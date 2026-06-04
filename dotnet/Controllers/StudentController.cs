@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
+using Backend.Data;
 using Backend.Services;
 using Backend.Extensions;
 
@@ -15,14 +17,16 @@ namespace Backend.Controllers;
 public class StudentController : ControllerBase
 {
     private readonly ILogger<StudentController> _logger;
+    private readonly ApplicationDbContext _db;
 
-    public StudentController(ILogger<StudentController> logger)
+    public StudentController(ILogger<StudentController> logger, ApplicationDbContext db)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _db = db;
     }
 
     /// <summary>
-    /// Récupère les statistiques de l'étudiant
+    /// Récupère les statistiques de l'étudiant avec priorités, objectifs et événements à venir
     /// </summary>
     [HttpGet("stats")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -31,17 +35,94 @@ public class StudentController : ControllerBase
     {
         try
         {
-            var studentId = User.GetUserId();
-            // Implémentation de la logique pour récupérer stats étudiant
-            var stats = new
+            var userId = User.GetUserId();
+
+            var totalCoursesEnrolled = await _db.Enrollments
+                .CountAsync(e => e.UserId == userId);
+
+            var coursesCompleted = await _db.Enrollments
+                .CountAsync(e => e.UserId == userId && e.IsCompleted);
+
+            var histories = await _db.LearningHistories
+                .Where(h => h.UserId == userId)
+                .Select(h => new { h.QuizScore, h.TimeSpentSeconds, h.ActivityType })
+                .ToListAsync();
+
+            var averageScore = histories.Any(h => h.QuizScore.HasValue)
+                ? histories.Where(h => h.QuizScore.HasValue).Average(h => (double)h.QuizScore!.Value)
+                : 0.0;
+
+            var totalTimeSeconds = histories.Sum(h => h.TimeSpentSeconds ?? 0);
+
+            var quizCompleted = histories.Count(h =>
+                h.ActivityType != null && h.ActivityType.ToLower().Contains("quiz"));
+
+            var priorities = await _db.Goals
+                .Where(g => g.UserId == userId && g.Status == "in_progress")
+                .OrderBy(g => g.TargetDate)
+                .Take(5)
+                .Select(g => new
+                {
+                    g.Id,
+                    g.Title,
+                    g.Description,
+                    g.Type,
+                    g.Progress,
+                    g.Status,
+                    g.TargetDate,
+                    g.CreatedAt
+                })
+                .ToListAsync();
+
+            var goals = await _db.Goals
+                .Where(g => g.UserId == userId)
+                .OrderByDescending(g => g.CreatedAt)
+                .Select(g => new
+                {
+                    g.Id,
+                    g.Title,
+                    g.Description,
+                    g.Type,
+                    g.Progress,
+                    g.Status,
+                    g.TargetDate,
+                    g.CreatedAt,
+                    g.CompletedAt
+                })
+                .ToListAsync();
+
+            var upcomingEvents = await _db.Events
+                .Where(e => e.StartDate > DateTime.UtcNow && !e.IsDeleted)
+                .OrderBy(e => e.StartDate)
+                .Take(5)
+                .Select(e => new
+                {
+                    e.Id,
+                    e.Title,
+                    e.Description,
+                    e.StartDate,
+                    e.EndDate,
+                    e.Location,
+                    e.EventType
+                })
+                .ToListAsync();
+
+            var data = new
             {
-                totalCoursesEnrolled = 0,
-                coursesCompleted = 0,
-                hoursSpent = 0,
-                averageScore = 0,
-                streak = 0
+                stats = new
+                {
+                    totalCoursesEnrolled,
+                    coursesCompleted,
+                    averageScore = Math.Round(averageScore, 2),
+                    totalTimeSeconds,
+                    quizCompleted
+                },
+                priorities,
+                goals,
+                upcomingEvents
             };
-            return Ok(new { data = stats, success = true });
+
+            return Ok(new { data, success = true });
         }
         catch (Exception ex)
         {

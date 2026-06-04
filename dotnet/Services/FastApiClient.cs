@@ -34,6 +34,7 @@ public class FastApiClient : IFastApiClient
     private readonly HttpClient _httpClient;
     private readonly ILogger<FastApiClient> _logger;
     private readonly IConfiguration _configuration;
+    private readonly INtfyService _ntfy;
     private readonly string _baseUrl;
     private readonly AsyncRetryPolicy _retryPolicy;
     private readonly IAsyncPolicy _circuitBreakerPolicy;
@@ -41,8 +42,10 @@ public class FastApiClient : IFastApiClient
     public FastApiClient(
         HttpClient httpClient,
         ILogger<FastApiClient> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        INtfyService ntfy)
     {
+        _ntfy = ntfy;
         _httpClient = httpClient;
         _logger = logger;
         _configuration = configuration;
@@ -92,6 +95,11 @@ public class FastApiClient : IFastApiClient
                             exception,
                             " Circuit Breaker OUVERT pour FastApi API. Durée: {Duration}s",
                             duration.TotalSeconds);
+                        _ = _ntfy.PublishAdminAsync(
+                            "Service IA indisponible",
+                            $"Le circuit-breaker s'est ouvert. Le service IA sera indisponible pendant {duration.TotalSeconds}s.",
+                            "urgent",
+                            new[] { "rotating_light", "robot_face" });
                     },
                     onReset: () =>
                     {

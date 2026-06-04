@@ -1,3 +1,5 @@
+using Amazon.S3;
+using Amazon.S3.Model;
 using Microsoft.AspNetCore.Http;
 
 namespace Backend.Services;
@@ -13,99 +15,81 @@ public class FileUploadService : IFileUploadService
 {
     private readonly ILogger<FileUploadService> _logger;
     private readonly IConfiguration _configuration;
-    private readonly string _uploadPath;
-    private readonly long _maxFileSize = 5 * 1024 * 1024; // 5 MB
+    private const string BucketName = "winplus-bucket";
+    private const string KeyPrefix = "avatars/";
+    private readonly long _maxFileSize = 5 * 1024 * 1024;
     private readonly string[] _allowedExtensions = { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
 
     public FileUploadService(ILogger<FileUploadService> logger, IConfiguration configuration)
     {
         _logger = logger;
         _configuration = configuration;
-        
-        // Path for local storage (can be replaced by S3)
-        _uploadPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "avatars");
-        
-        // Create folder if it doesn't exist
-        if (!Directory.Exists(_uploadPath))
-        {
-            Directory.CreateDirectory(_uploadPath);
-        }
     }
 
     public bool IsValidImageFile(IFormFile file)
     {
-        if (file == null || file.Length == 0)
-            return false;
+        if (file == null || file.Length == 0) return false;
+        if (file.Length > _maxFileSize) return false;
 
-        // Check size
-        if (file.Length > _maxFileSize)
-            return false;
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (!_allowedExtensions.Contains(ext)) return false;
 
-        // Check extension
-        var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
-        if (!_allowedExtensions.Contains(extension))
-            return false;
-
-        // Check MIME type
-        var allowedMimeTypes = new[] { "image/jpeg", "image/png", "image/gif", "image/webp" };
-        if (!allowedMimeTypes.Contains(file.ContentType?.ToLower() ?? ""))
-            return false;
+        var allowed = new[] { "image/jpeg", "image/png", "image/gif", "image/webp" };
+        if (!allowed.Contains(file.ContentType?.ToLower() ?? "")) return false;
 
         return true;
     }
 
     public async Task<string> UploadAvatarAsync(int userId, IFormFile file)
     {
-        try
+        if (!IsValidImageFile(file))
+            throw new ArgumentException("Invalid image file");
+
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var key = $"{KeyPrefix}user_{userId}_{Guid.NewGuid()}{ext}";
+        var region = _configuration["AWS:Region"] ?? "us-east-1";
+
+        var regionEndpoint = Amazon.RegionEndpoint.GetBySystemName(region);
+        using var s3 = new AmazonS3Client(regionEndpoint);
+
+        using var stream = file.OpenReadStream();
+        await s3.PutObjectAsync(new PutObjectRequest
         {
-            if (!IsValidImageFile(file))
-            {
-                throw new ArgumentException("Invalid image file");
-            }
+            BucketName = BucketName,
+            Key = key,
+            InputStream = stream,
+            ContentType = file.ContentType,
+            CannedACL = S3CannedACL.PublicRead
+        });
 
-            // Generate unique filename
-            var fileName = $"user_{userId}_{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
-            var filePath = Path.Combine(_uploadPath, fileName);
-
-            // Save file
-            using (var stream = new FileStream(filePath, FileMode.Create))
-            {
-                await file.CopyToAsync(stream);
-            }
-
-            // Relative URL
-            var avatarUrl = $"/uploads/avatars/{fileName}";
-
-            _logger.LogInformation("Avatar uploaded for user {UserId}: {AvatarUrl}", userId, avatarUrl);
-
-            return avatarUrl;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error uploading avatar for user {UserId}", userId);
-            throw;
-        }
+        var url = $"https://{BucketName}.s3.{region}.amazonaws.com/{key}";
+        _logger.LogInformation("Avatar uploaded to S3 for user {UserId}: {Url}", userId, url);
+        return url;
     }
 
     public async Task<bool> DeleteAvatarAsync(string avatarUrl)
     {
+        if (string.IsNullOrEmpty(avatarUrl)) return false;
+
         try
         {
-            if (string.IsNullOrEmpty(avatarUrl))
-                return false;
-
-            // Extract filename
-            var fileName = Path.GetFileName(avatarUrl);
-            var filePath = Path.Combine(_uploadPath, fileName);
-
-            if (File.Exists(filePath))
+            if (!avatarUrl.Contains("amazonaws.com"))
             {
-                File.Delete(filePath);
-                _logger.LogInformation("Avatar deleted: {AvatarUrl}", avatarUrl);
+                // Legacy local file
+                var fileName = Path.GetFileName(avatarUrl);
+                var localPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "avatars", fileName);
+                if (File.Exists(localPath)) File.Delete(localPath);
                 return true;
             }
 
-            return false;
+            var uri = new Uri(avatarUrl);
+            var s3Key = uri.AbsolutePath.TrimStart('/');
+            var region = _configuration["AWS:Region"] ?? "us-east-1";
+
+            using var s3 = new AmazonS3Client(Amazon.RegionEndpoint.GetBySystemName(region));
+            await s3.DeleteObjectAsync(BucketName, s3Key);
+            _logger.LogInformation("Avatar deleted from S3: {Key}", s3Key);
+            return true;
         }
         catch (Exception ex)
         {

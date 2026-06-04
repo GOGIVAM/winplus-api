@@ -93,7 +93,7 @@ class Enrollment(Base):
 class LearningHistory(Base):
     """Modèle FastApi mappé sur la table LearningHistories (ASP.NET)"""
     __tablename__ = 'LearningHistories'
-    
+
     Id = Column(Integer, primary_key=True)
     UserId = Column(Integer, ForeignKey('Users.Id'), nullable=False)
     SubjectId = Column(Integer, ForeignKey('Subjects.Id'), nullable=False)
@@ -102,6 +102,40 @@ class LearningHistory(Base):
     Duration = Column(Integer)  # seconds
     Timestamp = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     Metadata = Column(Text)  # JSON metadata
+
+
+class Conversation(Base):
+    """Modèle FastApi mappé sur la table Conversations (ASP.NET chatbot)"""
+    __tablename__ = 'Conversations'
+
+    Id = Column(Integer, primary_key=True)
+    UserId = Column(Integer, ForeignKey('Users.Id'), nullable=False)
+    Title = Column(String(255), nullable=False, default='Nouvelle conversation')
+    Tags = Column(Text)
+    IsActive = Column(Boolean, nullable=False, default=True)
+    LastMessageAt = Column(DateTime(timezone=True))
+    MessageCount = Column(Integer, nullable=False, default=0)
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    UpdatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    IsDeleted = Column(Boolean, nullable=False, default=False)
+
+    messages = relationship("ChatMessage", back_populates="conversation")
+
+
+class ChatMessage(Base):
+    """Modèle FastApi mappé sur la table Messages (ASP.NET chatbot)"""
+    __tablename__ = 'Messages'
+
+    Id = Column(Integer, primary_key=True)
+    ConversationId = Column(Integer, ForeignKey('Conversations.Id'), nullable=False)
+    Role = Column(String(20), nullable=False)
+    Content = Column(Text, nullable=False)
+    TokensUsed = Column(Integer)
+    GenerationTimeMs = Column(Integer)
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    IsDeleted = Column(Boolean, nullable=False, default=False)
+
+    conversation = relationship("Conversation", back_populates="messages")
 
 
 # ================== INITIALISATION DB ==================

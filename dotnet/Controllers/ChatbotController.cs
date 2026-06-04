@@ -1,8 +1,14 @@
+using Backend.Data;
 using Backend.Models.DTOs;
+using Backend.Models.Entities;
 using Backend.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using System.Net.Http.Json;
 using System.Security.Claims;
+using System.Text;
+using System.Text.Json;
 
 namespace Backend.Controllers;
 
@@ -15,11 +21,19 @@ namespace Backend.Controllers;
 public class ChatbotController : ControllerBase
 {
     private readonly IChatbotService _chatbotService;
+    private readonly ApplicationDbContext _dbContext;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ChatbotController> _logger;
 
-    public ChatbotController(IChatbotService chatbotService, ILogger<ChatbotController> logger)
+    public ChatbotController(
+        IChatbotService chatbotService,
+        ApplicationDbContext dbContext,
+        IHttpClientFactory httpClientFactory,
+        ILogger<ChatbotController> logger)
     {
         _chatbotService = chatbotService;
+        _dbContext = dbContext;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
@@ -292,13 +306,166 @@ public class ChatbotController : ControllerBase
         {
             var userId = GetCurrentUserId();
             var context = await _chatbotService.SyncContextAsync(userId, request);
-            
+
             return Ok(context);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in SyncContext");
             return StatusCode(500, new { error = "An error occurred while syncing context" });
+        }
+    }
+
+    /// <summary>
+    /// POST /api/chatbot/stream
+    /// SSE — crée la conversation/message utilisateur, proxie le stream FastAPI, ré-émet les chunks.
+    /// </summary>
+    [HttpPost("stream")]
+    public async Task StreamChat([FromBody] StreamChatRequest request, CancellationToken cancellationToken)
+    {
+        int userId;
+        try { userId = GetCurrentUserId(); }
+        catch
+        {
+            Response.StatusCode = 401;
+            await Response.WriteAsync("data: {\"error\": \"Unauthorized\"}\n\ndata: [DONE]\n\n", cancellationToken);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Message))
+        {
+            Response.StatusCode = 400;
+            await Response.WriteAsync("data: {\"error\": \"Message is required\"}\n\ndata: [DONE]\n\n", cancellationToken);
+            return;
+        }
+
+        // Create or retrieve conversation
+        int conversationId = request.ConversationId ?? 0;
+        bool isNew = conversationId == 0;
+
+        if (isNew)
+        {
+            var title = request.Message.Length > 50 ? request.Message[..50] + "…" : request.Message;
+            var conv = new Conversation
+            {
+                UserId = userId,
+                Title = title,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            _dbContext.Conversations.Add(conv);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            conversationId = conv.Id;
+        }
+
+        // Save user message
+        _dbContext.Messages.Add(new Message
+        {
+            ConversationId = conversationId,
+            Role = "user",
+            Content = request.Message,
+            CreatedAt = DateTime.UtcNow
+        });
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // Setup SSE response headers
+        Response.ContentType = "text/event-stream";
+        Response.Headers["Cache-Control"] = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        // Emit conversationId to frontend on new conversation
+        if (isNew)
+        {
+            await Response.WriteAsync($"data: {{\"conversationId\": {conversationId}}}\n\n", cancellationToken);
+            await Response.Body.FlushAsync(cancellationToken);
+        }
+
+        // Fetch last 20 messages for conversation context
+        var history = await _dbContext.Messages
+            .Where(m => m.ConversationId == conversationId && !m.IsDeleted)
+            .OrderByDescending(m => m.CreatedAt)
+            .Take(20)
+            .OrderBy(m => m.CreatedAt)
+            .Select(m => new { role = m.Role, content = m.Content })
+            .ToListAsync(cancellationToken);
+
+        // Forward request to FastAPI stream endpoint
+        var fastApiBody = new
+        {
+            messages = history,
+            conversation_id = conversationId,
+            max_tokens = 2000,
+            temperature = 0.7
+        };
+
+        var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+        using var fastApiReq = new HttpRequestMessage(HttpMethod.Post, "/api/chatbot/stream");
+        fastApiReq.Content = JsonContent.Create(fastApiBody);
+
+        var authHeader = HttpContext.Request.Headers["Authorization"].ToString();
+        if (!string.IsNullOrEmpty(authHeader))
+            fastApiReq.Headers.TryAddWithoutValidation("Authorization", authHeader);
+
+        try
+        {
+            using var fastApiRes = await httpClient.SendAsync(
+                fastApiReq, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+            if (!fastApiRes.IsSuccessStatusCode)
+            {
+                _logger.LogError("FastAPI stream returned {Status} for user {UserId}", fastApiRes.StatusCode, userId);
+                await Response.WriteAsync("data: {\"error\": \"AI service unavailable\"}\n\ndata: [DONE]\n\n", cancellationToken);
+                await Response.Body.FlushAsync(cancellationToken);
+                return;
+            }
+
+            using var stream = await fastApiRes.Content.ReadAsStreamAsync(cancellationToken);
+            using var reader = new System.IO.StreamReader(stream);
+
+            while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
+            {
+                var line = await reader.ReadLineAsync(cancellationToken);
+                if (line == null) break;
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                if (!line.StartsWith("data: ")) continue;
+
+                await Response.WriteAsync(line + "\n\n", cancellationToken);
+                await Response.Body.FlushAsync(cancellationToken);
+
+                if (line[6..] == "[DONE]") break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("Stream cancelled for user {UserId} on conv {ConvId}", userId, conversationId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Stream proxy error for user {UserId}", userId);
+            try
+            {
+                await Response.WriteAsync("data: {\"error\": \"Stream error\"}\n\ndata: [DONE]\n\n");
+                await Response.Body.FlushAsync(CancellationToken.None);
+            }
+            catch { }
+        }
+        finally
+        {
+            // Update conversation metadata
+            try
+            {
+                var conv = await _dbContext.Conversations.FindAsync(new object[] { conversationId }, CancellationToken.None);
+                if (conv != null)
+                {
+                    conv.LastMessageAt = DateTime.UtcNow;
+                    conv.UpdatedAt = DateTime.UtcNow;
+                    await _dbContext.SaveChangesAsync(CancellationToken.None);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to update conversation metadata for conv {ConvId}", conversationId);
+            }
         }
     }
 }

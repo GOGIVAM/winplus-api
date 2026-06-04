@@ -1,252 +1,263 @@
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using Backend.Models.DTOs;
 using Backend.Services;
 using Backend.Extensions;
 
 namespace Backend.Controllers;
 
-/// <summary>
-/// Controller pour gérer les paiements
-/// </summary>
 [ApiController]
 [Route("api/payments")]
 [Produces("application/json")]
 public class PaymentsController : ControllerBase
 {
     private readonly IPaymentService _paymentService;
+    private readonly INotchPayService _notchPay;
     private readonly ILogger<PaymentsController> _logger;
+    private readonly IMemoryCache _cache;
 
-    public PaymentsController(IPaymentService paymentService, ILogger<PaymentsController> logger)
+    public PaymentsController(
+        IPaymentService paymentService,
+        INotchPayService notchPay,
+        ILogger<PaymentsController> logger,
+        IMemoryCache cache)
     {
         _paymentService = paymentService;
+        _notchPay = notchPay;
         _logger = logger;
+        _cache = cache;
     }
 
-    /// <summary>
-    /// Crée un nouveau paiement
-    /// </summary>
-    /// <param name="request">Détails du paiement</param>
-    /// <returns>Les détails du paiement créé</returns>
-    /// <response code="200">Paiement créé avec succès</response>
-    /// <response code="400">Requête invalide</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpPost]
-    [ProducesResponseType(typeof(PaymentResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> CreatePayment([FromBody] CreatePaymentRequest request)
+    private const int PaymentRateLimit = 5;
+    private static readonly TimeSpan PaymentRateWindow = TimeSpan.FromMinutes(10);
+
+    private bool IsPaymentRateLimited(int userId)
     {
+        var key = $"payment_rate:{userId}";
+        var now = DateTime.UtcNow;
+        var cutoff = now - PaymentRateWindow;
+
+        var timestamps = _cache.GetOrCreate(key, entry =>
+        {
+            entry.SlidingExpiration = PaymentRateWindow;
+            return new List<DateTime>();
+        })!;
+
+        lock (timestamps)
+        {
+            timestamps.RemoveAll(t => t < cutoff);
+            if (timestamps.Count >= PaymentRateLimit)
+                return true;
+            timestamps.Add(now);
+            _cache.Set(key, timestamps, PaymentRateWindow);
+        }
+        return false;
+    }
+
+    /// <summary>POST /api/payments/initiate — Initier un paiement NotchPay (max 5 / 10 min / utilisateur)</summary>
+    [HttpPost("initiate")]
+    [Authorize]
+    public async Task<IActionResult> Initiate([FromBody] InitiatePaymentRequest request)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+
         try
         {
-            if (!ModelState.IsValid)
-                return BadRequest(ModelState);
-
             var userId = User.GetUserId();
 
-            var response = await _paymentService.CreatePaymentAsync(userId, request);
-            return Ok(response);
+            if (IsPaymentRateLimited(userId))
+            {
+                _logger.LogWarning("Rate limit dépassé pour les paiements — userId={UserId}", userId);
+                return StatusCode(429, new
+                {
+                    error = "too_many_requests",
+                    message = "Trop de tentatives de paiement. Veuillez réessayer dans 10 minutes.",
+                    retryAfterMinutes = 10
+                });
+            }
+
+            var result = await _paymentService.InitiateNotchPayAsync(userId, request);
+            return Ok(result);
         }
         catch (ArgumentException ex)
         {
-            _logger.LogWarning(ex, "Argument invalide lors de la création du paiement");
             return BadRequest(new { error = ex.Message });
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(503, new { error = "operator_unavailable", message = "Service de paiement temporairement indisponible. Réessayez dans quelques instants." });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Erreur lors de la création du paiement");
-            return StatusCode(500, new { error = "Erreur lors de la création du paiement" });
+            _logger.LogError(ex, "Erreur initiation paiement");
+            return StatusCode(500, new { error = "Erreur lors de l'initiation du paiement" });
         }
     }
 
-    /// <summary>
-    /// Récupère les détails d'un paiement
-    /// </summary>
-    /// <param name="id">ID du paiement</param>
-    /// <returns>Les détails du paiement</returns>
-    /// <response code="200">Paiement trouvé</response>
-    /// <response code="404">Paiement non trouvé</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpGet("{id}")]
-    [ProducesResponseType(typeof(PaymentResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetPayment(int id)
+    /// <summary>POST /api/payments/webhook/notchpay — Webhook NotchPay (signature HMAC-SHA256)</summary>
+    [HttpPost("webhook/notchpay")]
+    [AllowAnonymous]
+    public async Task<IActionResult> NotchPayWebhook()
+    {
+        string payload;
+        using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
+            payload = await reader.ReadToEndAsync();
+
+        var signature = Request.Headers["X-Notchpay-Signature"].FirstOrDefault()
+            ?? Request.Headers["x-notchpay-signature"].FirstOrDefault();
+
+        if (string.IsNullOrEmpty(signature) || !_notchPay.VerifyWebhookSignature(payload, signature))
+        {
+            _logger.LogWarning("Webhook NotchPay: signature invalide");
+            return Unauthorized(new { error = "Signature invalide" });
+        }
+
+        NotchPayWebhookPayload? webhookData;
+        try
+        {
+            webhookData = JsonSerializer.Deserialize<NotchPayWebhookPayload>(payload,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Webhook NotchPay: payload JSON invalide");
+            return BadRequest(new { error = "Payload invalide" });
+        }
+
+        if (webhookData?.Transaction == null)
+            return BadRequest(new { error = "Transaction manquante dans le payload" });
+
+        var eventId = webhookData.Transaction.Reference
+            ?? $"notchpay-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+
+        try
+        {
+            await _paymentService.HandleNotchPayWebhookAsync(
+                eventId, webhookData.Event ?? "unknown", webhookData.Transaction);
+            return Ok(new { received = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur traitement webhook NotchPay {EventId}", eventId);
+            return StatusCode(500, new { error = "Erreur traitement webhook" });
+        }
+    }
+
+    /// <summary>GET /api/payments/{id}/status — Statut d'un paiement (avec sync NotchPay)</summary>
+    [HttpGet("{id:int}/status")]
+    [Authorize]
+    public async Task<IActionResult> GetStatus(int id)
     {
         try
         {
-            var response = await _paymentService.GetPaymentByIdAsync(id);
-            return Ok(response);
+            var userId = User.GetUserId();
+            var isAdmin = User.IsInRole("admin");
+            var result = await _paymentService.GetPaymentStatusAsync(id, userId, isAdmin);
+            return Ok(result);
         }
         catch (ArgumentException ex)
         {
-            _logger.LogWarning(ex, "Paiement non trouvé: {PaymentId}", id);
             return NotFound(new { error = ex.Message });
         }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Erreur lors de la récupération du paiement");
+            _logger.LogError(ex, "Erreur récupération statut paiement {Id}", id);
             return StatusCode(500, new { error = "Erreur serveur" });
         }
     }
 
-    /// <summary>
-    /// Confirme un paiement en attente
-    /// </summary>
-    /// <param name="id">ID du paiement</param>
-    /// <param name="request">Données de confirmation</param>
-    /// <returns>Les détails du paiement mis à jour</returns>
-    /// <response code="200">Paiement confirmé avec succès</response>
-    /// <response code="400">Requête invalide</response>
-    /// <response code="404">Paiement non trouvé</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpPost("{id}/confirm")]
-    [ProducesResponseType(typeof(PaymentResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> ConfirmPayment(int id, [FromBody] ConfirmPaymentRequest request)
+    /// <summary>GET /api/payments/history — Historique des paiements de l'utilisateur connecté</summary>
+    [HttpGet("history")]
+    [Authorize]
+    public async Task<IActionResult> GetHistory([FromQuery] int page = 1, [FromQuery] int limit = 20)
     {
         try
         {
-            if (!ModelState.IsValid)
-                return BadRequest(ModelState);
-
-            var response = await _paymentService.ConfirmPaymentAsync(id, request);
-            return Ok(response);
-        }
-        catch (ArgumentException ex)
-        {
-            _logger.LogWarning(ex, "Argument invalide");
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (InvalidOperationException ex)
-        {
-            _logger.LogWarning(ex, "Opération invalide");
-            return BadRequest(new { error = ex.Message });
+            var userId = User.GetUserId();
+            var result = await _paymentService.GetUserPaymentHistoryAsync(userId, page, limit);
+            return Ok(result);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Erreur lors de la confirmation du paiement");
+            _logger.LogError(ex, "Erreur récupération historique paiements");
             return StatusCode(500, new { error = "Erreur serveur" });
         }
     }
 
-    /// <summary>
-    /// Effectue un remboursement de paiement
-    /// </summary>
-    /// <param name="id">ID du paiement</param>
-    /// <param name="request">Détails du remboursement</param>
-    /// <returns>Les détails du paiement mis à jour</returns>
-    /// <response code="200">Remboursement effectué avec succès</response>
-    /// <response code="400">Requête invalide</response>
-    /// <response code="404">Paiement non trouvé</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpPost("{id}/refund")]
-    [ProducesResponseType(typeof(PaymentResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> RefundPayment(int id, [FromBody] RefundPaymentRequest request)
+    /// <summary>POST /api/payments/{id}/retry — Réessayer un paiement échoué</summary>
+    [HttpPost("{id:int}/retry")]
+    [Authorize]
+    public async Task<IActionResult> Retry(int id)
     {
         try
         {
-            if (!ModelState.IsValid)
-                return BadRequest(ModelState);
-
-            var response = await _paymentService.RefundPaymentAsync(id, request);
-            return Ok(response);
+            var userId = User.GetUserId();
+            var result = await _paymentService.RetryPaymentAsync(id, userId);
+            return Ok(result);
         }
         catch (ArgumentException ex)
         {
-            _logger.LogWarning(ex, "Argument invalide");
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (InvalidOperationException ex)
-        {
-            _logger.LogWarning(ex, "Opération invalide");
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erreur lors du remboursement");
-            return StatusCode(500, new { error = "Erreur serveur" });
-        }
-    }
-
-    /// <summary>
-    /// Réessaie un paiement échoué
-    /// </summary>
-    /// <param name="id">ID du paiement</param>
-    /// <param name="request">Détails de réessai</param>
-    /// <returns>Les détails du paiement mis à jour</returns>
-    /// <response code="200">Réessai lancé avec succès</response>
-    /// <response code="400">Requête invalide</response>
-    /// <response code="404">Paiement non trouvé</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpPost("{id}/retry")]
-    [ProducesResponseType(typeof(PaymentResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> RetryPayment(int id, [FromBody] RetryPaymentRequest request)
-    {
-        try
-        {
-            if (!ModelState.IsValid)
-                return BadRequest(ModelState);
-
-            var response = await _paymentService.RetryPaymentAsync(id, request);
-            return Ok(response);
-        }
-        catch (ArgumentException ex)
-        {
-            _logger.LogWarning(ex, "Argument invalide");
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (InvalidOperationException ex)
-        {
-            _logger.LogWarning(ex, "Opération invalide");
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erreur lors du réessai du paiement");
-            return StatusCode(500, new { error = "Erreur serveur" });
-        }
-    }
-
-    /// <summary>
-    /// Annule un paiement
-    /// </summary>
-    /// <param name="id">ID du paiement</param>
-    /// <returns>Résultat de l'annulation</returns>
-    /// <response code="200">Paiement annulé avec succès</response>
-    /// <response code="404">Paiement non trouvé</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpDelete("{id}")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> CancelPayment(int id)
-    {
-        try
-        {
-            var result = await _paymentService.CancelPaymentAsync(id);
-            return Ok(new { success = result, message = "Paiement annulé avec succès" });
-        }
-        catch (ArgumentException ex)
-        {
-            _logger.LogWarning(ex, "Paiement non trouvé");
             return NotFound(new { error = ex.Message });
         }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
         catch (InvalidOperationException ex)
         {
-            _logger.LogWarning(ex, "Opération invalide");
             return BadRequest(new { error = ex.Message });
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(503, new { error = "operator_unavailable", message = "Service de paiement indisponible" });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Erreur lors de l'annulation du paiement");
+            _logger.LogError(ex, "Erreur réessai paiement {Id}", id);
+            return StatusCode(500, new { error = "Erreur serveur" });
+        }
+    }
+
+    /// <summary>GET /api/admin/payments — Liste tous les paiements (admin)</summary>
+    [HttpGet("/api/admin/payments")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> GetAllPayments(
+        [FromQuery] int page = 1,
+        [FromQuery] int limit = 50,
+        [FromQuery] string? status = null)
+    {
+        try
+        {
+            var result = await _paymentService.GetAllPaymentsAsync(page, limit, status);
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur récupération paiements admin");
+            return StatusCode(500, new { error = "Erreur serveur" });
+        }
+    }
+
+    /// <summary>GET /api/admin/payments/user/{userId} — Paiements d'un utilisateur spécifique (admin)</summary>
+    [HttpGet("/api/admin/payments/user/{userId:int}")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> GetPaymentsByUser(int userId, [FromQuery] int page = 1, [FromQuery] int limit = 50)
+    {
+        try
+        {
+            var result = await _paymentService.GetPaymentsByUserAsync(userId, page, limit);
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur récupération paiements utilisateur {UserId}", userId);
             return StatusCode(500, new { error = "Erreur serveur" });
         }
     }

@@ -66,9 +66,18 @@ public class ApplicationDbContext : DbContext
     public DbSet<Session> Sessions => Set<Session>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
 
+    // Forum
+    public DbSet<ForumThread> ForumThreads => Set<ForumThread>();
+    public DbSet<ForumPost> ForumPosts => Set<ForumPost>();
+    public DbSet<ForumVote> ForumVotes => Set<ForumVote>();
+
+    // Payment idempotency
+    public DbSet<WebhookIdempotencyKey> WebhookIdempotencyKeys => Set<WebhookIdempotencyKey>();
+
     // Category and Learning entities
     public DbSet<Level> Levels => Set<Level>();
     public DbSet<Goal> Goals => Set<Goal>();
+    public DbSet<Promotion> Promotions => Set<Promotion>();
     public DbSet<HomePage> HomePages => Set<HomePage>();
     public DbSet<HomePageFeature> HomePageFeatures => Set<HomePageFeature>();
     public DbSet<Page> Pages => Set<Page>();
@@ -684,6 +693,17 @@ modelBuilder.Entity<Exam>(entity =>
             entity.Property(e => e.Price).HasPrecision(10, 2);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
             entity.Property(e => e.Category).HasMaxLength(50);
+            entity.Property(e => e.Currency).HasMaxLength(3);
+            entity.Property(e => e.BillingPeriod).HasMaxLength(50);
+        });
+
+        // Configure Promotion entity
+        modelBuilder.Entity<Promotion>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Code).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.DiscountPercent).HasPrecision(5, 2);
+            entity.HasIndex(e => e.Code).IsUnique();
         });
 
         // Configure Institution entity
@@ -729,6 +749,75 @@ modelBuilder.Entity<Exam>(entity =>
                 .WithMany()
                 .HasForeignKey(e => e.PricingPlanId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Configure ForumThread entity
+        modelBuilder.Entity<ForumThread>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Title).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.Content).IsRequired();
+            entity.Property(e => e.Category).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Tag).HasMaxLength(100);
+            entity.HasIndex(e => e.Category).HasDatabaseName("idx_forum_threads_category");
+            entity.HasIndex(e => e.UserId).HasDatabaseName("idx_forum_threads_user");
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasMany(e => e.Posts)
+                .WithOne(p => p.Thread)
+                .HasForeignKey(p => p.ThreadId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure ForumPost entity
+        modelBuilder.Entity<ForumPost>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Content).IsRequired();
+            entity.HasIndex(e => e.ThreadId).HasDatabaseName("idx_forum_posts_thread");
+            entity.HasIndex(e => e.UserId).HasDatabaseName("idx_forum_posts_user");
+            entity.HasOne(e => e.Thread)
+                .WithMany(t => t.Posts)
+                .HasForeignKey(e => e.ThreadId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasMany(e => e.Votes)
+                .WithOne(v => v.Post)
+                .HasForeignKey(v => v.PostId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure ForumVote entity — contrainte unique (PostId, UserId)
+        modelBuilder.Entity<ForumVote>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Type).IsRequired().HasMaxLength(10);
+            entity.HasIndex(e => new { e.PostId, e.UserId })
+                .IsUnique()
+                .HasDatabaseName("uq_forum_votes_post_user");
+            entity.HasOne(e => e.Post)
+                .WithMany(p => p.Votes)
+                .HasForeignKey(e => e.PostId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure WebhookIdempotencyKey entity
+        modelBuilder.Entity<WebhookIdempotencyKey>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.EventId).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.Provider).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.EventType).HasMaxLength(50);
+            entity.HasIndex(e => new { e.EventId, e.Provider }).IsUnique();
         });
     }
 }

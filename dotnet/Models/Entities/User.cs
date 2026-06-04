@@ -40,7 +40,13 @@ public class User
     public string? AvatarUrl { get; set; } // Avatar URL for profile picture
     
     public string? Bio { get; set; }
-    
+
+    [MaxLength(100)]
+    public string? Level { get; set; }
+
+    [MaxLength(100)]
+    public string? City { get; set; }
+
     public bool IsActive { get; set; } = true;
     
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
+using Backend.Data;
 using Backend.Models.DTOs;
 using Backend.Services;
 
@@ -16,36 +18,141 @@ public class AdminController : ControllerBase
 {
     private readonly IAdminService _adminService;
     private readonly ILogger<AdminController> _logger;
+    private readonly ApplicationDbContext _db;
 
-    public AdminController(IAdminService adminService, ILogger<AdminController> logger)
+    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ApplicationDbContext db)
     {
         _adminService = adminService;
         _logger = logger;
+        _db = db;
     }
 
     /// <summary>
-    /// Récupère la liste de tous les utilisateurs
+    /// Récupère la liste de tous les utilisateurs avec recherche optionnelle
     /// </summary>
-    /// <param name="page">Numéro de page</param>
-    /// <param name="limit">Nombre de résultats par page</param>
-    /// <returns>Liste des utilisateurs</returns>
-    /// <response code="200">Utilisateurs retournés</response>
-    /// <response code="401">Non autorisé</response>
-    /// <response code="500">Erreur serveur</response>
     [HttpGet("users")]
     [ProducesResponseType(typeof(AdminUserListResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetAllUsers([FromQuery] int page = 1, [FromQuery] int limit = 50)
+    public async Task<IActionResult> GetAllUsers(
+        [FromQuery] int page = 1,
+        [FromQuery] int limit = 50,
+        [FromQuery] string? q = null)
     {
         try
         {
-            var response = await _adminService.GetAllUsersAsync(page, limit);
-            return Ok(response);
+            if (page < 1) page = 1;
+            if (limit < 1) limit = 50;
+            if (limit > 100) limit = 100;
+
+            var query = _db.Users.AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                var lower = q.ToLower();
+                query = query.Where(u =>
+                    u.Email.ToLower().Contains(lower) ||
+                    (u.FirstName != null && u.FirstName.ToLower().Contains(lower)) ||
+                    (u.LastName != null && u.LastName.ToLower().Contains(lower)));
+            }
+
+            var total = await query.CountAsync();
+            var users = await query
+                .OrderByDescending(u => u.CreatedAt)
+                .Skip((page - 1) * limit)
+                .Take(limit)
+                .Select(u => new AdminUserResponse
+                {
+                    Id = u.Id,
+                    Email = u.Email,
+                    FirstName = u.FirstName,
+                    LastName = u.LastName,
+                    Role = u.Role,
+                    IsActive = u.IsActive,
+                    CreatedAt = u.CreatedAt,
+                    UpdatedAt = u.UpdatedAt,
+                    LastLoginAt = u.LastLoginAt
+                })
+                .ToListAsync();
+
+            return Ok(new AdminUserListResponse
+            {
+                Users = users,
+                Total = total,
+                Page = page,
+                Limit = limit,
+                TotalPages = (int)Math.Ceiling(total / (double)limit)
+            });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting all users");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Met à jour le rôle d'un utilisateur
+    /// </summary>
+    [HttpPut("users/{id}/role")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> UpdateUserRole(int id, [FromBody] UpdateUserRoleRequest request)
+    {
+        try
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var user = await _db.Users.FindAsync(id);
+            if (user == null)
+                return NotFound(new { error = "User not found" });
+
+            user.Role = request.Role;
+            user.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+
+            _logger.LogInformation("Role updated for user {UserId}: {Role}", id, request.Role);
+            return Ok(new { success = true, message = "Role updated successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating role for user {UserId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Met à jour le statut actif d'un utilisateur
+    /// </summary>
+    [HttpPut("users/{id}/status")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> UpdateUserStatus(int id, [FromBody] UpdateUserStatusRequest request)
+    {
+        try
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var user = await _db.Users.FindAsync(id);
+            if (user == null)
+                return NotFound(new { error = "User not found" });
+
+            user.IsActive = request.IsActive;
+            user.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+
+            _logger.LogInformation("Status updated for user {UserId}: IsActive={IsActive}", id, request.IsActive);
+            return Ok(new { success = true, message = "Status updated successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating status for user {UserId}", id);
             return StatusCode(500, new { error = "Internal server error" });
         }
     }
@@ -425,6 +532,53 @@ public class AdminController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting popular subjects");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Métriques analytiques clés pour le tableau de bord admin
+    /// </summary>
+    [HttpGet("analytics")]
+    public async Task<IActionResult> GetAnalytics()
+    {
+        try
+        {
+            var totalRevenue = await _db.Payments
+                .Where(p => p.Status == "completed")
+                .SumAsync(p => (decimal?)p.Amount) ?? 0m;
+
+            var sevenDaysAgo = DateTime.UtcNow.AddDays(-7);
+            var newUsersThisWeek = await _db.Users
+                .CountAsync(u => u.CreatedAt > sevenDaysAgo);
+
+            var activeSubjects = await _db.Subjects
+                .CountAsync(s => s.IsPublished && !s.IsDeleted);
+
+            var totalUsers = await _db.Users.CountAsync();
+            var subscribedUsers = await _db.Subscriptions
+                .Select(s => s.UserId)
+                .Distinct()
+                .CountAsync();
+
+            var conversionRate = totalUsers > 0
+                ? Math.Round((double)subscribedUsers / totalUsers * 100, 2)
+                : 0.0;
+
+            return Ok(new
+            {
+                success = true,
+                totalRevenue,
+                newUsersThisWeek,
+                activeSubjects,
+                conversionRate,
+                totalUsers,
+                subscribedUsers
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting analytics");
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }

@@ -65,6 +65,22 @@ public class AttachmentDto
 }
 
 /// <summary>
+/// DTO pour le streaming SSE du chatbot
+/// </summary>
+public class StreamChatRequest
+{
+    [Required]
+    [MinLength(1)]
+    [MaxLength(10000)]
+    public string Message { get; set; } = string.Empty;
+
+    public int? ConversationId { get; set; }
+
+    [MaxLength(20)]
+    public string? Model { get; set; }
+}
+
+/// <summary>
 /// DTO pour créer une conversation
 /// </summary>
 public class CreateConversationRequest

@@ -4,10 +4,6 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Backend.Models.Entities;
 
-/// <summary>
-/// Représente une transaction de paiement
-/// </summary>
-// ✅ Attribut [Table] retiré - utiliser PascalCase par défaut d'EF Core
 public class Payment
 {
     [Key]
@@ -28,17 +24,26 @@ public class Payment
 
     [Required]
     [MaxLength(3)]
-    public string Currency { get; set; } = "EUR";
+    public string Currency { get; set; } = "XAF";
 
     [Required]
     [MaxLength(50)]
-    public string Status { get; set; } = "pending"; // pending, completed, failed, refunded, cancelled
+    public string Status { get; set; } = "pending"; // pending, completed, failed, cancelled, expired
+
+    [MaxLength(50)]
+    public string? PaymentMethod { get; set; } // notchpay
 
     [MaxLength(255)]
-    public string? PaymentMethod { get; set; } // credit_card, paypal, stripe, etc.
+    public string? TransactionId { get; set; }
 
     [MaxLength(255)]
-    public string? TransactionId { get; set; } // ID de la transaction externe (Stripe, PayPal)
+    public string? NotchpayReference { get; set; }
+
+    [MaxLength(20)]
+    public string? PhoneNumber { get; set; }
+
+    [MaxLength(20)]
+    public string? Operator { get; set; } // mtn, orange, wave
 
     [MaxLength(500)]
     public string? Description { get; set; }
@@ -51,15 +56,20 @@ public class Payment
 
     public DateTime? CompletedAt { get; set; }
 
+    public DateTime? ExpiresAt { get; set; }
+
     [MaxLength(500)]
     public string? ErrorMessage { get; set; }
+
+    [MaxLength(100)]
+    public string? ErrorCode { get; set; }
 
     public int? RetryCount { get; set; } = 0;
 
     public DateTime? NextRetryAt { get; set; }
 
     [MaxLength(500)]
-    public string? Metadata { get; set; } // JSON string for additional data
+    public string? Metadata { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

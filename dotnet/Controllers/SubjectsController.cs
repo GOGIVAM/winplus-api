@@ -1,3 +1,5 @@
+using Amazon.S3;
+using Amazon.S3.Model;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Backend.Services;
@@ -16,18 +18,32 @@ public class SubjectsController : ControllerBase
     private readonly ISubjectService _subjectService;
     private readonly ApplicationDbContext _context;
     private readonly ILogger<SubjectsController> _logger;
+    private readonly IFastApiClient _fastApiClient;
+    private readonly IConfiguration _configuration;
 
-    public SubjectsController(ISubjectService subjectService, ApplicationDbContext context, ILogger<SubjectsController> logger)
+    public SubjectsController(
+        ISubjectService subjectService,
+        ApplicationDbContext context,
+        ILogger<SubjectsController> logger,
+        IFastApiClient fastApiClient,
+        IConfiguration configuration)
     {
         _subjectService = subjectService;
         _context = context;
         _logger = logger;
+        _fastApiClient = fastApiClient;
+        _configuration = configuration;
     }
+
+    private class PythonRecsResponse { public List<object>? Recommendations { get; set; } }
 
     [HttpGet]
     [ProducesResponseType(typeof(PaginationResponse<Subject>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll(
-        [FromQuery] int page = 1, 
+        [FromQuery] string? q = null,
+        [FromQuery] string? category = null,
+        [FromQuery] string? difficulty = null,
+        [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] string sortBy = "createdAt",
         [FromQuery] string sortOrder = "desc")
@@ -37,14 +53,38 @@ public class SubjectsController : ControllerBase
             if (page < 1) page = 1;
             pageSize = Math.Clamp(pageSize, 1, 500);
 
-            var subjects = await _subjectService.GetAllSubjectsAsync(page, pageSize);
-            
-            // Apply sorting (if needed - subjects might already be sorted by service)
-            var sortedSubjects = SortSubjects(subjects, sortBy, sortOrder);
-            
-            var totalCount = await _subjectService.GetTotalSubjectsCountAsync();
-            
-            var response = new PaginationResponse<Subject>(sortedSubjects, totalCount, page, pageSize);
+            var query = _context.Subjects
+                .Where(s => !s.IsDeleted)
+                .AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                var lower = q.ToLower();
+                query = query.Where(s =>
+                    s.Title.ToLower().Contains(lower) ||
+                    (s.Description != null && s.Description.ToLower().Contains(lower)));
+            }
+
+            if (!string.IsNullOrWhiteSpace(category))
+                query = query.Where(s => s.Category != null && s.Category.ToLower() == category.ToLower());
+
+            if (!string.IsNullOrWhiteSpace(difficulty))
+                query = query.Where(s => _context.Exams.Any(e =>
+                    e.SubjectId == s.Id && !e.IsDeleted &&
+                    e.Difficulty != null && e.Difficulty.ToLower() == difficulty.ToLower()));
+
+            var totalCount = await query.CountAsync();
+
+            var isAscending = sortOrder.ToLower() != "desc";
+            query = sortBy.ToLower() switch
+            {
+                "price" => isAscending ? query.OrderBy(s => s.Price) : query.OrderByDescending(s => s.Price),
+                "title" => isAscending ? query.OrderBy(s => s.Title) : query.OrderByDescending(s => s.Title),
+                _ => isAscending ? query.OrderBy(s => s.CreatedAt) : query.OrderByDescending(s => s.CreatedAt)
+            };
+
+            var subjects = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+            var response = new PaginationResponse<Subject>(subjects, totalCount, page, pageSize);
             return Ok(response);
         }
         catch (Exception ex)
@@ -349,9 +389,9 @@ public class SubjectsController : ControllerBase
     }
 
     /// <summary>
-    /// Télécharger le PDF d'une épreuve
+    /// Télécharger le PDF d'une épreuve via URL S3 presignée (15 min)
     /// GET /api/subjects/{id}/download
-    /// Retourne { downloadUrl, filename } ou 403 (abonnement requis) / 404 (PDF manquant)
+    /// Retourne { downloadUrl, filename } ou 403 / 404
     /// </summary>
     [HttpGet("{id}/download")]
     [Authorize]
@@ -365,28 +405,75 @@ public class SubjectsController : ControllerBase
         if (subject == null)
             return NotFound(new { error = "Épreuve introuvable." });
 
-        // Paid subjects require a non-free subscription
         if (subject.Price > 0 && string.Equals(role, "free", StringComparison.OrdinalIgnoreCase))
             return StatusCode(403, new { error = "Un abonnement est requis pour télécharger cette épreuve." });
 
-        var content = subject.Contents?
-            .OrderBy(c => c.OrderIndex)
-            .FirstOrDefault(c => !string.IsNullOrEmpty(c.DocumentUrl));
+        var exam = await _context.Exams
+            .Where(e => e.SubjectId == id && !e.IsDeleted && e.DocumentUrl != null)
+            .OrderByDescending(e => e.CreatedAt)
+            .FirstOrDefaultAsync();
 
-        if (content == null || string.IsNullOrEmpty(content.DocumentUrl))
+        if (exam == null || string.IsNullOrEmpty(exam.DocumentUrl))
             return NotFound(new { error = "Le fichier PDF n'est pas encore disponible pour cette épreuve." });
 
-        return Ok(new { downloadUrl = content.DocumentUrl, filename = $"{subject.Title}.pdf" });
+        string downloadUrl;
+        try
+        {
+            var region = _configuration["AWS:Region"] ?? "us-east-1";
+            var bucket = _configuration["AWS:BucketName"] ?? "winplus-bucket";
+            var s3Key = ExtractS3Key(exam.DocumentUrl, bucket);
+
+            using var s3 = new AmazonS3Client(Amazon.RegionEndpoint.GetBySystemName(region));
+            var request = new GetPreSignedUrlRequest
+            {
+                BucketName = bucket,
+                Key = s3Key,
+                Expires = DateTime.UtcNow.AddMinutes(15),
+                Verb = HttpVerb.GET
+            };
+            downloadUrl = s3.GetPreSignedURL(request);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Impossible de générer une URL presignée pour l'épreuve {Id}, retour URL directe", id);
+            downloadUrl = exam.DocumentUrl;
+        }
+
+        exam.DownloadCount += 1;
+        await _context.SaveChangesAsync();
+
+        var filename = $"{subject.Title}.pdf";
+        return Ok(new { downloadUrl, filename });
+    }
+
+    private static string ExtractS3Key(string documentUrl, string bucket)
+    {
+        if (documentUrl.StartsWith("s3://"))
+        {
+            var uri = new Uri(documentUrl);
+            return uri.AbsolutePath.TrimStart('/');
+        }
+        if (documentUrl.StartsWith("http"))
+        {
+            var uri = new Uri(documentUrl);
+            return uri.AbsolutePath.TrimStart('/');
+        }
+        return documentUrl;
     }
 
     /// <summary>
-    /// Récupère les cours similaires à un cours donné
+    /// Récupère les cours similaires — proxy vers le service Python IA
     /// </summary>
     [HttpGet("{id}/similar")]
     public async Task<IActionResult> GetSimilar(int id, [FromQuery] int limit = 5)
     {
         try
         {
+            var result = await _fastApiClient.GetAsync<PythonRecsResponse>($"/api/recommendations/{id}?limit={limit}");
+            if (result?.Recommendations != null)
+                return Ok(result.Recommendations);
+
+            // Fallback: similarity par catégorie depuis la DB locale
             var similar = await _subjectService.GetSimilarSubjectsAsync(id, limit);
             return Ok(similar);
         }

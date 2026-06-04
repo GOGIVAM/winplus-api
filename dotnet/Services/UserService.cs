@@ -7,7 +7,6 @@ public interface IUserService
 {
     Task<User?> GetUserByIdAsync(int id);
     Task<User?> GetUserByEmailAsync(string email);
-    Task<User?> GetUserByCognitoIdAsync(string cognitoId);
     Task<IEnumerable<User>> GetAllUsersAsync();
     Task<IEnumerable<User>> GetAllUsersAsync(int page, int limit);
     Task<User> CreateUserAsync(User user);
@@ -17,7 +16,6 @@ public interface IUserService
     Task<bool> RestoreUserAsync(int userId);
     Task<bool> HardDeleteUserAsync(int userId);
     Task<bool> IsEmailAvailableAsync(string email);
-    Task<bool> IsCognitoIdAvailableAsync(string cognitoId);
     Task<int> GetTotalUsersCountAsync();
     Task<User> UpdateUserProfileAsync(int userId, string firstName, string lastName, string bio, string? profileImageUrl);
     Task<Dictionary<string, object>> GetUserStatisticsAsync(int userId);
@@ -57,19 +55,6 @@ public class UserService : IUserService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting user by email {Email}", email);
-            return null;
-        }
-    }
-
-    public async Task<User?> GetUserByCognitoIdAsync(string cognitoId)
-    {
-        try
-        {
-            return await _userRepository.GetByCognitoIdAsync(cognitoId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting user by cognito id");
             return null;
         }
     }
@@ -201,20 +186,6 @@ public class UserService : IUserService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error checking email availability");
-            return false;
-        }
-    }
-
-    public async Task<bool> IsCognitoIdAvailableAsync(string cognitoId)
-    {
-        try
-        {
-            var exists = await _userRepository.ExistsByCognitoIdAsync(cognitoId);
-            return !exists;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error checking cognito id availability");
             return false;
         }
     }

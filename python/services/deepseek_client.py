@@ -3,10 +3,11 @@ DeepSeek Client - Client pour communiquer avec l'API DeepSeek
 """
 
 import os
+import json
 import time
 import logging
 import requests
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Generator
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -139,6 +140,76 @@ class DeepSeekClient:
             "model": self.model
         }
     
+    def chat_stream(
+        self,
+        messages: List[Dict[str, str]],
+        system_prompt: Optional[str] = None,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None
+    ) -> Generator[str, None, None]:
+        """
+        Envoie une requête de chat streamée à DeepSeek.
+        Yields des chunks SSE au format 'data: {"delta": "...", "tokens_used": N}\\n\\n'.
+        Dernier chunk : 'data: [DONE]\\n\\n'.
+        """
+        all_messages = []
+        if system_prompt:
+            all_messages.append({"role": "system", "content": system_prompt})
+        all_messages.extend(messages)
+
+        request_body = {
+            "model": self.model,
+            "messages": all_messages,
+            "max_tokens": max_tokens or self.max_tokens,
+            "temperature": temperature or self.temperature,
+            "stream": True
+        }
+
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        tokens_used = 0
+        try:
+            response = requests.post(
+                f"{self.base_url}/v1/chat/completions",
+                json=request_body,
+                headers=headers,
+                timeout=self.timeout,
+                stream=True
+            )
+            response.raise_for_status()
+
+            for raw_line in response.iter_lines():
+                if not raw_line:
+                    continue
+                line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    data = json.loads(data_str)
+                    delta = data.get("choices", [{}])[0].get("delta", {}).get("content") or ""
+                    usage = data.get("usage") or {}
+                    if usage:
+                        tokens_used = usage.get("total_tokens", tokens_used)
+                    if delta:
+                        chunk_data = json.dumps({"delta": delta, "tokens_used": tokens_used})
+                        yield f"data: {chunk_data}\n\n"
+                except (json.JSONDecodeError, KeyError, IndexError):
+                    pass
+
+        except GeneratorExit:
+            logger.info("Client disconnected during DeepSeek stream")
+            return
+        except Exception as e:
+            logger.error(f"DeepSeek stream error: {e}")
+            yield f'data: {json.dumps({"error": "Stream error"})}\n\n'
+
+        yield "data: [DONE]\n\n"
+
     def health_check(self) -> Dict[str, Any]:
         """Vérifie l'état du service DeepSeek"""
         try:

@@ -56,21 +56,6 @@ public class UserRepository : IUserRepository
         }
     }
 
-    public async Task<User?> GetByCognitoIdAsync(string cognitoId)
-    {
-        try
-        {
-            return await _context.Users
-                .Include(u => u.Enrollments)
-                .FirstOrDefaultAsync(u => u.CognitoId == cognitoId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting user by cognito id {CognitoId}", cognitoId);
-            return null;
-        }
-    }
-
     public async Task<User?> GetByEmailAsync(string email)
     {
         try
@@ -181,19 +166,6 @@ public class UserRepository : IUserRepository
         {
             _logger.LogError(ex, "Error deleting user {UserId}", id);
             throw;
-        }
-    }
-
-    public async Task<bool> ExistsByCognitoIdAsync(string cognitoId)
-    {
-        try
-        {
-            return await _context.Users.WhereNotDeleted().AnyAsync(u => u.CognitoId == cognitoId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error checking cognito id existence");
-            return false;
         }
     }
 

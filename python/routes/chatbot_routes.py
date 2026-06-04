@@ -2,13 +2,18 @@
 Chatbot Routes - Router FastAPI pour le chatbot IA
 """
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+import json
+import time
 import logging
 from typing import Dict, Any, List, Optional
 
 from services.deepseek_client import get_deepseek_client
 from auth import verify_token, UserTokenData
 from schemas import ChatRequest, ChatResponse, ChatbotHealthResponse, ChatMessage, ChatbotContextRequest
+from database import Database, Conversation, ChatMessage as ChatMessageDB
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +208,85 @@ async def chat(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
+
+
+class StreamChatBody(BaseModel):
+    messages: List[Dict[str, Any]]
+    conversation_id: Optional[int] = None
+    system_prompt: Optional[str] = None
+    max_tokens: Optional[int] = 2000
+    temperature: Optional[float] = 0.7
+
+
+@chatbot_router.post('/stream', tags=["chatbot"])
+async def stream_chat(
+    body: StreamChatBody,
+    current_user: UserTokenData = Depends(verify_token)
+):
+    """
+    Stream SSE depuis DeepSeek, persiste le message assistant en fin de stream.
+    Format chunk : data: {"delta": "...", "tokens_used": N}\\n\\n
+    Dernier chunk : data: [DONE]\\n\\n
+    """
+    conv_id = body.conversation_id
+    messages = body.messages
+    system_prompt = body.system_prompt or build_system_prompt()
+
+    logger.info(f"Stream request from user {current_user.user_id}, conv_id={conv_id}")
+
+    def generate():
+        db = Database()
+        session = db.get_session()
+        full_content = ""
+        tokens_used = 0
+        start_time = time.time()
+
+        try:
+            client = get_deepseek_client()
+            for chunk in client.chat_stream(
+                messages=messages,
+                system_prompt=system_prompt,
+                max_tokens=body.max_tokens,
+                temperature=body.temperature
+            ):
+                if chunk.startswith("data: ") and chunk.strip() != "data: [DONE]":
+                    try:
+                        data = json.loads(chunk[6:].strip())
+                        full_content += data.get("delta", "")
+                        tokens_used = max(tokens_used, data.get("tokens_used", 0))
+                    except Exception:
+                        pass
+                yield chunk
+        except GeneratorExit:
+            logger.info(f"Client disconnected for conv {conv_id}")
+        except Exception as e:
+            logger.error(f"Stream error for conv {conv_id}: {e}")
+            yield f'data: {json.dumps({"error": str(e)})}\n\n'
+            yield "data: [DONE]\n\n"
+        finally:
+            if full_content and conv_id:
+                try:
+                    generation_time = int((time.time() - start_time) * 1000)
+                    msg = ChatMessageDB(
+                        ConversationId=conv_id,
+                        Role="assistant",
+                        Content=full_content,
+                        TokensUsed=tokens_used,
+                        GenerationTimeMs=generation_time
+                    )
+                    session.add(msg)
+                    session.commit()
+                    logger.info(f"Saved assistant message ({len(full_content)} chars) for conv {conv_id}")
+                except Exception as e:
+                    logger.error(f"Failed to save assistant message: {e}")
+                    session.rollback()
+            session.close()
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 
 @chatbot_router.post('/complete', response_model=ChatResponse, tags=["chatbot"])

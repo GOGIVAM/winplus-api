@@ -32,6 +32,8 @@ public class Subscription
     /// </summary>
     public string Status { get; set; } = "active";
     
+    public int RenewalCount { get; set; } = 0;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
     public bool IsDeleted { get; set; } = false;

@@ -409,7 +409,7 @@ public class AuthController : ControllerBase
     /// <summary>
     /// Refresh access token
     /// </summary>
-    [HttpPost("refresh-token")]
+    [HttpPost("refresh")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(RefreshTokenResponse), 200)]
     [ProducesResponseType(401)]

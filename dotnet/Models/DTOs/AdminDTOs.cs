@@ -12,10 +12,23 @@ public class AdminUserResponse
     public string Email { get; set; } = "";
     public string? FirstName { get; set; }
     public string? LastName { get; set; }
+    public string? Role { get; set; }
     public bool IsActive { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
+}
+
+public class UpdateUserRoleRequest
+{
+    [Required]
+    public string Role { get; set; } = string.Empty;
+}
+
+public class UpdateUserStatusRequest
+{
+    [Required]
+    public bool IsActive { get; set; }
 }
 
 /// <summary>

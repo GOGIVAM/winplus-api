@@ -251,7 +251,7 @@ public class CustomAuthService : ICustomAuthService
             var device = await _deviceTrackingService.TrackDeviceAsync(user.Id, request, rememberMe);
 
             // Generate tokens
-            var accessToken = _jwtService.GenerateAccessToken(user.Id, user.Email, user.Role);
+            var accessToken = _jwtService.GenerateAccessToken(user.Id, user.Email, user.Role, user.IsEmailVerified);
             var refreshToken = _jwtService.GenerateRefreshToken();
 
             // Save refresh token
@@ -700,7 +700,7 @@ public class CustomAuthService : ICustomAuthService
             }
 
             // Generate new tokens
-            var newAccessToken = _jwtService.GenerateAccessToken(user.Id, user.Email, user.Role);
+            var newAccessToken = _jwtService.GenerateAccessToken(user.Id, user.Email, user.Role, user.IsEmailVerified);
             var newRefreshToken = _jwtService.GenerateRefreshToken();
 
             // Save new refresh token

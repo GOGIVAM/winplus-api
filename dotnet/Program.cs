@@ -11,7 +11,6 @@ using System.Text.Json;
 using Backend.Data;
 using Backend.Repositories;
 using Backend.Services;
-using Backend.Services.PaymentProviders;
 using Backend.Utilities;
 
 using Backend.Middlewares;
@@ -42,7 +41,7 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "WinPlus Educational API",
         Version = "v4.0",
-        Description = "API avec authentification custom JWT"
+        Description = "WinPlus Educational API"
     });
     
     // Add JWT Authentication to Swagger
@@ -263,10 +262,6 @@ builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IDeviceTrackingService, DeviceTrackingService>();
 builder.Services.AddScoped<ICustomAuthService, CustomAuthService>();
 
-// Legacy Cognito services DISABLED (migrated to Custom Auth with JWT)
-// builder.Services.AddScoped<ICognitoAuthService, CognitoAuthService>();
-// builder.Services.AddScoped<ICognitoJwtValidator, CognitoJwtValidator>();
-// builder.Services.AddScoped<IClaimsEnricher, ClaimsEnricher>();
 builder.Services.AddMemoryCache();
 
 // Register Repositories
@@ -345,60 +340,49 @@ builder.Services.AddHttpClient("FastApiClient", client =>
 
 builder.Services.AddScoped<IFastApiClient, FastApiClient>();
 
-// ============ PAYMENT PROVIDERS SERVICES ============
-// Register Payment Provider Services and HttpClient
+// Resend email client
+builder.Services.AddHttpClient("ResendClient", client =>
+{
+    client.BaseAddress = new Uri("https://api.resend.com");
+    client.DefaultRequestHeaders.Add("Accept", "application/json");
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
+
+// ============ NOTCHPAY PAYMENT SERVICE ============
 builder.Services.AddHttpClient();
 
-// MTN Mobile Money
-builder.Services.AddSingleton(new MtnMomoConfig
+builder.Services.AddSingleton(new NotchPayConfig
 {
-    SubscriptionKey = builder.Configuration["Payment:MtnMomo:SubscriptionKey"] ?? "",
-    ApiUser = builder.Configuration["Payment:MtnMomo:ApiUser"] ?? "",
-    ApiKey = builder.Configuration["Payment:MtnMomo:ApiKey"] ?? "",
-    Environment = builder.Configuration["Payment:MtnMomo:Environment"] ?? "sandbox",
-    CallbackUrl = builder.Configuration["Payment:MtnMomo:CallbackUrl"] ?? "https://votresite.com/api/payments/mtn/callback"
+    PublicKey = builder.Configuration["NotchPay:PublicKey"] ?? "",
+    SecretKey = builder.Configuration["NotchPay:SecretKey"] ?? "",
+    WebhookSecret = builder.Configuration["NotchPay:WebhookSecret"] ?? "",
+    BaseUrl = builder.Configuration["NotchPay:BaseUrl"] ?? "https://api.notchpay.co",
+    CallbackUrl = builder.Configuration["NotchPay:CallbackUrl"] ?? "https://api.winplus.cm/api/payments/webhook/notchpay",
+    Currency = builder.Configuration["NotchPay:Currency"] ?? "XAF"
 });
-builder.Services.AddScoped<MtnMomoService>();
 
-// Orange Money
-builder.Services.AddSingleton(new OrangeMoneyConfig
+builder.Services.AddHttpClient("NotchPayClient", (sp, client) =>
 {
-    ClientId = builder.Configuration["Payment:OrangeMoney:ClientId"] ?? "",
-    ClientSecret = builder.Configuration["Payment:OrangeMoney:ClientSecret"] ?? "",
-    MerchantKey = builder.Configuration["Payment:OrangeMoney:MerchantKey"] ?? "",
-    NotifUrl = builder.Configuration["Payment:OrangeMoney:NotifUrl"] ?? "https://votresite.com/api/payments/orange/notify"
+    var config = sp.GetRequiredService<NotchPayConfig>();
+    client.BaseAddress = new Uri(config.BaseUrl);
+    client.DefaultRequestHeaders.Add("Authorization", config.SecretKey);
+    client.DefaultRequestHeaders.Add("Accept", "application/json");
+    client.Timeout = TimeSpan.FromSeconds(30);
 });
-builder.Services.AddScoped<OrangeMoneyService>();
 
-// Wave
-builder.Services.AddSingleton(new WaveConfig
-{
-    ApiKey = builder.Configuration["Payment:Wave:ApiKey"] ?? "",
-    Currency = builder.Configuration["Payment:Wave:Currency"] ?? "XOF"
-});
-builder.Services.AddScoped<WaveService>();
+builder.Services.AddScoped<INotchPayService, NotchPayService>();
 
-// Stripe
-builder.Services.AddSingleton(new StripeConfig
-{
-    SecretKey = builder.Configuration["Payment:Stripe:SecretKey"] ?? "",
-    PublishableKey = builder.Configuration["Payment:Stripe:PublishableKey"] ?? "",
-    WebhookSecret = builder.Configuration["Payment:Stripe:WebhookSecret"] ?? "",
-    Currency = builder.Configuration["Payment:Stripe:Currency"] ?? "xaf"
-});
-builder.Services.AddScoped<StripeService>();
+// Forum
+builder.Services.AddScoped<IForumService, ForumService>();
+builder.Services.AddScoped<INtfyService, NtfyService>();
 
-// PayPal
-builder.Services.AddSingleton(new PayPalConfig
-{
-    ClientId = builder.Configuration["Payment:PayPal:ClientId"] ?? "",
-    ClientSecret = builder.Configuration["Payment:PayPal:ClientSecret"] ?? "",
-    BaseUrl = builder.Configuration["Payment:PayPal:IsSandbox"] == "true"
-        ? "https://api-m.sandbox.paypal.com"
-        : "https://api-m.paypal.com",
-    WebhookId = builder.Configuration["Payment:PayPal:WebhookId"] ?? ""
-});
-builder.Services.AddScoped<PayPalService>();
+// Background services for payment lifecycle
+builder.Services.AddHostedService<PaymentReconciliationService>();
+builder.Services.AddHostedService<PaymentExpirationService>();
+
+// Background services for subscriptions
+builder.Services.AddHostedService<SubscriptionExpirationService>();
+builder.Services.AddHostedService<SubscriptionReminderService>();
 
 // Add health checks
 builder.Services.AddHealthChecks();

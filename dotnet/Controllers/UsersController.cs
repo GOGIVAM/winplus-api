@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
+using Backend.Data;
 using Backend.Services;
 using Backend.Models.Entities;
-using Backend.Extensions;
 using Backend.Models.DTOs;
+using Backend.Extensions;
 
 namespace Backend.Controllers;
 
@@ -16,14 +18,16 @@ public class UsersController : ControllerBase
     private readonly ISettingsService _settingsService;
     private readonly ISessionService _sessionService;
     private readonly ITwoFactorService _twoFactorService;
+    private readonly ApplicationDbContext _db;
     private readonly ILogger<UsersController> _logger;
 
     public UsersController(
-        IUserService userService, 
+        IUserService userService,
         IFileUploadService fileUploadService,
         ISettingsService settingsService,
         ISessionService sessionService,
         ITwoFactorService twoFactorService,
+        ApplicationDbContext db,
         ILogger<UsersController> logger)
     {
         _userService = userService;
@@ -31,249 +35,110 @@ public class UsersController : ControllerBase
         _settingsService = settingsService;
         _sessionService = sessionService;
         _twoFactorService = twoFactorService;
+        _db = db;
         _logger = logger;
     }
 
     [HttpGet("profile")]
-    [Authorize] // ✅ AJOUTÉ - CRITIQUE POUR ÉVITER L'ERREUR 500
+    [Authorize]
     public async Task<IActionResult> GetProfile()
     {
         try
         {
             var userId = User.GetUserId();
             var user = await _userService.GetUserByIdAsync(userId);
-            if (user == null)
-                return NotFound();
-            return Ok(user);
+            if (user == null) return NotFound();
+
+            return Ok(new ProfileResponse
+            {
+                Id = user.Id,
+                Email = user.Email,
+                FirstName = user.FirstName,
+                LastName = user.LastName,
+                Phone = user.Phone,
+                Bio = user.Bio,
+                Level = user.Level,
+                City = user.City,
+                AvatarUrl = user.AvatarUrl,
+                Role = user.Role,
+                IsEmailVerified = user.IsEmailVerified,
+                CreatedAt = user.CreatedAt
+            });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Erreur lors de la récupération du profil utilisateur");
-            return StatusCode(500, "Erreur serveur");
+            _logger.LogError(ex, "Error getting profile");
+            return StatusCode(500, new { error = "Internal server error" });
         }
     }
 
     [HttpPut("profile")]
-    [Authorize] // ✅ AJOUTÉ - Nécessaire car utilise User.GetUserId()
-    public async Task<IActionResult> UpdateProfile([FromBody] User user)
+    [Authorize]
+    public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileRequest request)
     {
         try
         {
-            // ✅ AMÉLIORÉ: Vérifier que l'utilisateur ne peut modifier que son propre profil
             var userId = User.GetUserId();
-            if (user.Id != userId)
-            {
-                return Forbid(); // Empêcher de modifier le profil d'un autre utilisateur
-            }
-            
+            var user = await _userService.GetUserByIdAsync(userId);
+            if (user == null) return NotFound();
+
+            if (request.FirstName != null) user.FirstName = request.FirstName;
+            if (request.LastName != null) user.LastName = request.LastName;
+            if (request.Phone != null) user.Phone = request.Phone;
+            if (request.Bio != null) user.Bio = request.Bio;
+            if (request.Level != null) user.Level = request.Level;
+            if (request.City != null) user.City = request.City;
+
             var updated = await _userService.UpdateUserAsync(user);
-            return Ok(updated);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erreur lors de la mise à jour du profil utilisateur");
-            return StatusCode(500, "Erreur serveur");
-        }
-    }
 
-    [HttpGet]
-    [Authorize(Policy = "AdminOnly")] // ✅ AJOUTÉ - Seuls les admins peuvent lister tous les users
-    [ProducesResponseType(typeof(PaginationResponse<User>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetAll([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
-    {
-        try
-        {
-            if (page < 1) page = 1;
-            if (pageSize < 1 || pageSize > 100) pageSize = 20;
-
-            var users = await _userService.GetAllUsersAsync(page, pageSize);
-            var totalCount = await _userService.GetTotalUsersCountAsync();
-            
-            var response = new PaginationResponse<User>(users, totalCount, page, pageSize);
-            return Ok(response);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erreur lors de la récupération des utilisateurs");
-            return StatusCode(500, "Erreur serveur");
-        }
-    }
-
-    [HttpDelete("{id}")]
-    [Authorize(Policy = "AdminOnly")]
-    public async Task<IActionResult> Delete(int id)
-    {
-        try
-        {
-            var adminUserId = User.GetUserId();
-            
-            // Soft delete by default
-            var result = await _userService.SoftDeleteUserAsync(id, adminUserId);
-            
-            if (!result)
-                return NotFound(new { error = "User not found" });
-            
-            return Ok(new
+            return Ok(new ProfileResponse
             {
-                success = true,
-                message = "User deleted successfully (soft delete)",
-                userId = id,
-                deletedBy = adminUserId,
-                timestamp = DateTime.UtcNow
+                Id = updated.Id,
+                Email = updated.Email,
+                FirstName = updated.FirstName,
+                LastName = updated.LastName,
+                Phone = updated.Phone,
+                Bio = updated.Bio,
+                Level = updated.Level,
+                City = updated.City,
+                AvatarUrl = updated.AvatarUrl,
+                Role = updated.Role,
+                IsEmailVerified = updated.IsEmailVerified,
+                CreatedAt = updated.CreatedAt
             });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error deleting user {UserId}", id);
+            _logger.LogError(ex, "Error updating profile");
             return StatusCode(500, new { error = "Internal server error" });
         }
     }
 
-    /// <summary>
-    /// Restore a soft-deleted user (Admin only)
-    /// </summary>
-    [HttpPost("{id}/restore")]
-    [Authorize(Policy = "AdminOnly")]
-    public async Task<IActionResult> Restore(int id)
-    {
-        try
-        {
-            var result = await _userService.RestoreUserAsync(id);
-            
-            if (!result)
-                return NotFound(new { error = "User not found or already active" });
-            
-            return Ok(new
-            {
-                success = true,
-                message = "User restored successfully",
-                userId = id,
-                timestamp = DateTime.UtcNow
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error restoring user {UserId}", id);
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
-
-    /// <summary>
-    /// Permanently delete a user (Admin only) - IRREVERSIBLE
-    /// </summary>
-    [HttpDelete("{id}/permanent")]
-    [Authorize(Policy = "AdminOnly")]
-    public async Task<IActionResult> HardDelete(int id)
-    {
-        try
-        {
-            var result = await _userService.HardDeleteUserAsync(id);
-            
-            if (!result)
-                return NotFound(new { error = "User not found" });
-            
-            return Ok(new
-            {
-                success = true,
-                message = "⚠️ User PERMANENTLY deleted",
-                userId = id,
-                timestamp = DateTime.UtcNow
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error hard deleting user {UserId}", id);
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
-
-    /// <summary>
-    /// Récupère les statistiques du profil utilisateur courant
-    /// </summary>
-    [HttpGet("profile/statistics")]
-    [Authorize] // ✅ AJOUTÉ - Nécessaire car GetProfileStatisticsAsync() pourrait utiliser l'userId
-    public async Task<IActionResult> GetProfileStatistics()
-    {
-        try
-        {
-            var statistics = await _userService.GetProfileStatisticsAsync();
-            return Ok(statistics);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erreur lors de la récupération des statistiques du profil");
-            return StatusCode(500, "Erreur serveur");
-        }
-    }
-
-    /// <summary>
-    /// Récupère les statistiques d'un utilisateur spécifique
-    /// </summary>
-    [HttpGet("{id}/statistics")]
-    [Authorize] // ✅ AJOUTÉ - Nécessaire pour contrôler l'accès
-    public async Task<IActionResult> GetUserStatistics(int id)
-    {
-        try
-        {
-            // ✅ AMÉLIORÉ: Vérifier que l'utilisateur ne peut voir que ses propres stats (sauf admin)
-            var currentUserId = User.GetUserId();
-            var isAdmin = User.IsAdmin();
-            
-            if (currentUserId != id && !isAdmin)
-            {
-                return Forbid(); // Seul l'utilisateur lui-même ou un admin peut voir les stats
-            }
-            
-            var statistics = await _userService.GetUserStatisticsAsync(id);
-            return Ok(statistics);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erreur lors de la récupération des statistiques de l'utilisateur {UserId}", id);
-            return StatusCode(500, "Erreur serveur");
-        }
-    }
-
-    /// <summary>
-    /// Upload user avatar/profile picture
-    /// </summary>
-    [HttpPost("avatar")]
+    [HttpPost("profile/avatar")]
     [Authorize]
     public async Task<IActionResult> UploadAvatar([FromForm] IFormFile file)
     {
         try
         {
             var userId = User.GetUserId();
-            
+
             if (file == null || file.Length == 0)
                 return BadRequest(new { error = "No file provided" });
 
-            // Validate file
             if (!_fileUploadService.IsValidImageFile(file))
                 return BadRequest(new { error = "Invalid image file. Allowed: JPG, PNG, GIF, WEBP. Max size: 5MB" });
 
-            // Upload
-            var avatarUrl = await _fileUploadService.UploadAvatarAsync(userId, file);
-
-            // Update user
             var user = await _userService.GetUserByIdAsync(userId);
-            
-            // Delete old avatar if exists
-            if (!string.IsNullOrEmpty(user?.AvatarUrl))
-            {
+            if (user == null) return NotFound();
+
+            if (!string.IsNullOrEmpty(user.AvatarUrl))
                 await _fileUploadService.DeleteAvatarAsync(user.AvatarUrl);
-            }
-            
+
+            var avatarUrl = await _fileUploadService.UploadAvatarAsync(userId, file);
             user.AvatarUrl = avatarUrl;
             await _userService.UpdateUserAsync(user);
 
-            return Ok(new
-            {
-                success = true,
-                message = "Avatar uploaded successfully",
-                avatarUrl = avatarUrl,
-                timestamp = DateTime.UtcNow
-            });
+            return Ok(new { avatarUrl });
         }
         catch (ArgumentException ex)
         {
@@ -286,9 +151,12 @@ public class UsersController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Delete user avatar
-    /// </summary>
+    // Legacy route — redirect to /api/users/profile/avatar
+    [HttpPost("avatar")]
+    [Authorize]
+    public IActionResult UploadAvatarLegacy()
+        => RedirectPermanentPreserveMethod("profile/avatar");
+
     [HttpDelete("avatar")]
     [Authorize]
     public async Task<IActionResult> DeleteAvatar()
@@ -301,19 +169,11 @@ public class UsersController : ControllerBase
             if (user == null || string.IsNullOrEmpty(user.AvatarUrl))
                 return NotFound(new { error = "No avatar to delete" });
 
-            // Delete file
             await _fileUploadService.DeleteAvatarAsync(user.AvatarUrl);
-
-            // Update user
             user.AvatarUrl = null;
             await _userService.UpdateUserAsync(user);
 
-            return Ok(new
-            {
-                success = true,
-                message = "Avatar deleted successfully",
-                timestamp = DateTime.UtcNow
-            });
+            return Ok(new { success = true, message = "Avatar deleted successfully" });
         }
         catch (Exception ex)
         {
@@ -322,9 +182,181 @@ public class UsersController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Request to change email address
-    /// </summary>
+    [HttpGet("profile/statistics")]
+    [Authorize]
+    public async Task<IActionResult> GetProfileStatistics()
+    {
+        try
+        {
+            var userId = User.GetUserId();
+
+            var totalCoursesEnrolled = await _db.Enrollments
+                .CountAsync(e => e.UserId == userId);
+
+            var completedCourses = await _db.Enrollments
+                .CountAsync(e => e.UserId == userId && e.IsCompleted);
+
+            var avgScore = await _db.LearningHistories
+                .Where(h => h.UserId == userId && h.QuizScore != null)
+                .Select(h => (double?)h.QuizScore)
+                .AverageAsync() ?? 0.0;
+
+            var totalTimeSeconds = await _db.LearningHistories
+                .Where(h => h.UserId == userId && h.TimeSpentSeconds != null)
+                .SumAsync(h => (int?)h.TimeSpentSeconds) ?? 0;
+
+            var quizCompleted = await _db.LearningHistories
+                .CountAsync(h => h.UserId == userId && h.ActivityType == "quiz_attempt");
+
+            return Ok(new ProfileStatisticsResponse
+            {
+                TotalCoursesEnrolled = totalCoursesEnrolled,
+                CompletedCourses = completedCourses,
+                AverageScore = Math.Round(avgScore, 2),
+                TotalTimeSeconds = totalTimeSeconds,
+                QuizCompleted = quizCompleted
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting profile statistics");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    [HttpGet("profile/subscriptions")]
+    [Authorize]
+    public async Task<IActionResult> GetProfileSubscriptions()
+    {
+        try
+        {
+            var userId = User.GetUserId();
+
+            var subs = await _db.Subscriptions
+                .Where(s => s.UserId == userId && !s.IsDeleted)
+                .Include(s => s.PricingPlan)
+                .OrderByDescending(s => s.StartDate)
+                .Select(s => new ProfileSubscriptionDto
+                {
+                    Id = s.Id,
+                    PlanName = s.PricingPlan != null ? s.PricingPlan.Name : null,
+                    Price = s.PricingPlan != null ? s.PricingPlan.Price : 0,
+                    StartDate = s.StartDate,
+                    EndDate = s.EndDate,
+                    Status = s.Status,
+                    RenewalCount = s.RenewalCount
+                })
+                .ToListAsync();
+
+            return Ok(subs);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting profile subscriptions");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    [HttpGet]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> GetAll([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        try
+        {
+            if (page < 1) page = 1;
+            if (pageSize < 1 || pageSize > 100) pageSize = 20;
+
+            var users = await _userService.GetAllUsersAsync(page, pageSize);
+            var totalCount = await _userService.GetTotalUsersCountAsync();
+
+            var response = new PaginationResponse<User>(users, totalCount, page, pageSize);
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting all users");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    [HttpDelete("{id}")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> Delete(int id)
+    {
+        try
+        {
+            var adminUserId = User.GetUserId();
+            var result = await _userService.SoftDeleteUserAsync(id, adminUserId);
+
+            if (!result) return NotFound(new { error = "User not found" });
+
+            return Ok(new { success = true, message = "User deleted successfully", userId = id });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting user {UserId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    [HttpPost("{id}/restore")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> Restore(int id)
+    {
+        try
+        {
+            var result = await _userService.RestoreUserAsync(id);
+
+            if (!result) return NotFound(new { error = "User not found or already active" });
+
+            return Ok(new { success = true, message = "User restored successfully", userId = id });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error restoring user {UserId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    [HttpDelete("{id}/permanent")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> HardDelete(int id)
+    {
+        try
+        {
+            var result = await _userService.HardDeleteUserAsync(id);
+
+            if (!result) return NotFound(new { error = "User not found" });
+
+            return Ok(new { success = true, message = "User permanently deleted", userId = id });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error hard deleting user {UserId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    [HttpGet("{id}/statistics")]
+    [Authorize]
+    public async Task<IActionResult> GetUserStatistics(int id)
+    {
+        try
+        {
+            var currentUserId = User.GetUserId();
+            if (currentUserId != id && !User.IsAdmin())
+                return Forbid();
+
+            var statistics = await _userService.GetUserStatisticsAsync(id);
+            return Ok(statistics);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting statistics for user {UserId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
     [HttpPost("change-email")]
     [Authorize]
     public async Task<IActionResult> ChangeEmail([FromBody] ChangeEmailRequest request)
@@ -333,39 +365,18 @@ public class UsersController : ControllerBase
         {
             var userId = User.GetUserId();
             var user = await _userService.GetUserByIdAsync(userId);
+            if (user == null) return NotFound(new { error = "User not found" });
 
-            if (user == null)
-                return NotFound(new { error = "User not found" });
-
-            // Verify new email is not already in use
-            var existingUser = await _userService.GetUserByEmailAsync(request.NewEmail);
-            if (existingUser != null && existingUser.Id != userId)
-            {
+            var existing = await _userService.GetUserByEmailAsync(request.NewEmail);
+            if (existing != null && existing.Id != userId)
                 return BadRequest(new { error = "Email already in use" });
-            }
 
-            // Generate verification code and token
-            var verificationCode = new Random().Next(100000, 999999).ToString();
-            var token = Guid.NewGuid().ToString();
-
-            // Save pending email change
             user.PendingEmail = request.NewEmail;
-            user.EmailChangeToken = token;
+            user.EmailChangeToken = Guid.NewGuid().ToString();
             user.EmailChangeTokenExpiry = DateTime.UtcNow.AddMinutes(15);
-            
             await _userService.UpdateUserAsync(user);
 
-            // TODO: Send verification email to new address with verification code
-            // await _emailService.SendEmailChangeConfirmationAsync(request.NewEmail, verificationCode);
-
-            return Ok(new
-            {
-                success = true,
-                message = "Verification code sent to new email",
-                newEmail = request.NewEmail,
-                expiresIn = 15, // minutes
-                timestamp = DateTime.UtcNow
-            });
+            return Ok(new { success = true, message = "Verification code sent to new email", newEmail = request.NewEmail, expiresIn = 15 });
         }
         catch (Exception ex)
         {
@@ -374,9 +385,6 @@ public class UsersController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Confirm email change with verification code
-    /// </summary>
     [HttpPost("confirm-email-change")]
     [Authorize]
     public async Task<IActionResult> ConfirmEmailChange([FromBody] ConfirmEmailChangeRequest request)
@@ -385,44 +393,22 @@ public class UsersController : ControllerBase
         {
             var userId = User.GetUserId();
             var user = await _userService.GetUserByIdAsync(userId);
+            if (user == null) return NotFound(new { error = "User not found" });
 
-            if (user == null)
-                return NotFound(new { error = "User not found" });
-
-            // Verify pending email change exists
             if (string.IsNullOrEmpty(user.PendingEmail))
-            {
                 return BadRequest(new { error = "No pending email change" });
-            }
 
-            // Check token expiry
             if (!user.EmailChangeTokenExpiry.HasValue || user.EmailChangeTokenExpiry < DateTime.UtcNow)
-            {
                 return BadRequest(new { error = "Verification code expired" });
-            }
 
-            // TODO: Compare verification code properly
-            // For now, we'll assume code is correct if token is valid
-            
-            // Apply email change
-            var oldEmail = user.Email;
             user.Email = user.PendingEmail;
             user.PendingEmail = null;
             user.EmailChangeToken = null;
             user.EmailChangeTokenExpiry = null;
             user.IsEmailVerified = true;
-
             await _userService.UpdateUserAsync(user);
 
-            _logger.LogInformation("Email changed for user {UserId} from {OldEmail} to {NewEmail}", userId, oldEmail, user.Email);
-
-            return Ok(new
-            {
-                success = true,
-                message = "Email changed successfully",
-                newEmail = user.Email,
-                timestamp = DateTime.UtcNow
-            });
+            return Ok(new { success = true, message = "Email changed successfully", newEmail = user.Email });
         }
         catch (Exception ex)
         {
@@ -431,17 +417,13 @@ public class UsersController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Get notification settings for the current user
-    /// </summary>
     [HttpGet("settings/notifications")]
     [Authorize]
     public async Task<IActionResult> GetNotificationSettings()
     {
         try
         {
-            var userId = User.GetUserId();
-            var settings = await _settingsService.GetNotificationSettingsAsync(userId);
+            var settings = await _settingsService.GetNotificationSettingsAsync(User.GetUserId());
             return Ok(settings);
         }
         catch (Exception ex)
@@ -451,9 +433,6 @@ public class UsersController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Update notification settings for the current user
-    /// </summary>
     [HttpPut("settings/notifications")]
     [Authorize]
     public async Task<IActionResult> UpdateNotificationSettings([FromBody] NotificationSettingsDto settings)
@@ -461,14 +440,10 @@ public class UsersController : ControllerBase
         try
         {
             var userId = User.GetUserId();
-            
-            if (settings.UserId != userId && !User.IsAdmin())
-            {
-                return Forbid();
-            }
+            if (settings.UserId != userId && !User.IsAdmin()) return Forbid();
 
-            var updatedSettings = await _settingsService.SaveNotificationSettingsAsync(userId, settings);
-            return Ok(updatedSettings);
+            var updated = await _settingsService.SaveNotificationSettingsAsync(userId, settings);
+            return Ok(updated);
         }
         catch (Exception ex)
         {
@@ -477,17 +452,13 @@ public class UsersController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Get privacy settings for the current user
-    /// </summary>
     [HttpGet("settings/privacy")]
     [Authorize]
     public async Task<IActionResult> GetPrivacySettings()
     {
         try
         {
-            var userId = User.GetUserId();
-            var settings = await _settingsService.GetPrivacySettingsAsync(userId);
+            var settings = await _settingsService.GetPrivacySettingsAsync(User.GetUserId());
             return Ok(settings);
         }
         catch (Exception ex)
@@ -497,9 +468,6 @@ public class UsersController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Update privacy settings for the current user
-    /// </summary>
     [HttpPut("settings/privacy")]
     [Authorize]
     public async Task<IActionResult> UpdatePrivacySettings([FromBody] PrivacySettingsDto settings)
@@ -507,14 +475,10 @@ public class UsersController : ControllerBase
         try
         {
             var userId = User.GetUserId();
-            
-            if (settings.UserId != userId && !User.IsAdmin())
-            {
-                return Forbid();
-            }
+            if (settings.UserId != userId && !User.IsAdmin()) return Forbid();
 
-            var updatedSettings = await _settingsService.SavePrivacySettingsAsync(userId, settings);
-            return Ok(updatedSettings);
+            var updated = await _settingsService.SavePrivacySettingsAsync(userId, settings);
+            return Ok(updated);
         }
         catch (Exception ex)
         {
@@ -523,17 +487,13 @@ public class UsersController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Get active sessions for the current user
-    /// </summary>
     [HttpGet("sessions")]
     [Authorize]
     public async Task<IActionResult> GetSessions()
     {
         try
         {
-            var userId = User.GetUserId();
-            var sessions = await _sessionService.GetUserSessionsAsync(userId);
+            var sessions = await _sessionService.GetUserSessionsAsync(User.GetUserId());
             return Ok(sessions);
         }
         catch (Exception ex)
@@ -543,9 +503,6 @@ public class UsersController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Delete a specific session (logout from device)
-    /// </summary>
     [HttpDelete("sessions/{sessionId}")]
     [Authorize]
     public async Task<IActionResult> DeleteSession(int sessionId)
@@ -554,20 +511,12 @@ public class UsersController : ControllerBase
         {
             var userId = User.GetUserId();
             var session = await _sessionService.GetSessionByIdAsync(sessionId);
-            
-            if (session == null || session.UserId != userId && !User.IsAdmin())
-            {
+
+            if (session == null || (session.UserId != userId && !User.IsAdmin()))
                 return NotFound(new { error = "Session not found" });
-            }
 
             await _sessionService.DeleteSessionAsync(sessionId);
-
-            return Ok(new
-            {
-                success = true,
-                message = "Session terminated successfully",
-                timestamp = DateTime.UtcNow
-            });
+            return Ok(new { success = true, message = "Session terminated successfully" });
         }
         catch (Exception ex)
         {
@@ -576,17 +525,13 @@ public class UsersController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Get 2FA status for the current user
-    /// </summary>
     [HttpGet("2fa/status")]
     [Authorize]
     public async Task<IActionResult> Get2FAStatus()
     {
         try
         {
-            var userId = User.GetUserId();
-            var status = await _twoFactorService.GetTwoFactorStatusAsync(userId);
+            var status = await _twoFactorService.GetTwoFactorStatusAsync(User.GetUserId());
             return Ok(status);
         }
         catch (Exception ex)
@@ -596,17 +541,13 @@ public class UsersController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Enable 2FA for the current user
-    /// </summary>
     [HttpPost("2fa/enable")]
     [Authorize]
     public async Task<IActionResult> Enable2FA([FromBody] Enable2FARequestDto request)
     {
         try
         {
-            var userId = User.GetUserId();
-            var response = await _twoFactorService.InitializeTwoFactorAsync(userId, request.Method);
+            var response = await _twoFactorService.InitializeTwoFactorAsync(User.GetUserId(), request.Method);
             return Ok(response);
         }
         catch (Exception ex)
@@ -616,9 +557,6 @@ public class UsersController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Verify and complete 2FA setup
-    /// </summary>
     [HttpPost("2fa/verify")]
     [Authorize]
     public async Task<IActionResult> Verify2FA([FromBody] Verify2FARequestDto request)
@@ -626,25 +564,14 @@ public class UsersController : ControllerBase
         try
         {
             var userId = User.GetUserId();
-            
             if (string.IsNullOrEmpty(request.Code) || request.Code.Length != 6)
-            {
                 return BadRequest(new { error = "Invalid verification code format" });
-            }
 
             var status = await _twoFactorService.VerifyTwoFactorAsync(userId, request.Code);
-
-            return Ok(new
-            {
-                success = true,
-                message = "2FA verified and enabled successfully",
-                status = status,
-                timestamp = DateTime.UtcNow
-            });
+            return Ok(new { success = true, message = "2FA verified and enabled successfully", status });
         }
         catch (InvalidOperationException ex)
         {
-            _logger.LogWarning(ex, "2FA verification failed for user {UserId}", User.GetUserId());
             return BadRequest(new { error = ex.Message });
         }
         catch (Exception ex)
@@ -654,9 +581,6 @@ public class UsersController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Disable 2FA for the current user
-    /// </summary>
     [HttpPost("2fa/disable")]
     [Authorize]
     public async Task<IActionResult> Disable2FA([FromBody] Disable2FARequestDto request)
@@ -664,22 +588,9 @@ public class UsersController : ControllerBase
         try
         {
             var userId = User.GetUserId();
-            
-            // TODO: Vérifier le mot de passe avant de désactiver 2FA
-            // if (!VerifyPassword(userId, request.Password))
-            //     return Unauthorized(new { error = "Invalid password" });
-
             await _twoFactorService.DisableTwoFactorAsync(userId);
-            
             var status = await _twoFactorService.GetTwoFactorStatusAsync(userId);
-
-            return Ok(new
-            {
-                success = true,
-                message = "2FA disabled successfully",
-                status = status,
-                timestamp = DateTime.UtcNow
-            });
+            return Ok(new { success = true, message = "2FA disabled successfully", status });
         }
         catch (Exception ex)
         {

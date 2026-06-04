@@ -15,7 +15,7 @@ namespace Backend.Services;
 /// </summary>
 public interface IJwtService
 {
-    string GenerateAccessToken(int userId, string email, string role = "student", IDictionary<string, object>? claims = null);
+    string GenerateAccessToken(int userId, string email, string role = "student", bool emailVerified = false, IDictionary<string, object>? additionalClaims = null);
     string GenerateRefreshToken();
     ClaimsPrincipal? ValidateToken(string token);
     (bool isValid, ClaimsPrincipal? principal) ValidateRefreshToken(string token);
@@ -58,9 +58,10 @@ public class JwtService : IJwtService
     /// Generate an access token (JWT)
     /// </summary>
     public string GenerateAccessToken(
-        int userId, 
-        string email, 
-        string role = "student", 
+        int userId,
+        string email,
+        string role = "student",
+        bool emailVerified = false,
         IDictionary<string, object>? additionalClaims = null)
     {
         try
@@ -70,9 +71,11 @@ public class JwtService : IJwtService
                 new("user_id", userId.ToString()),
                 new(ClaimTypes.NameIdentifier, userId.ToString()),
                 new(ClaimTypes.Email, email),
+                new("email", email),
                 new(ClaimTypes.Role, role),
-                new("sub", userId.ToString()), // For OAuth compatibility
-                new("email_verified", "true")
+                new("role", role),
+                new("sub", userId.ToString()),
+                new("email_verified", emailVerified.ToString().ToLower())
             };
 
             // Add additional claims

@@ -38,10 +38,16 @@ public class PricingPlan
     public bool IsPopular { get; set; } = false;
 
     /// <summary>
-    /// Indicateur si le plan est archivé
+    /// Indicateur si le plan est archivé (non mappé en DB)
     /// </summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public bool IsArchived { get; set; } = false;
-    
+
+    public string Currency { get; set; } = "XAF";
+    public string? BillingPeriod { get; set; }
+    public int? MaxDownloads { get; set; }
+    public int? MaxChatMessages { get; set; }
+
     /// <summary>
     /// Icône du plan
     /// </summary>
