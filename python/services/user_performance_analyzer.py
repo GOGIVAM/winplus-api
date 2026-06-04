@@ -162,7 +162,7 @@ class UserPerformanceAnalyzer:
                 # Analyser la description du sujet
                 nlp_analysis = self.nlp_analyzer.analyze(
                     subject.get('description', ''),
-                    {'subject_id': subject['id'], 'category': subject.get('category')'}
+                    {'subject_id': subject['id'], 'category': subject.get('category')}
                 )
                 
                 # Top N recommandations

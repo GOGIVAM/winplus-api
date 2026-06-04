@@ -20,12 +20,6 @@ scikit-learn==1.3.2
 scipy==1.11.4
 joblib==1.3.2
 
-# ==================== DEEP LEARNING (PyTorch) ====================
-# NOTE: torch sera installé séparément dans Dockerfile avec CUDA
-# Pour local CPU uniquement, décommenter:
-# torch==2.1.0
-# torchvision==0.16.0
-# torchaudio==2.1.0
 
 # ==================== NLP - MODÈLES LOURDS (BERT) ====================
 transformers==4.35.2  # Hugging Face Transformers (BERT, GPT, etc.)
