@@ -101,12 +101,83 @@ class Recommender:
             logger.error(f"[Recommender] ❌ Erreur get_popular_subjects: {e}")
             return []
     
-    def get_personalized_recommendations(self, user_id: int, limit: int = 10) -> list:
-        """Recommandations personnalisées basées sur l'historique"""
+    def get_personalized_recommendations(self, user_id: int, limit: int = 5) -> list:
+        """Recommandations personnalisées basées sur l'historique réel PostgreSQL"""
         try:
-            # TODO: Intégrer avec la table Enrollments pour l'historique utilisateur
-            # Pour l'instant, retourne les épreuves populaires
-            result = self.get_popular_subjects(limit=limit)
+            # 1. Enrollments de l'utilisateur
+            enrollments = self.db.get_user_enrollments(user_id)
+
+            if not enrollments:
+                popular = self.db.get_popular_subjects(limit)
+                logger.info(f"[Recommender] 👤 Fallback populaires pour user {user_id} (aucun enrollment)")
+                return [{
+                    'id': s['id'], 'title': s['title'], 'category': s['category'],
+                    'price': s['price'], 'averageRating': s['averageRating'],
+                    'enrollmentCount': s['enrollmentCount'], 'score': 0.0, 'reason': 'populaire'
+                } for s in popular]
+
+            # 2. Préférences de catégories
+            enrolled_ids = {e['subject_id'] for e in enrollments}
+            enrolled_categories = {e['subject_category'] for e in enrollments if e['subject_category']}
+
+            # 3. Candidats : sujets non encore inscrits
+            all_subjects = self.db.get_all_subjects()
+            candidates = [s for s in all_subjects if s['id'] not in enrolled_ids]
+
+            if not candidates:
+                return []
+
+            # Indices TF-IDF des sujets inscrits (si le vectorizer est chargé)
+            tfidf_ready = (
+                self.subjects_df is not None and
+                not self.subjects_df.empty and
+                self.subject_vectors is not None
+            )
+            enrolled_indices = []
+            if tfidf_ready:
+                enrolled_indices = self.subjects_df[
+                    self.subjects_df['id'].isin(enrolled_ids)
+                ].index.tolist()
+
+            # 4. Scorer chaque candidat
+            scored = []
+            for s in candidates:
+                score = 0.0
+                reasons = []
+
+                if s['category'] in enrolled_categories:
+                    score += 3.0
+                    reasons.append('catégorie préférée')
+
+                if s.get('isFeatured'):
+                    score += 2.0
+                    reasons.append('mis en avant')
+
+                score += s['enrollmentCount'] // 50
+
+                if tfidf_ready and enrolled_indices:
+                    try:
+                        idx = self.subjects_df[self.subjects_df['id'] == s['id']].index
+                        if len(idx) > 0:
+                            sims = cosine_similarity(
+                                self.subject_vectors[idx[0]:idx[0]+1],
+                                self.subject_vectors[enrolled_indices]
+                            ).flatten()
+                            score += float(np.mean(sims)) * 3
+                    except Exception:
+                        pass
+
+                scored.append({
+                    'id': s['id'], 'title': s['title'], 'category': s['category'],
+                    'price': s['price'], 'averageRating': s['averageRating'],
+                    'enrollmentCount': s['enrollmentCount'],
+                    'score': round(score, 3),
+                    'reason': ', '.join(reasons) if reasons else 'populaire'
+                })
+
+            # 5. Top limit par score décroissant
+            scored.sort(key=lambda x: x['score'], reverse=True)
+            result = scored[:limit]
             logger.info(f"[Recommender] 👤 {len(result)} recommandations personnalisées pour user {user_id}")
             return result
         except Exception as e:
