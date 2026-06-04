@@ -45,3 +45,6 @@ requests==2.31.0
 python-dateutil==2.8.2
 tqdm==4.66.1  # Progress bars
 python-json-logger==2.0.7
+# PyTorch CPU (pas de GPU sur EC2)
+
+torch --index-url https://download.pytorch.org/whl/cpu
