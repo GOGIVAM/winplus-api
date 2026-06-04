@@ -8,7 +8,7 @@ import jwt
 import os
 from typing import Optional, List
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ class UserTokenData:
         self.role = role
 
 
-async def verify_token(credentials: HTTPAuthCredentials = Depends(security)) -> UserTokenData:
+async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UserTokenData:
     """
     Dépendance FastAPI pour vérifier le token JWT
     Utilisation: @app.get("/protected") def endpoint(user = Depends(verify_token))
