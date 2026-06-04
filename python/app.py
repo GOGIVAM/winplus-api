@@ -4,7 +4,7 @@ Service IA FastAPI avec authentification
 Utilise les tables ASP.NET (Subjects, CourseContents)
 """
 
-from fastapi import FastAPI, Query, HTTPException, Depends, status
+from fastapi import FastAPI, Query, HTTPException, Depends, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
@@ -103,7 +103,7 @@ app.include_router(chatbot_router, prefix="/api/chatbot", tags=["chatbot"])
 # ==================== HEALTH CHECK (Public) ====================
 @app.get('/health', response_model=HealthResponse, tags=["health"])
 @limiter.limit("30/minute")
-async def health(request):
+async def health(request: Request):
     """Health check - pas d'auth requise"""
     return {
         'status': 'healthy',
@@ -117,7 +117,7 @@ async def health(request):
 @app.get('/api/subjects', response_model=PaginatedResponse, tags=["subjects"])
 @limiter.limit("30/minute")
 async def get_subjects(
-    request,
+    request: Request,
     category: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     featured: Optional[bool] = Query(None),
@@ -156,7 +156,7 @@ async def get_subjects(
 
 @app.get('/api/subjects/{subject_id}', response_model=ApiResponse, tags=["subjects"])
 @limiter.limit("30/minute")
-async def get_subject_detail(request, subject_id: int):
+async def get_subject_detail(request: Request, subject_id: int):
     """DÃ©tail d'une Ã©preuve avec ses contenus"""
     try:
         subject = db.get_subject_by_id(subject_id)
@@ -189,7 +189,7 @@ async def get_subject_detail(request, subject_id: int):
 
 @app.get('/api/categories', tags=["subjects"])
 @limiter.limit("30/minute")
-async def get_categories(request):
+async def get_categories(request: Request):
     """Liste des catÃ©gories"""
     try:
         categories = db.get_categories()
@@ -211,7 +211,7 @@ async def get_categories(request):
 @app.get('/api/popular', tags=["subjects"])
 @limiter.limit("30/minute")
 async def get_popular_subjects(
-    request,
+    request: Request,
     limit: int = Query(10, ge=1, le=50)
 ):
     """Ã‰preuves populaires"""
@@ -236,7 +236,7 @@ async def get_popular_subjects(
 @app.get('/api/recommendations/{subject_id}', response_model=RecommendationsListResponse, tags=["recommendations"])
 @limiter.limit("20/minute")
 async def get_recommendations(
-    request,
+    request: Request,
     subject_id: int,
     limit: int = Query(5, ge=1, le=20),
     user: UserTokenData = Depends(verify_token)
@@ -296,7 +296,7 @@ async def get_recommendations(
 @app.post('/api/analyze', response_model=AnalysisResponse, tags=["nlp"])
 @limiter.limit("20/minute")
 async def analyze_content(
-    request,
+    request: Request,
     analysis_request: AnalysisRequest,
     user: UserTokenData = Depends(verify_token)
 ):
@@ -323,7 +323,7 @@ async def analyze_content(
 @app.post('/api/recommend', tags=["recommendations"])
 @limiter.limit("20/minute")
 async def recommend_subjects(
-    request,
+    request: Request,
     user_id: int,
     limit: int = Query(5, ge=1, le=20),
     current_user: UserTokenData = Depends(verify_token)
@@ -368,7 +368,7 @@ async def recommend_subjects(
 @app.post('/api/analyze-progress', response_model=ProgressAnalysisResponse, tags=["analytics"])
 @limiter.limit("20/minute")
 async def analyze_progress(
-    request,
+    request: Request,
     user_id: int,
     current_user: UserTokenData = Depends(verify_token)
 ):
@@ -413,7 +413,7 @@ async def analyze_progress(
 # ==================== ADMIN ENDPOINTS ==================
 @app.post('/api/admin/init-db', tags=["admin"])
 async def init_database(
-    request,
+    request: Request,
     admin_user: UserTokenData = Depends(require_role('admin'))
 ):
     """Initialiser la base de donnÃ©es (admin only)"""
