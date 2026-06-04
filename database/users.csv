@@ -1,0 +1,101 @@
+user_id,nom,prenom,age,niveau,objectif
+1,Tanguy,Margaud,55,débutant,maîtriser les matrices
+2,Turpin,Isabelle,62,intermédiaire,mieux coder
+3,Morvan,Patrick,29,débutant,améliorer logique
+4,Thomas,Xavier,58,avancé,réussir le bac
+5,Michel,Agnès,20,avancé,apprendre le français
+6,Vincent,Stéphanie,17,débutant,améliorer logique
+7,Lemonnier,Renée,28,débutant,réussir le bac
+8,Guillaume,Augustin,53,débutant,réussir le bac
+9,Wagner,André,27,avancé,réussir le bac
+10,Gauthier,Michelle,41,débutant,développer en Python
+11,Brunel,Andrée,52,intermédiaire,maîtriser les matrices
+12,Hernandez,Guillaume,63,débutant,apprendre le français
+13,Simon,Aurore,36,intermédiaire,parler anglais
+14,Dupré,Vincent,28,intermédiaire,améliorer logique
+15,Thomas,Robert,20,intermédiaire,améliorer logique
+16,Vincent,Audrey,37,intermédiaire,maîtriser les statistiques
+17,Laroche,Élisabeth,31,débutant,développer en Python
+18,Gomes,Paulette,49,débutant,apprendre le français
+19,Charrier,Michelle,20,avancé,réussir examens
+20,Briand,Victor,55,avancé,comprendre les algorithmes
+21,Legendre,Éric,51,débutant,améliorer logique
+22,Hervé,Geneviève,17,avancé,mieux coder
+23,Guillou,Honoré,64,intermédiaire,améliorer logique
+24,Monnier,Paulette,29,débutant,apprendre le français
+25,Maury,Margaud,32,intermédiaire,comprendre les algorithmes
+26,Martin,Roland,25,intermédiaire,comprendre les algorithmes
+27,Bourdon,Jeanne,28,avancé,réussir examens
+28,Bouvet,Marie,59,avancé,améliorer logique
+29,Roger,Valérie,53,avancé,parler anglais
+30,Lelièvre,Édith,49,avancé,mieux coder
+31,Bertrand,Dorothée,25,intermédiaire,apprendre le français
+32,Martin,Bernadette,32,avancé,réussir le bac
+33,Marin,Margaret,29,avancé,comprendre les algorithmes
+34,Descamps,Céline,64,débutant,mieux coder
+35,Monnier,Olivier,17,intermédiaire,apprendre le français
+36,Bernard,Roger,32,débutant,mieux coder
+37,Duval,Isabelle,51,avancé,comprendre les algorithmes
+38,Chevalier,Lucas,28,avancé,développer en Python
+39,Neveu,Thibault,40,avancé,développer en Python
+40,Perez,Lorraine,24,intermédiaire,parler anglais
+41,Dias,Pierre,30,avancé,réussir le bac
+42,Samson,Alice,49,intermédiaire,maîtriser les statistiques
+43,Hardy,Marthe,42,avancé,apprendre le français
+44,Raymond,Julien,38,débutant,parler anglais
+45,Klein,Gilles,47,intermédiaire,améliorer logique
+46,Maillot,Pauline,63,débutant,améliorer logique
+47,Roux,Lucas,24,avancé,parler anglais
+48,Da Silva,Eugène,65,avancé,apprendre le français
+49,Clément,Tristan,53,débutant,apprendre le français
+50,Bertin,Christine,39,avancé,développer en Python
+51,Lefebvre,Jacques,48,intermédiaire,réussir le bac
+52,Boucher,Corinne,15,avancé,améliorer logique
+53,Guillou,Amélie,58,avancé,réussir examens
+54,Dupont,Margaret,64,avancé,comprendre les algorithmes
+55,Dias,Nath,22,intermédiaire,apprendre le français
+56,Petitjean,Constance,25,intermédiaire,maîtriser les matrices
+57,Pages,Sabine,61,avancé,réussir examens
+58,Dijoux,Célina,47,débutant,réussir le bac
+59,Laporte,Xavier,21,avancé,réussir examens
+60,Maury,Henri,55,avancé,maîtriser les statistiques
+61,Sanchez,Maurice,27,débutant,comprendre les algorithmes
+62,Boyer,Nath,63,débutant,réussir le bac
+63,Guillon,Frédéric,64,avancé,maîtriser les matrices
+64,Hamel,Bertrand,53,intermédiaire,développer en Python
+65,Boulanger,Isaac,16,débutant,comprendre les algorithmes
+66,Huet,Théodore,34,débutant,maîtriser les matrices
+67,Blanchet,Louise,30,avancé,améliorer logique
+68,Duval,Constance,20,avancé,développer en Python
+69,Barbier,Antoine,19,avancé,parler anglais
+70,Payet,Dominique,23,avancé,développer en Python
+71,Ferrand,Christiane,50,débutant,réussir examens
+72,Fabre,Catherine,48,avancé,apprendre le français
+73,Masse,Gérard,28,avancé,mieux coder
+74,Rocher,Marc,60,intermédiaire,apprendre le français
+75,Weber,Gabrielle,57,avancé,comprendre les algorithmes
+76,Blondel,Philippe,43,avancé,développer en Python
+77,Bouvier,Élisabeth,22,débutant,mieux coder
+78,Ribeiro,Margaret,19,intermédiaire,maîtriser les matrices
+79,Lucas,Célina,52,avancé,mieux coder
+80,Barbe,Constance,52,débutant,maîtriser les matrices
+81,Lebreton,Juliette,19,avancé,maîtriser les matrices
+82,Paul,Anouk,29,débutant,maîtriser les matrices
+83,Maréchal,Timothée,36,débutant,réussir le bac
+84,Costa,Denise,30,intermédiaire,développer en Python
+85,Marques,Audrey,28,avancé,parler anglais
+86,Bazin,Manon,61,avancé,maîtriser les statistiques
+87,Legros,Geneviève,45,débutant,développer en Python
+88,Louis,Antoinette,41,débutant,améliorer logique
+89,Rocher,Martin,21,avancé,apprendre le français
+90,François,Charlotte,37,intermédiaire,apprendre le français
+91,Joseph,Marcelle,44,avancé,maîtriser les matrices
+92,Blin,Alexandria,58,avancé,améliorer logique
+93,Roger,Véronique,18,intermédiaire,comprendre les algorithmes
+94,Maillot,Isaac,21,débutant,mieux coder
+95,Collet,Lucie,27,avancé,développer en Python
+96,Meunier,Gabrielle,23,intermédiaire,parler anglais
+97,Charles,Jacques,32,intermédiaire,mieux coder
+98,Lacroix,Émile,19,intermédiaire,réussir le bac
+99,Deschamps,Hortense,21,débutant,réussir le bac
+100,Maillet,Élodie,15,débutant,mieux coder

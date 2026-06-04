@@ -1,0 +1,71 @@
+using System;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace Backend.Models.Entities;
+
+/// <summary>
+/// Représente une transaction de paiement
+/// </summary>
+// ✅ Attribut [Table] retiré - utiliser PascalCase par défaut d'EF Core
+public class Payment
+{
+    [Key]
+    [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
+    public int Id { get; set; }
+
+    [Required]
+    [ForeignKey("Order")]
+    public int OrderId { get; set; }
+
+    [Required]
+    [ForeignKey("User")]
+    public int UserId { get; set; }
+
+    [Required]
+    [Column(TypeName = "decimal(10,2)")]
+    public decimal Amount { get; set; }
+
+    [Required]
+    [MaxLength(3)]
+    public string Currency { get; set; } = "EUR";
+
+    [Required]
+    [MaxLength(50)]
+    public string Status { get; set; } = "pending"; // pending, completed, failed, refunded, cancelled
+
+    [MaxLength(255)]
+    public string? PaymentMethod { get; set; } // credit_card, paypal, stripe, etc.
+
+    [MaxLength(255)]
+    public string? TransactionId { get; set; } // ID de la transaction externe (Stripe, PayPal)
+
+    [MaxLength(500)]
+    public string? Description { get; set; }
+
+    public decimal? FeeAmount { get; set; }
+
+    public DateTime InitiatedAt { get; set; } = DateTime.UtcNow;
+
+    public DateTime? ProcessedAt { get; set; }
+
+    public DateTime? CompletedAt { get; set; }
+
+    [MaxLength(500)]
+    public string? ErrorMessage { get; set; }
+
+    public int? RetryCount { get; set; } = 0;
+
+    public DateTime? NextRetryAt { get; set; }
+
+    [MaxLength(500)]
+    public string? Metadata { get; set; } // JSON string for additional data
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    // Navigation properties
+    public virtual Order? Order { get; set; }
+    public virtual User? User { get; set; }
+}

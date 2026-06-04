@@ -1,0 +1,59 @@
+# ==================== FASTAPI & API ====================
+fastapi==0.104.1
+uvicorn[standard]==0.24.0  # ASGI server
+python-multipart==0.0.6  # Pour les form-data
+python-dotenv==1.0.0
+slowapi==0.1.9  # Rate limiting pour FastAPI
+aiofiles==23.2.1  # Async file handling
+
+# ==================== AUTHENTICATION ====================
+PyJWT==2.8.0  # ✅ JWT token validation
+
+# ==================== DATABASE ====================
+psycopg2-binary==2.9.9  # PostgreSQL adapter
+SQLAlchemy==2.0.23
+
+# ==================== ML & DATA SCIENCE ====================
+numpy==1.26.2
+pandas==2.1.4
+scikit-learn==1.3.2
+scipy==1.11.4
+joblib==1.3.2
+
+# ==================== DEEP LEARNING (PyTorch) ====================
+# NOTE: torch sera installé séparément dans Dockerfile avec CUDA
+# Pour local CPU uniquement, décommenter:
+# torch==2.1.0
+# torchvision==0.16.0
+# torchaudio==2.1.0
+
+# ==================== NLP - MODÈLES LOURDS (BERT) ====================
+transformers==4.35.2  # Hugging Face Transformers (BERT, GPT, etc.)
+tokenizers==0.15.0    # Fast tokenizers
+sentencepiece==0.1.99  # Pour certains modèles
+sacremoses==0.1.1     # Tokenization preprocessing
+
+# ==================== OPTIONAL: GPT/LLM ====================
+# openai==1.3.5  # Si tu veux utiliser GPT-4 pour génération
+# anthropic==0.7.0  # Si tu veux utiliser Claude
+
+# ==================== AWS SERVICES ====================
+boto3==1.34.0  # AWS SDK
+botocore==1.34.0
+
+# ==================== CACHING & OPTIMIZATION ====================
+redis==5.0.1  # Pour cache distribué (optionnel)
+
+# ==================== MONITORING & LOGGING ====================
+python-json-logger==2.0.7
+prometheus-client==0.19.0
+
+# ==================== TESTING ====================
+pytest==7.4.3
+pytest-fastapi==1.3.0
+pytest-cov==4.1.0
+
+# ==================== UTILITIES ====================
+requests==2.31.0
+python-dateutil==2.8.2
+tqdm==4.66.1  # Progress bars

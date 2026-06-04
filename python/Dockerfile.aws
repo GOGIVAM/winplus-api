@@ -1,0 +1,57 @@
+# Multi-stage build pour optimiser la taille de l'image
+FROM mcr.microsoft.com/dotnet/sdk:7.0 AS build
+WORKDIR /src
+
+# Copier les fichiers .csproj et restaurer les dépendances (cache layer)
+COPY ["EducationalAI.csproj", "./"]
+RUN dotnet restore "EducationalAI.csproj"
+
+# Copier tout le code source
+COPY . .
+
+# Build en mode Release
+RUN dotnet build "EducationalAI.csproj" -c Release -o /app/build
+
+# Publish l'application
+FROM build AS publish
+RUN dotnet publish "EducationalAI.csproj" \
+    -c Release \
+    -o /app/publish \
+    --no-restore \
+    /p:UseAppHost=false
+
+# Image runtime finale (beaucoup plus légère)
+FROM mcr.microsoft.com/dotnet/aspnet:7.0 AS final
+
+# Métadonnées
+LABEL maintainer="your-email@example.com"
+LABEL description=".NET API Gateway for Educational AI with AWS Cognito"
+
+# Installer curl pour healthcheck
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copier les fichiers publiés depuis l'étape précédente
+COPY --from=publish /app/publish .
+
+# Variables d'environnement
+ENV ASPNETCORE_URLS=http://+:80 \
+    ASPNETCORE_ENVIRONMENT=Production \
+    DOTNET_RUNNING_IN_CONTAINER=true
+
+# Exposer le port
+EXPOSE 80
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:80/health || exit 1
+
+# Créer un utilisateur non-root
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
+
+USER appuser
+
+# Point d'entrée
+ENTRYPOINT ["dotnet", "EducationalAI.dll"]
