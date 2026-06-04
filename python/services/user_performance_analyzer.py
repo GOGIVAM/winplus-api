@@ -9,19 +9,22 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any
 from database import Database
 from models.nlp_analyzer import NLPAnalyzer
-from models.recommender import RecommendationEngine
+from models.recommender import Recommender
 
 logger = logging.getLogger(__name__)
 
 
 class UserPerformanceAnalyzer:
     """Analyse la vraie performance utilisateur avec modèles ML et données BD réelles"""
-    
-    def __init__(self):
-        """Initialise l'analyseur avec les modèles"""
-        self.db = Database()
-        self.nlp_analyzer = NLPAnalyzer()
-        self.recommender = RecommendationEngine()
+
+    def __init__(self, db=None, nlp_analyzer=None, recommender=None):
+        """
+        Accepte les instances partagées depuis app.py pour éviter de recharger
+        CamemBERT et la connexion DB en double. Crée les siennes si non fournies.
+        """
+        self.db = db or Database()
+        self.nlp_analyzer = nlp_analyzer or NLPAnalyzer()
+        self.recommender = recommender or Recommender(self.db)
         logger.info("[UserPerformanceAnalyzer] ✅ Initialisé avec NLP + Recommender")
     
     def analyze_user_progress(self, user_id: int) -> Dict[str, Any]:
@@ -65,7 +68,7 @@ class UserPerformanceAnalyzer:
                         'title': subject['subject_title'],
                         'difficulty': nlp_result['difficulty_level'],
                         'estimated_duration': nlp_result['estimated_duration_minutes'],
-                        'complexity_score': nlp_result['complexity_score']
+                        'complexity_score': nlp_result['difficulty_score']
                     }
             
             # 5. Calculer la date estimée de complétion

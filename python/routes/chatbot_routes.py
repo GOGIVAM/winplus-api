@@ -236,7 +236,7 @@ async def stream_chat(
 
     def generate():
         db = Database()
-        session = db.get_session()
+        session = db.SessionLocal()
         full_content = ""
         tokens_used = 0
         start_time = time.time()

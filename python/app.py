@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Service IA FastAPI avec authentification
 Utilise les tables ASP.NET (Subjects, CourseContents)
@@ -6,6 +6,7 @@ Utilise les tables ASP.NET (Subjects, CourseContents)
 
 from fastapi import FastAPI, Query, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -78,18 +79,21 @@ app.state.limiter = limiter
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_exceeded_handler(request, exc):
-    return {
-        'success': False,
-        'error': 'rate_limit_exceeded',
-        'message': 'Too many requests. Please try again later.'
-    }, status.HTTP_429_TOO_MANY_REQUESTS
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={
+            'success': False,
+            'error': 'rate_limit_exceeded',
+            'message': 'Too many requests. Please try again later.'
+        }
+    )
 
 
 # ==================== INITIALIZATION ====================
 db = Database()
 nlp_analyzer = NLPAnalyzer()
 recommender = Recommender(db)
-performance_analyzer = UserPerformanceAnalyzer()
+performance_analyzer = UserPerformanceAnalyzer(db=db, nlp_analyzer=nlp_analyzer, recommender=recommender)
 
 
 # ==================== ROUTERS ====================
@@ -251,7 +255,7 @@ async def get_recommendations(
             }
         
         # RÃ©cupÃ©rer les dÃ©tails des Ã©preuves similaires
-        session = db.get_session()
+        session = db.SessionLocal()
         try:
             subjects = session.query(Subject).filter(
                 Subject.Id.in_(similar_ids),
