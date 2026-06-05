@@ -31,4 +31,9 @@ public interface IHomeService
     /// Récupère les données du footer
     /// </summary>
     Task<FooterDto> GetFooterAsync();
+
+    /// <summary>
+    /// Compte les épreuves publiées par type d'examen (vitrine)
+    /// </summary>
+    Task<IEnumerable<ExamCountDto>> GetExamCountsAsync();
 }

@@ -62,6 +62,15 @@ public class PageContentDto
 }
 
 /// <summary>
+/// DTO pour le nombre d'épreuves par type d'examen
+/// </summary>
+public class ExamCountDto
+{
+    public string ExamId { get; set; } = string.Empty;
+    public int Count { get; set; }
+}
+
+/// <summary>
 /// DTO pour le contenu du footer
 /// </summary>
 public class FooterDto

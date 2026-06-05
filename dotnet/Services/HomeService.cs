@@ -240,4 +240,27 @@ public class HomeService : IHomeService
             throw;
         }
     }
+
+    /// <summary>
+    /// Compte les épreuves publiées par type d'examen (Category) pour la vitrine
+    /// </summary>
+    public async Task<IEnumerable<ExamCountDto>> GetExamCountsAsync()
+    {
+        try
+        {
+            var counts = await _context.Subjects
+                .AsNoTracking()
+                .Where(s => !s.IsDeleted && s.IsPublished && s.Category != null)
+                .GroupBy(s => s.Category!)
+                .Select(g => new ExamCountDto { ExamId = g.Key, Count = g.Count() })
+                .ToListAsync();
+
+            return counts;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting exam counts");
+            return Enumerable.Empty<ExamCountDto>();
+        }
+    }
 }

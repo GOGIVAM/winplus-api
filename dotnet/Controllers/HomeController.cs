@@ -110,6 +110,27 @@ public class HomeController : ControllerBase
     }
 
     /// <summary>
+    /// Compte les épreuves publiées par type d'examen
+    /// GET /api/home/exam-counts → [{ examId: "bepc", count: 96 }, ...]
+    /// </summary>
+    [HttpGet("exam-counts")]
+    [ProducesResponseType(typeof(IEnumerable<ExamCountDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GetExamCounts()
+    {
+        try
+        {
+            var counts = await _homeService.GetExamCountsAsync();
+            return Ok(new { data = counts, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting exam counts");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
     /// Récupère les données du footer
     /// </summary>
     /// <response code="200">Données du footer retournées</response>
