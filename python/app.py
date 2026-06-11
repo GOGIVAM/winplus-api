@@ -23,11 +23,16 @@ from models.recommender import Recommender
 from services.user_performance_analyzer import UserPerformanceAnalyzer
 from auth import verify_token, require_role, UserTokenData
 from routes.chatbot_routes import chatbot_router
+import json
 from schemas import (
-    HealthResponse, SubjectResponse, RecommendationResponse, 
+    HealthResponse, SubjectResponse, RecommendationResponse,
     RecommendationsListResponse, AnalysisRequest, AnalysisResponse,
-    ProgressAnalysisResponse, ApiResponse, PaginatedResponse
+    ProgressAnalysisResponse, ApiResponse, PaginatedResponse,
+    LearningPathResponse, AdaptiveQuizRequest, AdaptiveQuizResponse,
+    LearningStyleRequest, LearningStyleResponse,
+    SuccessPredictionResponse,
 )
+from services.deepseek_client import get_deepseek_client
 
 # Configuration
 load_dotenv()
@@ -408,6 +413,255 @@ async def analyze_progress(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
+
+
+# ==================== AI FEATURE ENDPOINTS ====================
+
+@app.get('/api/learning-path/{user_id}', response_model=LearningPathResponse, tags=["ai"])
+@limiter.limit("10/minute")
+async def get_learning_path(
+    request: Request,
+    user_id: int,
+    current_user: UserTokenData = Depends(verify_token)
+):
+    """
+    Parcours d'apprentissage personnalisé basé sur les performances réelles.
+    Temps de réponse typique : 1-3s (appels BD uniquement).
+    """
+    try:
+        logger.info(f"[API] 🗺️ GET /api/learning-path/{user_id}")
+        result = performance_analyzer.generate_learning_path(user_id)
+        if not result.get('success'):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=result.get('error', 'Données insuffisantes')
+            )
+        logger.info(f"[API] ✅ Learning path generated: {result.get('total_duration_days')} days")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[API] ❌ GET /api/learning-path/{user_id} - Error: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@app.post('/api/adaptive-quiz', response_model=AdaptiveQuizResponse, tags=["ai"])
+@limiter.limit("5/minute")
+async def generate_adaptive_quiz(
+    request: Request,
+    body: AdaptiveQuizRequest,
+    current_user: UserTokenData = Depends(verify_token)
+):
+    """
+    Génère un quiz adaptatif via DeepSeek, calibré sur les lacunes détectées.
+    Temps de réponse typique : 8-20s (appel LLM).
+    """
+    try:
+        logger.info(f"[API] 🧠 POST /api/adaptive-quiz user_id={body.user_id} subject={body.subject}")
+
+        # Récupérer les lacunes réelles
+        progress = performance_analyzer.analyze_user_progress(body.user_id)
+        weak_areas: list = []
+        if progress.get('success'):
+            weak_areas = progress.get('analysis', {}).get('weak_areas', [])
+
+        subject_label = body.subject.strip() or "les matières en cours"
+        weak_context = f"lacunes en : {', '.join(weak_areas[:3])}" if weak_areas else "niveau intermédiaire"
+
+        prompt = (
+            f"Tu es un professeur expert en \"{subject_label}\".\n"
+            f"Génère {body.count} questions QCM en français calibrées pour un étudiant avec des {weak_context}.\n\n"
+            "Retourne UNIQUEMENT un tableau JSON valide (sans texte ni markdown):\n"
+            "[\n"
+            "  {\n"
+            "    \"id\": 1,\n"
+            "    \"question\": \"Énoncé de la question ?\",\n"
+            "    \"options\": [\"Option A\", \"Option B\", \"Option C\", \"Option D\"],\n"
+            "    \"correct_answer\": \"Texte exact de la bonne option\",\n"
+            "    \"explanation\": \"Explication concise de la bonne réponse\",\n"
+            "    \"difficulty\": \"moyen\",\n"
+            "    \"topic\": \"sous-thème\"\n"
+            "  }\n"
+            "]"
+        )
+
+        deepseek_client = get_deepseek_client()
+        result = deepseek_client.chat(
+            messages=[{'role': 'user', 'content': prompt}],
+            max_tokens=2500,
+            temperature=0.6
+        )
+
+        content = result.get('content', '[]').strip()
+        # Strip markdown code fences if present
+        if content.startswith('```'):
+            lines = content.split('\n')
+            content = '\n'.join(lines[1:])
+        if content.endswith('```'):
+            content = content.rsplit('```', 1)[0].strip()
+
+        questions = json.loads(content)
+
+        logger.info(f"[API] ✅ Adaptive quiz generated: {len(questions)} questions")
+        return {
+            'success': True,
+            'subject': subject_label,
+            'weak_areas': weak_areas,
+            'questions': questions,
+            'count': len(questions),
+            'generated_at': datetime.utcnow().isoformat()
+        }
+    except json.JSONDecodeError as e:
+        logger.error(f"[API] ❌ JSON parse error in adaptive quiz: {str(e)}")
+        raise HTTPException(status_code=500, detail='Erreur de génération des questions — réessayez.')
+    except Exception as e:
+        logger.error(f"[API] ❌ POST /api/adaptive-quiz - Error: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@app.post('/api/learning-style', response_model=LearningStyleResponse, tags=["ai"])
+@limiter.limit("10/minute")
+async def analyze_learning_style(
+    request: Request,
+    body: LearningStyleRequest,
+    current_user: UserTokenData = Depends(verify_token)
+):
+    """
+    Analyse le style d'apprentissage à partir des réponses VARK.
+    Temps de réponse typique : <200ms (calcul local uniquement).
+    """
+    STYLE_META = {
+        'V': {
+            'key': 'visual',
+            'label': 'Apprenant Visuel',
+            'description': (
+                "Tu retiens mieux l'information sous forme de schémas, graphiques, "
+                "cartes mentales et couleurs. Ton cerveau encode les données visuellement "
+                "et tu as une bonne mémoire photographique des pages et des slides."
+            ),
+            'tips': [
+                "Utilise les schémas et illustrations du catalogue WinPlus en priorité",
+                "Crée des fiches colorées pour chaque chapitre étudié",
+                "Active les sous-titres et pause sur les tableaux dans les vidéos",
+                "Dessine des cartes mentales pour relier les concepts entre eux",
+            ]
+        },
+        'A': {
+            'key': 'auditory',
+            'label': 'Apprenant Auditif',
+            'description': (
+                "Tu assimiles mieux en écoutant et en parlant. Les explications orales, "
+                "les discussions et la répétition à voix haute sont tes meilleurs alliés. "
+                "Tu te souviens facilement de ce que tu as entendu."
+            ),
+            'tips': [
+                "Priorise les cours en vidéo sur WinPlus plutôt que les PDFs",
+                "Lis tes résumés à voix haute avant un examen",
+                "Explique les notions à un ami — enseigner consolide ta mémoire",
+                "Utilise WinAI pour te faire réexpliquer les concepts oralement",
+            ]
+        },
+        'R': {
+            'key': 'reading_writing',
+            'label': 'Apprenant Lecteur/Scripteur',
+            'description': (
+                "Tu apprends par le texte : lire des cours structurés, prendre des notes "
+                "détaillées, rédiger des résumés. Les listes, définitions et explications "
+                "écrites te permettent de mémoriser efficacement."
+            ),
+            'tips': [
+                "Télécharge tous les supports PDF disponibles sur WinPlus",
+                "Rédige des résumés personnels après chaque chapitre",
+                "Crée des listes de définitions et formules clés",
+                "Demande à WinAI des explications écrites et structurées",
+            ]
+        },
+        'K': {
+            'key': 'kinesthetic',
+            'label': 'Apprenant Kinesthésique',
+            'description': (
+                "Tu apprends par la pratique et l'expérimentation. Faire des exercices, "
+                "résoudre des problèmes concrets et appliquer les notions directement "
+                "est la méthode la plus efficace pour toi."
+            ),
+            'tips': [
+                "Lance-toi directement sur les quiz et exercices pratiques de WinPlus",
+                "Résous un maximum d'annales d'examens disponibles",
+                "Demande à WinAI des problèmes d'application sur chaque notion",
+                "Alterne courtes sessions de cours et exercices immédiats",
+            ]
+        },
+    }
+
+    scores: dict[str, int] = {'V': 0, 'A': 0, 'R': 0, 'K': 0}
+    for ans in body.answers:
+        tag = ans.style_tag.upper()
+        if tag in scores:
+            scores[tag] += 1
+
+    dominant = max(scores, key=lambda k: scores[k])
+    max_score = scores[dominant]
+    # Mixed if two styles tied at max
+    tied = [k for k, v in scores.items() if v == max_score]
+    if len(tied) > 1:
+        dominant = 'mixed'
+
+    if dominant == 'mixed':
+        return {
+            'success': True,
+            'style': 'mixed',
+            'label': 'Apprenant Polyvalent',
+            'description': (
+                "Tu combines plusieurs styles d'apprentissage selon le contexte. "
+                "Cette flexibilité est un atout : tu t'adaptes facilement aux différents "
+                "formats de cours et peux alterner selon tes besoins du moment."
+            ),
+            'winplus_tips': [
+                "Exploite tous les formats disponibles : vidéo, PDF, quiz et résumés",
+                "Varie tes méthodes de révision selon la matière",
+                "Utilise WinAI pour adapter les explications à ton humeur du moment",
+                "Combine fiches visuelles et exercices pratiques pour consolider",
+            ],
+            'score_breakdown': scores
+        }
+
+    meta = STYLE_META[dominant]
+    return {
+        'success': True,
+        'style': meta['key'],
+        'label': meta['label'],
+        'description': meta['description'],
+        'winplus_tips': meta['tips'],
+        'score_breakdown': scores
+    }
+
+
+@app.get('/api/success-prediction/{user_id}', response_model=SuccessPredictionResponse, tags=["ai"])
+@limiter.limit("10/minute")
+async def get_success_prediction(
+    request: Request,
+    user_id: int,
+    current_user: UserTokenData = Depends(verify_token)
+):
+    """
+    Prédit la probabilité de réussite basée sur les données réelles de progression.
+    Temps de réponse typique : 2-4s (appels BD + calcul).
+    """
+    try:
+        logger.info(f"[API] 🎯 GET /api/success-prediction/{user_id}")
+        result = performance_analyzer.predict_success(user_id)
+        if not result.get('success'):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=result.get('error', 'Données insuffisantes pour la prédiction')
+            )
+        logger.info(f"[API] ✅ Success prediction: {result.get('probability')}% probability")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[API] ❌ GET /api/success-prediction/{user_id} - Error: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 # ==================== ADMIN ENDPOINTS ==================

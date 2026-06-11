@@ -42,6 +42,28 @@ public class GenerateCertificateRequest
 }
 
 /// <summary>
+/// Request for admin to issue a certificate directly
+/// </summary>
+public class AdminIssueCertificateRequest
+{
+    [Required]
+    public int UserId { get; set; }
+
+    [Required]
+    public int SubjectId { get; set; }
+
+    [Range(0, 100)]
+    public decimal? Grade { get; set; }
+
+    public DateTime? IssuedAt { get; set; }
+
+    public DateTime? CompletionDate { get; set; }
+
+    [MaxLength(500)]
+    public string? Notes { get; set; }
+}
+
+/// <summary>
 /// DTO for certificate verification response
 /// </summary>
 public class CertificateVerificationDto

@@ -11,9 +11,10 @@ public interface IPromoCodeService
     Task<PromoCodeDto> CreatePromoCodeAsync(int adminUserId, CreatePromoCodeRequest request);
     Task<PromoCodeValidationResult> ValidatePromoCodeAsync(int userId, ValidatePromoCodeRequest request);
     Task<bool> ApplyPromoCodeAsync(int userId, int orderId, string code);
-    Task<List<PromoCodeDto>> GetAllPromoCodesAsync();
+    Task<List<PromoCodeDto>> GetAllPromoCodesAsync(bool includeInactive = false);
     Task<PromoCodeDto?> GetPromoCodeByCodeAsync(string code);
     Task<bool> DeactivatePromoCodeAsync(int id);
+    Task<bool> ActivatePromoCodeAsync(int id);
 }
 
 public class PromoCodeService : IPromoCodeService
@@ -246,12 +247,14 @@ public class PromoCodeService : IPromoCodeService
         }
     }
 
-    public async Task<List<PromoCodeDto>> GetAllPromoCodesAsync()
+    public async Task<List<PromoCodeDto>> GetAllPromoCodesAsync(bool includeInactive = false)
     {
         try
         {
-            var promoCodes = await _context.PromoCodes
-                .Where(p => p.IsActive)
+            var query = _context.PromoCodes.AsQueryable();
+            if (!includeInactive) query = query.Where(p => p.IsActive);
+
+            var promoCodes = await query
                 .OrderByDescending(p => p.CreatedAt)
                 .ToListAsync();
 
@@ -300,6 +303,30 @@ public class PromoCodeService : IPromoCodeService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error deactivating promo code");
+            return false;
+        }
+    }
+
+    public async Task<bool> ActivatePromoCodeAsync(int id)
+    {
+        try
+        {
+            var promoCode = await _context.PromoCodes.FindAsync(id);
+            if (promoCode == null) return false;
+
+            promoCode.IsActive = true;
+            promoCode.UpdatedAt = DateTime.UtcNow;
+
+            _context.PromoCodes.Update(promoCode);
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Promo code {PromoCodeId} activated", id);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error activating promo code");
             return false;
         }
     }

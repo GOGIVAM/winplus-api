@@ -443,6 +443,103 @@ class UserPerformanceAnalyzer:
         
         return recommendations if recommendations else ["Continuez votre apprentissage régulier"]
     
+    def predict_success(self, user_id: int) -> dict:
+        """
+        Prédit la probabilité de réussite basée sur les métriques réelles.
+        Retourne probabilité (0-100), facteurs positifs/négatifs, contexte.
+        """
+        try:
+            analysis = self.analyze_user_progress(user_id)
+            if not analysis.get('success'):
+                return {'success': False, 'error': 'Analyse impossible — vérifiez les enrollments'}
+
+            overview = analysis['overview']
+            analysis_data = analysis['analysis']
+
+            completion_rate = overview['completion_rate']
+            velocity = analysis_data['learning_velocity']
+            pattern = analysis_data['learning_pattern']
+            total_hours = overview['total_learning_time_hours']
+            weak_areas = analysis_data['weak_areas']
+            strengths = analysis_data['strengths']
+
+            # Pondération: complétion 40%, vélocité 30%, régularité 20%, temps 10%
+            completion_score = completion_rate * 0.4
+            velocity_score = min(velocity / 15.0, 1.0) * 100.0 * 0.3
+            pattern_weight = {'very_consistent': 100, 'consistent': 75, 'moderate': 50,
+                              'intermittent': 25, 'inconsistent': 15}
+            pattern_score = pattern_weight.get(pattern, 50) * 0.2
+            time_score = min(total_hours / 20.0, 1.0) * 100.0 * 0.1
+
+            probability = int(min(round(completion_score + velocity_score + pattern_score + time_score), 95))
+
+            positive_factors = []
+            negative_factors = []
+
+            # Complétion
+            if completion_rate >= 70:
+                positive_factors.append({'label': 'Taux de complétion élevé', 'impact': 'positive',
+                                         'detail': f'{completion_rate:.1f}% du programme couvert'})
+            elif completion_rate < 30:
+                negative_factors.append({'label': 'Taux de complétion insuffisant', 'impact': 'negative',
+                                         'detail': f'Seulement {completion_rate:.1f}% du programme couvert'})
+
+            # Vélocité
+            if velocity >= 3:
+                positive_factors.append({'label': 'Rythme d\'apprentissage soutenu', 'impact': 'positive',
+                                         'detail': f'{velocity:.1f}% de progression par jour en moyenne'})
+            elif velocity < 1:
+                negative_factors.append({'label': 'Progression trop lente', 'impact': 'negative',
+                                         'detail': 'Moins de 1% de progression par jour'})
+
+            # Régularité
+            if pattern in ('very_consistent', 'consistent'):
+                positive_factors.append({'label': 'Régularité d\'étude excellente', 'impact': 'positive',
+                                         'detail': 'Sessions fréquentes et régulières'})
+            elif pattern in ('inconsistent', 'intermittent'):
+                negative_factors.append({'label': 'Irrégularité dans les révisions', 'impact': 'negative',
+                                         'detail': 'Les pauses longues réduisent la rétention'})
+
+            # Temps total
+            if total_hours >= 10:
+                positive_factors.append({'label': 'Volume de travail solide', 'impact': 'positive',
+                                         'detail': f'{total_hours:.1f}h de travail enregistrées'})
+            elif total_hours < 2:
+                negative_factors.append({'label': 'Temps d\'étude insuffisant', 'impact': 'negative',
+                                         'detail': f'Seulement {total_hours:.1f}h — visez 20h minimum'})
+
+            # Matières fortes
+            if strengths:
+                positive_factors.append({'label': f'Points forts identifiés', 'impact': 'positive',
+                                         'detail': f'Bon niveau en : {", ".join(strengths[:3])}'})
+
+            # Lacunes
+            for area in weak_areas[:2]:
+                negative_factors.append({'label': f'Lacune détectée : {area}', 'impact': 'negative',
+                                         'detail': f'{area} nécessite un travail de renforcement'})
+
+            level = 'high' if probability >= 70 else ('medium' if probability >= 45 else 'low')
+
+            return {
+                'success': True,
+                'user_id': user_id,
+                'probability': probability,
+                'level': level,
+                'positive_factors': positive_factors,
+                'negative_factors': negative_factors,
+                'context': {
+                    'completion_rate': completion_rate,
+                    'learning_velocity': velocity,
+                    'learning_pattern': pattern,
+                    'total_hours': total_hours,
+                    'enrolled_subjects': overview['total_enrolled_subjects'],
+                },
+                'computed_at': datetime.utcnow().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"[UserPerformanceAnalyzer] ❌ predict_success error: {str(e)}")
+            return {'success': False, 'error': str(e)}
+
     def _recommend_study_time(self, velocity: float) -> str:
         """Recommande le temps d'étude quotidien basé sur vélocité"""
         if velocity < 1:

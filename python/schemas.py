@@ -13,7 +13,9 @@ from enum import Enum
 class UserRole(str, Enum):
     student = "student"
     teacher = "teacher"
+    parent = "parent"
     admin = "admin"
+    organization = "organization"
 
 
 class LearningStyle(str, Enum):
@@ -198,11 +200,14 @@ class ChatMessage(BaseModel):
 
 
 class ChatbotContextRequest(BaseModel):
+    role: Optional[str] = "student"                             # student | teacher | parent | admin | organization
+    first_name: Optional[str] = None
     education_level: Optional[str] = None
     grade: Optional[str] = None
     enrolled_subjects: Optional[List[SubjectResponse]] = []
     objectives: Optional[List[str]] = []
     learning_style: Optional[str] = None
+    performance_history: Optional[Dict[str, float]] = {}       # {"Maths": 14.5, "Physique": 11.0}
 
 
 class ChatRequest(BaseModel):
@@ -248,3 +253,94 @@ class PaginatedResponse(BaseModel):
     success: bool
     count: int
     data: List[Dict[str, Any]]
+
+
+# ==================== LEARNING PATH SCHEMAS ====================
+class LearningPathPhase(BaseModel):
+    phase: int
+    name: str
+    duration_days: int
+    focus_areas: List[str]
+    difficulty: str
+    target_completion: float
+    actions: List[str]
+
+
+class LearningPathRecommendations(BaseModel):
+    daily_study_time: str
+    focus_areas: List[str]
+    growth_areas: List[str]
+
+
+class LearningPathResponse(BaseModel):
+    success: bool
+    user_id: int
+    learning_velocity: float
+    total_duration_days: int
+    estimated_end_date: str
+    phases: List[LearningPathPhase]
+    recommendations: LearningPathRecommendations
+    generated_at: str
+
+
+# ==================== ADAPTIVE QUIZ SCHEMAS ====================
+class AdaptiveQuizRequest(BaseModel):
+    user_id: int
+    subject: str = ""
+    count: int = Field(default=8, ge=3, le=20)
+
+
+class AdaptiveQuizQuestion(BaseModel):
+    id: int
+    question: str
+    options: List[str]
+    correct_answer: str
+    explanation: str
+    difficulty: str
+    topic: str
+
+
+class AdaptiveQuizResponse(BaseModel):
+    success: bool
+    subject: str
+    weak_areas: List[str]
+    questions: List[AdaptiveQuizQuestion]
+    count: int
+    generated_at: str
+
+
+# ==================== LEARNING STYLE SCHEMAS ====================
+class LearningStyleAnswer(BaseModel):
+    question_id: str
+    style_tag: str  # "V", "A", "R", "K"
+
+
+class LearningStyleRequest(BaseModel):
+    answers: List[LearningStyleAnswer]
+
+
+class LearningStyleResponse(BaseModel):
+    success: bool
+    style: str  # visual | auditory | reading_writing | kinesthetic | mixed
+    label: str
+    description: str
+    winplus_tips: List[str]
+    score_breakdown: Dict[str, int]
+
+
+# ==================== SUCCESS PREDICTION SCHEMAS ====================
+class PredictionFactor(BaseModel):
+    label: str
+    impact: str  # "positive" | "negative"
+    detail: str
+
+
+class SuccessPredictionResponse(BaseModel):
+    success: bool
+    user_id: int
+    probability: int  # 0-100
+    level: str        # low | medium | high
+    positive_factors: List[PredictionFactor]
+    negative_factors: List[PredictionFactor]
+    context: Dict[str, Any]
+    computed_at: str

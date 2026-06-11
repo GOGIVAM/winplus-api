@@ -12,6 +12,8 @@ public interface ICertificateService
     Task<List<CertificateDto>> GetUserCertificatesAsync(int userId);
     Task<CertificateVerificationDto> VerifyCertificateAsync(string verificationCode);
     Task<List<CertificateDto>> GetSubjectCertificatesAsync(int subjectId);
+    Task<List<CertificateDto>> GetAllCertificatesAsync(DateTime? from = null, DateTime? to = null);
+    Task<CertificateDto> AdminIssueCertificateAsync(AdminIssueCertificateRequest request);
 }
 
 public class CertificateService : ICertificateService
@@ -190,6 +192,80 @@ public class CertificateService : ICertificateService
         {
             _logger.LogError(ex, "Error getting certificates for subject {SubjectId}", subjectId);
             return new List<CertificateDto>();
+        }
+    }
+
+    public async Task<List<CertificateDto>> GetAllCertificatesAsync(DateTime? from = null, DateTime? to = null)
+    {
+        try
+        {
+            var query = _context.Certificates
+                .Include(c => c.User)
+                .Include(c => c.Subject)
+                .AsQueryable();
+
+            if (from.HasValue) query = query.Where(c => c.IssuedAt >= from.Value);
+            if (to.HasValue) query = query.Where(c => c.IssuedAt <= to.Value.AddDays(1));
+
+            var certs = await query.OrderByDescending(c => c.IssuedAt).ToListAsync();
+            return certs.Select(c => MapToDto(c, c.User, c.Subject)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting all certificates");
+            return new List<CertificateDto>();
+        }
+    }
+
+    public async Task<CertificateDto> AdminIssueCertificateAsync(AdminIssueCertificateRequest request)
+    {
+        try
+        {
+            var enrollment = await _context.Enrollments
+                .Include(e => e.User)
+                .Include(e => e.Subject)
+                .Where(e => e.UserId == request.UserId && e.SubjectId == request.SubjectId)
+                .OrderByDescending(e => e.EnrolledAt)
+                .FirstOrDefaultAsync();
+
+            if (enrollment == null)
+                throw new KeyNotFoundException($"No enrollment found for user {request.UserId} in subject {request.SubjectId}");
+
+            // Check if already issued
+            var existing = await _context.Certificates
+                .Include(c => c.User)
+                .Include(c => c.Subject)
+                .FirstOrDefaultAsync(c => c.EnrollmentId == enrollment.Id);
+
+            if (existing != null)
+                return MapToDto(existing, existing.User, existing.Subject);
+
+            var certNumber = $"CERT-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString("N")[..8].ToUpper()}";
+            var verCode = Guid.NewGuid().ToString("N")[..12].ToUpper();
+
+            var cert = new Certificate
+            {
+                UserId = request.UserId,
+                SubjectId = request.SubjectId,
+                EnrollmentId = enrollment.Id,
+                CertificateNumber = certNumber,
+                IssuedAt = request.IssuedAt ?? DateTime.UtcNow,
+                CompletionDate = request.CompletionDate ?? enrollment.CompletedAt ?? DateTime.UtcNow,
+                Grade = request.Grade,
+                VerificationCode = verCode,
+                FileUrl = $"/certificates/{certNumber}.pdf"
+            };
+
+            _context.Certificates.Add(cert);
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Admin issued certificate {CertNumber} for user {UserId}", certNumber, request.UserId);
+            return MapToDto(cert, enrollment.User, enrollment.Subject);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in admin certificate issuance");
+            throw;
         }
     }
 

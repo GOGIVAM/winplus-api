@@ -11,6 +11,7 @@ import logging
 from typing import Dict, Any, List, Optional
 
 from services.deepseek_client import get_deepseek_client
+from services.prompt_builder import build_system_prompt, UserContext
 from auth import verify_token, UserTokenData
 from schemas import ChatRequest, ChatResponse, ChatbotHealthResponse, ChatMessage, ChatbotContextRequest
 from database import Database, Conversation, ChatMessage as ChatMessageDB
@@ -20,61 +21,27 @@ logger = logging.getLogger(__name__)
 chatbot_router = APIRouter(tags=["chatbot"])
 
 
-def build_system_prompt(user_context: Optional[ChatbotContextRequest] = None) -> str:
+def _build_prompt_from_request(
+    user_context: Optional[ChatbotContextRequest],
+    token_data: UserTokenData,
+) -> tuple[str, str]:
     """
-    Construit le prompt système personnalisé en fonction du contexte utilisateur
-    
-    Args:
-        user_context: Contexte de l'utilisateur (niveau, matières, etc.)
-    
-    Returns:
-        Prompt système personnalisé
+    Converts request context + JWT data into a WinAI system prompt.
+    Returns (system_prompt, winai_role) for logging.
     """
-    base_prompt = """Tu es un assistant pédagogique intelligent pour WinPlus, une plateforme d'apprentissage.
-Tu aides les étudiants dans leurs révisions et préparation aux concours.
-
-Directives importantes:
-- Réponds toujours en français sauf si l'utilisateur parle une autre langue
-- Sois pédagogue, patient et encourage l'apprentissage
-- Utilise le LaTeX pour les équations mathématiques (format $...$ pour inline, $$...$$ pour les blocs)
-- Adapte ton niveau de langage au niveau de l'étudiant
-- Fournis des explications claires, structurées et progressives
-- Si tu ne sais pas, dis-le honnêtement plutôt que d'inventer
-- Propose des exemples concrets et des exercices quand c'est pertinent
-- Encourage l'étudiant et valorise ses efforts"""
-
-    if not user_context:
-        return base_prompt
-    
-    # Enrichir avec le contexte utilisateur
-    context_additions = []
-    
-    if user_context.education_level or user_context.grade:
-        level_info = f"\n\nProfil de l'étudiant:"
-        if user_context.education_level:
-            level_info += f"\n- Niveau: {user_context.education_level}"
-        if user_context.grade:
-            level_info += f"\n- Classe: {user_context.grade}"
-        context_additions.append(level_info)
-    
-    # Matières inscrites
-    if user_context.enrolled_subjects:
-        subjects_list = ", ".join([s.title for s in user_context.enrolled_subjects if s.title])
-        if subjects_list:
-            context_additions.append(f"\n- Matières suivies: {subjects_list}")
-    
-    # Objectifs
-    if user_context.objectives:
-        context_additions.append(f"\n- Objectifs: {', '.join(user_context.objectives)}")
-    
-    # Style d'apprentissage
-    if user_context.learning_style:
-        context_additions.append(f"\n- Style d'apprentissage préféré: {user_context.learning_style}")
-    
-    if context_additions:
-        base_prompt += "".join(context_additions)
-    
-    return base_prompt
+    ctx = UserContext(
+        role=getattr(user_context, "role", None) or token_data.role or "student",
+        first_name=getattr(user_context, "first_name", None),
+        education_level=getattr(user_context, "education_level", None),
+        grade=getattr(user_context, "grade", None),
+        enrolled_subjects=[
+            s.title for s in (user_context.enrolled_subjects or []) if s.title
+        ] if user_context and user_context.enrolled_subjects else [],
+        objectives=list(user_context.objectives or []) if user_context else [],
+        learning_style=getattr(user_context, "learning_style", None),
+        performance_history=dict(user_context.performance_history or {}) if user_context else {},
+    )
+    return build_system_prompt(ctx), ctx.role
 
 
 def format_messages_for_deepseek(messages: List[ChatMessage]) -> List[Dict[str, str]]:
@@ -168,16 +135,22 @@ async def chat(
                 detail="Messages are required"
             )
         
-        # Construire le prompt système
+        # Construire le prompt système différencié par rôle
         if chat_request.system_prompt:
             system_prompt = chat_request.system_prompt
+            winai_role = getattr(chat_request.user_context, "role", None) or current_user.role or "student"
         else:
-            system_prompt = build_system_prompt(chat_request.user_context)
-        
+            system_prompt, winai_role = _build_prompt_from_request(
+                chat_request.user_context, current_user
+            )
+
         # Formater les messages
         formatted_messages = format_messages_for_deepseek(chat_request.messages)
-        
-        logger.info(f"Processing chat request from user {current_user.user_id} with {len(chat_request.messages)} messages")
+
+        logger.info(
+            f"Processing chat request from user {current_user.user_id} "
+            f"winai_role={winai_role} messages={len(chat_request.messages)}"
+        )
         
         # Appeler DeepSeek
         deepseek_client = get_deepseek_client()
@@ -214,6 +187,7 @@ class StreamChatBody(BaseModel):
     messages: List[Dict[str, Any]]
     conversation_id: Optional[int] = None
     system_prompt: Optional[str] = None
+    user_context: Optional[ChatbotContextRequest] = None
     max_tokens: Optional[int] = 2000
     temperature: Optional[float] = 0.7
 
@@ -230,9 +204,14 @@ async def stream_chat(
     """
     conv_id = body.conversation_id
     messages = body.messages
-    system_prompt = body.system_prompt or build_system_prompt()
 
-    logger.info(f"Stream request from user {current_user.user_id}, conv_id={conv_id}")
+    if body.system_prompt:
+        system_prompt = body.system_prompt
+        winai_role = getattr(body.user_context, "role", None) or current_user.role or "student"
+    else:
+        system_prompt, winai_role = _build_prompt_from_request(body.user_context, current_user)
+
+    logger.info(f"Stream request from user {current_user.user_id}, winai_role={winai_role}, conv_id={conv_id}")
 
     def generate():
         db = Database()

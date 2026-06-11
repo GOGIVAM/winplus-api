@@ -1,3 +1,4 @@
+using Backend.Extensions;
 using Backend.Models;
 using Backend.Models.DTOs;
 using Backend.Services;
@@ -208,6 +209,56 @@ public class CertificatesController : ControllerBase
                 Message = "An error occurred while retrieving subject certificates",
                 Timestamp = DateTime.UtcNow
             });
+        }
+    }
+
+    /// <summary>
+    /// Get all certificates (admin only), optional date filters
+    /// </summary>
+    [HttpGet("admin/all")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<ActionResult<ApiResponse<List<CertificateDto>>>> GetAllCertificates(
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to)
+    {
+        try
+        {
+            var certs = await _certificateService.GetAllCertificatesAsync(from, to);
+            return Ok(new ApiResponse<List<CertificateDto>>
+            {
+                Success = true,
+                Data = certs,
+                Timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting all certificates");
+            return StatusCode(500, new ApiResponse<object> { Success = false, Message = "Internal server error", Timestamp = DateTime.UtcNow });
+        }
+    }
+
+    /// <summary>
+    /// Admin issues a certificate directly (admin only)
+    /// </summary>
+    [HttpPost("admin/issue")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<ActionResult<ApiResponse<CertificateDto>>> AdminIssueCertificate([FromBody] AdminIssueCertificateRequest request)
+    {
+        try
+        {
+            var cert = await _certificateService.AdminIssueCertificateAsync(request);
+            return CreatedAtAction(nameof(GetCertificate), new { id = cert.Id },
+                new ApiResponse<CertificateDto> { Success = true, Data = cert, Timestamp = DateTime.UtcNow });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new ApiResponse<object> { Success = false, Message = ex.Message, Timestamp = DateTime.UtcNow });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in admin certificate issuance");
+            return StatusCode(500, new ApiResponse<object> { Success = false, Message = "Internal server error", Timestamp = DateTime.UtcNow });
         }
     }
 

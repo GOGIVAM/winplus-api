@@ -117,7 +117,7 @@ public class PromoCodesController : ControllerBase
     }
 
     /// <summary>
-    /// Get all active promo codes
+    /// Get all active promo codes (public)
     /// </summary>
     [HttpGet]
     public async Task<IActionResult> GetAllPromoCodes()
@@ -137,6 +137,32 @@ public class PromoCodesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting promo codes");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Get all promo codes including inactive (admin only)
+    /// </summary>
+    [HttpGet("admin")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> GetAllPromoCodesAdmin()
+    {
+        try
+        {
+            var promoCodes = await _promoCodeService.GetAllPromoCodesAsync(includeInactive: true);
+
+            return Ok(new
+            {
+                success = true,
+                data = promoCodes,
+                count = promoCodes.Count,
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting promo codes for admin");
             return StatusCode(500, new { error = "Internal server error" });
         }
     }
@@ -195,4 +221,38 @@ public class PromoCodesController : ControllerBase
             return StatusCode(500, new { error = "Internal server error" });
         }
     }
+
+    /// <summary>
+    /// Toggle promo code active status (admin only)
+    /// </summary>
+    [HttpPatch("{id}/status")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> UpdatePromoCodeStatus(int id, [FromBody] UpdatePromoCodeStatusRequest request)
+    {
+        try
+        {
+            bool result;
+            if (request.IsActive)
+                result = await _promoCodeService.ActivatePromoCodeAsync(id);
+            else
+                result = await _promoCodeService.DeactivatePromoCodeAsync(id);
+
+            if (!result)
+                return NotFound(new { error = "Promo code not found" });
+
+            return Ok(new
+            {
+                success = true,
+                message = request.IsActive ? "Promo code activated successfully" : "Promo code deactivated successfully",
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating promo code status");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
 }
+
+public record UpdatePromoCodeStatusRequest(bool IsActive);

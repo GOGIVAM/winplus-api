@@ -1,12 +1,11 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Backend.Models.Entities;
 using Backend.Services;
+using Backend.Extensions;
 
 namespace Backend.Controllers;
 
-/// <summary>
-/// Controller pour la gestion des annonces
-/// </summary>
 [ApiController]
 [Route("api/announcements")]
 [Produces("application/json")]
@@ -21,16 +20,7 @@ public class AnnouncementController : ControllerBase
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    /// <summary>
-    /// Récupère les annonces publiées
-    /// </summary>
-    /// <param name="limit">Nombre maximum d'annonces</param>
-    /// <returns>Annonces publiées</returns>
-    /// <response code="200">Annonces retournées</response>
-    /// <response code="500">Erreur serveur</response>
     [HttpGet]
-    [ProducesResponseType(typeof(IEnumerable<Announcement>), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> GetPublished([FromQuery] int limit = 4)
     {
         try
@@ -45,18 +35,7 @@ public class AnnouncementController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Récupère une annonce par ID
-    /// </summary>
-    /// <param name="id">ID de l'annonce</param>
-    /// <returns>L'annonce</returns>
-    /// <response code="200">Annonce retournée</response>
-    /// <response code="404">Annonce non trouvée</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpGet("{id}")]
-    [ProducesResponseType(typeof(Announcement), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
         try
@@ -64,7 +43,7 @@ public class AnnouncementController : ControllerBase
             var announcement = await _announcementService.GetAnnouncementByIdAsync(id);
             if (announcement == null)
                 return NotFound(new { success = false, error = "Announcement not found" });
-            
+
             return Ok(new { data = announcement, success = true });
         }
         catch (Exception ex)
@@ -73,4 +52,120 @@ public class AnnouncementController : ControllerBase
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }
+
+    // ── Admin endpoints ───────────────────────────────────────────────────────
+
+    [HttpGet("admin/all")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> GetAll()
+    {
+        try
+        {
+            var announcements = await _announcementService.GetAllAnnouncementsAsync();
+            var list = announcements.ToList();
+            return Ok(new { data = list, count = list.Count, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting all announcements");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    [HttpPost]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> Create([FromBody] AnnouncementRequest request)
+    {
+        try
+        {
+            var adminId = User.GetUserId();
+            var entity = new Announcement
+            {
+                Title = request.Title,
+                Content = request.Content,
+                Priority = request.Priority,
+                ExpiresAt = request.ExpiresAt,
+                IsPublished = false,
+                CreatedBy = adminId,
+            };
+
+            var created = await _announcementService.CreateAnnouncementAsync(entity);
+            return CreatedAtAction(nameof(GetById), new { id = created.Id }, new { data = created, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating announcement");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    [HttpPut("{id:int}")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> Update(int id, [FromBody] AnnouncementRequest request)
+    {
+        try
+        {
+            var existing = await _announcementService.GetAnnouncementByIdAsync(id);
+            if (existing == null)
+                return NotFound(new { success = false, error = "Announcement not found" });
+
+            existing.Title = request.Title;
+            existing.Content = request.Content;
+            existing.Priority = request.Priority;
+            existing.ExpiresAt = request.ExpiresAt;
+
+            var updated = await _announcementService.UpdateAnnouncementAsync(existing);
+            return Ok(new { data = updated, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating announcement {AnnouncementId}", id);
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    [HttpDelete("{id:int}")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> Delete(int id)
+    {
+        try
+        {
+            var result = await _announcementService.DeleteAnnouncementAsync(id);
+            if (!result)
+                return NotFound(new { success = false, error = "Announcement not found" });
+
+            return Ok(new { success = true, message = "Announcement deleted" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting announcement {AnnouncementId}", id);
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    [HttpPost("{id:int}/publish")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> Publish(int id)
+    {
+        try
+        {
+            var result = await _announcementService.PublishAnnouncementAsync(id);
+            if (!result)
+                return NotFound(new { success = false, error = "Announcement not found" });
+
+            return Ok(new { success = true, message = "Announcement published" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error publishing announcement {AnnouncementId}", id);
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
 }
+
+public record AnnouncementRequest(
+    string Title,
+    string? Content,
+    int Priority,
+    DateTime? ExpiresAt
+);
