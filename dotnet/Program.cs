@@ -215,31 +215,32 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization(options =>
 {
     // Politique pour les administrateurs
-    options.AddPolicy("AdminOnly", policy => 
+    // RequireRole uses ClaimTypes.Role which matches the JWT "role" claim after MapInboundClaims mapping
+    options.AddPolicy("AdminOnly", policy =>
     {
         policy.RequireAuthenticatedUser();
-        policy.RequireClaim("role", "admin");
+        policy.RequireRole("admin");
     });
-    
+
     // Politique pour les instructeurs
-    options.AddPolicy("InstructorOnly", policy => 
+    options.AddPolicy("InstructorOnly", policy =>
     {
         policy.RequireAuthenticatedUser();
-        policy.RequireClaim("role", "teacher", "admin");
+        policy.RequireRole("teacher", "admin");
     });
-    
+
     // Politique pour les parents
-    options.AddPolicy("ParentOnly", policy => 
+    options.AddPolicy("ParentOnly", policy =>
     {
         policy.RequireAuthenticatedUser();
-        policy.RequireClaim("role", "parent", "admin");
+        policy.RequireRole("parent", "admin");
     });
-    
+
     // Politique pour les étudiants
-    options.AddPolicy("StudentOnly", policy => 
+    options.AddPolicy("StudentOnly", policy =>
     {
         policy.RequireAuthenticatedUser();
-        policy.RequireClaim("role", "student", "teacher", "parent", "admin");
+        policy.RequireRole("student", "teacher", "parent", "admin");
     });
     
     // Politique pour les utilisateurs authentifiés
