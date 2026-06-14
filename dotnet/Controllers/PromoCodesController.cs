@@ -223,6 +223,33 @@ public class PromoCodesController : ControllerBase
     }
 
     /// <summary>
+    /// Update an existing promo code (admin only)
+    /// </summary>
+    [HttpPut("{id}")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> UpdatePromoCode(int id, [FromBody] UpdatePromoCodeRequest request)
+    {
+        try
+        {
+            var updated = await _promoCodeService.UpdatePromoCodeAsync(id, request);
+            if (updated == null)
+                return NotFound(new { error = "Promo code not found" });
+
+            return Ok(new
+            {
+                success = true,
+                data = updated,
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating promo code {PromoCodeId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
     /// Toggle promo code active status (admin only)
     /// </summary>
     [HttpPatch("{id}/status")]

@@ -94,6 +94,35 @@ public class PromoCodeDto
 }
 
 /// <summary>
+/// DTO for updating an existing promo code (admin only)
+/// </summary>
+public class UpdatePromoCodeRequest
+{
+    [MaxLength(500)]
+    public string? Description { get; set; }
+
+    [Required]
+    public string DiscountType { get; set; } = string.Empty;
+
+    [Required]
+    [Range(0.01, double.MaxValue)]
+    public decimal DiscountValue { get; set; }
+
+    [Range(0, double.MaxValue)]
+    public decimal? MinimumPurchase { get; set; }
+
+    [Range(0, double.MaxValue)]
+    public decimal? MaximumDiscount { get; set; }
+
+    [Range(1, int.MaxValue)]
+    public int? UsageLimit { get; set; }
+
+    public DateTime? ValidUntil { get; set; }
+
+    public List<int>? ApplicableSubjectIds { get; set; }
+}
+
+/// <summary>
 /// DTO for promo code validation result
 /// </summary>
 public class PromoCodeValidationResult

@@ -15,6 +15,7 @@ public interface IPromoCodeService
     Task<PromoCodeDto?> GetPromoCodeByCodeAsync(string code);
     Task<bool> DeactivatePromoCodeAsync(int id);
     Task<bool> ActivatePromoCodeAsync(int id);
+    Task<PromoCodeDto?> UpdatePromoCodeAsync(int id, UpdatePromoCodeRequest request);
 }
 
 public class PromoCodeService : IPromoCodeService
@@ -328,6 +329,39 @@ public class PromoCodeService : IPromoCodeService
         {
             _logger.LogError(ex, "Error activating promo code");
             return false;
+        }
+    }
+
+    public async Task<PromoCodeDto?> UpdatePromoCodeAsync(int id, UpdatePromoCodeRequest request)
+    {
+        try
+        {
+            var promoCode = await _context.PromoCodes.FindAsync(id);
+            if (promoCode == null) return null;
+
+            promoCode.Description = request.Description;
+            promoCode.DiscountType = request.DiscountType;
+            promoCode.DiscountValue = request.DiscountValue;
+            promoCode.MinimumPurchase = request.MinimumPurchase;
+            promoCode.MaximumDiscount = request.MaximumDiscount;
+            promoCode.UsageLimit = request.UsageLimit;
+            promoCode.ValidUntil = request.ValidUntil;
+            promoCode.ApplicableSubjectIds = request.ApplicableSubjectIds != null
+                ? JsonSerializer.Serialize(request.ApplicableSubjectIds)
+                : null;
+            promoCode.UpdatedAt = DateTime.UtcNow;
+
+            _context.PromoCodes.Update(promoCode);
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Promo code {PromoCodeId} updated", id);
+
+            return MapToDto(promoCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating promo code {PromoCodeId}", id);
+            throw;
         }
     }
 
