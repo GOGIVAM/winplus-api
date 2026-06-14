@@ -215,5 +215,44 @@ public class HealthController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Diagnostic CORS - vérifie que l'en-tête CORS est envoyé
+    /// GET /api/health/cors
+    /// </summary>
+    [HttpGet("cors")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult GetCorsHealth()
+    {
+        var origin = Request.Headers.Origin.ToString();
+        var hasAccessControlHeader = Response.Headers.ContainsKey("Access-Control-Allow-Origin");
+        
+        _logger.LogInformation(
+            "[HealthController] CORS Diagnostic\n" +
+            "Request Origin: {Origin}\n" +
+            "Response Has CORS Header: {HasCorsHeader}\n" +
+            "Timestamp: {Timestamp}",
+            origin ?? "(NO ORIGIN)",
+            hasAccessControlHeader,
+            DateTime.UtcNow
+        );
+
+        return Ok(new
+        {
+            status = "ok",
+            timestamp = DateTime.UtcNow,
+            cors = new
+            {
+                requestOrigin = origin ?? "(no origin header)",
+                responseHasAccessControlOrigin = hasAccessControlHeader,
+                expectedAllowedOrigins = new[] {
+                    "https://winplus.cm",
+                    "https://www.winplus.cm",
+                    "http://localhost:3000",
+                    "http://localhost:5173"
+                }
+            }
+        });
+    }
+
 
 }
