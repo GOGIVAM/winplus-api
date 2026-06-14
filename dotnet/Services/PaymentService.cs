@@ -7,7 +7,7 @@ namespace Backend.Services;
 public interface IPaymentService
 {
     // NotchPay operations
-    Task<InitiatePaymentResponse> InitiateNotchPayAsync(int userId, InitiatePaymentRequest request);
+    Task<InitiatePaymentResponse> InitiateNotchPayAsync(int? userId, InitiatePaymentRequest request);
     Task<bool> HandleNotchPayWebhookAsync(string eventId, string eventType, NotchPayWebhookTransaction transaction);
     Task<PaymentStatusResponse> GetPaymentStatusAsync(int paymentId, int requestingUserId, bool isAdmin);
     Task<PaymentHistoryResponse> GetUserPaymentHistoryAsync(int userId, int page, int limit);
@@ -55,31 +55,40 @@ public class PaymentService : IPaymentService
 
     // ─── NotchPay operations ──────────────────────────────────────────────────
 
-    public async Task<InitiatePaymentResponse> InitiateNotchPayAsync(int userId, InitiatePaymentRequest request)
+    public async Task<InitiatePaymentResponse> InitiateNotchPayAsync(int? userId, InitiatePaymentRequest request)
     {
         var order = await _orderService.GetOrderByIdAsync(request.OrderId)
             ?? throw new ArgumentException("Commande introuvable");
 
-        var user = await _userService.GetUserByIdAsync(userId)
-            ?? throw new ArgumentException("Utilisateur introuvable");
+        // Résoudre l'email : depuis le compte si connecté, depuis la requête sinon
+        string email;
+        if (userId.HasValue)
+        {
+            var user = await _userService.GetUserByIdAsync(userId.Value);
+            email = user?.Email ?? request.Email ?? $"user{userId}@winplus.cm";
+        }
+        else
+        {
+            email = request.Email ?? order.GuestEmail ?? "guest@winplus.cm";
+        }
 
         var payment = await _repository.CreateAsync(new Payment
         {
-            OrderId = request.OrderId,
-            UserId = userId,
-            Amount = request.Amount,
-            Currency = "XAF",
+            OrderId    = request.OrderId,
+            UserId     = userId,
+            GuestEmail = userId.HasValue ? null : email,
+            Amount     = request.Amount,
+            Currency   = "XAF",
             PaymentMethod = "notchpay",
-            PhoneNumber = request.Phone,
-            Description = request.Description ?? $"Paiement commande #{request.OrderId}",
-            Status = "pending",
+            PhoneNumber   = request.Phone,
+            Description   = request.Description ?? $"Paiement commande #{request.OrderId}",
+            Status      = "pending",
             InitiatedAt = DateTime.UtcNow,
-            ExpiresAt = DateTime.UtcNow.AddHours(1)
+            ExpiresAt   = DateTime.UtcNow.AddHours(1)
         });
 
         try
         {
-            var email = user.Email ?? $"user{userId}@winplus.cm";
             var result = await _notchPay.InitiatePaymentAsync(
                 request.Phone, request.Amount, request.OrderId,
                 payment.Description!, email);

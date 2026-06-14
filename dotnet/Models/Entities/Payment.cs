@@ -14,9 +14,11 @@ public class Payment
     [ForeignKey("Order")]
     public int OrderId { get; set; }
 
-    [Required]
     [ForeignKey("User")]
-    public int UserId { get; set; }
+    public int? UserId { get; set; }
+
+    [MaxLength(255)]
+    public string? GuestEmail { get; set; }
 
     [Required]
     [Column(TypeName = "decimal(10,2)")]

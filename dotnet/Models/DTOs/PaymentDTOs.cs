@@ -16,6 +16,9 @@ public class InitiatePaymentRequest
     [Range(100, double.MaxValue, ErrorMessage = "Le montant minimum est 100 XAF")]
     public decimal Amount { get; set; }
 
+    [MaxLength(255)]
+    public string? Email { get; set; }
+
     [MaxLength(500)]
     public string? Description { get; set; }
 }

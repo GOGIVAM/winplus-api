@@ -34,9 +34,9 @@ public class PaymentsController : ControllerBase
     private const int PaymentRateLimit = 5;
     private static readonly TimeSpan PaymentRateWindow = TimeSpan.FromMinutes(10);
 
-    private bool IsPaymentRateLimited(int userId)
+    private bool IsPaymentRateLimited(string key)
     {
-        var key = $"payment_rate:{userId}";
+        key = $"payment_rate:{key}";
         var now = DateTime.UtcNow;
         var cutoff = now - PaymentRateWindow;
 
@@ -57,20 +57,26 @@ public class PaymentsController : ControllerBase
         return false;
     }
 
-    /// <summary>POST /api/payments/initiate — Initier un paiement NotchPay (max 5 / 10 min / utilisateur)</summary>
+    /// <summary>POST /api/payments/initiate — Initier un paiement NotchPay (max 5 / 10 min)</summary>
     [HttpPost("initiate")]
-    [Authorize]
+    [AllowAnonymous]
     public async Task<IActionResult> Initiate([FromBody] InitiatePaymentRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
 
         try
         {
-            var userId = User.GetUserId();
+            var isAuth = User.Identity?.IsAuthenticated == true;
+            int? userId = isAuth ? User.GetUserId() : null;
 
-            if (IsPaymentRateLimited(userId))
+            // Rate limiting : par userId si connecté, par IP sinon
+            var rateLimitKey = userId.HasValue
+                ? userId.Value.ToString()
+                : (HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+
+            if (IsPaymentRateLimited(rateLimitKey))
             {
-                _logger.LogWarning("Rate limit dépassé pour les paiements — userId={UserId}", userId);
+                _logger.LogWarning("Rate limit dépassé pour les paiements — key={Key}", rateLimitKey);
                 return StatusCode(429, new
                 {
                     error = "too_many_requests",
