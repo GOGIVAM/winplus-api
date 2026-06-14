@@ -7,9 +7,15 @@ using Backend.Models.DTOs;
 
 namespace Backend.Controllers;
 
+public record CreateOrderRequest(
+    string PaymentMethod,
+    string? GuestEmail,
+    string? GuestName,
+    List<GuestOrderItem>? Items
+);
+
 [ApiController]
 [Route("api/orders")]
-[Authorize]
 public class OrdersController : ControllerBase
 {
     private readonly IOrderService _orderService;
@@ -22,13 +28,31 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<IActionResult> CreateOrder([FromBody] string paymentMethod)
+    public async Task<IActionResult> CreateOrder([FromBody] CreateOrderRequest request)
     {
         try
         {
-            var userId = User.GetUserId();
-            var order = await _orderService.CreateOrderAsync(userId, paymentMethod);
-            return Ok(order);
+            var isAuth = User.Identity?.IsAuthenticated == true;
+
+            if (isAuth)
+            {
+                var userId = User.GetUserId();
+                var order = await _orderService.CreateOrderAsync(userId, request.PaymentMethod);
+                return Ok(order);
+            }
+            else
+            {
+                if (request.Items == null || !request.Items.Any())
+                    return BadRequest("Les articles du panier sont requis pour une commande anonyme.");
+
+                var order = await _orderService.CreateGuestOrderAsync(
+                    request.GuestEmail,
+                    request.GuestName,
+                    request.PaymentMethod,
+                    request.Items
+                );
+                return Ok(order);
+            }
         }
         catch (Exception ex)
         {
@@ -38,6 +62,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize]
     [ProducesResponseType(typeof(PaginationResponse<Order>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetOrders([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
@@ -50,7 +75,7 @@ public class OrdersController : ControllerBase
             var orders = await _orderService.GetUserOrdersAsync(userId, page, pageSize);
             var allOrders = await _orderService.GetUserOrdersAsync(userId);
             var totalCount = allOrders.Count();
-            
+
             var response = new PaginationResponse<Order>(orders, totalCount, page, pageSize);
             return Ok(response);
         }
@@ -62,6 +87,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpGet("{id}")]
+    [Authorize]
     public async Task<IActionResult> GetOrderById(int id)
     {
         try

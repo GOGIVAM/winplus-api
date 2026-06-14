@@ -3,9 +3,12 @@ using Backend.Repositories;
 
 namespace Backend.Services;
 
+public record GuestOrderItem(int SubjectId, decimal Price);
+
 public interface IOrderService
 {
     Task<Order> CreateOrderAsync(int userId, string paymentMethod);
+    Task<Order> CreateGuestOrderAsync(string? guestEmail, string? guestName, string paymentMethod, List<GuestOrderItem> items);
     Task<IEnumerable<Order>> GetUserOrdersAsync(int userId);
     Task<IEnumerable<Order>> GetUserOrdersAsync(int userId, int page, int limit);
     Task<Order?> GetOrderByIdAsync(int orderId);
@@ -90,6 +93,54 @@ public class OrderService : IOrderService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating order for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<Order> CreateGuestOrderAsync(string? guestEmail, string? guestName, string paymentMethod, List<GuestOrderItem> items)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(paymentMethod))
+                throw new ArgumentException("Payment method is required");
+
+            if (items == null || !items.Any())
+                throw new InvalidOperationException("Cart is empty");
+
+            var totalAmount = items.Sum(i => i.Price);
+
+            var order = new Order
+            {
+                UserId     = null,
+                GuestEmail = guestEmail,
+                GuestName  = guestName,
+                OrderNumber  = $"ORD-{DateTime.UtcNow:yyyyMMddHHmmss}-{Random.Shared.Next(1000, 9999)}",
+                TotalAmount  = totalAmount,
+                Status       = "pending",
+                PaymentMethod = paymentMethod,
+                OrderDate    = DateTime.UtcNow,
+                Items        = new List<OrderItem>()
+            };
+
+            foreach (var item in items)
+            {
+                order.Items.Add(new OrderItem
+                {
+                    SubjectId        = item.SubjectId,
+                    PriceAtPurchase  = item.Price,
+                    Order            = order
+                });
+            }
+
+            var created = await _orderRepository.CreateAsync(order);
+
+            _logger.LogInformation("Guest order created {OrderNumber} for {Email}", created.OrderNumber, guestEmail ?? "anonymous");
+
+            return created;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating guest order for {Email}", guestEmail);
             throw;
         }
     }

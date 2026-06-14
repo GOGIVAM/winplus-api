@@ -7,8 +7,12 @@ public class Order
 {
     public int Id { get; set; }
     
-    public int UserId { get; set; }
-    
+    public int? UserId { get; set; }
+
+    public string? GuestEmail { get; set; }
+
+    public string? GuestName { get; set; }
+
     public required string OrderNumber { get; set; }
     
     public decimal TotalAmount { get; set; }
@@ -32,7 +36,7 @@ public class Order
     public bool IsDeleted { get; set; } = false;
     
     // Navigation properties
-    public required User User { get; set; }
+    public User? User { get; set; }
     
     public ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
     
