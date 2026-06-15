@@ -906,6 +906,383 @@ public class AdminController : ControllerBase
         return Ok(new { success = true, message = "Utilisateur supprimé" });
     }
 
+    // ─── WinAI Admin ────────────────────────────────────────────────────────────
+
+    /// <summary>GET /admin/winai/stats — Statistiques WinAI agrégées depuis les tables de chat</summary>
+    [HttpGet("winai/stats")]
+    public async Task<IActionResult> GetWinAIStats()
+    {
+        try
+        {
+            var totalConversations  = await _db.Conversations.CountAsync(c => !c.IsDeleted);
+            var activeConversations = await _db.Conversations.CountAsync(c => !c.IsDeleted && c.IsActive);
+            var totalMessages       = await _db.Messages.CountAsync(m => !m.IsDeleted);
+            var avgMsgPerConv       = totalConversations > 0 ? Math.Round((double)totalMessages / totalConversations, 1) : 0.0;
+            var last30 = DateTime.UtcNow.AddDays(-30);
+            var recentConversations = await _db.Conversations.CountAsync(c => !c.IsDeleted && c.CreatedAt >= last30);
+            var avgTokens    = await _db.Messages.Where(m => !m.IsDeleted && m.TokensUsed.HasValue).AverageAsync(m => (double?)m.TokensUsed) ?? 0;
+            var avgRespTime  = await _db.Messages.Where(m => !m.IsDeleted && m.GenerationTimeMs.HasValue).AverageAsync(m => (double?)m.GenerationTimeMs) ?? 0;
+            var positiveRatings = await _db.Messages.CountAsync(m => !m.IsDeleted && m.FeedbackRating == 1);
+            var ratedMessages   = await _db.Messages.CountAsync(m => !m.IsDeleted && m.FeedbackRating.HasValue);
+            var satisfaction    = ratedMessages > 0 ? Math.Round((double)positiveRatings / ratedMessages * 100, 1) : 0.0;
+
+            return Ok(new
+            {
+                success = true,
+                data = new
+                {
+                    totalConversations, activeConversations, totalMessages,
+                    avgMessagesPerConversation = avgMsgPerConv,
+                    recentConversations,
+                    avgTokensUsed    = (int)Math.Round(avgTokens),
+                    avgResponseTimeMs = (int)Math.Round(avgRespTime),
+                    satisfactionRate = satisfaction,
+                    status    = "operational",
+                    modelName = "WinAI"
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting WinAI stats");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    // ─── Chat Admin ──────────────────────────────────────────────────────────────
+
+    /// <summary>GET /admin/chat/sessions — Liste paginée des sessions de chat</summary>
+    [HttpGet("chat/sessions")]
+    public async Task<IActionResult> GetChatSessions([FromQuery] int limit = 100, [FromQuery] int page = 1)
+    {
+        try
+        {
+            if (limit < 1) limit = 100;
+            if (limit > 200) limit = 200;
+            if (page  < 1) page  = 1;
+
+            var total = await _db.Conversations.CountAsync(c => !c.IsDeleted);
+            var sessions = await _db.Conversations
+                .Where(c => !c.IsDeleted)
+                .OrderByDescending(c => c.LastMessageAt ?? c.CreatedAt)
+                .Skip((page - 1) * limit)
+                .Take(limit)
+                .Select(c => new
+                {
+                    id            = c.Id,
+                    userId        = c.UserId,
+                    userName      = (c.User.FirstName + " " + c.User.LastName).Trim() != "" ? (c.User.FirstName + " " + c.User.LastName).Trim() : c.User.Email,
+                    userEmail     = c.User.Email,
+                    title         = c.Title,
+                    messageCount  = c.MessageCount,
+                    isActive      = c.IsActive,
+                    lastMessageAt = c.LastMessageAt,
+                    createdAt     = c.CreatedAt,
+                })
+                .ToListAsync();
+
+            return Ok(new { success = true, data = sessions, total, page, limit, totalPages = (int)Math.Ceiling(total / (double)limit) });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting chat sessions");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>GET /admin/chat/stats — Statistiques globales des sessions de chat</summary>
+    [HttpGet("chat/stats")]
+    public async Task<IActionResult> GetChatStats()
+    {
+        try
+        {
+            var total    = await _db.Conversations.CountAsync(c => !c.IsDeleted);
+            var active   = await _db.Conversations.CountAsync(c => !c.IsDeleted && c.IsActive);
+            var closed   = await _db.Conversations.CountAsync(c => !c.IsDeleted && !c.IsActive);
+            var msgs     = await _db.Messages.CountAsync(m => !m.IsDeleted);
+            var last30   = DateTime.UtcNow.AddDays(-30);
+            var recentSessions = await _db.Conversations.CountAsync(c => !c.IsDeleted && c.CreatedAt >= last30);
+            var deletedMsgs    = await _db.Messages.CountAsync(m => m.IsDeleted);
+
+            return Ok(new
+            {
+                success = true,
+                data = new
+                {
+                    totalSessions = total, activeSessions = active, closedSessions = closed,
+                    totalMessages = msgs, recentSessions, deletedMessages = deletedMsgs,
+                    avgMessagesPerSession = total > 0 ? Math.Round((double)msgs / total, 1) : 0.0
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting chat stats");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>GET /admin/chat/sessions/{id}/messages — Messages d'une session spécifique</summary>
+    [HttpGet("chat/sessions/{id}/messages")]
+    public async Task<IActionResult> GetSessionMessages(int id)
+    {
+        try
+        {
+            var exists = await _db.Conversations.AnyAsync(c => c.Id == id && !c.IsDeleted);
+            if (!exists) return NotFound(new { error = "Session not found" });
+
+            var messages = await _db.Messages
+                .Where(m => m.ConversationId == id && !m.IsDeleted)
+                .OrderBy(m => m.CreatedAt)
+                .Select(m => new
+                {
+                    id               = m.Id,
+                    role             = m.Role,
+                    content          = m.Content,
+                    tokensUsed       = m.TokensUsed,
+                    feedbackRating   = m.FeedbackRating,
+                    feedbackComment  = m.FeedbackComment,
+                    generationTimeMs = m.GenerationTimeMs,
+                    createdAt        = m.CreatedAt,
+                })
+                .ToListAsync();
+
+            return Ok(new { success = true, data = messages, sessionId = id, total = messages.Count });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting session messages for {Id}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>PATCH /admin/chat/sessions/{id}/close — Ferme une session de chat</summary>
+    [HttpPatch("chat/sessions/{id}/close")]
+    public async Task<IActionResult> CloseSession(int id)
+    {
+        try
+        {
+            var conv = await _db.Conversations.FirstOrDefaultAsync(c => c.Id == id && !c.IsDeleted);
+            if (conv == null) return NotFound(new { error = "Session not found" });
+            conv.IsActive  = false;
+            conv.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return Ok(new { success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error closing session {Id}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>DELETE /admin/chat/messages/{id} — Supprime (soft-delete) un message</summary>
+    [HttpDelete("chat/messages/{id}")]
+    public async Task<IActionResult> DeleteChatMessage(int id)
+    {
+        try
+        {
+            var msg = await _db.Messages.FirstOrDefaultAsync(m => m.Id == id && !m.IsDeleted);
+            if (msg == null) return NotFound(new { error = "Message not found" });
+            msg.IsDeleted = true;
+            await _db.SaveChangesAsync();
+            return Ok(new { success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting message {Id}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    // ─── Subscriptions Admin ─────────────────────────────────────────────────────
+
+    /// <summary>GET /admin/subscriptions/plans — Plans de tarification avec comptage d'abonnés actifs</summary>
+    [HttpGet("subscriptions/plans")]
+    public async Task<IActionResult> GetSubscriptionPlans()
+    {
+        try
+        {
+            var plans = await _db.PricingPlans.Where(p => !p.IsDeleted).ToListAsync();
+
+            var activeCounts = await _db.Subscriptions
+                .Where(s => s.Status == "active" && !s.IsDeleted)
+                .GroupBy(s => s.PricingPlanId)
+                .Select(g => new { planId = g.Key, count = g.Count() })
+                .ToListAsync();
+
+            var countDict = activeCounts.ToDictionary(x => x.planId, x => x.count);
+
+            var result = plans.Select(p => new
+            {
+                id            = p.Id,
+                name          = p.Name,
+                category      = p.Category,
+                price         = p.Price,
+                currency      = p.Currency,
+                billingPeriod = p.BillingPeriod ?? p.Period,
+                activeCount   = countDict.GetValueOrDefault(p.Id, 0),
+                features      = p.Features,
+                isPopular     = p.IsPopular,
+                description   = p.Description,
+            });
+
+            return Ok(new { success = true, data = result });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting subscription plans");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>GET /admin/subscriptions/stats — Statistiques globales d'abonnements</summary>
+    [HttpGet("subscriptions/stats")]
+    public async Task<IActionResult> GetSubscriptionStats()
+    {
+        try
+        {
+            var now            = DateTime.UtcNow;
+            var thisMonthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
+            var total        = await _db.Subscriptions.CountAsync(s => !s.IsDeleted);
+            var active       = await _db.Subscriptions.CountAsync(s => s.Status == "active"    && !s.IsDeleted);
+            var cancelled    = await _db.Subscriptions.CountAsync(s => s.Status == "cancelled" && !s.IsDeleted);
+            var expired      = await _db.Subscriptions.CountAsync(s => s.Status == "expired"   && !s.IsDeleted);
+            var newThisMonth = await _db.Subscriptions.CountAsync(s => !s.IsDeleted && s.CreatedAt >= thisMonthStart);
+
+            var activeWithPeriod = await _db.Subscriptions
+                .Where(s => s.Status == "active" && !s.IsDeleted)
+                .Join(_db.PricingPlans, s => s.PricingPlanId, p => p.Id,
+                    (s, p) => new { period = p.BillingPeriod ?? p.Period ?? "" })
+                .ToListAsync();
+
+            var monthly = activeWithPeriod.Count(x => x.period.Contains("mois") || x.period.Contains("month"));
+            var yearly  = activeWithPeriod.Count(x => x.period.Contains("an")   || x.period.Contains("year"));
+
+            var denominator = active + cancelled + expired;
+            var churnRate   = denominator > 0
+                ? Math.Round((double)(cancelled + expired) / denominator * 100, 2)
+                : 0.0;
+
+            return Ok(new
+            {
+                success = true,
+                data    = new { total, active, cancelled, expired, newThisMonth, monthly, yearly, churnRate }
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting subscription stats");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    // ─── Certificates Admin ──────────────────────────────────────────────────────
+
+    /// <summary>GET /admin/certificates — Liste des certificats avec infos utilisateur et cours</summary>
+    [HttpGet("certificates")]
+    public async Task<IActionResult> GetCertificates([FromQuery] int page = 1, [FromQuery] int limit = 50)
+    {
+        try
+        {
+            if (page  < 1) page  = 1;
+            if (limit < 1) limit = 50;
+            if (limit > 100) limit = 100;
+
+            var total = await _db.Certificates.CountAsync();
+            var certs = await _db.Certificates
+                .OrderByDescending(c => c.IssuedAt)
+                .Skip((page - 1) * limit)
+                .Take(limit)
+                .Select(c => new
+                {
+                    id                = c.Id,
+                    certificateNumber = c.CertificateNumber,
+                    verificationCode  = c.VerificationCode,
+                    userName          = (c.User.FirstName + " " + c.User.LastName).Trim() != "" ? (c.User.FirstName + " " + c.User.LastName).Trim() : c.User.Email,
+                    userEmail         = c.User.Email,
+                    subjectTitle      = c.Subject.Title,
+                    grade             = c.Grade,
+                    issuedAt          = c.IssuedAt,
+                    completionDate    = c.CompletionDate,
+                    fileUrl           = c.FileUrl,
+                })
+                .ToListAsync();
+
+            return Ok(new { success = true, data = certs, total, page, limit, totalPages = (int)Math.Ceiling(total / (double)limit) });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting certificates");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    // ─── Application Logs Admin ──────────────────────────────────────────────────
+
+    /// <summary>GET /admin/logs — Logs d'erreurs applicatifs paginés</summary>
+    [HttpGet("logs")]
+    public async Task<IActionResult> GetLogs([FromQuery] int page = 1, [FromQuery] int limit = 50, [FromQuery] string? level = null)
+    {
+        try
+        {
+            if (page  < 1) page  = 1;
+            if (limit < 1) limit = 50;
+            if (limit > 200) limit = 200;
+
+            var query = _db.ApplicationLogs.AsQueryable();
+            if (!string.IsNullOrWhiteSpace(level))
+                query = query.Where(l => l.Level == level);
+
+            var total = await query.CountAsync();
+            var logs  = await query
+                .OrderByDescending(l => l.CreatedAt)
+                .Skip((page - 1) * limit)
+                .Take(limit)
+                .Select(l => new
+                {
+                    id          = l.Id,
+                    level       = l.Level,
+                    category    = l.Category,
+                    message     = l.Message,
+                    requestPath = l.RequestPath,
+                    userId      = l.UserId,
+                    isResolved  = l.IsResolved,
+                    resolvedAt  = l.ResolvedAt,
+                    createdAt   = l.CreatedAt,
+                })
+                .ToListAsync();
+
+            return Ok(new { success = true, data = logs, total, page, limit, totalPages = (int)Math.Ceiling(total / (double)limit) });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting logs");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>PATCH /admin/logs/{id}/resolve — Marque un log comme résolu</summary>
+    [HttpPatch("logs/{id}/resolve")]
+    public async Task<IActionResult> ResolveLog(int id)
+    {
+        try
+        {
+            var log = await _db.ApplicationLogs.FindAsync(id);
+            if (log == null) return NotFound(new { error = "Log not found" });
+            log.IsResolved = true;
+            log.ResolvedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return Ok(new { success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error resolving log {Id}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
 }
 
 public record AdminActivityEntry(string Id, string Type, DateTime Timestamp, string Title, string Description, string Status, string UserName, string UserEmail, string Target);

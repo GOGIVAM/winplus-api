@@ -92,7 +92,7 @@ async def health():
         return {
             "status": "healthy",
             "service": "chatbot-fastapi",
-            "deepseek": deepseek_health
+            "ai_service": deepseek_health
         }
     except Exception as e:
         logger.error(f"Chatbot health check failed: {e}")
@@ -168,11 +168,10 @@ async def chat(
             "content": result.get('content', ''),
             "tokens_used": result.get('tokens_used', 0),
             "generation_time_ms": result.get('generation_time_ms', 0),
-            "model": result.get('model', 'deepseek-chat'),
             "success": result.get('success', False),
             "error": result.get('error')
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -309,11 +308,10 @@ async def complete(
             "content": result.get('content', ''),
             "tokens_used": result.get('tokens_used', 0),
             "generation_time_ms": result.get('generation_time_ms', 0),
-            "model": result.get('model', 'deepseek-chat'),
             "success": result.get('success', False),
             "error": result.get('error')
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:

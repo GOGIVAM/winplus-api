@@ -164,7 +164,6 @@ class RecommendationsListResponse(BaseModel):
     count: int
     recommendations: List[RecommendationResponse]
     data_source: str = "content_based"
-    models_used: List[str] = []
 
 
 # ==================== PROGRESS ANALYSIS SCHEMAS ====================
@@ -222,7 +221,6 @@ class ChatResponse(BaseModel):
     content: str
     tokens_used: int
     generation_time_ms: int
-    model: str
     success: bool
     error: Optional[str] = None
 
@@ -238,7 +236,7 @@ class HealthResponse(BaseModel):
 class ChatbotHealthResponse(BaseModel):
     status: str
     service: str
-    deepseek: Dict[str, Any]
+    ai_service: Dict[str, Any]
 
 
 # ==================== API RESPONSE SCHEMAS ====================

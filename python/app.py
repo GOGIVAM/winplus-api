@@ -285,7 +285,6 @@ async def get_recommendations(
                 'count': len(recommendations),
                 'recommendations': recommendations,
                 'data_source': 'content_based',
-                'models_used': ['recommender.py (TF-IDF)']
             }
         finally:
             session.close()
@@ -360,7 +359,6 @@ async def recommend_subjects(
             'recommendations': recommendations,
             'count': len(recommendations),
             'data_source': 'real_user_history',
-            'models_used': ['recommender.py (TF-IDF)', 'nlp_analyzer.py (CamemBERT)']
         }
     except Exception as e:
         logger.error(f"[API] âŒ POST /api/recommend - Error: {str(e)}")

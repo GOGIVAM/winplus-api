@@ -74,6 +74,9 @@ public class ApplicationDbContext : DbContext
     // Payment idempotency
     public DbSet<WebhookIdempotencyKey> WebhookIdempotencyKeys => Set<WebhookIdempotencyKey>();
 
+    // Application logs
+    public DbSet<ApplicationLog> ApplicationLogs => Set<ApplicationLog>();
+
     // Category and Learning entities
     public DbSet<Level> Levels => Set<Level>();
     public DbSet<Goal> Goals => Set<Goal>();
@@ -818,6 +821,18 @@ modelBuilder.Entity<Exam>(entity =>
             entity.Property(e => e.Provider).IsRequired().HasMaxLength(50);
             entity.Property(e => e.EventType).HasMaxLength(50);
             entity.HasIndex(e => new { e.EventId, e.Provider }).IsUnique();
+        });
+
+        // Configure ApplicationLog entity
+        modelBuilder.Entity<ApplicationLog>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Level).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.Category).HasMaxLength(200);
+            entity.Property(e => e.Message).IsRequired();
+            entity.HasIndex(e => e.CreatedAt);
+            entity.HasIndex(e => e.IsResolved);
+            entity.HasIndex(e => e.Level);
         });
     }
 }
