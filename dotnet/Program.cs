@@ -331,11 +331,16 @@ builder.Services.AddScoped<IRepository<Institution>, GenericRepository<Instituti
 builder.Services.AddScoped<IRepository<PricingPlan>, GenericRepository<PricingPlan>>();
 
 // Configure HttpClient for FastAPI AI Service
+// Note: FastApiClient service reads AIService:TimeoutSeconds from config and overrides this value.
+// The circuit breaker is implemented in FastApiClient.cs and activated via AIService:EnableCircuitBreaker.
 builder.Services.AddHttpClient("FastApiClient", client =>
 {
-    var fastapiBaseUrl = builder.Configuration["FastApi:BaseUrl"] ?? "http://localhost:8000";
+    var fastapiBaseUrl = builder.Configuration["AIService:BaseUrl"]
+        ?? builder.Configuration["FastApi:BaseUrl"]
+        ?? "http://172.31.1.71:5000";
     client.BaseAddress = new Uri(fastapiBaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(120);
+    client.Timeout = TimeSpan.FromSeconds(
+        builder.Configuration.GetValue<int>("AIService:TimeoutSeconds", 5) + 2); // grace margin
     client.DefaultRequestHeaders.Add("Accept", "application/json");
 });
 

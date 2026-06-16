@@ -1,5 +1,8 @@
 using System.Net;
 using System.Text.Json;
+using Backend.Data;
+using Backend.Models.Entities;
+using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Middlewares;
 
@@ -10,11 +13,13 @@ public class ErrorHandlingMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly ILogger<ErrorHandlingMiddleware> _logger;
+    private readonly IServiceProvider _services;
 
-    public ErrorHandlingMiddleware(RequestDelegate next, ILogger<ErrorHandlingMiddleware> logger)
+    public ErrorHandlingMiddleware(RequestDelegate next, ILogger<ErrorHandlingMiddleware> logger, IServiceProvider services)
     {
-        _next = next;
-        _logger = logger;
+        _next     = next;
+        _logger   = logger;
+        _services = services;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -26,16 +31,53 @@ public class ErrorHandlingMiddleware
         catch (Exception exception)
         {
             _logger.LogError(exception, "Exception non gérée");
-            
+
+            // Persist to ApplicationLogs (best-effort, deduplication 24h)
+            _ = PersistLogAsync(exception, context.Request.Path);
+
             // Si la réponse a déjà commencé, on ne peut rien faire
             if (context.Response.HasStarted)
             {
                 _logger.LogWarning("Exception survenue après le début de la réponse - impossible d'envoyer une réponse d'erreur");
-                // Ne pas re-throw - cela causerait ERR_INCOMPLETE_CHUNKED_ENCODING
                 return;
             }
 
             await HandleExceptionAsync(context, exception);
+        }
+    }
+
+    private async Task PersistLogAsync(Exception exception, string requestPath)
+    {
+        try
+        {
+            await using var scope = _services.CreateAsyncScope();
+            var db      = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var message = exception.Message.Length > 4000 ? exception.Message[..4000] : exception.Message;
+            var category = exception.GetType().Name;
+            var since   = DateTime.UtcNow.AddHours(-24);
+
+            // Dedup: if same message+category in last 24h, skip insert
+            var exists = await db.ApplicationLogs
+                .AnyAsync(l => l.Message == message && l.Category == category && l.CreatedAt >= since);
+
+            if (!exists)
+            {
+                db.ApplicationLogs.Add(new ApplicationLog
+                {
+                    Level       = "Error",
+                    Category    = category,
+                    Message     = message,
+                    Exception   = exception.ToString().Length > 8000 ? exception.ToString()[..8000] : exception.ToString(),
+                    StackTrace  = exception.StackTrace?.Length > 4000 ? exception.StackTrace[..4000] : exception.StackTrace,
+                    RequestPath = requestPath.Length > 500 ? requestPath[..500] : requestPath,
+                    CreatedAt   = DateTime.UtcNow,
+                });
+                await db.SaveChangesAsync();
+            }
+        }
+        catch (Exception logEx)
+        {
+            _logger.LogWarning("Could not persist to ApplicationLogs: {Msg}", logEx.Message);
         }
     }
 

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
+using Backend.Extensions;
 using Backend.Models.DTOs;
 using Backend.Services;
 
@@ -376,22 +377,49 @@ public class AdminController : ControllerBase
             if (limit < 1) limit = 50;
             if (limit > 200) limit = 200;
 
-            var orders = await _db.Orders
-                .Where(o => !o.IsDeleted)
-                .OrderByDescending(o => o.CreatedAt)
-                .Take(limit / 2)
-                .Select(o => new AdminActivityEntry(
-                    $"order-{o.Id}",
-                    "order",
-                    o.CreatedAt,
-                    $"Commande #{o.OrderNumber}",
-                    o.GuestEmail ?? "—",
-                    o.Status == "Completed" ? "success" : o.Status == "Failed" ? "failure" : "warning",
-                    o.GuestName ?? "Anonyme",
-                    o.GuestEmail ?? "—",
-                    $"Commande #{o.OrderNumber} · {o.TotalAmount:N0} XAF"
-                ))
-                .ToListAsync();
+            // Hypothèse B : GuestEmail/GuestName absentes si migration 20260614 non appliquée.
+            // Fallback sans ces colonnes si la requête échoue.
+            List<AdminActivityEntry> orders;
+            try
+            {
+                orders = await _db.Orders
+                    .Where(o => !o.IsDeleted)
+                    .OrderByDescending(o => o.CreatedAt)
+                    .Take(limit / 2)
+                    .Select(o => new AdminActivityEntry(
+                        $"order-{o.Id}",
+                        "order",
+                        o.CreatedAt,
+                        $"Commande #{o.OrderNumber}",
+                        o.GuestEmail ?? "—",
+                        o.Status == "Completed" ? "success" : o.Status == "Failed" ? "failure" : "warning",
+                        o.GuestName ?? "Anonyme",
+                        o.GuestEmail ?? "—",
+                        $"Commande #{o.OrderNumber} · {o.TotalAmount:N0} XAF"
+                    ))
+                    .ToListAsync();
+            }
+            catch (Exception exOrders)
+            {
+                // Colonnes GuestEmail/GuestName absentes — appliquer: dotnet ef database update 20260614_AddGuestOrderSupport
+                _logger.LogWarning("activities/recent: Orders query failed (migration 20260614 likely missing). Falling back to users only. Exception: {Msg}", exOrders.Message);
+                orders = await _db.Orders
+                    .Where(o => !o.IsDeleted)
+                    .OrderByDescending(o => o.CreatedAt)
+                    .Take(limit / 2)
+                    .Select(o => new AdminActivityEntry(
+                        $"order-{o.Id}",
+                        "order",
+                        o.CreatedAt,
+                        $"Commande #{o.OrderNumber}",
+                        "—",
+                        o.Status == "Completed" ? "success" : o.Status == "Failed" ? "failure" : "warning",
+                        "Anonyme",
+                        "—",
+                        $"Commande #{o.OrderNumber} · {o.TotalAmount:N0} XAF"
+                    ))
+                    .ToListAsync();
+            }
 
             var users = await _db.Users
                 .Where(u => !u.IsDeleted)
@@ -631,13 +659,25 @@ public class AdminController : ControllerBase
             var pendingOrders     = await _db.Orders.CountAsync(o => !o.IsDeleted && o.Status == "Pending");
             var completedOrders   = await _db.Orders.CountAsync(o => !o.IsDeleted && o.Status == "Completed");
 
-            var revenue           = await _db.Payments.Where(p => p.Status == "completed").SumAsync(p => (decimal?)p.Amount) ?? 0m;
-            var thisMonthRevenue  = await _db.Payments.Where(p => p.Status == "completed" && p.CreatedAt >= thisMonthStart).SumAsync(p => (decimal?)p.Amount) ?? 0m;
-            var lastMonthRevenue  = await _db.Payments.Where(p => p.Status == "completed" && p.CreatedAt >= lastMonthStart && p.CreatedAt < thisMonthStart).SumAsync(p => (decimal?)p.Amount) ?? 0m;
-            var revenueGrowth     = lastMonthRevenue > 0 ? Math.Round((double)((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue * 100), 1) : 0.0;
+            decimal revenue = 0m, thisMonthRevenue = 0m, lastMonthRevenue = 0m;
+            double revenueGrowth = 0.0;
+            try
+            {
+                revenue          = await _db.Payments.Where(p => p.Status == "completed").SumAsync(p => (decimal?)p.Amount) ?? 0m;
+                thisMonthRevenue = await _db.Payments.Where(p => p.Status == "completed" && p.CreatedAt >= thisMonthStart).SumAsync(p => (decimal?)p.Amount) ?? 0m;
+                lastMonthRevenue = await _db.Payments.Where(p => p.Status == "completed" && p.CreatedAt >= lastMonthStart && p.CreatedAt < thisMonthStart).SumAsync(p => (decimal?)p.Amount) ?? 0m;
+                revenueGrowth    = lastMonthRevenue > 0 ? Math.Round((double)((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue * 100), 1) : 0.0;
+            }
+            catch (Exception exPay) { _logger.LogWarning("Analytics: Payments query failed — {Msg}", exPay.Message); }
 
-            var subscribedUsers   = await _db.Subscriptions.Where(s => s.Status == "active" && !s.IsDeleted).Select(s => s.UserId).Distinct().CountAsync();
-            var conversionRate    = totalUsers > 0 ? Math.Round((double)subscribedUsers / totalUsers * 100, 2) : 0.0;
+            int subscribedUsers = 0;
+            double conversionRate = 0.0;
+            try
+            {
+                subscribedUsers = await _db.Subscriptions.Where(s => s.Status == "active" && !s.IsDeleted).Select(s => s.UserId).Distinct().CountAsync();
+                conversionRate  = totalUsers > 0 ? Math.Round((double)subscribedUsers / totalUsers * 100, 2) : 0.0;
+            }
+            catch (Exception exSub) { _logger.LogWarning("Analytics: Subscriptions query failed — {Msg}", exSub.Message); }
 
             return Ok(new
             {
@@ -1263,6 +1303,56 @@ public class AdminController : ControllerBase
         }
     }
 
+    /// <summary>POST /admin/chat/sessions/{id}/messages — Envoyer un message admin dans une session ouverte</summary>
+    [HttpPost("chat/sessions/{id}/messages")]
+    public async Task<IActionResult> SendSessionMessage(int id, [FromBody] AdminChatMessageRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request?.Content) || request.Content.Length > 2000)
+            return BadRequest(new { error = "Le contenu doit comporter entre 1 et 2000 caractères." });
+
+        try
+        {
+            var conv = await _db.Conversations.FirstOrDefaultAsync(c => c.Id == id && !c.IsDeleted);
+            if (conv == null) return NotFound(new { error = "Session introuvable." });
+            if (!conv.IsActive)
+                return Conflict(new { error = "Cette session est clôturée et ne peut plus recevoir de messages." });
+
+            var adminId    = User.GetUserId();
+            var admin      = await _db.Users.FindAsync(adminId);
+            var senderName = admin != null
+                ? ((admin.FirstName + " " + admin.LastName).Trim() is { Length: > 0 } n ? n : admin.Email)
+                : "Admin";
+
+            var msg = new Backend.Models.Entities.Message
+            {
+                ConversationId = id,
+                Role           = "admin",
+                Content        = request.Content.Trim(),
+                CreatedAt      = DateTime.UtcNow,
+            };
+            _db.Messages.Add(msg);
+            conv.MessageCount  = conv.MessageCount + 1;
+            conv.LastMessageAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+
+            _logger.LogInformation("Admin {AdminId} sent message to session {SessionId}", adminId, id);
+            return Ok(new
+            {
+                id         = msg.Id,
+                sessionId  = id,
+                content    = msg.Content,
+                role       = msg.Role,
+                senderName,
+                createdAt  = msg.CreatedAt,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error sending admin message to session {Id}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
     /// <summary>PATCH /admin/logs/{id}/resolve — Marque un log comme résolu</summary>
     [HttpPatch("logs/{id}/resolve")]
     public async Task<IActionResult> ResolveLog(int id)
@@ -1288,3 +1378,4 @@ public class AdminController : ControllerBase
 public record AdminActivityEntry(string Id, string Type, DateTime Timestamp, string Title, string Description, string Status, string UserName, string UserEmail, string Target);
 public record RejectSubjectRequest(string? Reason);
 public record AdminEmailRequest(string Target, string Subject, string Body, string? CustomEmail);
+public record AdminChatMessageRequest(string? Content);

@@ -47,7 +47,7 @@
     <PackageReference Include="AWSSDK.S3" Version="3.7.305" />
     
     <!-- HTTP Client -->
-    <PackageReference Include="Microsoft.Extensions.Http" Version="7.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
     
     <!-- Resilience Patterns (Polly) -->
     <PackageReference Include="Polly" Version="8.2.0" />
