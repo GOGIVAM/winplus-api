@@ -31,6 +31,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("signup")]
+    [HttpPost("register")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(SignUpResponse), 200)]
     [ProducesResponseType(400)]
