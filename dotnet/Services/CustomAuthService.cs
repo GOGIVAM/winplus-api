@@ -57,9 +57,30 @@ public class CustomAuthService : ICustomAuthService
             configuration["Auth:PasswordResetExpirationHours"], out var pwHours) ? pwHours : 1;
     }
 
-    /// <summary>
-    /// Sign up new user with email and password
-    /// </summary>
+        private static bool IsBcryptHash(string? hash)
+        {
+            return !string.IsNullOrWhiteSpace(hash) &&
+                (hash.StartsWith("$2a$") || hash.StartsWith("$2b$") || hash.StartsWith("$2y$") || hash.StartsWith("$2x$"));
+        }
+
+        private bool TryLegacyPasswordMigration(User user, string password)
+        {
+            if (string.IsNullOrEmpty(user.PasswordHash))
+            {
+                return false;
+            }
+
+            if (!IsBcryptHash(user.PasswordHash) && password == user.PasswordHash)
+            {
+                _logger.LogWarning("Legacy plaintext password detected for user {Email}. Migrating to BCrypt.", user.Email);
+                user.PasswordHash = BC.HashPassword(password);
+                _dbContext.Update(user);
+                return true;
+            }
+
+            return false;
+        }
+
     public async Task<AuthResult> SignUpAsync(
         string email,
         string password,
@@ -69,6 +90,7 @@ public class CustomAuthService : ICustomAuthService
     {
         try
         {
+            email = email?.Trim().ToLowerInvariant() ?? string.Empty;
             _logger.LogInformation("SignUp request for email: {Email}", email);
 
             // Validation
@@ -186,6 +208,7 @@ public class CustomAuthService : ICustomAuthService
     {
         try
         {
+            email = email?.Trim().ToLowerInvariant() ?? string.Empty;
             _logger.LogInformation("SignIn request for email: {Email}", email);
 
             // Validation
@@ -226,7 +249,10 @@ public class CustomAuthService : ICustomAuthService
             }
 
             // Verify password
-            if (user.PasswordHash == null || !BC.Verify(password, user.PasswordHash))
+            if (user.PasswordHash == null ||
+                !(IsBcryptHash(user.PasswordHash)
+                    ? BC.Verify(password, user.PasswordHash)
+                    : TryLegacyPasswordMigration(user, password)))
             {
                 _logger.LogWarning("Invalid password for user: {Email}", email);
                 return new AuthResult
