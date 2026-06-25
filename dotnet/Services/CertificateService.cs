@@ -1,3 +1,5 @@
+using Amazon.S3;
+using Amazon.S3.Model;
 using Backend.Data;
 using Backend.Models.DTOs;
 using Backend.Models.Entities;
@@ -20,11 +22,19 @@ public class CertificateService : ICertificateService
 {
     private readonly ApplicationDbContext _context;
     private readonly ILogger<CertificateService> _logger;
+    private readonly IPdfService _pdfService;
+    private readonly IConfiguration _configuration;
 
-    public CertificateService(ApplicationDbContext context, ILogger<CertificateService> logger)
+    public CertificateService(
+        ApplicationDbContext context,
+        ILogger<CertificateService> logger,
+        IPdfService pdfService,
+        IConfiguration configuration)
     {
         _context = context;
         _logger = logger;
+        _pdfService = pdfService;
+        _configuration = configuration;
     }
 
     public async Task<CertificateDto> GenerateCertificateAsync(int userId, int enrollmentId)
@@ -70,16 +80,14 @@ public class CertificateService : ICertificateService
                 CertificateNumber = certificateNumber,
                 IssuedAt = DateTime.UtcNow,
                 CompletionDate = enrollment.CompletedAt ?? DateTime.UtcNow,
-                Grade = null, // TODO: Calculate from quiz scores or other metrics
+                Grade = await ComputeGradeAsync(userId, enrollment.SubjectId),
                 VerificationCode = verificationCode
             };
 
             _context.Certificates.Add(certificate);
             await _context.SaveChangesAsync();
 
-            // TODO: Generate PDF and upload to storage
-            // For now, just set a placeholder URL
-            certificate.FileUrl = $"/certificates/{certificateNumber}.pdf";
+            certificate.FileUrl = await GenerateAndUploadPdfAsync(certificate, enrollment.User!, enrollment.Subject!, certificateNumber);
             await _context.SaveChangesAsync();
 
             _logger.LogInformation("Certificate {CertificateNumber} generated for user {UserId} - enrollment {EnrollmentId}",
@@ -266,6 +274,48 @@ public class CertificateService : ICertificateService
         {
             _logger.LogError(ex, "Error in admin certificate issuance");
             throw;
+        }
+    }
+
+    private async Task<decimal?> ComputeGradeAsync(int userId, int subjectId)
+    {
+        var avg = await _context.LearningHistories
+            .Where(h => h.UserId == userId && h.SubjectId == subjectId
+                     && (h.QuizScore != null || h.Score != null))
+            .AverageAsync(h => (double?)(h.QuizScore ?? h.Score));
+        return avg.HasValue ? (decimal?)Math.Round(avg.Value, 2) : null;
+    }
+
+    private async Task<string> GenerateAndUploadPdfAsync(
+        Certificate cert, User user, Subject subject, string certNumber)
+    {
+        try
+        {
+            var pdfBytes = _pdfService.GenerateCertificate(cert, user, subject);
+            const string BucketName = "winplus-bucket";
+            var region = _configuration["AWS:Region"] ?? "us-east-1";
+            var key = $"certificates/{certNumber}.pdf";
+
+            var regionEndpoint = Amazon.RegionEndpoint.GetBySystemName(region);
+            using var s3 = new AmazonS3Client(regionEndpoint);
+            using var stream = new MemoryStream(pdfBytes);
+            await s3.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName  = BucketName,
+                Key         = key,
+                InputStream = stream,
+                ContentType = "application/pdf",
+                CannedACL   = S3CannedACL.PublicRead,
+            });
+
+            var url = $"https://{BucketName}.s3.{region}.amazonaws.com/{key}";
+            _logger.LogInformation("Certificate PDF uploaded: {Url}", url);
+            return url;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to upload certificate PDF for {CertNumber}", certNumber);
+            return $"/certificates/{certNumber}.pdf"; // fallback local path
         }
     }
 

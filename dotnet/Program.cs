@@ -1,3 +1,4 @@
+using QuestPDF.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Cors;
@@ -15,6 +16,8 @@ using Backend.Utilities;
 
 using Backend.Middlewares;
 using Backend.Models.Entities;
+
+QuestPDF.Settings.License = LicenseType.Community;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -292,6 +295,7 @@ builder.Services.AddScoped<IReviewService, ReviewService>();
 builder.Services.AddScoped<IPromoCodeService, PromoCodeService>();
 builder.Services.AddScoped<IFavoriteCollectionService, FavoriteCollectionService>();
 builder.Services.AddScoped<ICertificateService, CertificateService>();
+builder.Services.AddScoped<IPdfService, PdfService>();
 
 // User Settings Services (Notifications, Privacy, Sessions, 2FA)
 builder.Services.AddScoped<ISettingsService, SettingsService>();

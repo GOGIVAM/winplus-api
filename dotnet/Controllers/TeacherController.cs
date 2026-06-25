@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
+using Backend.Data;
 using Backend.Services;
 using Backend.Extensions;
 
@@ -16,11 +18,13 @@ public class TeacherController : ControllerBase
 {
     private readonly ITeacherService _teacherService;
     private readonly ILogger<TeacherController> _logger;
+    private readonly ApplicationDbContext _db;
 
-    public TeacherController(ITeacherService teacherService, ILogger<TeacherController> logger)
+    public TeacherController(ITeacherService teacherService, ILogger<TeacherController> logger, ApplicationDbContext db)
     {
         _teacherService = teacherService;
         _logger = logger;
+        _db = db;
     }
 
     /// <summary>
@@ -219,6 +223,60 @@ public class TeacherController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting teacher revenues");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Récupère les classes du professeur
+    /// </summary>
+    [HttpGet("classes")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GetClasses()
+    {
+        try
+        {
+            var teacherId = User.GetUserId();
+            var classes = await _db.TeacherClasses
+                .Where(c => c.TeacherId == teacherId && c.IsActive)
+                .OrderByDescending(c => c.CreatedAt)
+                .Select(c => new
+                {
+                    c.Id,
+                    c.Name,
+                    c.Level,
+                    c.AcademicYear,
+                    c.Description,
+                    c.StudentCount,
+                    c.CreatedAt
+                })
+                .ToListAsync();
+            return Ok(new { data = classes, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting teacher classes");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Récupère les publications du professeur
+    /// </summary>
+    [HttpGet("publications")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GetPublications([FromQuery] int teacherId, [FromQuery] int limit = 50)
+    {
+        try
+        {
+            var contents = await _teacherService.GetTeacherContentsAsync(teacherId, limit);
+            return Ok(new { data = contents, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting teacher publications");
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }

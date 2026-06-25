@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
+using Backend.Data;
 using Backend.Services;
 using Backend.Extensions;
 
@@ -16,11 +18,13 @@ public class ParentController : ControllerBase
 {
     private readonly IParentService _parentService;
     private readonly ILogger<ParentController> _logger;
+    private readonly ApplicationDbContext _db;
 
-    public ParentController(IParentService parentService, ILogger<ParentController> logger)
+    public ParentController(IParentService parentService, ILogger<ParentController> logger, ApplicationDbContext db)
     {
         _parentService = parentService;
         _logger = logger;
+        _db = db;
     }
 
     /// <summary>
@@ -200,6 +204,117 @@ public class ParentController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting child goals");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Récupère les enfants du parent via la table ParentStudentLinks
+    /// </summary>
+    [HttpGet("children")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GetChildren()
+    {
+        try
+        {
+            var parentId = User.GetUserId();
+            var children = await _db.ParentStudentLinks
+                .Where(l => l.ParentId == parentId)
+                .Select(l => new
+                {
+                    studentId  = l.StudentId,
+                    firstName  = l.Student != null ? l.Student.FirstName : null,
+                    lastName   = l.Student != null ? l.Student.LastName  : null,
+                    email      = l.Student != null ? l.Student.Email     : null,
+                    level      = l.Student != null ? l.Student.Level     : null,
+                    avatarUrl  = l.Student != null ? l.Student.AvatarUrl : null,
+                    linkedAt   = l.CreatedAt
+                })
+                .ToListAsync();
+
+            return Ok(new { data = children, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting children for parent");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Récupère les analytiques d'un enfant — vérifie que l'enfant appartient bien au parent
+    /// </summary>
+    [HttpGet("analytics/{childId}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GetChildAnalytics([FromRoute] int childId)
+    {
+        try
+        {
+            var parentId = User.GetUserId();
+
+            var linked = await _db.ParentStudentLinks
+                .AnyAsync(l => l.ParentId == parentId && l.StudentId == childId);
+
+            if (!linked)
+                return StatusCode(403, new { success = false, error = "Accès refusé : cet enfant n'est pas lié à votre compte" });
+
+            var stats = await _parentService.GetChildStatsAsync(parentId, childId);
+            return Ok(new { data = stats, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting child analytics");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Récupère les messages reçus par le parent (messagerie directe)
+    /// </summary>
+    [HttpGet("messages")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GetMessages([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        try
+        {
+            var parentId = User.GetUserId();
+            if (page < 1) page = 1;
+            if (pageSize < 1 || pageSize > 100) pageSize = 20;
+
+            var messages = await _db.DirectMessages
+                .Where(m => m.ToUserId == parentId)
+                .OrderByDescending(m => m.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(m => new
+                {
+                    m.Id,
+                    m.Content,
+                    m.IsRead,
+                    m.CreatedAt,
+                    m.ReadAt,
+                    from = m.From == null ? null : new
+                    {
+                        id        = m.FromUserId,
+                        firstName = m.From.FirstName,
+                        lastName  = m.From.LastName,
+                        avatarUrl = m.From.AvatarUrl
+                    }
+                })
+                .ToListAsync();
+
+            var unreadCount = await _db.DirectMessages
+                .CountAsync(m => m.ToUserId == parentId && !m.IsRead);
+
+            return Ok(new { data = messages, unreadCount, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting messages for parent");
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }

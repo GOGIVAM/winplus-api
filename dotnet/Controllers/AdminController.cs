@@ -1,3 +1,5 @@
+using Amazon.S3;
+using Amazon.S3.Model;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -20,12 +22,14 @@ public class AdminController : ControllerBase
     private readonly IAdminService _adminService;
     private readonly ILogger<AdminController> _logger;
     private readonly ApplicationDbContext _db;
+    private readonly IConfiguration _configuration;
 
-    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ApplicationDbContext db)
+    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ApplicationDbContext db, IConfiguration configuration)
     {
         _adminService = adminService;
         _logger = logger;
         _db = db;
+        _configuration = configuration;
     }
 
     /// <summary>
@@ -1369,6 +1373,64 @@ public class AdminController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error resolving log {Id}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>POST /admin/subjects/{id}/pdf — Upload du PDF d'un sujet vers S3</summary>
+    [HttpPost("subjects/{id}/pdf")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> UploadSubjectPdf(int id, IFormFile file)
+    {
+        const long MaxPdfSize = 50L * 1024 * 1024;
+
+        if (file == null || file.Length == 0)
+            return BadRequest(new { error = "Fichier requis" });
+
+        if (file.Length > MaxPdfSize)
+            return BadRequest(new { error = "Le fichier dépasse la limite de 50 Mo" });
+
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var mime = file.ContentType?.ToLower();
+        if (ext != ".pdf" || (mime != "application/pdf" && mime != "application/x-pdf"))
+            return BadRequest(new { error = "Seuls les fichiers PDF sont acceptés" });
+
+        var exam = await _db.Exams.FirstOrDefaultAsync(e => e.SubjectId == id && !e.IsDeleted);
+        if (exam == null)
+            return NotFound(new { error = "Aucun examen trouvé pour ce sujet" });
+
+        try
+        {
+            const string BucketName = "winplus-bucket";
+            var region = _configuration["AWS:Region"] ?? "us-east-1";
+            var key = $"exams/subject_{id}_{Guid.NewGuid()}.pdf";
+
+            var regionEndpoint = Amazon.RegionEndpoint.GetBySystemName(region);
+            using var s3 = new AmazonS3Client(regionEndpoint);
+
+            using var stream = file.OpenReadStream();
+            await s3.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName  = BucketName,
+                Key         = key,
+                InputStream = stream,
+                ContentType = "application/pdf",
+                CannedACL   = S3CannedACL.PublicRead,
+            });
+
+            var url = $"https://{BucketName}.s3.{region}.amazonaws.com/{key}";
+            exam.DocumentUrl = url;
+            await _db.SaveChangesAsync();
+
+            _logger.LogInformation("PDF uploaded for subject {SubjectId}: {Url}", id, url);
+            return Ok(new { data = new { examId = exam.Id, documentUrl = url }, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error uploading PDF for subject {SubjectId}", id);
             return StatusCode(500, new { error = "Internal server error" });
         }
     }

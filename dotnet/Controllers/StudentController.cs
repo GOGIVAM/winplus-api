@@ -235,4 +235,99 @@ public class StudentController : ControllerBase
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }
+
+    /// <summary>
+    /// Récupère les statistiques de l'étudiant (alias de /stats sans priorities/goals/events)
+    /// </summary>
+    [HttpGet("statistics")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GetStatistics()
+    {
+        try
+        {
+            var userId = User.GetUserId();
+
+            var totalCoursesEnrolled = await _db.Enrollments
+                .CountAsync(e => e.UserId == userId);
+
+            var completedCourses = await _db.Enrollments
+                .CountAsync(e => e.UserId == userId && e.IsCompleted);
+
+            var histories = await _db.LearningHistories
+                .Where(h => h.UserId == userId)
+                .Select(h => new { h.QuizScore, h.TimeSpentSeconds, h.ActivityType })
+                .ToListAsync();
+
+            var averageScore = histories.Any(h => h.QuizScore.HasValue)
+                ? histories.Where(h => h.QuizScore.HasValue).Average(h => (double)h.QuizScore!.Value)
+                : 0.0;
+
+            var totalTimeSeconds = histories.Sum(h => h.TimeSpentSeconds ?? 0);
+
+            var quizCompleted = histories.Count(h =>
+                h.ActivityType != null && h.ActivityType.ToLower().Contains("quiz"));
+
+            var data = new
+            {
+                totalCoursesEnrolled,
+                completedCourses,
+                averageScore = Math.Round(averageScore, 2),
+                totalTimeSeconds,
+                quizCompleted
+            };
+
+            return Ok(new { data, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting student statistics");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Récupère la progression des cours de l'étudiant
+    /// </summary>
+    [HttpGet("progress")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GetProgress()
+    {
+        try
+        {
+            var userId = User.GetUserId();
+
+            var enrollments = await _db.Enrollments
+                .Where(e => e.UserId == userId)
+                .Select(e => new
+                {
+                    e.SubjectId,
+                    subjectTitle = e.Subject != null ? e.Subject.Title : null,
+                    e.IsCompleted,
+                    e.ProgressPercentage,
+                    e.EnrolledAt
+                })
+                .ToListAsync();
+
+            var mastered   = enrollments.Where(e => e.IsCompleted).ToList();
+            var inProgress = enrollments.Where(e => !e.IsCompleted && e.ProgressPercentage > 0).ToList();
+            var difficult  = enrollments.Where(e => !e.IsCompleted && e.ProgressPercentage == 0).ToList();
+
+            var data = new
+            {
+                total      = enrollments.Count,
+                mastered   = new { count = mastered.Count,   items = mastered },
+                inProgress = new { count = inProgress.Count, items = inProgress },
+                difficult  = new { count = difficult.Count,  items = difficult }
+            };
+
+            return Ok(new { data, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting student progress");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
 }

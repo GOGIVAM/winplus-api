@@ -85,6 +85,11 @@ public class ApplicationDbContext : DbContext
     public DbSet<HomePageFeature> HomePageFeatures => Set<HomePageFeature>();
     public DbSet<Page> Pages => Set<Page>();
 
+    // Liaison parent-enfant, classes enseignant, messagerie directe
+    public DbSet<ParentStudentLink> ParentStudentLinks => Set<ParentStudentLink>();
+    public DbSet<TeacherClass> TeacherClasses => Set<TeacherClass>();
+    public DbSet<DirectMessage> DirectMessages => Set<DirectMessage>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -833,6 +838,55 @@ modelBuilder.Entity<Exam>(entity =>
             entity.HasIndex(e => e.CreatedAt);
             entity.HasIndex(e => e.IsResolved);
             entity.HasIndex(e => e.Level);
+        });
+
+        // Liaison parent-enfant
+        modelBuilder.Entity<ParentStudentLink>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.ParentId);
+            entity.HasIndex(e => e.StudentId);
+            entity.HasIndex(e => new { e.ParentId, e.StudentId }).IsUnique();
+            entity.HasOne(e => e.Parent)
+                .WithMany()
+                .HasForeignKey(e => e.ParentId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Student)
+                .WithMany()
+                .HasForeignKey(e => e.StudentId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Classes enseignant
+        modelBuilder.Entity<TeacherClass>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(150);
+            entity.Property(e => e.Level).HasMaxLength(100);
+            entity.Property(e => e.AcademicYear).HasMaxLength(20);
+            entity.Property(e => e.Description).HasMaxLength(500);
+            entity.HasIndex(e => e.TeacherId);
+            entity.HasOne(e => e.Teacher)
+                .WithMany()
+                .HasForeignKey(e => e.TeacherId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Messagerie directe
+        modelBuilder.Entity<DirectMessage>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Content).IsRequired().HasMaxLength(2000);
+            entity.HasIndex(e => e.ToUserId);
+            entity.HasIndex(e => e.FromUserId);
+            entity.HasOne(e => e.From)
+                .WithMany()
+                .HasForeignKey(e => e.FromUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.To)
+                .WithMany()
+                .HasForeignKey(e => e.ToUserId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

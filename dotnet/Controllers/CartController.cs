@@ -17,14 +17,20 @@ namespace Backend.Controllers;
 public class CartController : ControllerBase
 {
     private readonly ICartService _cartService;
-    private readonly IAnonymousCartService _anonymousCartService; // ✅ Service for anonymous carts
+    private readonly IAnonymousCartService _anonymousCartService;
     private readonly ILogger<CartController> _logger;
+    private readonly IPromoCodeService _promoCodeService;
 
-    public CartController(ICartService cartService, IAnonymousCartService anonymousCartService, ILogger<CartController> logger)
+    public CartController(
+        ICartService cartService,
+        IAnonymousCartService anonymousCartService,
+        ILogger<CartController> logger,
+        IPromoCodeService promoCodeService)
     {
         _cartService = cartService;
         _anonymousCartService = anonymousCartService;
         _logger = logger;
+        _promoCodeService = promoCodeService;
     }
 
     [HttpGet]
@@ -174,7 +180,7 @@ public class CartController : ControllerBase
                     // ✅ Utiliser le prix du Subject si celui du CartItem est 0 ou invalide
                     Price = item.Price > 0 ? item.Price : (item.Subject?.Price ?? 0),
                     Image = item.Subject?.ThumbnailUrl,
-                    Quantity = 1, // TODO: Gérer les quantités si nécessaire
+                    Quantity = 1,
                     AddedAt = item.AddedAt
                 })
                 .ToList();
@@ -258,7 +264,7 @@ public class CartController : ControllerBase
     /// </summary>
     [HttpPost("items")]
     // ✅ REMOVED [Authorize] - Allow anonymous carts with deviceId
-    [ProducesResponseType(typeof(CartItemDto), 200)]
+    [ProducesResponseType(typeof(CartResponseDto), 200)]
     [ProducesResponseType(400)]
     [ProducesResponseType(401)]
     [ProducesResponseType(500)]
@@ -315,49 +321,83 @@ public class CartController : ControllerBase
                 return BadRequest(new { error = "Authentication required or DeviceId must be provided" });
             }
             
-            // ✅ For authenticated users, save to DB. For anonymous, add to in-memory service
-            CartItem? added;
+            // ✅ For authenticated users, save to DB. For anonymous, add to in-memory service.
+            // Both paths return CartResponseDto (unified format — audit section 8.4 ✅)
             if (isAuthenticated && userId > 0)
             {
-                added = await _cartService.AddToCartAsync(userId, request.SubjectId, request.Price);
+                var added = await _cartService.AddToCartAsync(userId, request.SubjectId, request.Price);
                 if (added == null)
                 {
                     return BadRequest(new { error = "Failed to add item to cart" });
                 }
-                _logger.LogInformation("[AddToCart] Item persisted for user {UserId}: CartItemId={CartItemId}", 
-                    userId, added.Id);
+
+                var updatedItems = (await _cartService.GetUserCartAsync(userId))
+                    .Select(item => new CartItemDto
+                    {
+                        Id = item.Id,
+                        SubjectId = item.SubjectId,
+                        Title = item.Subject?.Title ?? $"Subject #{item.SubjectId}",
+                        Description = item.Subject?.Description,
+                        Price = item.Price > 0 ? item.Price : (item.Subject?.Price ?? 0),
+                        Image = item.Subject?.ThumbnailUrl,
+                        Quantity = 1,
+                        AddedAt = item.AddedAt
+                    }).ToList();
+
+                var cartResponse = new CartResponseDto
+                {
+                    Items = updatedItems,
+                    ItemsCount = updatedItems.Count,
+                    Subtotal = updatedItems.Sum(i => i.Price),
+                    Discount = 0,
+                    Tax = updatedItems.Sum(i => i.Price) * 0.1m,
+                    Total = updatedItems.Sum(i => i.Price) * 1.1m,
+                    Currency = "XAF",
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                _logger.LogInformation("[AddToCart] ✅ Full cart returned for user {UserId}: {ItemCount} items, {Total} XAF",
+                    userId, cartResponse.ItemsCount, cartResponse.Total);
+                return Ok(cartResponse);
             }
             else if (!string.IsNullOrEmpty(request.DeviceId))
             {
                 // ✅ Anonymous user: persist to in-memory cache by deviceId
-                added = _anonymousCartService.AddToAnonymousCart(
-                    request.DeviceId, 
-                    request.SubjectId, 
-                    request.Price
-                );
-                _logger.LogInformation("[AddToCart] Item persisted to anonymous cart {DeviceId}: SubjectId={SubjectId}", 
-                    request.DeviceId, request.SubjectId);
+                _anonymousCartService.AddToAnonymousCart(request.DeviceId, request.SubjectId, request.Price);
+
+                var anonymousItems = _anonymousCartService.GetAnonymousCart(request.DeviceId)
+                    .Select(item => new CartItemDto
+                    {
+                        Id = item.Id,
+                        SubjectId = item.SubjectId,
+                        Title = item.Subject?.Title ?? string.Empty, // Subject non chargé pour panier anonyme — enrichi par le frontend
+                        Description = item.Subject?.Description,
+                        Price = item.Price,
+                        Image = item.Subject?.ThumbnailUrl,
+                        Quantity = 1,
+                        AddedAt = item.AddedAt
+                    }).ToList();
+
+                var cartResponse = new CartResponseDto
+                {
+                    Items = anonymousItems,
+                    ItemsCount = anonymousItems.Count,
+                    Subtotal = anonymousItems.Sum(i => i.Price),
+                    Discount = 0,
+                    Tax = anonymousItems.Sum(i => i.Price) * 0.1m,
+                    Total = anonymousItems.Sum(i => i.Price) * 1.1m,
+                    Currency = "XAF",
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                _logger.LogInformation("[AddToCart] ✅ Full anonymous cart returned for {DeviceId}: {ItemCount} items",
+                    request.DeviceId, cartResponse.ItemsCount);
+                return Ok(cartResponse);
             }
             else
             {
-                // Should not reach here (already validated above)
                 return BadRequest(new { error = "Invalid request: no userId or deviceId" });
             }
-
-            // Retourner le nouvel item
-            var cartItemDto = new CartItemDto
-            {
-                Id = added.Id,
-                SubjectId = added.SubjectId,
-                Title = added.Subject?.Title ?? "",
-                Description = added.Subject?.Description,
-                Price = added.Price,
-                Image = added.Subject?.ThumbnailUrl,
-                Quantity = 1,
-                AddedAt = added.AddedAt
-            };
-
-            return Ok(cartItemDto);
         }
         catch (Exception ex)
         {
@@ -552,14 +592,27 @@ public class CartController : ControllerBase
             int userId = User.GetUserId();
             _logger.LogInformation("Applying promo code '{Code}' for user {UserId}", request.Code, userId);
 
-            // TODO: Implémenter la logique de validation du code promo
-            // Pour l'instant, retourner un message simple
-            
-            return Ok(new 
-            { 
-                success = true, 
-                message = "Promo code applied successfully",
-                discount = 0m // TODO: Calculer le discount réel
+            var cartItems = (await _cartService.GetUserCartAsync(userId)).ToList();
+            var cartTotal = cartItems.Sum(i => i.Price);
+            var subjectIds = cartItems.Select(i => i.SubjectId).ToList();
+
+            var result = await _promoCodeService.ValidatePromoCodeAsync(userId, new ValidatePromoCodeRequest
+            {
+                Code       = request.Code,
+                CartTotal  = cartTotal > 0 ? cartTotal : 1m, // évite la validation [Range(0.01,...)]
+                SubjectIds = subjectIds
+            });
+
+            if (!result.IsValid)
+                return BadRequest(new { success = false, error = result.ErrorMessage });
+
+            return Ok(new
+            {
+                success     = true,
+                message     = "Code promo appliqué avec succès",
+                discount    = result.DiscountAmount,
+                finalAmount = result.FinalAmount,
+                data        = result
             });
         }
         catch (UnauthorizedAccessException ex)
@@ -588,12 +641,12 @@ public class CartController : ControllerBase
             int userId = User.GetUserId();
             _logger.LogInformation("Removing promo code for user {UserId}", userId);
 
-            // TODO: Implémenter la logique de suppression du code promo
-            
-            return Ok(new 
-            { 
-                success = true, 
-                message = "Promo code removed successfully" 
+            // Les codes promo sont appliqués à la commande, pas stockés dans le panier.
+            // Supprimer côté client suffit ; aucune entrée BDD à effacer à ce stade.
+            return Ok(new
+            {
+                success = true,
+                message = "Code promo retiré du panier"
             });
         }
         catch (UnauthorizedAccessException ex)
@@ -629,10 +682,24 @@ public class CartController : ControllerBase
             _logger.LogInformation("Syncing cart for user {UserId}: {ItemCount} items", 
                 userId, localCart.Items.Count);
 
-            // TODO: Implémenter la logique de synchronisation
-            // Pour l'instant, retourner le panier actuel du serveur
-            var serverItems = await _cartService.GetUserCartAsync(userId);
-            
+            // Fusion : on ajoute les items locaux absents du panier serveur
+            var serverItems = (await _cartService.GetUserCartAsync(userId)).ToList();
+            var serverSubjectIds = serverItems.Select(i => i.SubjectId).ToHashSet();
+
+            foreach (var localItem in localCart.Items.Where(i => !serverSubjectIds.Contains(i.SubjectId)))
+            {
+                try
+                {
+                    await _cartService.AddToCartAsync(userId, localItem.SubjectId, localItem.Price);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("Sync: impossible d'ajouter le sujet {SubjectId}: {Err}", localItem.SubjectId, ex.Message);
+                }
+            }
+
+            serverItems = (await _cartService.GetUserCartAsync(userId)).ToList();
+
             var cartDto = new CartResponseDto
             {
                 Items = serverItems.Select(item => new CartItemDto
@@ -646,7 +713,7 @@ public class CartController : ControllerBase
                     Quantity = 1,
                     AddedAt = item.AddedAt
                 }).ToList(),
-                ItemsCount = serverItems.Count(),
+                ItemsCount = serverItems.Count,
                 Subtotal = serverItems.Sum(i => i.Price),
                 Discount = 0,
                 Tax = serverItems.Sum(i => i.Price) * 0.1m,
