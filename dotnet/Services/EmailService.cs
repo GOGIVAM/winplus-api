@@ -40,30 +40,35 @@ public class EmailService : IEmailService
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  EMAIL : Vérification du compte
+    //  EMAIL : Vérification du compte (code à 6 chiffres)
     // ─────────────────────────────────────────────────────────────────────────
     public async Task<bool> SendEmailVerificationAsync(string email, string firstName, string verificationCode)
     {
         var body = $@"
-      <p style=""margin:0 0 16px"">Bonjour <strong>{EscapeHtml(firstName)}</strong>,</p>
-      <p style=""margin:0 0 24px;color:#4A6670"">
-        Bienvenue sur WinPlus ! Pour activer votre compte et commencer à préparer vos concours,
-        entrez le code ci-dessous dans l'application.
-      </p>
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 8px 32px;"">
+          <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
+            Salut <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, voici ton code à 6 chiffres pour activer ton compte WinPlus. Saisis-le dans l'application pour continuer.
+          </p>
+        </td></tr>
+      </table>
 
-      <!-- Code block -->
-      <div style=""background:#E6FAF9;border:2px solid #33BBAF;border-radius:12px;padding:32px 24px;text-align:center;margin:0 0 24px"">
-        <p style=""margin:0 0 8px;font-size:12px;font-weight:600;letter-spacing:2px;color:#259A8E;text-transform:uppercase"">Votre code de vérification</p>
-        <span style=""font-size:42px;font-weight:700;letter-spacing:12px;color:#0F2A35;font-family:monospace"">{EscapeHtml(verificationCode)}</span>
-        <p style=""margin:12px 0 0;font-size:12px;color:#6B8A95"">⏳ Ce code expire dans <strong>24 heures</strong></p>
-      </div>
+      {OtpBlock(verificationCode)}
 
-      <p style=""margin:0;font-size:13px;color:#8BA3AC"">
-        Si vous n'avez pas créé de compte WinPlus, ignorez simplement cet e-mail.
-      </p>";
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 0 32px;"">
+          <span style=""font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">
+            Ce code expire dans <span style=""font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-weight:600;color:#1F4A5A;"">24 heures</span>.
+          </span>
+        </td></tr>
+      </table>
 
-        var html = Wrapper("Confirmez votre adresse e-mail", body, iconEmoji: "✉️");
-        return await SendGenericEmailAsync(email, "Votre code de vérification WinPlus", html);
+      {Divider()}
+
+      {InfoBox("Tu n'as pas créé de compte WinPlus&nbsp;? Tu peux ignorer cet e-mail en toute sécurité.")}";
+
+        var html = Wrapper("Vérification d'email", "Vérifie ton adresse email", body);
+        return await SendGenericEmailAsync(email, "Ton code de vérification WinPlus", html);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -73,34 +78,32 @@ public class EmailService : IEmailService
     {
         var resetUrl = $"https://winplus.cm/reset-password?token={Uri.EscapeDataString(resetToken)}";
         var body = $@"
-      <p style=""margin:0 0 16px"">Bonjour <strong>{EscapeHtml(firstName)}</strong>,</p>
-      <p style=""margin:0 0 24px;color:#4A6670"">
-        Vous avez demandé à réinitialiser votre mot de passe WinPlus.
-        Cliquez sur le bouton ci-dessous — ce lien est valable <strong>1 heure</strong>.
-      </p>
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 4px 32px;"">
+          <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
+            Bonjour <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, vous avez demandé à réinitialiser votre mot de passe WinPlus. Le lien ci-dessous est valable <strong style=""color:#1F4A5A;"">1&nbsp;heure</strong>.
+          </p>
+        </td></tr>
+      </table>
 
-      <div style=""text-align:center;margin:0 0 24px"">
-        <a href=""{resetUrl}""
-           style=""display:inline-block;padding:15px 36px;background:#0F2A35;color:#4DD8CC;
-                  text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;
-                  letter-spacing:0.5px"">
-          Réinitialiser mon mot de passe
-        </a>
-      </div>
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 0 18px;"">
+          {Button("Réinitialiser mon mot de passe", resetUrl)}
+        </td></tr>
+      </table>
 
-      <p style=""margin:0 0 8px;font-size:12px;color:#8BA3AC"">Ou copiez ce lien dans votre navigateur :</p>
-      <p style=""margin:0 0 24px;font-size:12px"">
-        <a href=""{resetUrl}"" style=""color:#259A8E;word-break:break-all"">{resetUrl}</a>
-      </p>
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 0 32px;"">
+          <p style=""margin:0 0 6px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:12px;color:#97AAB2;text-align:center;"">Ou copiez ce lien dans votre navigateur&nbsp;:</p>
+          <p style=""margin:0;font-size:12px;text-align:center;word-break:break-all;""><a href=""{resetUrl}"" style=""color:#3471A0;"">{resetUrl}</a></p>
+        </td></tr>
+      </table>
 
-      <div style=""background:#FFF8E6;border-left:4px solid #F59E0B;border-radius:0 8px 8px 0;padding:14px 16px;margin:0 0 16px"">
-        <p style=""margin:0;font-size:13px;color:#92400E"">
-          <strong>⚠️ Vous n'avez pas fait cette demande ?</strong><br>
-          Votre compte est en sécurité. Ignorez simplement cet e-mail.
-        </p>
-      </div>";
+      {Divider()}
 
-        var html = Wrapper("Réinitialisation de mot de passe", body, iconEmoji: "🔐");
+      {WarningBox("Vous n'avez pas fait cette demande&nbsp;?", "Votre compte reste en sécurité — ignorez simplement cet e-mail.")}";
+
+        var html = Wrapper("Sécurité du compte", "Réinitialise ton mot de passe", body);
         return await SendGenericEmailAsync(email, "Réinitialisation de votre mot de passe WinPlus", html);
     }
 
@@ -110,27 +113,23 @@ public class EmailService : IEmailService
     public async Task<bool> SendPasswordChangedAsync(string email, string firstName)
     {
         var body = $@"
-      <p style=""margin:0 0 16px"">Bonjour <strong>{EscapeHtml(firstName)}</strong>,</p>
-      <p style=""margin:0 0 24px;color:#4A6670"">
-        Le mot de passe de votre compte WinPlus a bien été modifié avec succès.
-      </p>
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 4px 28px;"">
+          <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
+            Bonjour <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, le mot de passe de votre compte WinPlus a bien été modifié avec succès.
+          </p>
+        </td></tr>
+      </table>
 
-      <div style=""background:#FFF8E6;border-left:4px solid #F59E0B;border-radius:0 8px 8px 0;padding:14px 16px;margin:0 0 24px"">
-        <p style=""margin:0;font-size:13px;color:#92400E"">
-          <strong>Ce n'était pas vous ?</strong><br>
-          Contactez immédiatement notre support pour sécuriser votre compte.
-        </p>
-      </div>
+      {WarningBox("Ce n'était pas vous&nbsp;?", "Contactez immédiatement notre support pour sécuriser votre compte.")}
 
-      <div style=""text-align:center;margin:0 0 16px"">
-        <a href=""https://winplus.cm/support""
-           style=""display:inline-block;padding:13px 30px;background:#0F2A35;color:#4DD8CC;
-                  text-decoration:none;border-radius:10px;font-weight:700;font-size:14px"">
-          Contacter le support
-        </a>
-      </div>";
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:24px 0 0;"">
+          {Button("Contacter le support", "https://winplus.cm/support")}
+        </td></tr>
+      </table>";
 
-        var html = Wrapper("Mot de passe modifié", body, iconEmoji: "🔒");
+        var html = Wrapper("Sécurité du compte", "Mot de passe modifié", body);
         return await SendGenericEmailAsync(email, "Votre mot de passe WinPlus a été modifié", html);
     }
 
@@ -141,85 +140,107 @@ public class EmailService : IEmailService
     {
         var time = DateTime.UtcNow.ToString("dd/MM/yyyy à HH:mm") + " UTC";
         var body = $@"
-      <p style=""margin:0 0 16px"">Bonjour <strong>{EscapeHtml(firstName)}</strong>,</p>
-      <p style=""margin:0 0 24px;color:#4A6670"">
-        Une connexion a été effectuée depuis un nouvel appareil sur votre compte WinPlus.
-      </p>
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 4px 28px;"">
+          <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
+            Bonjour <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, une connexion a été effectuée depuis un nouvel appareil sur votre compte WinPlus.
+          </p>
+        </td></tr>
+      </table>
 
-      <div style=""background:#F7F4EE;border:1px solid #E0D8C8;border-radius:10px;padding:20px 24px;margin:0 0 24px"">
-        <table style=""width:100%;border-collapse:collapse"">
-          <tr>
-            <td style=""padding:8px 0;font-size:13px;color:#6B8A95;border-bottom:1px solid #E0D8C8"">Appareil</td>
-            <td style=""padding:8px 0;font-size:13px;font-weight:600;color:#0F2A35;text-align:right;border-bottom:1px solid #E0D8C8"">{EscapeHtml(deviceName)}</td>
-          </tr>
-          <tr>
-            <td style=""padding:8px 0;font-size:13px;color:#6B8A95;border-bottom:1px solid #E0D8C8"">Adresse IP</td>
-            <td style=""padding:8px 0;font-size:13px;font-weight:600;color:#0F2A35;text-align:right;border-bottom:1px solid #E0D8C8;font-family:monospace"">{EscapeHtml(ipAddress)}</td>
-          </tr>
-          <tr>
-            <td style=""padding:8px 0;font-size:13px;color:#6B8A95"">Date</td>
-            <td style=""padding:8px 0;font-size:13px;font-weight:600;color:#0F2A35;text-align:right"">{time}</td>
-          </tr>
-        </table>
-      </div>
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td style=""background-color:#FBF8F2;border:1px solid #E8E0CE;border-radius:14px;padding:8px 22px;margin:0 0 28px;"">
+          <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+            <tr>
+              <td style=""padding:12px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;border-bottom:1px solid #E8E0CE;"">Appareil</td>
+              <td style=""padding:12px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;font-weight:600;color:#0F2A35;text-align:right;border-bottom:1px solid #E8E0CE;"">{EscapeHtml(deviceName)}</td>
+            </tr>
+            <tr>
+              <td style=""padding:12px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;border-bottom:1px solid #E8E0CE;"">Adresse IP</td>
+              <td style=""padding:12px 0;font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-size:13px;font-weight:600;color:#0F2A35;text-align:right;border-bottom:1px solid #E8E0CE;"">{EscapeHtml(ipAddress)}</td>
+            </tr>
+            <tr>
+              <td style=""padding:12px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">Date</td>
+              <td style=""padding:12px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;font-weight:600;color:#0F2A35;text-align:right;"">{time}</td>
+            </tr>
+          </table>
+        </td></tr>
+      </table>
 
-      <p style=""margin:0;font-size:13px;color:#8BA3AC"">
-        ✅ <strong>C'était vous ?</strong> Aucune action requise.<br>
-        ⚠️ <strong>Ce n'était pas vous ?</strong> Changez immédiatement votre mot de passe.
-      </p>";
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:28px 0 0;"">
+          <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;line-height:1.6;color:#4E7280;text-align:center;"">
+            ✅&nbsp;<strong style=""color:#1F4A5A;"">C'était vous&nbsp;?</strong> Aucune action requise.<br>
+            ⚠️&nbsp;<strong style=""color:#1F4A5A;"">Ce n'était pas vous&nbsp;?</strong> Changez immédiatement votre mot de passe.
+          </p>
+        </td></tr>
+      </table>";
 
-        var html = Wrapper("Nouvelle connexion détectée", body, iconEmoji: "📱");
+        var html = Wrapper("Sécurité du compte", "Nouvelle connexion détectée", body);
         return await SendGenericEmailAsync(email, "Nouvelle connexion sur votre compte WinPlus", html);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  EMAIL : Code 2FA
+    //  EMAIL : Code 2FA (code à 6 chiffres)
     // ─────────────────────────────────────────────────────────────────────────
     public async Task<bool> SendTwoFactorCodeAsync(string email, string firstName, string code)
     {
         var body = $@"
-      <p style=""margin:0 0 16px"">Bonjour <strong>{EscapeHtml(firstName)}</strong>,</p>
-      <p style=""margin:0 0 24px;color:#4A6670"">
-        Votre code de double authentification WinPlus. Saisissez-le pour finaliser votre connexion.
-      </p>
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 8px 32px;"">
+          <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
+            Salut <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, voici ton code de double authentification. Saisis-le pour finaliser ta connexion.
+          </p>
+        </td></tr>
+      </table>
 
-      <div style=""background:#E6FAF9;border:2px solid #33BBAF;border-radius:12px;padding:32px 24px;text-align:center;margin:0 0 24px"">
-        <p style=""margin:0 0 8px;font-size:12px;font-weight:600;letter-spacing:2px;color:#259A8E;text-transform:uppercase"">Code 2FA</p>
-        <span style=""font-size:42px;font-weight:700;letter-spacing:12px;color:#0F2A35;font-family:monospace"">{EscapeHtml(code)}</span>
-        <p style=""margin:12px 0 0;font-size:12px;color:#6B8A95"">⏳ Expire dans <strong>5 minutes</strong></p>
-      </div>
+      {OtpBlock(code)}
 
-      <p style=""margin:0;font-size:13px;color:#8BA3AC"">
-        Si vous n'avez pas tenté de vous connecter, ignorez cet e-mail.
-      </p>";
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 0 32px;"">
+          <span style=""font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">
+            Ce code expire dans <span style=""font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-weight:600;color:#1F4A5A;"">5 minutes</span>.
+          </span>
+        </td></tr>
+      </table>
 
-        var html = Wrapper("Code d'authentification", body, iconEmoji: "🔑");
-        return await SendGenericEmailAsync(email, "Votre code 2FA WinPlus", html);
+      {Divider()}
+
+      {InfoBox("Tu n'as pas tenté de te connecter&nbsp;? Ignore cet e-mail et vérifie la sécurité de ton compte.")}";
+
+        var html = Wrapper("Double authentification", "Ton code de connexion", body);
+        return await SendGenericEmailAsync(email, "Ton code de connexion WinPlus", html);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  EMAIL : Vérification changement d'e-mail
+    //  EMAIL : Vérification changement d'e-mail (code à 6 chiffres)
     // ─────────────────────────────────────────────────────────────────────────
     public async Task<bool> SendEmailChangeVerificationAsync(string email, string firstName, string verificationCode)
     {
         var body = $@"
-      <p style=""margin:0 0 16px"">Bonjour <strong>{EscapeHtml(firstName)}</strong>,</p>
-      <p style=""margin:0 0 24px;color:#4A6670"">
-        Vous avez demandé à changer votre adresse e-mail. Entrez le code ci-dessous
-        pour confirmer votre nouvelle adresse.
-      </p>
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 8px 32px;"">
+          <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
+            Salut <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, tu as demandé à changer ton adresse e-mail. Voici ton code pour confirmer cette nouvelle adresse.
+          </p>
+        </td></tr>
+      </table>
 
-      <div style=""background:#E6FAF9;border:2px solid #33BBAF;border-radius:12px;padding:32px 24px;text-align:center;margin:0 0 24px"">
-        <p style=""margin:0 0 8px;font-size:12px;font-weight:600;letter-spacing:2px;color:#259A8E;text-transform:uppercase"">Code de confirmation</p>
-        <span style=""font-size:42px;font-weight:700;letter-spacing:12px;color:#0F2A35;font-family:monospace"">{EscapeHtml(verificationCode)}</span>
-        <p style=""margin:12px 0 0;font-size:12px;color:#6B8A95"">⏳ Ce code expire dans <strong>24 heures</strong></p>
-      </div>
+      {OtpBlock(verificationCode)}
 
-      <p style=""margin:0;font-size:13px;color:#8BA3AC"">
-        Si vous n'avez pas fait cette demande, ignorez cet e-mail — votre adresse actuelle reste inchangée.
-      </p>";
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 0 32px;"">
+          <span style=""font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">
+            Ce code expire dans <span style=""font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-weight:600;color:#1F4A5A;"">24 heures</span>.
+          </span>
+        </td></tr>
+      </table>
 
-        var html = Wrapper("Vérification de votre nouvel e-mail", body, iconEmoji: "✉️");
+      {Divider()}
+
+      {InfoBox("Tu n'as pas fait cette demande&nbsp;? Ignore cet e-mail — ton adresse actuelle reste inchangée.")}";
+
+        var html = Wrapper("Changement d'email", "Confirme ta nouvelle adresse", body);
         return await SendGenericEmailAsync(email, "Vérification de votre nouvel e-mail WinPlus", html);
     }
 
@@ -232,45 +253,47 @@ public class EmailService : IEmailService
         var formattedDate   = completedAt.ToString("dd/MM/yyyy à HH:mm") + " UTC";
 
         var body = $@"
-      <p style=""margin:0 0 16px"">Bonjour <strong>{EscapeHtml(firstName)}</strong>,</p>
-      <p style=""margin:0 0 24px;color:#4A6670"">
-        Votre paiement a bien été reçu et validé. Vos cours sont maintenant accessibles.
-      </p>
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 4px 28px;"">
+          <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
+            Bonjour <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, votre paiement a bien été reçu et validé. Vos cours sont maintenant accessibles.
+          </p>
+        </td></tr>
+      </table>
 
-      <!-- Reçu -->
-      <div style=""background:#E6FAF9;border:1px solid #33BBAF;border-radius:12px;padding:24px;margin:0 0 24px"">
-        <p style=""margin:0 0 16px;font-size:12px;font-weight:700;letter-spacing:2px;color:#259A8E;text-transform:uppercase"">Reçu de paiement</p>
-        <table style=""width:100%;border-collapse:collapse"">
-          <tr>
-            <td style=""padding:10px 0;font-size:13px;color:#6B8A95;border-bottom:1px solid #B2E8E3"">Référence</td>
-            <td style=""padding:10px 0;font-size:13px;font-weight:600;color:#0F2A35;text-align:right;font-family:monospace;border-bottom:1px solid #B2E8E3"">{EscapeHtml(reference)}</td>
-          </tr>
-          <tr>
-            <td style=""padding:10px 0;font-size:13px;color:#6B8A95;border-bottom:1px solid #B2E8E3"">Date</td>
-            <td style=""padding:10px 0;font-size:13px;font-weight:600;color:#0F2A35;text-align:right;border-bottom:1px solid #B2E8E3"">{formattedDate}</td>
-          </tr>
-          <tr>
-            <td style=""padding:10px 0;font-size:13px;color:#6B8A95;border-bottom:1px solid #B2E8E3"">Statut</td>
-            <td style=""padding:10px 0;text-align:right;border-bottom:1px solid #B2E8E3"">
-              <span style=""display:inline-block;background:#0F2A35;color:#4DD8CC;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700"">✓ Confirmé</span>
-            </td>
-          </tr>
-          <tr>
-            <td style=""padding:14px 0 4px;font-size:13px;color:#6B8A95"">Montant</td>
-            <td style=""padding:14px 0 4px;text-align:right;font-size:26px;font-weight:700;color:#0F2A35"">{formattedAmount} <span style=""font-size:14px;color:#259A8E"">XAF</span></td>
-          </tr>
-        </table>
-      </div>
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td style=""background-color:#EBF8F6;border:1px solid #D6F1ED;border-radius:16px;padding:24px;margin:0 0 28px;"">
+          <p style=""margin:0 0 16px;font-family:Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:0.09em;color:#1E8077;text-transform:uppercase;"">Reçu de paiement</p>
+          <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+            <tr>
+              <td style=""padding:10px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;border-bottom:1px solid #D6F1ED;"">Référence</td>
+              <td style=""padding:10px 0;font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-size:13px;font-weight:600;color:#0F2A35;text-align:right;border-bottom:1px solid #D6F1ED;"">{EscapeHtml(reference)}</td>
+            </tr>
+            <tr>
+              <td style=""padding:10px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;border-bottom:1px solid #D6F1ED;"">Date</td>
+              <td style=""padding:10px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;font-weight:600;color:#0F2A35;text-align:right;border-bottom:1px solid #D6F1ED;"">{formattedDate}</td>
+            </tr>
+            <tr>
+              <td style=""padding:10px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">Statut</td>
+              <td style=""padding:10px 0;text-align:right;"">
+                <span style=""display:inline-block;background-color:#0F2A35;color:#6BCFC6;padding:4px 12px;border-radius:99px;font-family:Arial,sans-serif;font-size:11px;font-weight:700;"">✓ Confirmé</span>
+              </td>
+            </tr>
+            <tr>
+              <td style=""padding:16px 0 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">Montant</td>
+              <td style=""padding:16px 0 0;text-align:right;font-family:'Bricolage Grotesque',-apple-system,'Helvetica Neue',Arial,sans-serif;font-size:26px;font-weight:700;color:#0F2A35;"">{formattedAmount} <span style=""font-size:14px;color:#259A8E;"">XAF</span></td>
+            </tr>
+          </table>
+        </td></tr>
+      </table>
 
-      <div style=""text-align:center;margin:0 0 16px"">
-        <a href=""https://winplus.cm/dashboard""
-           style=""display:inline-block;padding:15px 36px;background:#0F2A35;color:#4DD8CC;
-                  text-decoration:none;border-radius:10px;font-weight:700;font-size:15px"">
-          Accéder à mes cours →
-        </a>
-      </div>";
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"">
+          {Button("Accéder à mes cours →", "https://winplus.cm/dashboard")}
+        </td></tr>
+      </table>";
 
-        var html = Wrapper("Paiement confirmé", body, iconEmoji: "✅", accentGreen: true);
+        var html = Wrapper("Paiement", "Paiement confirmé", body, "#1F9D6E");
         return await SendGenericEmailAsync(email, $"Reçu de paiement — {formattedAmount} XAF", html);
     }
 
@@ -282,31 +305,31 @@ public class EmailService : IEmailService
         var formattedDate = expiryDate.ToString("dd MMMM yyyy", new System.Globalization.CultureInfo("fr-FR"));
 
         var body = $@"
-      <p style=""margin:0 0 16px"">Bonjour <strong>{EscapeHtml(firstName)}</strong>,</p>
-      <p style=""margin:0 0 24px;color:#4A6670"">
-        Votre abonnement WinPlus arrive à expiration dans <strong>3 jours</strong>, le <strong>{formattedDate}</strong>.
-        Renouvelez-le pour continuer à accéder à vos cours sans interruption.
-      </p>
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 4px 24px;"">
+          <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
+            Bonjour <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, votre abonnement WinPlus arrive à expiration dans <strong style=""color:#1F4A5A;"">3 jours</strong>, le <strong style=""color:#1F4A5A;"">{formattedDate}</strong>. Renouvelez-le pour continuer à accéder à vos cours sans interruption.
+          </p>
+        </td></tr>
+      </table>
 
-      <div style=""background:#FFF8E6;border:1px solid #FDE68A;border-radius:10px;padding:20px 24px;margin:0 0 24px"">
-        <p style=""margin:0;font-size:13px;color:#92400E"">
-          ⏳ <strong>Plus que 3 jours</strong> pour renouveler avant la suspension de votre accès.
-        </p>
-      </div>
+      {WarningBox("Plus que 3 jours&nbsp;⏳", "Renouvelez avant la suspension de votre accès.")}
 
-      <div style=""text-align:center;margin:0 0 24px"">
-        <a href=""https://winplus.cm/pricing""
-           style=""display:inline-block;padding:15px 36px;background:#0F2A35;color:#4DD8CC;
-                  text-decoration:none;border-radius:10px;font-weight:700;font-size:15px"">
-          Renouveler mon abonnement →
-        </a>
-      </div>
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:24px 0 28px;"">
+          {Button("Renouveler mon abonnement →", "https://winplus.cm/pricing")}
+        </td></tr>
+      </table>
 
-      <p style=""margin:0;font-size:13px;color:#8BA3AC"">
-        Besoin d'aide ? <a href=""https://winplus.cm/support"" style=""color:#259A8E;font-weight:600"">Contactez notre support</a>.
-      </p>";
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"">
+          <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#97AAB2;text-align:center;"">
+            Besoin d'aide&nbsp;? <a href=""https://winplus.cm/support"" style=""color:#259A8E;font-weight:600;"">Contactez notre support</a>.
+          </p>
+        </td></tr>
+      </table>";
 
-        var html = Wrapper("Votre abonnement expire bientôt", body, iconEmoji: "⏳");
+        var html = Wrapper("Abonnement", "Ton abonnement expire bientôt", body);
         return await SendGenericEmailAsync(email, "Votre abonnement WinPlus expire dans 3 jours", html);
     }
 
@@ -348,108 +371,199 @@ public class EmailService : IEmailService
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  HELPERS PRIVÉS
+    //  IDENTITÉ VISUELLE — logo WinPlus encodé en base64 (autonome, sans hébergement)
+    // ─────────────────────────────────────────────────────────────────────────
+    private const string LogoBase64 = "LOGOBASE64PLACEHOLDER";
+
+    // Police d'affichage WinPlus + responsive (petits écrans) — injecté dans le <head>.
+    // Constante "plain" (pas d'interpolation) : les accolades CSS restent littérales, sans échappement.
+    private const string HeadStyles = @"<style>
+  @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=Instrument+Serif:ital@1&display=swap');
+  html, body { margin:0 !important; padding:0 !important; height:100% !important; width:100% !important; }
+  table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; border-collapse:collapse !important; }
+  img { border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; display:block; }
+  a { text-decoration:none; }
+  body { -webkit-font-smoothing:antialiased; }
+
+  @media only screen and (max-width:600px) {
+    .email-container { width:100% !important; }
+    .stack-px        { padding-left:18px !important; padding-right:18px !important; }
+    .card-padding    { padding:36px 24px 30px !important; }
+    .otp-cell        { width:40px !important; height:50px !important; font-size:22px !important; }
+    .otp-spacer      { width:7px !important; }
+    .headline        { font-size:21px !important; }
+  }
+
+  @media only screen and (max-width:380px) {
+    .card-padding    { padding:30px 16px 26px !important; }
+    .otp-cell        { width:32px !important; height:44px !important; font-size:18px !important; }
+    .otp-spacer      { width:4px !important; }
+    .headline        { font-size:19px !important; }
+  }
+</style>";
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  HELPERS PRIVÉS — composants visuels réutilisables
     // ─────────────────────────────────────────────────────────────────────────
 
     private static string EscapeHtml(string? value)
         => System.Net.WebUtility.HtmlEncode(value ?? string.Empty);
 
-    /// <summary>
-    /// Enveloppe chaque e-mail dans le layout branded WinPlus :
-    ///  – header avec logo SVG inline + couleurs Ink/Teal
-    ///  – corps dans une carte blanche centrée
-    ///  – footer avec liens légaux
-    /// </summary>
-    private static string Wrapper(string title, string bodyHtml, string iconEmoji = "📬", bool accentGreen = false)
+    /// <summary>Construit les cases de code à 6 chiffres (calque exact de l'UI produit VerifyCode).</summary>
+    private static string OtpBlock(string code)
     {
-        // Logo SVG inline (Win+ stylisé, palette Ink + Teal)
-        const string LogoSvg = @"
-<svg width=""110"" height=""32"" viewBox=""0 0 110 32"" fill=""none"" xmlns=""http://www.w3.org/2000/svg"">
-  <!-- Icône carré arrondi -->
-  <rect width=""32"" height=""32"" rx=""8"" fill=""#4DD8CC""/>
-  <text x=""16"" y=""22"" font-family=""Georgia,serif"" font-size=""16"" font-weight=""700""
-        fill=""#0F2A35"" text-anchor=""middle"">W+</text>
-  <!-- Texte WinPlus -->
-  <text x=""40"" y=""12"" font-family=""Georgia,serif"" font-size=""13"" font-weight=""700""
-        fill=""#0F2A35"">Win</text>
-  <text x=""65"" y=""12"" font-family=""Georgia,serif"" font-size=""13"" font-weight=""700""
-        fill=""#33BBAF"">Plus</text>
-  <text x=""40"" y=""26"" font-family=""Arial,sans-serif"" font-size=""8"" letter-spacing=""1.5""
-        fill=""#8BA3AC"">RÉUSSITE · CAMEROUN</text>
-</svg>";
+        var safeCode = EscapeHtml(code ?? string.Empty);
+        var sb = new StringBuilder();
 
-        var headerBg = accentGreen ? "#259A8E" : "#0F2A35";
-        var headerTextColor = "#4DD8CC";
+        for (int i = 0; i < safeCode.Length; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(@"<td class=""otp-spacer"" style=""width:9px;font-size:1px;"">&nbsp;</td>");
+            }
 
+            sb.Append($@"<td class=""otp-cell"" align=""center"" valign=""middle"" style=""width:48px;height:56px;border:1px solid #C8D2D6;border-radius:10px;background-color:#FFFFFF;"">
+                  <span style=""font-family:'Bricolage Grotesque',-apple-system,'Helvetica Neue',Arial,sans-serif;font-size:28px;font-weight:500;color:#0F2A35;"">{safeCode[i]}</span>
+                </td>");
+        }
+
+        return $@"<table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 0 24px;"">
+          <table role=""presentation"" cellpadding=""0"" cellspacing=""0"" border=""0""><tr>{sb}</tr></table>
+        </td></tr>
+      </table>";
+    }
+
+    /// <summary>Bouton d'action principal (ink-900 / texte teal clair), identique au .btn-primary de l'app.</summary>
+    private static string Button(string label, string url)
+        => $@"<a href=""{url}""
+         style=""display:inline-block;padding:15px 36px;background-color:#0F2A35;color:#6BCFC6;
+                font-family:'Bricolage Grotesque',-apple-system,'Helvetica Neue',Arial,sans-serif;
+                text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.01em;"">
+        {EscapeHtml(label)}
+      </a>";
+
+    /// <summary>Trait de séparation discret (border tokens de l'app).</summary>
+    private static string Divider()
+        => @"<table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td style=""border-top:1px solid #E8E0CE;padding:0 0 24px;font-size:1px;line-height:1px;"">&nbsp;</td></tr>
+      </table>";
+
+    /// <summary>Encart informatif neutre (teal-50 / teal-100) — pour les notices "ce n'était pas toi".</summary>
+    private static string InfoBox(string message)
+        => $@"<table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td style=""background-color:#EBF8F6;border:1px solid #D6F1ED;border-radius:14px;padding:16px 18px;"">
+          <table role=""presentation"" cellpadding=""0"" cellspacing=""0"" border=""0"" width=""100%""><tr>
+            <td width=""22"" valign=""top"" style=""padding-right:10px;""><span style=""font-family:Arial,sans-serif;font-size:15px;color:#1E8077;"">&#9432;</span></td>
+            <td><p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;line-height:1.55;color:#1F4A5A;"">{message}</p></td>
+          </tr></table>
+        </td></tr>
+      </table>";
+
+    /// <summary>Encart d'alerte (gold/ambre) — pour les notices de sécurité plus appuyées.</summary>
+    private static string WarningBox(string title, string message)
+        => $@"<table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td style=""background-color:#FBF3E3;border:1px solid #EAD9B0;border-radius:14px;padding:16px 18px;"">
+          <table role=""presentation"" cellpadding=""0"" cellspacing=""0"" border=""0"" width=""100%""><tr>
+            <td width=""22"" valign=""top"" style=""padding-right:10px;""><span style=""font-family:Arial,sans-serif;font-size:15px;color:#B07A1A;"">&#9888;</span></td>
+            <td><p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;line-height:1.55;color:#7A5413;""><strong>{title}</strong><br>{message}</p></td>
+          </tr></table>
+        </td></tr>
+      </table>";
+
+    /// <summary>
+    /// Enveloppe chaque e-mail dans le layout WinPlus :
+    ///  – logo réel + wordmark "Win+" (Bricolage Grotesque / Instrument Serif)
+    ///  – carte blanche arrondie centrée, eyebrow + titre + contenu
+    ///  – pied de page avec liens, support@winplus.cm
+    ///  – entièrement responsive (petits écrans / mobile)
+    /// </summary>
+    private static string Wrapper(string eyebrow, string headline, string bodyHtml, string accentColor = "#259A8E")
+    {
         return $@"<!DOCTYPE html>
-<html lang=""fr"">
+<html lang=""fr"" xmlns=""http://www.w3.org/1999/xhtml"">
 <head>
 <meta charset=""UTF-8"">
-<meta name=""viewport"" content=""width=device-width,initial-scale=1"">
-<title>{EscapeHtml(title)}</title>
+<meta name=""viewport"" content=""width=device-width, initial-scale=1.0"">
+<meta http-equiv=""X-UA-Compatible"" content=""IE=edge"">
+<meta name=""color-scheme"" content=""light"">
+<meta name=""supported-color-schemes"" content=""light"">
+<title>{EscapeHtml(headline)}</title>
+<!--[if mso]>
+<noscript>
+<xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch><o:AllowPNG/></o:OfficeDocumentSettings></xml>
+</noscript>
+<![endif]-->
+{HeadStyles}
 </head>
-<body style=""margin:0;padding:0;background:#F0EBE0;font-family:'Helvetica Neue',Arial,sans-serif"">
+<body style=""margin:0;padding:0;background-color:#F6F0E4;"">
 
-  <!-- Préheader invisible -->
-  <div style=""display:none;max-height:0;overflow:hidden;mso-hide:all"">
-    {EscapeHtml(title)} — WinPlus ‌ ‌ ‌ ‌ ‌ ‌ ‌ ‌ ‌ ‌ ‌ ‌ ‌
+  <div style=""display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F6F0E4;"">
+    {EscapeHtml(headline)} — WinPlus&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
   </div>
 
-  <!-- Wrapper centré -->
-  <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+  <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"" style=""background-color:#F6F0E4;"">
     <tr>
-      <td align=""center"" style=""padding:40px 16px"">
-        <table role=""presentation"" width=""100%"" style=""max-width:600px"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+      <td align=""center"" class=""stack-px"" style=""padding:40px 16px;"">
 
-          <!-- ── HEADER ── -->
+        <table role=""presentation"" width=""600"" cellpadding=""0"" cellspacing=""0"" border=""0"" class=""email-container"" style=""width:600px;max-width:600px;"">
+
+          <!-- Logo + wordmark -->
           <tr>
-            <td style=""background:{headerBg};border-radius:16px 16px 0 0;padding:28px 36px"">
-              <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+            <td align=""center"" style=""padding:0 0 28px;"">
+              <table role=""presentation"" cellpadding=""0"" cellspacing=""0"" border=""0"">
                 <tr>
-                  <td>{LogoSvg}</td>
-                  <td align=""right"" style=""font-size:24px"">{iconEmoji}</td>
+                  <td style=""padding:0 8px 0 0;vertical-align:middle;"">
+                    <img src=""data:image/png;base64,{LogoBase64}"" width=""34"" height=""29"" alt=""WinPlus"" style=""display:block;width:34px;height:auto;"">
+                  </td>
+                  <td style=""vertical-align:middle;"">
+                    <span style=""font-family:'Bricolage Grotesque',-apple-system,'Helvetica Neue',Arial,sans-serif;font-size:20px;font-weight:700;color:#0F2A35;letter-spacing:-0.02em;"">Win<em style=""font-family:'Instrument Serif',Georgia,serif;font-style:italic;color:#259A8E;"">+</em></span>
+                  </td>
                 </tr>
               </table>
-              <p style=""margin:20px 0 0;font-size:22px;font-weight:700;color:{headerTextColor};
-                         font-family:Georgia,serif;letter-spacing:-0.3px"">
-                {EscapeHtml(title)}
+            </td>
+          </tr>
+
+          <!-- Carte principale -->
+          <tr>
+            <td class=""card-padding"" style=""background-color:#FFFFFF;border-radius:24px;padding:48px 44px 40px;box-shadow:0 12px 32px rgba(23,65,82,0.10);"">
+
+              <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+                <tr><td align=""center"" style=""padding:0 0 16px;"">
+                  <span style=""font-family:Arial,sans-serif;font-size:12px;font-weight:700;color:{accentColor};letter-spacing:0.09em;text-transform:uppercase;"">{EscapeHtml(eyebrow)}</span>
+                </td></tr>
+              </table>
+
+              <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+                <tr><td align=""center"" style=""padding:0 0 28px;"">
+                  <h1 class=""headline"" style=""margin:0;font-family:'Bricolage Grotesque',-apple-system,'Helvetica Neue',Arial,sans-serif;font-size:26px;line-height:1.25;font-weight:700;color:#0F2A35;letter-spacing:-0.02em;"">{EscapeHtml(headline)}</h1>
+                </td></tr>
+              </table>
+
+              {bodyHtml}
+
+            </td>
+          </tr>
+
+          <!-- Pied de page -->
+          <tr>
+            <td align=""center"" style=""padding:32px 24px 8px;"">
+              <p style=""margin:0 0 6px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:12px;color:#97AAB2;"">
+                Besoin d'aide&nbsp;? <a href=""mailto:support@winplus.cm"" style=""color:#3471A0;font-weight:500;"">support@winplus.cm</a>
+              </p>
+              <p style=""margin:0 0 14px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:12px;color:#97AAB2;"">
+                <a href=""https://winplus.cm/privacy"" style=""color:#97AAB2;text-decoration:underline;"">Confidentialité</a>
+                &nbsp;·&nbsp;
+                <a href=""https://winplus.cm"" style=""color:#97AAB2;text-decoration:underline;"">winplus.cm</a>
+              </p>
+              <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:11px;color:#C8D2D6;"">
+                © {DateTime.UtcNow.Year} WinPlus. Tous droits réservés.
               </p>
             </td>
           </tr>
 
-          <!-- ── CORPS ── -->
-          <tr>
-            <td style=""background:#FFFFFF;padding:36px 36px 28px;border-left:1px solid #E0D8C8;border-right:1px solid #E0D8C8"">
-              <div style=""font-size:15px;line-height:1.7;color:#1A3845"">
-                {bodyHtml}
-              </div>
-            </td>
-          </tr>
-
-          <!-- ── FOOTER ── -->
-          <tr>
-            <td style=""background:#F7F4EE;border:1px solid #E0D8C8;border-top:none;
-                        border-radius:0 0 16px 16px;padding:20px 36px"">
-              <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
-                <tr>
-                  <td style=""font-size:12px;color:#8BA3AC;line-height:1.6"">
-                    Cet e-mail vous a été envoyé par <strong style=""color:#4A6670"">WinPlus</strong>,
-                    la plateforme de préparation aux concours au Cameroun.<br>
-                    <a href=""https://winplus.cm"" style=""color:#259A8E;text-decoration:none"">winplus.cm</a>
-                    &nbsp;·&nbsp;
-                    <a href=""https://winplus.cm/privacy"" style=""color:#259A8E;text-decoration:none"">Confidentialité</a>
-                    &nbsp;·&nbsp;
-                    <a href=""https://winplus.cm/support"" style=""color:#259A8E;text-decoration:none"">Support</a>
-                  </td>
-                  <td align=""right"" style=""font-size:11px;color:#B0C4CB;white-space:nowrap;vertical-align:top"">
-                    © 2025 WinPlus
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
         </table>
+
       </td>
     </tr>
   </table>
