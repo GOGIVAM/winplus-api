@@ -14,6 +14,7 @@ public class AdminUserResponse
     public string? LastName { get; set; }
     public string? Role { get; set; }
     public bool IsActive { get; set; }
+    public bool IsDeleted { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
@@ -29,6 +30,38 @@ public class UpdateUserStatusRequest
 {
     [Required]
     public bool IsActive { get; set; }
+}
+
+/// <summary>
+/// DTO pour la mise à jour générique d'un utilisateur depuis l'admin
+/// (tous les champs sont optionnels — seuls ceux fournis sont modifiés)
+/// </summary>
+public class AdminUpdateUserRequest
+{
+    [MaxLength(100)]
+    public string? FirstName { get; set; }
+
+    [MaxLength(100)]
+    public string? LastName { get; set; }
+
+    [EmailAddress]
+    [MaxLength(255)]
+    public string? Email { get; set; }
+
+    [MaxLength(50)]
+    public string? Role { get; set; }
+
+    /// <summary>"active" ou "suspended" — autre valeur ignorée</summary>
+    public string? Status { get; set; }
+}
+
+/// <summary>
+/// Réponse générique pour les actions admin sur un utilisateur
+/// </summary>
+public class AdminUserActionResponse
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = "";
 }
 
 /// <summary>

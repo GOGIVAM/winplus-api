@@ -42,7 +42,8 @@ public class AdminController : ControllerBase
     public async Task<IActionResult> GetAllUsers(
         [FromQuery] int page = 1,
         [FromQuery] int limit = 50,
-        [FromQuery] string? q = null)
+        [FromQuery] string? q = null,
+        [FromQuery] bool includeDeleted = false)
     {
         try
         {
@@ -51,6 +52,11 @@ public class AdminController : ControllerBase
             if (limit > 100) limit = 100;
 
             var query = _db.Users.AsQueryable();
+
+            if (!includeDeleted)
+            {
+                query = query.Where(u => !u.IsDeleted);
+            }
 
             if (!string.IsNullOrWhiteSpace(q))
             {
@@ -74,6 +80,7 @@ public class AdminController : ControllerBase
                     LastName = u.LastName,
                     Role = u.Role,
                     IsActive = u.IsActive,
+                    IsDeleted = u.IsDeleted,
                     CreatedAt = u.CreatedAt,
                     UpdatedAt = u.UpdatedAt,
                     LastLoginAt = u.LastLoginAt
@@ -158,6 +165,240 @@ public class AdminController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error updating status for user {UserId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Met à jour les informations d'un utilisateur (nom, email, rôle, statut) depuis l'admin
+    /// </summary>
+    /// <param name="id">ID de l'utilisateur</param>
+    /// <param name="request">Champs à mettre à jour (tous optionnels)</param>
+    /// <response code="200">Utilisateur mis à jour</response>
+    /// <response code="400">Requête invalide ou email déjà utilisé</response>
+    /// <response code="404">Utilisateur non trouvé</response>
+    /// <response code="500">Erreur serveur</response>
+    [HttpPut("users/{id}")]
+    [ProducesResponseType(typeof(AdminUserResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> UpdateUser(int id, [FromBody] AdminUpdateUserRequest request)
+    {
+        try
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var user = await _db.Users.FindAsync(id);
+            if (user == null)
+                return NotFound(new { error = "User not found" });
+
+            if (!string.IsNullOrWhiteSpace(request.Email) &&
+                !string.Equals(request.Email, user.Email, StringComparison.OrdinalIgnoreCase))
+            {
+                var emailTaken = await _db.Users.AnyAsync(u => u.Id != id && u.Email.ToLower() == request.Email.ToLower());
+                if (emailTaken)
+                    return BadRequest(new { error = "Cet email est déjà utilisé par un autre compte" });
+
+                user.Email = request.Email.Trim().ToLowerInvariant();
+            }
+
+            if (request.FirstName != null) user.FirstName = request.FirstName.Trim();
+            if (request.LastName != null) user.LastName = request.LastName.Trim();
+            if (!string.IsNullOrWhiteSpace(request.Role)) user.Role = request.Role;
+
+            if (!string.IsNullOrWhiteSpace(request.Status))
+            {
+                if (request.Status == "active") user.IsActive = true;
+                else if (request.Status == "suspended") user.IsActive = false;
+            }
+
+            user.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+
+            _logger.LogInformation("Admin updated user {UserId}", id);
+
+            return Ok(new AdminUserResponse
+            {
+                Id = user.Id,
+                Email = user.Email,
+                FirstName = user.FirstName,
+                LastName = user.LastName,
+                Role = user.Role,
+                IsActive = user.IsActive,
+                IsDeleted = user.IsDeleted,
+                CreatedAt = user.CreatedAt,
+                UpdatedAt = user.UpdatedAt,
+                LastLoginAt = user.LastLoginAt
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating user {UserId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Suspend un utilisateur (alias pratique de PUT users/{id}/status avec isActive=false)
+    /// </summary>
+    [HttpPost("users/{id}/suspend")]
+    [ProducesResponseType(typeof(AdminUserActionResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> SuspendUser(int id)
+    {
+        try
+        {
+            var user = await _db.Users.FindAsync(id);
+            if (user == null)
+                return NotFound(new { error = "User not found" });
+
+            user.IsActive = false;
+            user.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+
+            _logger.LogWarning("User {UserId} suspended by admin", id);
+            return Ok(new AdminUserActionResponse { Success = true, Message = "Utilisateur suspendu" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error suspending user {UserId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Réactive un utilisateur suspendu
+    /// </summary>
+    [HttpPost("users/{id}/reactivate")]
+    [ProducesResponseType(typeof(AdminUserActionResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> ReactivateUser(int id)
+    {
+        try
+        {
+            var user = await _db.Users.FindAsync(id);
+            if (user == null)
+                return NotFound(new { error = "User not found" });
+
+            user.IsActive = true;
+            user.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+
+            _logger.LogInformation("User {UserId} reactivated by admin", id);
+            return Ok(new AdminUserActionResponse { Success = true, Message = "Utilisateur réactivé" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error reactivating user {UserId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Suppression douce d'un utilisateur (réversible via /restore)
+    /// </summary>
+    [HttpDelete("users/{id}")]
+    [ProducesResponseType(typeof(AdminUserActionResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> SoftDeleteUser(int id)
+    {
+        try
+        {
+            var adminIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                                ?? User.FindFirst("user_id")?.Value
+                                ?? User.FindFirst("sub")?.Value;
+            var adminId = int.TryParse(adminIdClaim, out var aid) ? aid : 0;
+
+            var user = await _db.Users.FindAsync(id);
+            if (user == null)
+                return NotFound(new { error = "User not found" });
+
+            if (user.IsDeleted)
+                return Ok(new AdminUserActionResponse { Success = true, Message = "Utilisateur déjà supprimé" });
+
+            user.IsDeleted = true;
+            user.DeletedByUserId = adminId;
+            user.DeletedBy = adminId.ToString();
+            user.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+
+            _logger.LogWarning("User {UserId} soft-deleted by admin {AdminId}", id, adminId);
+            return Ok(new AdminUserActionResponse { Success = true, Message = "Utilisateur supprimé (récupérable)" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error soft deleting user {UserId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Restaure un utilisateur précédemment supprimé (suppression douce)
+    /// </summary>
+    [HttpPost("users/{id}/restore")]
+    [ProducesResponseType(typeof(AdminUserActionResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> RestoreUser(int id)
+    {
+        try
+        {
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
+            if (user == null)
+                return NotFound(new { error = "User not found" });
+
+            user.IsDeleted = false;
+            user.DeletedBy = null;
+            user.DeletedByUserId = null;
+            user.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+
+            _logger.LogInformation("User {UserId} restored by admin", id);
+            return Ok(new AdminUserActionResponse { Success = true, Message = "Utilisateur restauré" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error restoring user {UserId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Suppression définitive et irréversible d'un utilisateur
+    /// </summary>
+    [HttpDelete("users/{id}/hard")]
+    [ProducesResponseType(typeof(AdminUserActionResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> HardDeleteUser(int id)
+    {
+        try
+        {
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
+            if (user == null)
+                return NotFound(new { error = "User not found" });
+
+            if (string.Equals(user.Role, "admin", StringComparison.OrdinalIgnoreCase))
+            {
+                var adminCount = await _db.Users.CountAsync(u => u.Role == "admin" && !u.IsDeleted);
+                if (adminCount <= 1)
+                    return BadRequest(new { error = "Impossible de supprimer le dernier compte administrateur" });
+            }
+
+            _db.Users.Remove(user);
+            await _db.SaveChangesAsync();
+
+            _logger.LogWarning("User {UserId} permanently deleted by admin", id);
+            return Ok(new AdminUserActionResponse { Success = true, Message = "Utilisateur supprimé définitivement" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error hard deleting user {UserId}", id);
             return StatusCode(500, new { error = "Internal server error" });
         }
     }
