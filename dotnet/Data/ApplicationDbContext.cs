@@ -90,6 +90,10 @@ public class ApplicationDbContext : DbContext
     public DbSet<TeacherClass> TeacherClasses => Set<TeacherClass>();
     public DbSet<DirectMessage> DirectMessages => Set<DirectMessage>();
 
+    // Exam Coach
+    public DbSet<ExamCoachPlan> ExamCoachPlans => Set<ExamCoachPlan>();
+    public DbSet<ExamCoachDayCompletion> ExamCoachDayCompletions => Set<ExamCoachDayCompletion>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -887,6 +891,39 @@ modelBuilder.Entity<Exam>(entity =>
                 .WithMany()
                 .HasForeignKey(e => e.ToUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Configure ExamCoachPlan entity
+        modelBuilder.Entity<ExamCoachPlan>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.ExamType).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.PlanJson).HasColumnType("jsonb");
+            entity.Property(e => e.ConfidenceScore).HasPrecision(4, 3);
+            entity.Property(e => e.HoursPerDay).HasPrecision(4, 1);
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => new { e.UserId, e.IsActive });
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasMany(e => e.DayCompletions)
+                .WithOne(d => d.Plan)
+                .HasForeignKey(d => d.PlanId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure ExamCoachDayCompletion entity
+        modelBuilder.Entity<ExamCoachDayCompletion>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.QuizScore).HasPrecision(5, 2);
+            entity.HasIndex(e => e.PlanId);
+            entity.HasIndex(e => new { e.PlanId, e.DayNumber }).IsUnique();
+            entity.HasOne(e => e.Plan)
+                .WithMany(p => p.DayCompletions)
+                .HasForeignKey(e => e.PlanId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

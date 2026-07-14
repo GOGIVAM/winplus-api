@@ -263,6 +263,34 @@ namespace Backend.Models.DTOs
 
     #endregion
 
+    #region Quiz Explanation
+
+    /// <summary>
+    /// Request to get a WinAI explanation for a wrong quiz answer
+    /// </summary>
+    public class ExplainErrorRequest
+    {
+        [Required(ErrorMessage = "Question text is required")]
+        [MaxLength(2000)]
+        public string QuestionText { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Wrong answer is required")]
+        [MaxLength(500)]
+        public string WrongAnswer { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Correct answer is required")]
+        [MaxLength(500)]
+        public string CorrectAnswer { get; set; } = string.Empty;
+
+        [MaxLength(100)]
+        public string Subject { get; set; } = string.Empty;
+
+        [MaxLength(50)]
+        public string Level { get; set; } = string.Empty;
+    }
+
+    #endregion
+
     // NOTE: ChatRequest et ChatResponse ont été déplacés vers ChatbotDTOs.cs
     // pour éviter la duplication et centraliser les DTOs du chatbot
 

@@ -138,6 +138,32 @@ class ChatMessage(Base):
     conversation = relationship("Conversation", back_populates="messages")
 
 
+class QuizExplanation(Base):
+    """Cache des explications WinAI pour les erreurs de quiz"""
+    __tablename__ = 'QuizExplanations'
+
+    Id = Column(Integer, primary_key=True)
+    QuestionHash = Column(String(64), nullable=False, index=True)
+    ExplanationText = Column(Text, nullable=False)
+    Subject = Column(String(100))
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
+class ExamCoachPlanAI(Base):
+    """Plan de révision WinAI — stockage Python indépendant du .NET"""
+    __tablename__ = 'ExamCoachPlansAI'
+
+    Id = Column(Integer, primary_key=True)
+    UserId = Column(Integer, nullable=False, index=True)
+    ExamType = Column(String(100), nullable=False)
+    ExamDate = Column(DateTime(timezone=True), nullable=False)
+    HoursPerDay = Column(Numeric, nullable=False)
+    PlanJson = Column(Text, nullable=False)
+    ConfidenceScore = Column(Numeric, nullable=False, default=0.7)
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    IsActive = Column(Boolean, nullable=False, default=True)
+
+
 # ================== INITIALISATION DB ==================
 
 class Database:

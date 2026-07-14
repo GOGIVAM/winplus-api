@@ -23,6 +23,8 @@ from models.recommender import Recommender
 from services.user_performance_analyzer import UserPerformanceAnalyzer
 from auth import verify_token, require_role, UserTokenData
 from routes.chatbot_routes import chatbot_router
+from routes.quiz_explain_routes import quiz_explain_router
+from routes.exam_coach_routes import exam_coach_router
 import json
 from schemas import (
     HealthResponse, SubjectResponse, RecommendationResponse,
@@ -103,6 +105,8 @@ performance_analyzer = UserPerformanceAnalyzer(db=db, nlp_analyzer=nlp_analyzer,
 
 # ==================== ROUTERS ====================
 app.include_router(chatbot_router, prefix="/api/chatbot", tags=["chatbot"])
+app.include_router(quiz_explain_router, prefix="/api/quiz", tags=["quiz"])
+app.include_router(exam_coach_router, prefix="/api/exam-coach", tags=["exam-coach"])
 
 
 # ==================== HEALTH CHECK (Public) ====================

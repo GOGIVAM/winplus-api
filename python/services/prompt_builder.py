@@ -51,15 +51,49 @@ def _objectives_line(ctx: UserContext) -> str:
     return f"\nObjectifs déclarés : {', '.join(ctx.objectives)}."
 
 
+_VARK_INSTRUCTIONS = {
+    "visual": (
+        "Cet étudiant est un apprenant VISUEL.\n"
+        "- Privilégie systématiquement les schémas, tableaux, listes structurées et représentations graphiques.\n"
+        "- Utilise des tirets, numérotations, indentations pour visualiser la hiérarchie des idées.\n"
+        "- Propose des cartes mentales textuelles (ex : A → B → C) pour montrer les liens.\n"
+        "- Évite les longs paragraphes narratifs non structurés.\n"
+        "- Quand tu expliques un processus, utilise des étapes numérotées avec des flèches (➔) ou séparateurs visuels."
+    ),
+    "auditory": (
+        "Cet étudiant est un apprenant AUDITIF.\n"
+        "- Structure tes réponses comme si tu expliquais à voix haute, avec des transitions explicites.\n"
+        "- Utilise des connecteurs parlés : 'd'abord', 'ensuite', 'donc', 'en d'autres termes', 'pour résumer'.\n"
+        "- Propose des mnémotechniques, des rimes ou des formules à mémoriser oralement.\n"
+        "- Reformule les concepts avec des analogies et des métaphores vivantes.\n"
+        "- Évite les tableaux et listes sèches sans explication verbale — commente toujours."
+    ),
+    "reading_writing": (
+        "Cet étudiant est un apprenant LECTEUR/SCRIPTEUR.\n"
+        "- Privilégie les explications textuelles détaillées, complètes et bien structurées.\n"
+        "- Propose systématiquement des définitions précises des termes clés.\n"
+        "- Utilise des listes numérotées, des sous-sections avec titres clairs.\n"
+        "- Encourage la prise de notes : propose des résumés rédigés que l'étudiant peut recopier.\n"
+        "- Évite les raccourcis visuels sans texte d'accompagnement — explique toujours par écrit."
+    ),
+    "kinesthetic": (
+        "Cet étudiant est un apprenant KINESTHÉSIQUE.\n"
+        "- Propose des exemples concrets issus du monde réel ou de situations vécues.\n"
+        "- Après chaque notion, suggère immédiatement un exercice pratique à résoudre.\n"
+        "- Utilise des analogies ancrées dans l'action : 'imagine que tu construis…', 'si tu devais mesurer…'.\n"
+        "- Guide par étapes actionnables, pas par théorie abstraite.\n"
+        "- Évite les explications purement conceptuelles sans application immédiate."
+    ),
+}
+
+
 def _learning_style_line(ctx: UserContext) -> str:
-    styles = {
-        "visual": "visuel (privilégie schémas et diagrammes)",
-        "auditory": "auditif (privilégie explications orales et mnémotechniques)",
-        "reading_writing": "lecture/écriture (privilégie textes structurés et listes)",
-        "kinesthetic": "kinesthésique (privilégie exemples concrets et exercices pratiques)",
-    }
-    label = styles.get(ctx.learning_style or "", ctx.learning_style or "")
-    return f"\nStyle d'apprentissage : {label}." if ctx.learning_style else ""
+    if not ctx.learning_style:
+        return ""
+    instruction = _VARK_INSTRUCTIONS.get(ctx.learning_style)
+    if instruction:
+        return f"\n\n[Style d'apprentissage détecté]\n{instruction}"
+    return f"\nStyle d'apprentissage : {ctx.learning_style}."
 
 
 def _performance_lines(ctx: UserContext) -> str:
