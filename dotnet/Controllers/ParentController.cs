@@ -1,3 +1,6 @@
+using System;
+using System.Net.Http;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -19,12 +22,14 @@ public class ParentController : ControllerBase
     private readonly IParentService _parentService;
     private readonly ILogger<ParentController> _logger;
     private readonly ApplicationDbContext _db;
+    private readonly IHttpClientFactory _httpClientFactory;
 
-    public ParentController(IParentService parentService, ILogger<ParentController> logger, ApplicationDbContext db)
+    public ParentController(IParentService parentService, ILogger<ParentController> logger, ApplicationDbContext db, IHttpClientFactory httpClientFactory)
     {
         _parentService = parentService;
         _logger = logger;
         _db = db;
+        _httpClientFactory = httpClientFactory;
     }
 
     /// <summary>
@@ -316,6 +321,42 @@ public class ParentController : ControllerBase
         {
             _logger.LogError(ex, "Error getting messages for parent");
             return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// GET /api/parent/ai-alerts/{childId}
+    /// Proxy vers Python /api/parent-alerts/{childId} — détection d'anomalies + messages WinAI
+    /// </summary>
+    [HttpGet("ai-alerts/{childId:int}")]
+    [ProducesResponseType(200)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(500)]
+    public async Task<IActionResult> GetAIAlerts([FromRoute] int childId)
+    {
+        try
+        {
+            var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"/api/parent-alerts/{childId}");
+            var auth = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(auth))
+                req.Headers.TryAddWithoutValidation("Authorization", auth);
+
+            var res = await httpClient.SendAsync(req);
+            var content = await res.Content.ReadAsStringAsync();
+
+            if (!res.IsSuccessStatusCode)
+            {
+                _logger.LogError("Python parent-alerts returned {Status}: {Body}", res.StatusCode, content);
+                return StatusCode((int)res.StatusCode, new { message = "AI alert service unavailable" });
+            }
+
+            return Content(content, "application/json");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching AI alerts for child {ChildId}", childId);
+            return StatusCode(502, new { message = "Could not reach AI service" });
         }
     }
 }

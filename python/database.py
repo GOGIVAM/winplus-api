@@ -149,6 +149,32 @@ class QuizExplanation(Base):
     CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
 
+class QuizAttempt(Base):
+    """Modèle FastApi mappé sur la table QuizAttempts (ASP.NET)"""
+    __tablename__ = 'QuizAttempts'
+
+    Id = Column(Integer, primary_key=True)
+    UserId = Column(Integer, ForeignKey('Users.Id'), nullable=False)
+    QuizId = Column(Integer)
+    Score = Column(Numeric)
+    TotalQuestions = Column(Integer)
+    CorrectAnswers = Column(Integer)
+    CompletedAt = Column(DateTime(timezone=True))
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
+class RecommendationFeedbackDB(Base):
+    """Feedback utilisateur sur les recommandations — mappé sur RecommendationFeedbacks (.NET)"""
+    __tablename__ = 'RecommendationFeedbacks'
+
+    Id = Column(Integer, primary_key=True)
+    UserId = Column(Integer, ForeignKey('Users.Id'), nullable=False)
+    SubjectId = Column(Integer, ForeignKey('Subjects.Id'), nullable=False)
+    FeedbackType = Column(String(30), nullable=False)  # "not_interested" | "already_seen"
+    Context = Column(String(50), nullable=False, default='dashboard')
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
 class ExamCoachPlanAI(Base):
     """Plan de révision WinAI — stockage Python indépendant du .NET"""
     __tablename__ = 'ExamCoachPlansAI'

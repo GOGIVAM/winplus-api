@@ -138,8 +138,24 @@ class UserPerformanceAnalyzer:
             # 2. Obtenir tous les sujets
             all_subjects = self.db.get_all_subjects()
             
-            # 3. Filtrer sujects non-enrolled
-            available_subjects = [s for s in all_subjects if s['id'] not in enrolled_subject_ids]
+            # 3. Filtrer sujets non-enrolled + feedback négatif utilisateur
+            from database import RecommendationFeedbackDB
+            session = self.db.SessionLocal()
+            try:
+                excluded_ids = set(
+                    r.SubjectId for r in session.query(RecommendationFeedbackDB)
+                    .filter(RecommendationFeedbackDB.UserId == user_id)
+                    .all()
+                )
+            except Exception:
+                excluded_ids = set()
+            finally:
+                session.close()
+
+            available_subjects = [
+                s for s in all_subjects
+                if s['id'] not in enrolled_subject_ids and s['id'] not in excluded_ids
+            ]
             
             if not available_subjects:
                 logger.info(f"[UserPerformanceAnalyzer] ⚠️ Aucun sujet disponible pour user {user_id}")

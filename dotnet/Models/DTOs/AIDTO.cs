@@ -313,4 +313,21 @@ namespace Backend.Models.DTOs
     }
 
     #endregion
+
+    #region Feedback
+
+    public class RecommendationFeedbackDto
+    {
+        [Required]
+        public int SubjectId { get; set; }
+
+        [Required]
+        [MaxLength(30)]
+        public string Feedback { get; set; } = string.Empty; // "not_interested" | "already_seen"
+
+        [MaxLength(50)]
+        public string? Context { get; set; } = "dashboard";
+    }
+
+    #endregion
 }

@@ -94,6 +94,9 @@ public class ApplicationDbContext : DbContext
     public DbSet<ExamCoachPlan> ExamCoachPlans => Set<ExamCoachPlan>();
     public DbSet<ExamCoachDayCompletion> ExamCoachDayCompletions => Set<ExamCoachDayCompletion>();
 
+    // AI Feedback
+    public DbSet<RecommendationFeedback> RecommendationFeedbacks => Set<RecommendationFeedback>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

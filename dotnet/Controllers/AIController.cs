@@ -1,12 +1,17 @@
 using System;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Backend.Data;
 using Backend.Models.DTOs;
+using Backend.Models.Entities;
 using Backend.Services;
 
 namespace Backend.Controllers;
@@ -19,12 +24,22 @@ namespace Backend.Controllers;
         private readonly IAIService _aiService;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<AIController> _logger;
+        private readonly ApplicationDbContext _db;
 
-        public AIController(IAIService aiService, IHttpClientFactory httpClientFactory, ILogger<AIController> logger)
+        public AIController(IAIService aiService, IHttpClientFactory httpClientFactory, ILogger<AIController> logger, ApplicationDbContext db)
         {
             _aiService = aiService ?? throw new ArgumentNullException(nameof(aiService));
             _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _db = db ?? throw new ArgumentNullException(nameof(db));
+        }
+
+        private int GetCurrentUserId()
+        {
+            var claim = User.FindFirst("userId") ?? User.FindFirst("sub") ?? User.FindFirst(ClaimTypes.NameIdentifier);
+            if (claim == null || !int.TryParse(claim.Value, out var id))
+                throw new UnauthorizedAccessException("Invalid user token");
+            return id;
         }
 
         [HttpPost("recommend")]
@@ -454,6 +469,60 @@ namespace Backend.Controllers;
             var res = await httpClient.SendAsync(req, ct);
             var content = await res.Content.ReadAsStringAsync(ct);
             return Content(UnwrapPythonData(content), "application/json");
+        }
+
+        /// <summary>
+        /// POST /api/ai/feedback/recommendation
+        /// Stocke le feedback utilisateur sur une recommandation (not_interested / already_seen).
+        /// La prochaine génération de recommandations exclura ces sujets.
+        /// </summary>
+        [HttpPost("feedback/recommendation")]
+        [ProducesResponseType(200)]
+        [ProducesResponseType(400)]
+        [ProducesResponseType(401)]
+        public async Task<IActionResult> PostRecommendationFeedback([FromBody] RecommendationFeedbackDto request)
+        {
+            try
+            {
+                int userId;
+                try { userId = GetCurrentUserId(); }
+                catch (UnauthorizedAccessException ex) { return Unauthorized(new { message = ex.Message }); }
+
+                if (request.SubjectId <= 0)
+                    return BadRequest(new { message = "SubjectId must be > 0" });
+
+                var validTypes = new[] { "not_interested", "already_seen" };
+                if (!validTypes.Contains(request.Feedback))
+                    return BadRequest(new { message = "Invalid feedback type" });
+
+                var existing = await _db.RecommendationFeedbacks
+                    .FirstOrDefaultAsync(f => f.UserId == userId && f.SubjectId == request.SubjectId);
+
+                if (existing != null)
+                {
+                    existing.FeedbackType = request.Feedback;
+                    existing.Context      = request.Context ?? "dashboard";
+                    existing.CreatedAt    = DateTime.UtcNow;
+                }
+                else
+                {
+                    _db.RecommendationFeedbacks.Add(new RecommendationFeedback
+                    {
+                        UserId       = userId,
+                        SubjectId    = request.SubjectId,
+                        FeedbackType = request.Feedback,
+                        Context      = request.Context ?? "dashboard",
+                    });
+                }
+
+                await _db.SaveChangesAsync();
+                return Ok(new { message = "Feedback recorded" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error saving recommendation feedback");
+                return StatusCode(500, new { message = "An error occurred" });
+            }
         }
 
         /// Extracts the inner `data` field from Python's { success, data } response envelope.
