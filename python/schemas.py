@@ -183,6 +183,7 @@ class ProgressAnalysisResponse(BaseModel):
     analysis: Dict[str, Any]
     recommendations: List[str]
     estimated_completion_date: Optional[str] = None
+    history: Optional[List[Dict[str, Any]]] = []
 
 
 # ==================== CHATBOT SCHEMAS ====================

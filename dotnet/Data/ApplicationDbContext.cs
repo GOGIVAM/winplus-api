@@ -97,6 +97,9 @@ public class ApplicationDbContext : DbContext
     // AI Feedback
     public DbSet<RecommendationFeedback> RecommendationFeedbacks => Set<RecommendationFeedback>();
 
+    // Score history (one row per user per day)
+    public DbSet<DailyScore> DailyScores => Set<DailyScore>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -927,6 +930,15 @@ modelBuilder.Entity<Exam>(entity =>
                 .WithMany(p => p.DayCompletions)
                 .HasForeignKey(e => e.PlanId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure DailyScore entity
+        modelBuilder.Entity<DailyScore>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.AverageScore).HasPrecision(5, 2);
+            entity.HasIndex(e => new { e.UserId, e.Date }).IsUnique();
+            entity.HasIndex(e => e.UserId);
         });
     }
 }

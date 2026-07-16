@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Services;
 using Backend.Extensions;
+using Microsoft.AspNetCore.Http;
 
 namespace Backend.Controllers;
 
@@ -18,11 +19,13 @@ public class StudentController : ControllerBase
 {
     private readonly ILogger<StudentController> _logger;
     private readonly ApplicationDbContext _db;
+    private readonly IDailyScoreService _dailyScore;
 
-    public StudentController(ILogger<StudentController> logger, ApplicationDbContext db)
+    public StudentController(ILogger<StudentController> logger, ApplicationDbContext db, IDailyScoreService dailyScore)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _db = db;
+        _dailyScore = dailyScore;
     }
 
     /// <summary>
@@ -282,6 +285,26 @@ public class StudentController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting student statistics");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Historique de scores journaliers pour le graphique d'analyse
+    /// </summary>
+    [HttpGet("score-history")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetScoreHistory([FromQuery] string period = "30d")
+    {
+        try
+        {
+            var userId = User.GetUserId();
+            var history = await _dailyScore.GetScoreHistoryAsync(userId, period);
+            return Ok(new { success = true, history });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting score history");
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }

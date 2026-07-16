@@ -407,7 +407,8 @@ async def analyze_progress(
             'overview': analysis.get('overview'),
             'analysis': analysis.get('analysis'),
             'recommendations': analysis.get('recommendations', []),
-            'estimated_completion_date': analysis.get('estimated_completion_date')
+            'estimated_completion_date': analysis.get('estimated_completion_date'),
+            'history': analysis.get('history', []),
         }
     except HTTPException:
         raise

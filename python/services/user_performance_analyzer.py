@@ -38,6 +38,7 @@ class UserPerformanceAnalyzer:
             stats = self.db.get_user_progress_stats(user_id)
             enrollments = self.db.get_user_enrollments(user_id)
             learning_history = self.db.get_user_learning_history(user_id, limit=50)
+            score_history = self._get_score_history(user_id)
             
             if not enrollments:
                 return {
@@ -90,6 +91,7 @@ class UserPerformanceAnalyzer:
             analysis = {
                 'success': True,
                 'user_id': user_id,
+                'history': score_history,
                 'overview': {
                     'total_enrolled_subjects': stats['total_enrolled_subjects'],
                     'completed_subjects': stats['completed_subjects'],
@@ -555,6 +557,32 @@ class UserPerformanceAnalyzer:
         except Exception as e:
             logger.error(f"[UserPerformanceAnalyzer] ❌ predict_success error: {str(e)}")
             return {'success': False, 'error': str(e)}
+
+    def _get_score_history(self, user_id: int, days: int = 90) -> list:
+        """Récupère l'historique de scores depuis DailyScores (30 derniers jours par défaut)"""
+        try:
+            from database import DailyScore
+            from datetime import date, timedelta
+            cutoff = (date.today() - timedelta(days=days)).isoformat()
+            session = self.db.SessionLocal()
+            try:
+                rows = session.query(DailyScore).filter(
+                    DailyScore.UserId == user_id,
+                    DailyScore.Date >= cutoff
+                ).order_by(DailyScore.Date).all()
+                return [
+                    {
+                        'date': str(r.Date)[:10],
+                        'score': round(float(r.AverageScore), 1),
+                        'quizCount': r.QuizCount,
+                    }
+                    for r in rows
+                ]
+            finally:
+                session.close()
+        except Exception as e:
+            logger.warning(f"[UserPerformanceAnalyzer] ⚠️ score_history unavailable: {e}")
+            return []
 
     def _recommend_study_time(self, velocity: float) -> str:
         """Recommande le temps d'étude quotidien basé sur vélocité"""

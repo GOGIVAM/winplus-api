@@ -175,6 +175,20 @@ class RecommendationFeedbackDB(Base):
     CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
 
+class DailyScore(Base):
+    """Score journalier agrégé — mappé sur la table DailyScores (.NET)"""
+    __tablename__ = 'DailyScores'
+
+    Id = Column(Integer, primary_key=True)
+    UserId = Column(Integer, ForeignKey('Users.Id'), nullable=False, index=True)
+    Date = Column(String(10), nullable=False)  # DATE stored as string 'YYYY-MM-DD'
+    AverageScore = Column(Numeric(5, 2), nullable=False)
+    QuizCount = Column(Integer, nullable=False, default=1)
+    SubjectId = Column(Integer, nullable=True)
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    UpdatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
 class ExamCoachPlanAI(Base):
     """Plan de révision WinAI — stockage Python indépendant du .NET"""
     __tablename__ = 'ExamCoachPlansAI'

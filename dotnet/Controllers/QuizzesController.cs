@@ -14,10 +14,12 @@ namespace Backend.Controllers;
 public class QuizzesController : ControllerBase
 {
     private readonly IQuizService _quizService;
+    private readonly IDailyScoreService _dailyScore;
 
-    public QuizzesController(IQuizService quizService)
+    public QuizzesController(IQuizService quizService, IDailyScoreService dailyScore)
     {
         _quizService = quizService;
+        _dailyScore = dailyScore;
     }
 
     /// <summary>
@@ -127,6 +129,7 @@ public class QuizzesController : ControllerBase
                 return Unauthorized(new { message = "User not authenticated" });
 
             var result = await _quizService.SubmitQuizAttemptAsync(quizId, userId, request);
+            try { await _dailyScore.UpsertDailyScoreAsync(userId, (decimal)result.Score); } catch { /* best-effort */ }
             return Ok(result);
         }
         catch (KeyNotFoundException)
