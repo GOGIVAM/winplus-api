@@ -398,6 +398,9 @@ builder.Services.AddHostedService<SubscriptionReminderService>();
 // Background services for parent features
 builder.Services.AddHostedService<WeeklyParentReportService>();
 
+// Background services for institution features
+builder.Services.AddHostedService<MonthlyInstitutionReportService>();
+
 // Add health checks
 builder.Services.AddHealthChecks();
 

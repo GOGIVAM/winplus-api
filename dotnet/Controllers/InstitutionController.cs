@@ -1,4 +1,8 @@
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Backend.Models.Entities;
 using Backend.Services;
 
@@ -14,22 +18,31 @@ public class InstitutionController : ControllerBase
 {
     private readonly IInstitutionService _institutionService;
     private readonly ILogger<InstitutionController> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
 
-    public InstitutionController(IInstitutionService institutionService, ILogger<InstitutionController> logger)
+    public InstitutionController(
+        IInstitutionService institutionService,
+        ILogger<InstitutionController> logger,
+        IHttpClientFactory httpClientFactory)
     {
         _institutionService = institutionService ?? throw new ArgumentNullException(nameof(institutionService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _httpClientFactory = httpClientFactory;
     }
 
-    /// <summary>
-    /// Récupère toutes les institutions
-    /// </summary>
-    /// <returns>Liste des institutions</returns>
-    /// <response code="200">Institutions retournées</response>
-    /// <response code="500">Erreur serveur</response>
+    private HttpClient PyClient() => _httpClientFactory.CreateClient("FastApiClient");
+
+    private void ForwardAuth(HttpClient client)
+    {
+        var auth = Request.Headers["Authorization"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(auth))
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", auth);
+    }
+
+    // ── Endpoints READ existants ─────────────────────────────────────────────
+
     [HttpGet]
     [ProducesResponseType(typeof(IEnumerable<Institution>), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> GetAll()
     {
         try
@@ -44,31 +57,15 @@ public class InstitutionController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Récupère les institutions par pays
-    /// </summary>
-    /// <param name="country">Code pays</param>
-    /// <returns>Institutions du pays</returns>
-    /// <response code="200">Institutions retournées</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpGet]
+    [HttpGet("by-country")]
     [ProducesResponseType(typeof(IEnumerable<Institution>), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> GetByCountry([FromQuery] string? country = null)
     {
         try
         {
-            IEnumerable<Institution> institutions;
-            
-            if (string.IsNullOrWhiteSpace(country))
-            {
-                institutions = await _institutionService.GetAllInstitutionsAsync();
-            }
-            else
-            {
-                institutions = await _institutionService.GetInstitutionsByCountryAsync(country);
-            }
-            
+            var institutions = string.IsNullOrWhiteSpace(country)
+                ? await _institutionService.GetAllInstitutionsAsync()
+                : await _institutionService.GetInstitutionsByCountryAsync(country);
             return Ok(new { data = institutions, success = true });
         }
         catch (Exception ex)
@@ -78,18 +75,9 @@ public class InstitutionController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Récupère une institution par ID
-    /// </summary>
-    /// <param name="id">ID de l'institution</param>
-    /// <returns>L'institution</returns>
-    /// <response code="200">Institution retournée</response>
-    /// <response code="404">Institution non trouvée</response>
-    /// <response code="500">Erreur serveur</response>
     [HttpGet("{id}")]
     [ProducesResponseType(typeof(Institution), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> GetById(int id)
     {
         try
@@ -97,13 +85,102 @@ public class InstitutionController : ControllerBase
             var institution = await _institutionService.GetInstitutionByIdAsync(id);
             if (institution == null)
                 return NotFound(new { success = false, error = "Institution not found" });
-            
             return Ok(new { data = institution, success = true });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting institution {InstitutionId}", id);
             return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    // ── AI proxy endpoints ────────────────────────────────────────────────────
+
+    /// <summary>Analyse prédictive de réussite — proxy vers Python FastAPI</summary>
+    [HttpPost("class-prediction")]
+    [Authorize]
+    public async Task<IActionResult> ClassPrediction([FromBody] JsonElement body)
+    {
+        try
+        {
+            var client = PyClient();
+            ForwardAuth(client);
+            var response = await client.PostAsJsonAsync("/api/institution/class-prediction", body);
+            var content = await response.Content.ReadAsStringAsync();
+            Response.ContentType = "application/json";
+            return StatusCode((int)response.StatusCode, content);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error proxying institution class-prediction");
+            return StatusCode(500, new { success = false, error = "Service unavailable" });
+        }
+    }
+
+    /// <summary>Benchmarking anonyme vs national — proxy vers Python FastAPI</summary>
+    [HttpGet("{institutionId}/benchmark")]
+    [Authorize]
+    public async Task<IActionResult> Benchmark(int institutionId, [FromQuery] string? studentIds = null)
+    {
+        try
+        {
+            var client = PyClient();
+            ForwardAuth(client);
+            var url = $"/api/institution/benchmark/{institutionId}";
+            if (!string.IsNullOrEmpty(studentIds)) url += $"?student_ids={Uri.EscapeDataString(studentIds)}";
+            var response = await client.GetAsync(url);
+            var content = await response.Content.ReadAsStringAsync();
+            Response.ContentType = "application/json";
+            return StatusCode((int)response.StatusCode, content);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error proxying institution benchmark {InstitutionId}", institutionId);
+            return StatusCode(500, new { success = false, error = "Service unavailable" });
+        }
+    }
+
+    /// <summary>Plan d'action institutionnel IA — proxy vers Python FastAPI</summary>
+    [HttpPost("action-plan")]
+    [Authorize]
+    public async Task<IActionResult> ActionPlan([FromBody] JsonElement body)
+    {
+        try
+        {
+            var client = PyClient();
+            ForwardAuth(client);
+            var response = await client.PostAsJsonAsync("/api/institution/action-plan", body);
+            var content = await response.Content.ReadAsStringAsync();
+            Response.ContentType = "application/json";
+            return StatusCode((int)response.StatusCode, content);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error proxying institution action-plan");
+            return StatusCode(500, new { success = false, error = "Service unavailable" });
+        }
+    }
+
+    /// <summary>Détection des étudiants à risque — proxy vers Python FastAPI</summary>
+    [HttpGet("{institutionId}/at-risk-students")]
+    [Authorize]
+    public async Task<IActionResult> AtRiskStudents(int institutionId, [FromQuery] string? studentIds = null)
+    {
+        try
+        {
+            var client = PyClient();
+            ForwardAuth(client);
+            var url = $"/api/institution/at-risk-students/{institutionId}";
+            if (!string.IsNullOrEmpty(studentIds)) url += $"?student_ids={Uri.EscapeDataString(studentIds)}";
+            var response = await client.GetAsync(url);
+            var content = await response.Content.ReadAsStringAsync();
+            Response.ContentType = "application/json";
+            return StatusCode((int)response.StatusCode, content);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error proxying institution at-risk-students {InstitutionId}", institutionId);
+            return StatusCode(500, new { success = false, error = "Service unavailable" });
         }
     }
 }

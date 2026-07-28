@@ -29,6 +29,7 @@ from routes.parent_alert_routes import parent_alert_router
 from routes.study_session_routes import study_session_router
 from routes.parent_extra_routes import parent_extra_router
 from routes.teacher_extra_routes import teacher_ai_router
+from routes.institution_routes import institution_router
 import json
 from schemas import (
     HealthResponse, SubjectResponse, RecommendationResponse,
@@ -115,6 +116,7 @@ app.include_router(parent_alert_router, prefix="/api/parent-alerts", tags=["pare
 app.include_router(study_session_router, prefix="/api/study-session", tags=["study-session"])
 app.include_router(parent_extra_router, prefix="/api", tags=["parent-extra"])
 app.include_router(teacher_ai_router, prefix="/api", tags=["teacher-ai"])
+app.include_router(institution_router, prefix="/api", tags=["institution-ai"])
 
 
 # ==================== HEALTH CHECK (Public) ====================
