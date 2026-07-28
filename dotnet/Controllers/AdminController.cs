@@ -23,13 +23,24 @@ public class AdminController : ControllerBase
     private readonly ILogger<AdminController> _logger;
     private readonly ApplicationDbContext _db;
     private readonly IConfiguration _configuration;
+    private readonly IHttpClientFactory _httpClientFactory;
 
-    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ApplicationDbContext db, IConfiguration configuration)
+    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ApplicationDbContext db, IConfiguration configuration, IHttpClientFactory httpClientFactory)
     {
         _adminService = adminService;
         _logger = logger;
         _db = db;
         _configuration = configuration;
+        _httpClientFactory = httpClientFactory;
+    }
+
+    private HttpClient PyClient() => _httpClientFactory.CreateClient("FastApiClient");
+
+    private void ForwardAuth(HttpClient c)
+    {
+        if (Request.Headers.TryGetValue("Authorization", out var v))
+            c.DefaultRequestHeaders.Authorization =
+                System.Net.Http.Headers.AuthenticationHeaderValue.Parse(v.ToString());
     }
 
     /// <summary>
@@ -1676,6 +1687,112 @@ public class AdminController : ControllerBase
         }
     }
 
+    // ── WinAI proxy endpoints ─────────────────────────────────────────────────
+
+    [HttpPost("winai/anomaly-detection")]
+    public async Task<IActionResult> AnomalyDetection([FromBody] object? body = null)
+    {
+        try
+        {
+            var c = PyClient(); ForwardAuth(c);
+            var res = await c.PostAsJsonAsync("/api/admin/anomaly-detection", body ?? new { force_refresh = false });
+            var json = await res.Content.ReadAsStringAsync();
+            return Content(json, "application/json");
+        }
+        catch (Exception ex) { _logger.LogError(ex, "AnomalyDetection proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
+    }
+
+    [HttpGet("winai/anomalies/active")]
+    public async Task<IActionResult> GetActiveAnomalies()
+    {
+        try
+        {
+            var c = PyClient(); ForwardAuth(c);
+            var res = await c.GetAsync("/api/admin/anomalies/active");
+            var json = await res.Content.ReadAsStringAsync();
+            return Content(json, "application/json");
+        }
+        catch (Exception ex) { _logger.LogError(ex, "GetActiveAnomalies proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
+    }
+
+    [HttpPost("winai/anomaly/{id}/resolve")]
+    public async Task<IActionResult> ResolveAnomaly(int id, [FromQuery] string resolution)
+    {
+        try
+        {
+            var c = PyClient(); ForwardAuth(c);
+            var res = await c.PostAsync($"/api/admin/anomaly/{id}/resolve?resolution={Uri.EscapeDataString(resolution)}", null);
+            var json = await res.Content.ReadAsStringAsync();
+            return Content(json, "application/json");
+        }
+        catch (Exception ex) { _logger.LogError(ex, "ResolveAnomaly proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
+    }
+
+    [HttpPost("winai/content-health-check")]
+    public async Task<IActionResult> ContentHealthCheck([FromBody] object body)
+    {
+        try
+        {
+            var c = PyClient(); ForwardAuth(c);
+            var res = await c.PostAsJsonAsync("/api/admin/content-health-check", body);
+            var json = await res.Content.ReadAsStringAsync();
+            return Content(json, "application/json");
+        }
+        catch (Exception ex) { _logger.LogError(ex, "ContentHealthCheck proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
+    }
+
+    [HttpPost("winai/growth-insights")]
+    public async Task<IActionResult> GrowthInsights([FromBody] object? body = null)
+    {
+        try
+        {
+            var c = PyClient(); ForwardAuth(c);
+            var res = await c.PostAsJsonAsync("/api/admin/growth-insights", body ?? new { period_days = 7 });
+            var json = await res.Content.ReadAsStringAsync();
+            return Content(json, "application/json");
+        }
+        catch (Exception ex) { _logger.LogError(ex, "GrowthInsights proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
+    }
+
+    [HttpPost("winai/revenue-forecast")]
+    public async Task<IActionResult> RevenueForecast([FromBody] object? body = null)
+    {
+        try
+        {
+            var c = PyClient(); ForwardAuth(c);
+            var res = await c.PostAsJsonAsync("/api/admin/revenue-forecast", body ?? new { currency = "XAF" });
+            var json = await res.Content.ReadAsStringAsync();
+            return Content(json, "application/json");
+        }
+        catch (Exception ex) { _logger.LogError(ex, "RevenueForecast proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
+    }
+
+    [HttpGet("winai/moderation/pending")]
+    public async Task<IActionResult> GetPendingModeration()
+    {
+        try
+        {
+            var c = PyClient(); ForwardAuth(c);
+            var res = await c.GetAsync("/api/admin/moderation/pending");
+            var json = await res.Content.ReadAsStringAsync();
+            return Content(json, "application/json");
+        }
+        catch (Exception ex) { _logger.LogError(ex, "GetPendingModeration proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
+    }
+
+    [HttpPost("winai/moderation/{id}/resolve")]
+    public async Task<IActionResult> ResolveModeration(int id, [FromQuery] string action, [FromQuery] string? note = null)
+    {
+        try
+        {
+            var c = PyClient(); ForwardAuth(c);
+            var qs = $"action={Uri.EscapeDataString(action)}{(note != null ? $"&note={Uri.EscapeDataString(note)}" : "")}";
+            var res = await c.PostAsync($"/api/admin/moderation/{id}/resolve?{qs}", null);
+            var json = await res.Content.ReadAsStringAsync();
+            return Content(json, "application/json");
+        }
+        catch (Exception ex) { _logger.LogError(ex, "ResolveModeration proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
+    }
 }
 
 public record AdminActivityEntry(string Id, string Type, DateTime Timestamp, string Title, string Description, string Status, string UserName, string UserEmail, string Target);

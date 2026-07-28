@@ -30,6 +30,7 @@ from routes.study_session_routes import study_session_router
 from routes.parent_extra_routes import parent_extra_router
 from routes.teacher_extra_routes import teacher_ai_router
 from routes.institution_routes import institution_router
+from routes.admin_routes import admin_router, _init_admin_tables
 import json
 from schemas import (
     HealthResponse, SubjectResponse, RecommendationResponse,
@@ -106,6 +107,7 @@ db = Database()
 nlp_analyzer = NLPAnalyzer()
 recommender = Recommender(db)
 performance_analyzer = UserPerformanceAnalyzer(db=db, nlp_analyzer=nlp_analyzer, recommender=recommender)
+_init_admin_tables()
 
 
 # ==================== ROUTERS ====================
@@ -117,6 +119,7 @@ app.include_router(study_session_router, prefix="/api/study-session", tags=["stu
 app.include_router(parent_extra_router, prefix="/api", tags=["parent-extra"])
 app.include_router(teacher_ai_router, prefix="/api", tags=["teacher-ai"])
 app.include_router(institution_router, prefix="/api", tags=["institution-ai"])
+app.include_router(admin_router, prefix="/api", tags=["admin-ai"])
 
 
 # ==================== HEALTH CHECK (Public) ====================

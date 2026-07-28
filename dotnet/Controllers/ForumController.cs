@@ -15,12 +15,34 @@ public class ForumController : ControllerBase
     private readonly IForumService _forumService;
     private readonly INtfyService _ntfyService;
     private readonly ILogger<ForumController> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
 
-    public ForumController(IForumService forumService, INtfyService ntfyService, ILogger<ForumController> logger)
+    public ForumController(IForumService forumService, INtfyService ntfyService, ILogger<ForumController> logger, IHttpClientFactory httpClientFactory)
     {
         _forumService = forumService;
         _ntfyService = ntfyService;
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
+    }
+
+    private async Task TriggerModerationAsync(int postId, int threadId, string content, int authorId)
+    {
+        try
+        {
+            var c = _httpClientFactory.CreateClient("FastApiClient");
+            await c.PostAsJsonAsync("/api/admin/moderate-content", new
+            {
+                post_id = postId,
+                thread_id = threadId,
+                content_text = content,
+                author_id = authorId,
+                confidence_threshold = 0.8,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Background moderation trigger failed for post {PostId}", postId);
+        }
     }
 
     /// <summary>
@@ -111,6 +133,8 @@ public class ForumController : ControllerBase
         {
             var userId = User.GetUserId();
             var post = await _forumService.CreatePostAsync(id, userId, request);
+
+            _ = TriggerModerationAsync((post as dynamic)?.Id ?? 0, id, request.Content ?? "", userId);
 
             var threadAuthorId = await _forumService.GetThreadAuthorIdAsync(id);
             if (threadAuthorId.HasValue && threadAuthorId.Value != userId)
