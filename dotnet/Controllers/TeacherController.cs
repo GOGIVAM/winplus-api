@@ -19,12 +19,89 @@ public class TeacherController : ControllerBase
     private readonly ITeacherService _teacherService;
     private readonly ILogger<TeacherController> _logger;
     private readonly ApplicationDbContext _db;
+    private readonly IHttpClientFactory _httpClientFactory;
 
-    public TeacherController(ITeacherService teacherService, ILogger<TeacherController> logger, ApplicationDbContext db)
+    public TeacherController(ITeacherService teacherService, ILogger<TeacherController> logger, ApplicationDbContext db, IHttpClientFactory httpClientFactory)
     {
         _teacherService = teacherService;
         _logger = logger;
         _db = db;
+        _httpClientFactory = httpClientFactory;
+    }
+
+    // ── WinAI proxy helpers ──────────────────────────────────────────────────
+
+    private HttpClient PyClient() => _httpClientFactory.CreateClient("FastApiClient");
+
+    private void ForwardAuth(HttpRequestMessage req)
+    {
+        var auth = HttpContext.Request.Headers["Authorization"].ToString();
+        if (!string.IsNullOrEmpty(auth))
+            req.Headers.TryAddWithoutValidation("Authorization", auth);
+    }
+
+    // ── Feature 2 — POST /api/teacher/class-analysis ─────────────────────────
+
+    /// <summary>Analyse collective WinAI des apprenants d'un contenu</summary>
+    [HttpPost("class-analysis")]
+    public async Task<IActionResult> GetClassAnalysis([FromBody] object body, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/class-analysis");
+        req.Content = System.Net.Http.Json.JsonContent.Create(body);
+        ForwardAuth(req);
+        var res = await PyClient().SendAsync(req, ct);
+        return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+    }
+
+    // ── Feature 3 — GET /api/teacher/content-impact/{contentId} ─────────────
+
+    /// <summary>Score d'impact pédagogique d'un contenu</summary>
+    [HttpGet("content-impact/{contentId:int}")]
+    public async Task<IActionResult> GetContentImpact([FromRoute] int contentId, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"/api/teacher/content-impact/{contentId}");
+        ForwardAuth(req);
+        var res = await PyClient().SendAsync(req, ct);
+        return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+    }
+
+    // ── Feature 4 — POST /api/teacher/generate-correction ───────────────────
+
+    /// <summary>Génère une correction IA d'une épreuve</summary>
+    [HttpPost("generate-correction")]
+    public async Task<IActionResult> GenerateCorrection([FromBody] object body, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/generate-correction");
+        req.Content = System.Net.Http.Json.JsonContent.Create(body);
+        ForwardAuth(req);
+        var res = await PyClient().SendAsync(req, ct);
+        return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+    }
+
+    // ── Feature 5 — POST /api/teacher/predict-popularity ────────────────────
+
+    /// <summary>Prédiction de popularité d'un contenu avant publication</summary>
+    [HttpPost("predict-popularity")]
+    public async Task<IActionResult> PredictPopularity([FromBody] object body, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/predict-popularity");
+        req.Content = System.Net.Http.Json.JsonContent.Create(body);
+        ForwardAuth(req);
+        var res = await PyClient().SendAsync(req, ct);
+        return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+    }
+
+    // ── Feature 6 — POST /api/teacher/analyze-submission ────────────────────
+
+    /// <summary>Analyse IA d'une soumission d'élève</summary>
+    [HttpPost("analyze-submission")]
+    public async Task<IActionResult> AnalyzeSubmission([FromBody] object body, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/analyze-submission");
+        req.Content = System.Net.Http.Json.JsonContent.Create(body);
+        ForwardAuth(req);
+        var res = await PyClient().SendAsync(req, ct);
+        return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
     }
 
     /// <summary>

@@ -712,4 +712,34 @@ namespace Backend.Controllers;
             catch { }
             return raw;
         }
+
+        // ── Feature 1b — POST /api/ai/optimize-title ──────────────────────────
+
+        /// <summary>Optimisation SEO du titre d'un contenu par WinAI</summary>
+        [HttpPost("optimize-title")]
+        public async Task<IActionResult> OptimizeTitle([FromBody] object body, CancellationToken ct)
+        {
+            var client = _httpClientFactory.CreateClient("FastApiClient");
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/ai/optimize-title");
+            req.Content = JsonContent.Create(body);
+            var auth = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+            var res = await client.SendAsync(req, ct);
+            return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+        }
+
+        // ── Feature 1c — POST /api/ai/generate-description ───────────────────
+
+        /// <summary>Génère une description catalogue 2-3 phrases par WinAI</summary>
+        [HttpPost("generate-description")]
+        public async Task<IActionResult> GenerateDescription([FromBody] object body, CancellationToken ct)
+        {
+            var client = _httpClientFactory.CreateClient("FastApiClient");
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/ai/generate-description");
+            req.Content = JsonContent.Create(body);
+            var auth = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+            var res = await client.SendAsync(req, ct);
+            return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+        }
     }
