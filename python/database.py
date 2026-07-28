@@ -7,7 +7,7 @@ Utilise SQLAlchemy ORM pour PostgreSQL avec les schémas ASP.NET.
 """
 
 import os
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, Numeric, DateTime, Text, ForeignKey, func, and_, or_, desc
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, Numeric, DateTime, Date, Text, ForeignKey, func, and_, or_, desc
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -181,7 +181,7 @@ class DailyScore(Base):
 
     Id = Column(Integer, primary_key=True)
     UserId = Column(Integer, ForeignKey('Users.Id'), nullable=False, index=True)
-    Date = Column(String(10), nullable=False)  # DATE stored as string 'YYYY-MM-DD'
+    Date = Column(Date, nullable=False)
     AverageScore = Column(Numeric(5, 2), nullable=False)
     QuizCount = Column(Integer, nullable=False, default=1)
     SubjectId = Column(Integer, nullable=True)

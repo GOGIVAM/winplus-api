@@ -563,7 +563,7 @@ class UserPerformanceAnalyzer:
         try:
             from database import DailyScore
             from datetime import date, timedelta
-            cutoff = (date.today() - timedelta(days=days)).isoformat()
+            cutoff = date.today() - timedelta(days=days)
             session = self.db.SessionLocal()
             try:
                 rows = session.query(DailyScore).filter(
@@ -572,7 +572,7 @@ class UserPerformanceAnalyzer:
                 ).order_by(DailyScore.Date).all()
                 return [
                     {
-                        'date': str(r.Date)[:10],
+                        'date': r.Date.isoformat() if hasattr(r.Date, 'isoformat') else str(r.Date)[:10],
                         'score': round(float(r.AverageScore), 1),
                         'quizCount': r.QuizCount,
                     }
