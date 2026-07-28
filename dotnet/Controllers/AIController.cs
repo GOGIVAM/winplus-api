@@ -525,6 +525,41 @@ namespace Backend.Controllers;
             }
         }
 
+        /// <summary>
+        /// GET /api/ai/health
+        /// Vérifie la disponibilité du service Python FastAPI.
+        /// Retourne { status: "ok" | "degraded" | "down", latency_ms }.
+        /// </summary>
+        [HttpGet("health")]
+        [AllowAnonymous]
+        [ProducesResponseType(typeof(object), 200)]
+        public async Task<IActionResult> GetAIHealth(CancellationToken ct)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(TimeSpan.FromSeconds(5));
+                var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+                using var req = new HttpRequestMessage(HttpMethod.Get, "/health");
+                var res = await httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+                sw.Stop();
+                var status = res.IsSuccessStatusCode ? "ok" : "degraded";
+                return Ok(new { status, latency_ms = sw.ElapsedMilliseconds });
+            }
+            catch (OperationCanceledException)
+            {
+                sw.Stop();
+                return Ok(new { status = "down", latency_ms = sw.ElapsedMilliseconds });
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                _logger.LogWarning(ex, "AI health check failed");
+                return Ok(new { status = "down", latency_ms = sw.ElapsedMilliseconds });
+            }
+        }
+
         /// Extracts the inner `data` field from Python's { success, data } response envelope.
         private static string UnwrapPythonData(string raw)
         {
