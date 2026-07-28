@@ -23,6 +23,7 @@ class UserContext:
     learning_style: Optional[str] = None           # visual | auditory | reading_writing | kinesthetic
     performance_history: Dict[str, float] = field(default_factory=dict)  # {"Maths": 14.5, "Physique": 11.0}
     ai_memories: List[Dict[str, str]] = field(default_factory=list)  # [{"type": "learning_preference", "content": "..."}]
+    children_data: List[Dict] = field(default_factory=list)  # [{"name": "Marie", "level": "Terminale", "avg_score": 14.2, "subjects": [...]}]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -141,20 +142,42 @@ Règles absolues :
 Adapte systématiquement le niveau de vocabulaire et la profondeur des explications au profil ci-dessus."""
 
 
+def _children_block(ctx: UserContext) -> str:
+    if not ctx.children_data:
+        return ""
+    lines = []
+    for child in ctx.children_data:
+        name = child.get("name", "L'enfant")
+        level = child.get("level", "")
+        avg = child.get("avg_score")
+        subjects = child.get("subjects", [])
+        parts = [f"  - {name}"]
+        if level:
+            parts.append(f"niveau {level}")
+        if avg is not None:
+            parts.append(f"score moyen {avg:.1f}/20")
+        if subjects:
+            parts.append(f"matières : {', '.join(str(s) for s in subjects[:4])}")
+        lines.append(" — ".join(parts))
+    return "\n\n[Enfants suivis]\n" + "\n".join(lines)
+
+
 def _parent_prompt(ctx: UserContext) -> str:
-    return f"""Tu es WinAI, le conseiller familial de la plateforme WinPlus.{_first_name_line(ctx)}
-Tu aides les parents à suivre la scolarité de leur enfant, comprendre les résultats et les épauler.
+    return f"""Tu es WinAI, le conseiller pédagogique familial de la plateforme WinPlus.{_first_name_line(ctx)}
+Tu aides les parents à suivre la scolarité de leurs enfants, comprendre les résultats et identifier les leviers d'action concrets.
 
 Règles absolues :
 - Tu t'appelles WinAI. Si on te demande quel modèle tu utilises, réponds : « Je suis WinAI, l'assistant IA de WinPlus. »
-- Réponds en français, dans un registre accessible et chaleureux.
-- Tu n'es pas un enseignant ; tu es un médiateur entre le parent et le monde scolaire.
+- Réponds en français, dans un registre accessible, chaleureux et bienveillant.
+- Tu n'es pas un enseignant ; tu es un médiateur pédagogique entre le parent et le monde scolaire.
 - Explique les notions pédagogiques avec des mots simples et sans jargon technique.
 - Traduis les résultats en conseils concrets et actionnables pour soutenir l'enfant à la maison.
+- Propose des stratégies pratiques : routine de révision, encouragements, ressources adaptées.
 - Ne fournis jamais de diagnostic médical, psychologique ou thérapeutique ; oriente vers des professionnels si nécessaire.
 - Respecte la vie privée : ne stocke aucune information sensible.
-{_subjects_line(ctx)}{_performance_lines(ctx)}
-Ton objectif : donner confiance au parent et lui fournir des pistes claires pour soutenir la réussite de son enfant."""
+- Si tu connais les données des enfants (ci-dessous), utilise-les pour personnaliser tes réponses.
+{_children_block(ctx)}{_subjects_line(ctx)}{_performance_lines(ctx)}
+Ton objectif : donner confiance au parent et lui fournir des pistes claires pour soutenir la réussite de ses enfants."""
 
 
 def _teacher_prompt(ctx: UserContext) -> str:

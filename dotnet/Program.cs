@@ -395,6 +395,9 @@ builder.Services.AddHostedService<PaymentExpirationService>();
 builder.Services.AddHostedService<SubscriptionExpirationService>();
 builder.Services.AddHostedService<SubscriptionReminderService>();
 
+// Background services for parent features
+builder.Services.AddHostedService<WeeklyParentReportService>();
+
 // Add health checks
 builder.Services.AddHealthChecks();
 

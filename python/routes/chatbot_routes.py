@@ -14,7 +14,7 @@ from services.deepseek_client import get_deepseek_client
 from services.prompt_builder import build_system_prompt, UserContext
 from auth import verify_token, UserTokenData
 from schemas import ChatRequest, ChatResponse, ChatbotHealthResponse, ChatMessage, ChatbotContextRequest
-from database import Database, Conversation, ChatMessage as ChatMessageDB, UserAIMemory
+from database import Database, Conversation, ChatMessage as ChatMessageDB, UserAIMemory, User, QuizAttempt, DailyScore
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,44 @@ def _load_user_memories(user_id: int) -> list:
         return []
 
 
+def _load_parent_children_data(child_ids: list) -> list:
+    """Charge un résumé des enfants pour enrichir le contexte parental WinAI."""
+    if not child_ids:
+        return []
+    try:
+        from datetime import datetime, timedelta, timezone
+        db = Database()
+        session = db.SessionLocal()
+        now = datetime.now(timezone.utc)
+        cutoff_30 = now - timedelta(days=30)
+        children = []
+        try:
+            for child_id in child_ids[:5]:
+                child = session.query(User).filter(User.Id == child_id).first()
+                if not child:
+                    continue
+                scores = (
+                    session.query(DailyScore)
+                    .filter(DailyScore.UserId == child_id, DailyScore.CreatedAt >= cutoff_30)
+                    .all()
+                )
+                avg_score = (
+                    sum(float(s.AverageScore) for s in scores) / len(scores) * 20 / 100
+                    if scores else None
+                )
+                children.append({
+                    "name": child.FirstName or f"Enfant {child_id}",
+                    "avg_score": round(avg_score, 1) if avg_score is not None else None,
+                    "subjects": [],
+                })
+        finally:
+            session.close()
+        return children
+    except Exception as e:
+        logger.warning(f"Could not load parent children data: {e}")
+        return []
+
+
 def _build_prompt_from_request(
     user_context: Optional[ChatbotContextRequest],
     token_data: UserTokenData,
@@ -48,6 +86,14 @@ def _build_prompt_from_request(
     """
     role = getattr(user_context, "role", None) or token_data.role or "student"
     memories = _load_user_memories(token_data.user_id) if token_data.user_id else []
+
+    # For parents, inject children context if child_ids are provided
+    children_data: list = []
+    if role == "parent":
+        raw_child_ids = getattr(user_context, "child_ids", None) or []
+        if raw_child_ids:
+            children_data = _load_parent_children_data(list(raw_child_ids))
+
     ctx = UserContext(
         role=role,
         first_name=getattr(user_context, "first_name", None),
@@ -60,6 +106,7 @@ def _build_prompt_from_request(
         learning_style=getattr(user_context, "learning_style", None),
         performance_history=dict(user_context.performance_history or {}) if user_context else {},
         ai_memories=memories,
+        children_data=children_data,
     )
     return build_system_prompt(ctx), ctx.role
 

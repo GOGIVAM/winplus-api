@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from auth import verify_token, UserTokenData
-from database import Database, QuizAttempt, User
+from database import Database, QuizAttempt, User, ExamCoachPlanAI
 from services.deepseek_client import get_deepseek_client
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ parent_alert_router = APIRouter()
 
 
 class AlertItem(BaseModel):
-    type: str          # "performance_drop" | "inactivity" | "excellent_week"
+    type: str          # "performance_drop" | "inactivity" | "excellent_week" | "exam_anxiety" | "surmenage"
     severity: str      # "error" | "warn" | "info" | "success"
     message: str
     detected_at: str
@@ -51,6 +51,14 @@ def _winai_message(alert_type: str, child_name: str, stat_value: float | int | N
             f"{child_name} a obtenu une excellente performance cette semaine (score moyen {stat_value:.0f}%). "
             "Génère un message chaleureux de 1-2 phrases pour féliciter et encourager le parent à transmettre cette fierté à l'enfant."
         ),
+        "exam_anxiety": (
+            f"{child_name} a passé {int(stat_value) if stat_value else 'plusieurs'} séances de révision après 22h cette semaine, signe d'une anxiété possible à l'approche d'un examen. "
+            "Génère un message empathique de 1-2 phrases pour alerter le parent avec douceur et lui proposer de rassurer son enfant."
+        ),
+        "surmenage": (
+            f"{child_name} a nettement augmenté son rythme de travail ({int(stat_value) if stat_value else 'beaucoup'} séances cette semaine) mais ses scores ont baissé malgré cet effort. "
+            "Génère un message bienveillant de 1-2 phrases pour alerter le parent sur un possible surmenage et l'encourager à inviter son enfant à se reposer."
+        ),
     }
     prompt = prompts.get(alert_type, f"Génère un message bienveillant court pour le parent de {child_name}.")
     try:
@@ -75,6 +83,8 @@ def _fallback_message(alert_type: str, child_name: str) -> str:
         "performance_drop": f"Les scores de {child_name} ont baissé cette semaine — un petit encouragement peut faire toute la différence !",
         "inactivity":       f"{child_name} n'a pas étudié depuis quelques jours. Un message de votre part pourrait l'aider à reprendre.",
         "excellent_week":   f"Bravo à {child_name} pour cette excellente semaine ! Partagez-lui votre fierté.",
+        "exam_anxiety":     f"{child_name} révise très tard le soir. Encouragez-le à se reposer : le sommeil est essentiel avant un examen.",
+        "surmenage":        f"{child_name} travaille beaucoup mais ses résultats baissent. Invitez-le à faire une pause — la qualité prime sur la quantité.",
     }
     return fallbacks.get(alert_type, f"WinAI a détecté quelque chose à surveiller pour {child_name}.")
 
@@ -169,6 +179,67 @@ async def get_parent_alerts(
                     "child_stats": {
                         "avg_score_last_7d": round(avg_last, 1),
                         "quiz_count":        len(scores_last_7),
+                    },
+                })
+
+        # ── Détection 4 : anxiété d'examen (quiz après 22h) ────────────────────
+        night_attempts = [
+            a for a in attempts
+            if a.CompletedAt and a.CompletedAt.hour >= 22
+        ]
+        if len(night_attempts) >= 3:
+            near_exam = False
+            try:
+                plan = (
+                    session.query(ExamCoachPlanAI)
+                    .filter(
+                        ExamCoachPlanAI.UserId == child_id,
+                        ExamCoachPlanAI.IsActive == True,
+                        ExamCoachPlanAI.ExamDate >= now,
+                        ExamCoachPlanAI.ExamDate <= now + timedelta(days=60),
+                    )
+                    .first()
+                )
+                near_exam = plan is not None
+            except Exception:
+                pass
+            if near_exam:
+                deepseek = get_deepseek_client()
+                msg = _winai_message("exam_anxiety", child_name, len(night_attempts), deepseek)
+                alerts.append({
+                    "type":        "exam_anxiety",
+                    "severity":    "warn",
+                    "message":     msg,
+                    "detected_at": now.isoformat(),
+                    "child_stats": {"night_sessions_count": len(night_attempts)},
+                })
+
+        # ── Détection 5 : surmenage (plus de travail, moins de résultats) ───────
+        count_last_7 = len([a for a in attempts if a.CompletedAt and a.CompletedAt >= cutoff_7])
+        count_prev_7 = len([a for a in attempts if a.CompletedAt and a.CompletedAt < cutoff_7])
+        if (
+            count_last_7 > 0
+            and count_prev_7 > 0
+            and count_last_7 >= count_prev_7 * 1.5
+            and scores_last_7
+            and scores_prev_7
+            and not any(a["type"] == "surmenage" for a in alerts)
+        ):
+            avg_last = sum(scores_last_7) / len(scores_last_7)
+            avg_prev = sum(scores_prev_7) / len(scores_prev_7)
+            if avg_prev > 0 and (avg_prev - avg_last) / avg_prev * 100 >= 10:
+                deepseek = get_deepseek_client()
+                msg = _winai_message("surmenage", child_name, count_last_7, deepseek)
+                alerts.append({
+                    "type":        "surmenage",
+                    "severity":    "warn",
+                    "message":     msg,
+                    "detected_at": now.isoformat(),
+                    "child_stats": {
+                        "sessions_this_week": count_last_7,
+                        "sessions_prev_week": count_prev_7,
+                        "avg_score_last_7d":  round(avg_last, 1),
+                        "avg_score_prev_7d":  round(avg_prev, 1),
                     },
                 })
 

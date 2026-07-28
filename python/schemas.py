@@ -212,6 +212,7 @@ class ChatbotContextRequest(BaseModel):
     objectives: Optional[List[str]] = []
     learning_style: Optional[str] = None
     performance_history: Optional[Dict[str, float]] = {}       # {"Maths": 14.5, "Physique": 11.0}
+    child_ids: Optional[List[int]] = []                        # For parents: IDs of children to inject context
 
 
 class ChatRequest(BaseModel):

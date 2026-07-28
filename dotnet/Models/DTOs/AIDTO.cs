@@ -344,4 +344,14 @@ namespace Backend.Models.DTOs
     }
 
     #endregion
+
+    #region Parent Settings
+
+    public class ParentSettingsDto
+    {
+        public bool? WeeklyReport { get; set; }
+        public bool? ChildrenComparison { get; set; }
+    }
+
+    #endregion
 }

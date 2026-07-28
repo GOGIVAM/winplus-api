@@ -325,6 +325,90 @@ public class ParentController : ControllerBase
     }
 
     /// <summary>
+    /// GET /api/parent/engagement/{parentId}
+    /// Proxy → Python /api/parent-engagement/{parentId} — Score de mobilisation parental
+    /// </summary>
+    [HttpGet("engagement/{parentId:int}")]
+    public async Task<IActionResult> GetEngagementScore([FromRoute] int parentId, CancellationToken ct)
+    {
+        var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"/api/parent-engagement/{parentId}");
+        var auth = HttpContext.Request.Headers["Authorization"].ToString();
+        if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+        var res = await httpClient.SendAsync(req, ct);
+        var content = await res.Content.ReadAsStringAsync(ct);
+        return Content(content, "application/json");
+    }
+
+    /// <summary>
+    /// POST /api/parent/educational-roi
+    /// Proxy → Python /api/parent/educational-roi — ROI éducatif
+    /// </summary>
+    [HttpPost("educational-roi")]
+    public async Task<IActionResult> GetEducationalROI([FromBody] object body, CancellationToken ct)
+    {
+        var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/parent/educational-roi");
+        req.Content = System.Net.Http.Json.JsonContent.Create(body);
+        var auth = HttpContext.Request.Headers["Authorization"].ToString();
+        if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+        var res = await httpClient.SendAsync(req, ct);
+        var content = await res.Content.ReadAsStringAsync(ct);
+        return Content(content, "application/json");
+    }
+
+    /// <summary>
+    /// GET /api/parent/children-insights
+    /// Proxy → Python /api/parent/children-insights — Comparaison inter-enfants
+    /// </summary>
+    [HttpGet("children-insights")]
+    public async Task<IActionResult> GetChildrenInsights([FromQuery] string childIds, CancellationToken ct)
+    {
+        var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"/api/parent/children-insights?child_ids={Uri.EscapeDataString(childIds ?? "")}");
+        var auth = HttpContext.Request.Headers["Authorization"].ToString();
+        if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+        var res = await httpClient.SendAsync(req, ct);
+        var content = await res.Content.ReadAsStringAsync(ct);
+        return Content(content, "application/json");
+    }
+
+    /// <summary>
+    /// PUT /api/parent/settings
+    /// Mise à jour des préférences du parent (rapport hebdomadaire, comparaison enfants…)
+    /// </summary>
+    [HttpPut("settings")]
+    public async Task<IActionResult> UpdateSettings([FromBody] ParentSettingsDto settings)
+    {
+        try
+        {
+            var parentId = User.GetUserId();
+            var parent = await _db.Users.FindAsync(parentId);
+            if (parent == null) return NotFound(new { message = "Parent not found" });
+
+            // Store settings in Bio field as JSON metadata (lightweight settings store)
+            System.Collections.Generic.Dictionary<string, object?> meta;
+            try { meta = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, object?>>(parent.Bio ?? "{}") ?? new(); }
+            catch { meta = new(); }
+
+            if (settings.WeeklyReport.HasValue) meta["weeklyReport"] = settings.WeeklyReport.Value;
+            if (settings.ChildrenComparison.HasValue) meta["childrenComparison"] = settings.ChildrenComparison.Value;
+
+            // Only write back if Bio looks like a settings JSON (not a real bio string)
+            if (parent.Bio == null || parent.Bio.TrimStart().StartsWith("{"))
+                parent.Bio = System.Text.Json.JsonSerializer.Serialize(meta);
+
+            await _db.SaveChangesAsync();
+            return Ok(new { message = "Settings updated", settings = meta });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating parent settings");
+            return StatusCode(500, new { message = "An error occurred" });
+        }
+    }
+
+    /// <summary>
     /// GET /api/parent/ai-alerts/{childId}
     /// Proxy vers Python /api/parent-alerts/{childId} — détection d'anomalies + messages WinAI
     /// </summary>
