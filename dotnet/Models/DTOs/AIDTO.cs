@@ -330,4 +330,18 @@ namespace Backend.Models.DTOs
     }
 
     #endregion
+
+    #region AI Memory
+
+    public class UpsertMemoryRequest
+    {
+        [Required]
+        [MaxLength(50)]
+        public string MemoryType { get; set; } = string.Empty;
+
+        [Required]
+        public string Content { get; set; } = string.Empty;
+    }
+
+    #endregion
 }

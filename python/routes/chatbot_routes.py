@@ -14,11 +14,28 @@ from services.deepseek_client import get_deepseek_client
 from services.prompt_builder import build_system_prompt, UserContext
 from auth import verify_token, UserTokenData
 from schemas import ChatRequest, ChatResponse, ChatbotHealthResponse, ChatMessage, ChatbotContextRequest
-from database import Database, Conversation, ChatMessage as ChatMessageDB
+from database import Database, Conversation, ChatMessage as ChatMessageDB, UserAIMemory
 
 logger = logging.getLogger(__name__)
 
 chatbot_router = APIRouter(tags=["chatbot"])
+
+
+def _load_user_memories(user_id: int) -> list:
+    """Charge les mémoires WinAI persistantes pour un utilisateur."""
+    try:
+        db = Database()
+        session = db.SessionLocal()
+        try:
+            memories = session.query(UserAIMemory).filter(
+                UserAIMemory.UserId == user_id
+            ).order_by(UserAIMemory.UpdatedAt.desc()).limit(10).all()
+            return [{"type": m.MemoryType, "content": m.Content} for m in memories]
+        finally:
+            session.close()
+    except Exception as e:
+        logger.warning(f"Could not load AI memories for user {user_id}: {e}")
+        return []
 
 
 def _build_prompt_from_request(
@@ -29,8 +46,10 @@ def _build_prompt_from_request(
     Converts request context + JWT data into a WinAI system prompt.
     Returns (system_prompt, winai_role) for logging.
     """
+    role = getattr(user_context, "role", None) or token_data.role or "student"
+    memories = _load_user_memories(token_data.user_id) if token_data.user_id else []
     ctx = UserContext(
-        role=getattr(user_context, "role", None) or token_data.role or "student",
+        role=role,
         first_name=getattr(user_context, "first_name", None),
         education_level=getattr(user_context, "education_level", None),
         grade=getattr(user_context, "grade", None),
@@ -40,6 +59,7 @@ def _build_prompt_from_request(
         objectives=list(user_context.objectives or []) if user_context else [],
         learning_style=getattr(user_context, "learning_style", None),
         performance_history=dict(user_context.performance_history or {}) if user_context else {},
+        ai_memories=memories,
     )
     return build_system_prompt(ctx), ctx.role
 

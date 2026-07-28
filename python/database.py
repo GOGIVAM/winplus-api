@@ -204,6 +204,32 @@ class ExamCoachPlanAI(Base):
     IsActive = Column(Boolean, nullable=False, default=True)
 
 
+class UserAIMemory(Base):
+    """Mémoire persistante WinAI par étudiant — mappé sur UserAIMemories (.NET)"""
+    __tablename__ = 'UserAIMemories'
+
+    Id = Column(Integer, primary_key=True)
+    UserId = Column(Integer, ForeignKey('Users.Id'), nullable=False, index=True)
+    MemoryType = Column(String(50), nullable=False)  # learning_preference | understood_topics | struggling_topics | exam_context | motivation_style
+    Content = Column(Text, nullable=False)
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    UpdatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
+class StudySession(Base):
+    """Session d'étude guidée — mappé sur StudySessions (.NET)"""
+    __tablename__ = 'StudySessions'
+
+    Id = Column(Integer, primary_key=True)
+    UserId = Column(Integer, ForeignKey('Users.Id'), nullable=False, index=True)
+    SubjectId = Column(Integer, ForeignKey('Subjects.Id'), nullable=False)
+    Duration = Column(Integer, nullable=False)  # minutes
+    Score = Column(Numeric(5, 2))
+    KeyPoints = Column(Text)  # JSON array
+    CompletedAt = Column(DateTime(timezone=True))
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
 # ================== INITIALISATION DB ==================
 
 class Database:

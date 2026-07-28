@@ -100,6 +100,12 @@ public class ApplicationDbContext : DbContext
     // Score history (one row per user per day)
     public DbSet<DailyScore> DailyScores => Set<DailyScore>();
 
+    // WinAI persistent memory per student
+    public DbSet<UserAIMemory> UserAIMemories => Set<UserAIMemory>();
+
+    // Guided study sessions
+    public DbSet<StudySession> StudySessions => Set<StudySession>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -939,6 +945,37 @@ modelBuilder.Entity<Exam>(entity =>
             entity.Property(e => e.AverageScore).HasPrecision(5, 2);
             entity.HasIndex(e => new { e.UserId, e.Date }).IsUnique();
             entity.HasIndex(e => e.UserId);
+        });
+
+        // Configure UserAIMemory entity
+        modelBuilder.Entity<UserAIMemory>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.MemoryType).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.Content).IsRequired();
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => new { e.UserId, e.MemoryType });
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure StudySession entity
+        modelBuilder.Entity<StudySession>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Score).HasPrecision(5, 2);
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => new { e.UserId, e.SubjectId });
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Subject)
+                .WithMany()
+                .HasForeignKey(e => e.SubjectId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

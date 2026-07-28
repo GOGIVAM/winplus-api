@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from auth import verify_token, UserTokenData
-from database import Database, ExamCoachPlanAI
+from database import Database, ExamCoachPlanAI, QuizAttempt, DailyScore, LearningHistory, Enrollment, Subject
 from services.deepseek_client import get_deepseek_client
 from services.user_performance_analyzer import UserPerformanceAnalyzer
 from models.nlp_analyzer import NLPAnalyzer
@@ -33,6 +33,12 @@ class GeneratePlanRequest(BaseModel):
     exam_type: str
     exam_date: str  # ISO YYYY-MM-DD
     hours_per_day: float
+
+
+class GradePredictRequest(BaseModel):
+    user_id: int
+    subject: str
+    exam_type: Optional[str] = None
 
 
 class DayResult(BaseModel):
@@ -461,3 +467,231 @@ async def get_today_session(
     finally:
         if session:
             session.close()
+
+
+# ── Endpoint 4: Predict grade ─────────────────────────────────────────────────
+
+@exam_coach_router.post('/predict-grade')
+async def predict_grade(
+    body: GradePredictRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    """
+    Prédit la note probable de l'étudiant sur un sujet donné.
+    Retourne: predicted_grade (/20), confidence, grade_range, key_topics_to_master.
+    """
+    db_obj = Database()
+    session = db_obj.SessionLocal()
+    try:
+        # Fetch quiz attempts for the user (all quizzes, last 90 days)
+        cutoff = datetime.utcnow() - timedelta(days=90)
+        attempts = session.query(QuizAttempt).filter(
+            QuizAttempt.UserId == body.user_id,
+            QuizAttempt.CreatedAt >= cutoff,
+        ).order_by(QuizAttempt.CreatedAt.desc()).limit(50).all()
+
+        scores = [float(a.Score) for a in attempts if a.Score is not None]
+        if not scores:
+            # No data — return estimate based on enrollment only
+            return {
+                'success': True,
+                'data': {
+                    'predicted_grade': '10/20',
+                    'confidence': 0.35,
+                    'grade_range': '8-13/20',
+                    'improvement_points': 4,
+                    'key_topics_to_master': [],
+                    'data_points': 0,
+                }
+            }
+
+        # Compute average and recent trend
+        avg_pct = sum(scores) / len(scores)  # 0–100 scale
+        recent = scores[:5]
+        older = scores[5:15] if len(scores) > 5 else scores
+        trend = (sum(recent) / len(recent)) - (sum(older) / len(older)) if older else 0
+
+        # Convert from % to /20
+        avg_20 = avg_pct * 20 / 100
+        trend_20 = trend * 20 / 100
+
+        # Predicted grade with trend adjustment
+        predicted_raw = min(20.0, max(0.0, avg_20 + trend_20 * 0.3))
+        low = max(0.0, predicted_raw - 2.0)
+        high = min(20.0, predicted_raw + 2.0)
+
+        # Confidence scales with number of data points
+        confidence = min(0.95, 0.40 + len(scores) * 0.025)
+
+        # Daily score trend for improvement points
+        daily_scores = session.query(DailyScore).filter(
+            DailyScore.UserId == body.user_id
+        ).order_by(DailyScore.Date.desc()).limit(30).all()
+        improvement_delta = 0.0
+        if len(daily_scores) >= 2:
+            improvement_delta = float(daily_scores[0].AverageScore) - float(daily_scores[-1].AverageScore)
+        improvement_pts = max(0, min(10, round(improvement_delta * 20 / 100)))
+
+        # Ask DeepSeek for key topics
+        key_topics = []
+        try:
+            client = get_deepseek_client()
+            subject_name = body.subject
+            exam_name = body.exam_type or 'BAC'
+            prompt = (
+                f"Tu es un expert en préparation aux examens camerounais ({exam_name}). "
+                f"Pour un étudiant qui a une moyenne de {predicted_raw:.1f}/20 en {subject_name}, "
+                f"liste 3 à 5 notions clés à maîtriser pour améliorer sa note. "
+                f"Réponds uniquement avec une liste JSON: [\"notion1\", \"notion2\", ...]. "
+                f"Pas d'explication, juste le tableau JSON."
+            )
+            result = client.chat(
+                messages=[{'role': 'user', 'content': prompt}],
+                max_tokens=150,
+                temperature=0.3,
+            )
+            raw = result.get('content', '').strip()
+            # Extract JSON array from response
+            import re
+            match = re.search(r'\[.*?\]', raw, re.DOTALL)
+            if match:
+                key_topics = json.loads(match.group())
+        except Exception as exc:
+            logger.warning(f"[predict-grade] DeepSeek topics failed: {exc}")
+
+        return {
+            'success': True,
+            'data': {
+                'predicted_grade': f"{predicted_raw:.0f}/20",
+                'confidence': round(confidence, 2),
+                'grade_range': f"{low:.0f}-{high:.0f}/20",
+                'improvement_points': improvement_pts,
+                'key_topics_to_master': key_topics[:5],
+                'data_points': len(scores),
+                'avg_score_pct': round(avg_pct, 1),
+                'trend': round(trend_20, 2),
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"[predict-grade] Error: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        session.close()
+
+
+# ── Endpoint 5: Micro-intervention ───────────────────────────────────────────
+
+@exam_coach_router.get('/micro-intervention/{user_id}')
+async def get_micro_intervention(
+    user_id: int,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    """
+    Calcule si l'étudiant nécessite une micro-intervention WinAI.
+    Conditions: inactif > 3 jours ET examen dans < 60 jours.
+    Retourne un message bienveillant et actionnable.
+    """
+    db_obj = Database()
+    session = db_obj.SessionLocal()
+    try:
+        # Last activity
+        last_activity = session.query(LearningHistory).filter(
+            LearningHistory.UserId == user_id
+        ).order_by(LearningHistory.Timestamp.desc()).first()
+
+        days_inactive = 0
+        if last_activity:
+            delta = datetime.utcnow() - last_activity.Timestamp.replace(tzinfo=None)
+            days_inactive = delta.days
+        else:
+            days_inactive = 30  # no data → assume inactive
+
+        # Active exam coach plan
+        active_plan = session.query(ExamCoachPlanAI).filter(
+            ExamCoachPlanAI.UserId == user_id,
+            ExamCoachPlanAI.IsActive == True,
+        ).order_by(ExamCoachPlanAI.CreatedAt.desc()).first()
+
+        days_to_exam = 999
+        exam_type = 'BAC'
+        if active_plan:
+            days_to_exam = (active_plan.ExamDate.date() - date.today()).days
+            exam_type = active_plan.ExamType
+
+        # Score trend (last 14 days DailyScores)
+        scores = session.query(DailyScore).filter(
+            DailyScore.UserId == user_id,
+        ).order_by(DailyScore.Date.desc()).limit(14).all()
+        last_score_trend = 'stable'
+        if len(scores) >= 4:
+            recent_avg = sum(float(s.AverageScore) for s in scores[:3]) / 3
+            older_avg = sum(float(s.AverageScore) for s in scores[3:7]) / len(scores[3:7])
+            if recent_avg > older_avg + 2:
+                last_score_trend = 'up'
+            elif recent_avg < older_avg - 2:
+                last_score_trend = 'down'
+
+        # Only trigger if conditions met
+        if days_inactive <= 3 or days_to_exam >= 60:
+            return {
+                'success': True,
+                'data': None,
+                'trigger': False,
+            }
+
+        # Find the subject from last enrollment
+        enrolled = session.query(Enrollment, Subject).join(
+            Subject, Enrollment.SubjectId == Subject.Id
+        ).filter(
+            Enrollment.UserId == user_id,
+            Enrollment.IsDeleted == False,
+        ).order_by(Enrollment.EnrolledAt.desc()).first()
+
+        suggested_subject = enrolled[1].Title if enrolled else exam_type
+        urgency = 'high' if days_to_exam < 14 else ('medium' if days_to_exam < 30 else 'low')
+
+        # Generate message via DeepSeek
+        message = ''
+        suggested_action = f'Reprendre {suggested_subject}'
+        duration_minutes = 25
+        try:
+            client = get_deepseek_client()
+            prompt = (
+                f"Tu es WinAI, un coach bienveillant pour un étudiant camerounais. "
+                f"L'étudiant prépare {exam_type} dans {days_to_exam} jours. "
+                f"Il est inactif depuis {days_inactive} jours. "
+                f"Sa tendance de notes est : {last_score_trend}. "
+                f"Génère exactement 2 phrases : une d'encouragement bienveillant, "
+                f"une action concrète à faire maintenant (ex: 'Commence par 25 minutes de {suggested_subject}'). "
+                f"Ton, chaleureux, en français, sans jugement."
+            )
+            result = client.chat(
+                messages=[{'role': 'user', 'content': prompt}],
+                max_tokens=100,
+                temperature=0.8,
+            )
+            message = result.get('content', '').strip()
+        except Exception as exc:
+            logger.warning(f"[micro-intervention] DeepSeek failed: {exc}")
+            message = f"Tu y es presque ! {days_to_exam} jours avant {exam_type} — chaque révision compte. Commence par 25 minutes de {suggested_subject} maintenant."
+
+        return {
+            'success': True,
+            'trigger': True,
+            'data': {
+                'message': message,
+                'suggested_action': suggested_action,
+                'subject': suggested_subject,
+                'duration_minutes': duration_minutes,
+                'urgency': urgency,
+                'days_inactive': days_inactive,
+                'days_to_exam': days_to_exam,
+            }
+        }
+    except Exception as exc:
+        logger.error(f"[micro-intervention] Error: {exc}")
+        return {'success': False, 'trigger': False, 'data': None}
+    finally:
+        session.close()

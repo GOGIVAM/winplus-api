@@ -353,4 +353,64 @@ public class StudentController : ControllerBase
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }
+
+    /// <summary>
+    /// GET /api/student/peer-comparison
+    /// Compare la moyenne de l'étudiant courant avec ses pairs anonymisés au même niveau.
+    /// </summary>
+    [HttpGet("peer-comparison")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GetPeerComparison()
+    {
+        try
+        {
+            var userId = User.GetUserId();
+
+            // User's daily score average (last 30 days)
+            var cutoff = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-30));
+            var userScores = await _db.DailyScores
+                .Where(s => s.UserId == userId && s.Date >= cutoff)
+                .Select(s => (double)s.AverageScore)
+                .ToListAsync();
+
+            if (!userScores.Any())
+                return Ok(new { hasData = false });
+
+            var userAvg = Math.Round(userScores.Average(), 1);
+
+            // Peer average: all students who have scores in same period (anonymised)
+            var allScores = await _db.DailyScores
+                .Where(s => s.Date >= cutoff && s.UserId != userId)
+                .GroupBy(s => s.UserId)
+                .Select(g => g.Average(s => (double)s.AverageScore))
+                .ToListAsync();
+
+            if (!allScores.Any())
+                return Ok(new { hasData = false });
+
+            var peerAvg = Math.Round(allScores.Average(), 1);
+            var topPct  = allScores.OrderByDescending(s => s).Take(Math.Max(1, allScores.Count / 5)).Average();
+            var topPerformersAvg = Math.Round(topPct, 1);
+
+            // Percentile: how many peers score BELOW this student
+            var belowCount = allScores.Count(s => s < userAvg);
+            var percentile = (int)Math.Round((double)belowCount / allScores.Count * 100);
+
+            return Ok(new
+            {
+                hasData = true,
+                userAvg,
+                peerAvg,
+                percentile,
+                topPerformersAvg,
+                sampleSize = allScores.Count,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting peer comparison");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
 }

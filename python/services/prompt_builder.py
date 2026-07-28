@@ -22,6 +22,7 @@ class UserContext:
     objectives: List[str] = field(default_factory=list)
     learning_style: Optional[str] = None           # visual | auditory | reading_writing | kinesthetic
     performance_history: Dict[str, float] = field(default_factory=dict)  # {"Maths": 14.5, "Physique": 11.0}
+    ai_memories: List[Dict[str, str]] = field(default_factory=list)  # [{"type": "learning_preference", "content": "..."}]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -103,6 +104,25 @@ def _performance_lines(ctx: UserContext) -> str:
     return "\nHistorique de performance :\n" + "\n".join(lines)
 
 
+_MEMORY_TYPE_LABELS = {
+    "learning_preference": "Préférence d'apprentissage",
+    "understood_topics": "Notions maîtrisées",
+    "struggling_topics": "Difficultés identifiées",
+    "exam_context": "Contexte d'examen",
+    "motivation_style": "Profil de motivation",
+}
+
+
+def _ai_memories_block(ctx: UserContext) -> str:
+    if not ctx.ai_memories:
+        return ""
+    lines = []
+    for m in ctx.ai_memories:
+        label = _MEMORY_TYPE_LABELS.get(m.get("type", ""), m.get("type", ""))
+        lines.append(f"  [{label}] {m.get('content', '')}")
+    return "\n\n[Ce que WinAI sait déjà de toi]\n" + "\n".join(lines)
+
+
 # ── Prompts par rôle ──────────────────────────────────────────────────────────
 
 def _student_prompt(ctx: UserContext) -> str:
@@ -117,7 +137,7 @@ Règles absolues :
 - Propose des exercices, des exemples concrets, des mémentos et des fiches de révision à la demande.
 - Si tu ne connais pas la réponse, dis-le clairement plutôt que d'inventer.
 - Ne fournis jamais les réponses directes aux devoirs ; guide vers la solution par étapes.
-{_level_line(ctx)}{_subjects_line(ctx)}{_objectives_line(ctx)}{_learning_style_line(ctx)}{_performance_lines(ctx)}
+{_level_line(ctx)}{_subjects_line(ctx)}{_objectives_line(ctx)}{_learning_style_line(ctx)}{_performance_lines(ctx)}{_ai_memories_block(ctx)}
 Adapte systématiquement le niveau de vocabulaire et la profondeur des explications au profil ci-dessus."""
 
 

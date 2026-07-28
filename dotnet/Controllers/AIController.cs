@@ -560,6 +560,146 @@ namespace Backend.Controllers;
             }
         }
 
+        /// <summary>
+        /// POST /api/ai/predict-grade
+        /// Proxy → Python /api/exam-coach/predict-grade
+        /// </summary>
+        [HttpPost("predict-grade")]
+        public async Task<IActionResult> PredictGrade([FromBody] object body, CancellationToken ct)
+        {
+            var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/exam-coach/predict-grade");
+            req.Content = JsonContent.Create(body);
+            var auth = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+            var res = await httpClient.SendAsync(req, ct);
+            var content = await res.Content.ReadAsStringAsync(ct);
+            return Content(UnwrapPythonData(content), "application/json");
+        }
+
+        /// <summary>
+        /// GET /api/ai/micro-intervention
+        /// Proxy → Python /api/exam-coach/micro-intervention/{userId}
+        /// </summary>
+        [HttpGet("micro-intervention")]
+        public async Task<IActionResult> GetMicroIntervention([FromQuery] int userId, CancellationToken ct)
+        {
+            var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"/api/exam-coach/micro-intervention/{userId}");
+            var auth = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+            var res = await httpClient.SendAsync(req, ct);
+            var content = await res.Content.ReadAsStringAsync(ct);
+            return Content(UnwrapPythonData(content), "application/json");
+        }
+
+        /// <summary>
+        /// POST /api/ai/memory/upsert
+        /// Upsert une entrée de mémoire WinAI pour l'utilisateur courant.
+        /// </summary>
+        [HttpPost("memory/upsert")]
+        public async Task<IActionResult> UpsertMemory([FromBody] UpsertMemoryRequest request)
+        {
+            try
+            {
+                int userId;
+                try { userId = GetCurrentUserId(); }
+                catch (UnauthorizedAccessException ex) { return Unauthorized(new { message = ex.Message }); }
+
+                var validTypes = new[] { "learning_preference", "understood_topics", "struggling_topics", "exam_context", "motivation_style" };
+                if (!validTypes.Contains(request.MemoryType))
+                    return BadRequest(new { message = "Invalid memory type" });
+
+                var existing = await _db.UserAIMemories
+                    .FirstOrDefaultAsync(m => m.UserId == userId && m.MemoryType == request.MemoryType);
+
+                if (existing != null)
+                {
+                    existing.Content = request.Content;
+                    existing.UpdatedAt = DateTime.UtcNow;
+                }
+                else
+                {
+                    _db.UserAIMemories.Add(new UserAIMemory
+                    {
+                        UserId = userId,
+                        MemoryType = request.MemoryType,
+                        Content = request.Content,
+                    });
+                }
+
+                await _db.SaveChangesAsync();
+                return Ok(new { message = "Memory saved" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error upserting AI memory");
+                return StatusCode(500, new { message = "An error occurred" });
+            }
+        }
+
+        /// <summary>
+        /// GET /api/ai/memory
+        /// Retourne les mémoires WinAI de l'utilisateur courant.
+        /// </summary>
+        [HttpGet("memory")]
+        public async Task<IActionResult> GetMemories()
+        {
+            try
+            {
+                int userId;
+                try { userId = GetCurrentUserId(); }
+                catch (UnauthorizedAccessException ex) { return Unauthorized(new { message = ex.Message }); }
+
+                var memories = await _db.UserAIMemories
+                    .Where(m => m.UserId == userId)
+                    .OrderByDescending(m => m.UpdatedAt)
+                    .Select(m => new { m.MemoryType, m.Content, m.UpdatedAt })
+                    .ToListAsync();
+
+                return Ok(memories);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching AI memories");
+                return StatusCode(500, new { message = "An error occurred" });
+            }
+        }
+
+        /// <summary>
+        /// POST /api/ai/study-session/generate
+        /// Proxy → Python /api/study-session/generate
+        /// </summary>
+        [HttpPost("study-session/generate")]
+        public async Task<IActionResult> StudySessionGenerate([FromBody] object body, CancellationToken ct)
+        {
+            var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/study-session/generate");
+            req.Content = JsonContent.Create(body);
+            var auth = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+            var res = await httpClient.SendAsync(req, ct);
+            var content = await res.Content.ReadAsStringAsync(ct);
+            return Content(UnwrapPythonData(content), "application/json");
+        }
+
+        /// <summary>
+        /// POST /api/ai/study-session/complete
+        /// Proxy → Python /api/study-session/complete
+        /// </summary>
+        [HttpPost("study-session/complete")]
+        public async Task<IActionResult> StudySessionComplete([FromBody] object body, CancellationToken ct)
+        {
+            var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/study-session/complete");
+            req.Content = JsonContent.Create(body);
+            var auth = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+            var res = await httpClient.SendAsync(req, ct);
+            var content = await res.Content.ReadAsStringAsync(ct);
+            return Content(content, "application/json");
+        }
+
         /// Extracts the inner `data` field from Python's { success, data } response envelope.
         private static string UnwrapPythonData(string raw)
         {
