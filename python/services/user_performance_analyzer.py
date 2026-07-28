@@ -88,17 +88,23 @@ class UserPerformanceAnalyzer:
                 weak_areas
             )
             
+            avg_score, trend = self._compute_score_stats(score_history)
+
             analysis = {
                 'success': True,
                 'user_id': user_id,
                 'history': score_history,
+                'strong_areas': strong_subjects,
+                'weak_areas': weak_areas,
                 'overview': {
                     'total_enrolled_subjects': stats['total_enrolled_subjects'],
                     'completed_subjects': stats['completed_subjects'],
-                    'completion_rate': round(completion_rate, 1),  # pourcentage
+                    'completion_rate': round(completion_rate, 1),
                     'enrolled_days': learning_days,
                     'total_learning_time_hours': round(stats['total_learning_time_minutes'] / 60, 1),
-                    'average_session_duration_minutes': round(avg_session_duration, 1)
+                    'average_session_duration_minutes': round(avg_session_duration, 1),
+                    'avg_score': avg_score,
+                    'trend': trend,
                 },
                 'analysis': {
                     'learning_velocity': round(learning_velocity, 2),  # % par jour
@@ -557,6 +563,22 @@ class UserPerformanceAnalyzer:
         except Exception as e:
             logger.error(f"[UserPerformanceAnalyzer] ❌ predict_success error: {str(e)}")
             return {'success': False, 'error': str(e)}
+
+    def _compute_score_stats(self, history: list) -> tuple:
+        """Calcule avg_score et trend depuis l'historique de scores journaliers."""
+        if not history:
+            return None, None
+        scores = [h['score'] for h in history]
+        avg = round(sum(scores) / len(scores), 1)
+        if len(scores) >= 4:
+            mid = len(scores) // 2
+            first_half = sum(scores[:mid]) / mid
+            second_half = sum(scores[mid:]) / (len(scores) - mid)
+            diff = second_half - first_half
+            trend = 'up' if diff > 2 else ('down' if diff < -2 else 'stable')
+        else:
+            trend = None
+        return avg, trend
 
     def _get_score_history(self, user_id: int, days: int = 90) -> list:
         """Récupère l'historique de scores depuis DailyScores (30 derniers jours par défaut)"""

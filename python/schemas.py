@@ -174,6 +174,8 @@ class ProgressStatsResponse(BaseModel):
     enrolled_days: int
     total_learning_time_hours: float
     average_session_duration_minutes: float
+    avg_score: Optional[float] = None
+    trend: Optional[str] = None
 
 
 class ProgressAnalysisResponse(BaseModel):
@@ -184,6 +186,8 @@ class ProgressAnalysisResponse(BaseModel):
     recommendations: List[str]
     estimated_completion_date: Optional[str] = None
     history: Optional[List[Dict[str, Any]]] = []
+    strong_areas: Optional[List[str]] = []
+    weak_areas: Optional[List[str]] = []
 
 
 # ==================== CHATBOT SCHEMAS ====================
