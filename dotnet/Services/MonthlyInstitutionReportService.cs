@@ -185,8 +185,7 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
         await emailService.SendGenericEmailAsync(
             to: institutionEmail,
             subject: $"[WinPlus] Rapport mensuel de pilotage — {monthLabel}",
-            htmlBody: body,
-            cancellationToken: ct);
+            htmlContent: body);
 
         _logger.LogInformation(
             "Monthly report sent to {Email} for {Month} ({Students} students).",
