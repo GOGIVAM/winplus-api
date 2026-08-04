@@ -1164,31 +1164,6 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>POST /admin/users/{id}/suspend — Suspendre un utilisateur</summary>
-    [HttpPost("users/{id}/suspend")]
-    public async Task<IActionResult> SuspendUser(int id)
-    {
-        var user = await _db.Users.FindAsync(id);
-        if (user == null) return NotFound(new { error = "User not found" });
-        user.IsActive = false;
-        user.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
-        return Ok(new { success = true, message = "Utilisateur suspendu" });
-    }
-
-    /// <summary>POST /admin/users/{id}/restore — Réactiver un utilisateur</summary>
-    [HttpPost("users/{id}/restore")]
-    public async Task<IActionResult> RestoreUser(int id)
-    {
-        var user = await _db.Users.FindAsync(id);
-        if (user == null) return NotFound(new { error = "User not found" });
-        user.IsActive = true;
-        user.IsDeleted = false;
-        user.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
-        return Ok(new { success = true, message = "Utilisateur réactivé" });
-    }
-
     /// <summary>POST /admin/users/{id}/delete — Supprimer (soft-delete) un utilisateur</summary>
     [HttpPost("users/{id}/delete")]
     public async Task<IActionResult> DeleteUser(int id)
