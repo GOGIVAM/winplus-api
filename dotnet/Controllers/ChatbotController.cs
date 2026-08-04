@@ -395,7 +395,11 @@ public class ChatbotController : ControllerBase
             messages = history,
             conversation_id = conversationId,
             max_tokens = 2000,
-            temperature = 0.7
+            temperature = 0.7,
+            user_context = string.IsNullOrEmpty(request.ForceLanguage) ? null : new
+            {
+                force_language = request.ForceLanguage
+            }
         };
 
         var httpClient = _httpClientFactory.CreateClient("FastApiClient");

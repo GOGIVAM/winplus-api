@@ -742,4 +742,32 @@ namespace Backend.Controllers;
             var res = await client.SendAsync(req, ct);
             return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
         }
+
+        // ── Smart AI cross-compte ─────────────────────────────────────────────
+
+        /// <summary>POST /api/ai/summarize-notifications — résumé bullet-points via DeepSeek</summary>
+        [HttpPost("summarize-notifications")]
+        public async Task<IActionResult> SummarizeNotifications([FromBody] object body, CancellationToken ct)
+        {
+            var client = _httpClientFactory.CreateClient("FastApiClient");
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/ai/summarize-notifications");
+            req.Content = JsonContent.Create(body);
+            var auth = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+            var res = await client.SendAsync(req, ct);
+            return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+        }
+
+        /// <summary>POST /api/ai/content-fit-analysis — adéquation contenu/profil utilisateur</summary>
+        [HttpPost("content-fit-analysis")]
+        public async Task<IActionResult> ContentFitAnalysis([FromBody] object body, CancellationToken ct)
+        {
+            var client = _httpClientFactory.CreateClient("FastApiClient");
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/ai/content-fit-analysis");
+            req.Content = JsonContent.Create(body);
+            var auth = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+            var res = await client.SendAsync(req, ct);
+            return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+        }
     }

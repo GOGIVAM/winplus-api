@@ -24,6 +24,44 @@ class UserContext:
     performance_history: Dict[str, float] = field(default_factory=dict)  # {"Maths": 14.5, "Physique": 11.0}
     ai_memories: List[Dict[str, str]] = field(default_factory=list)  # [{"type": "learning_preference", "content": "..."}]
     children_data: List[Dict] = field(default_factory=list)  # [{"name": "Marie", "level": "Terminale", "avg_score": 14.2, "subjects": [...]}]
+    language: Optional[str] = None                 # "french" | "english" | "pidgin" — détecté ou forcé par l'utilisateur
+
+
+# ── Language detection ────────────────────────────────────────────────────────
+
+_PIDGIN_MARKERS = {"wuna", "na", "make", "oya", "abeg", "chop", "don", "comot", "sef", "dey"}
+_FRENCH_WORDS   = {"le", "la", "les", "un", "une", "des", "est", "sont", "je", "tu", "il",
+                   "elle", "nous", "vous", "ils", "elles", "et", "en", "de", "du", "pour",
+                   "pas", "que", "qui", "avec", "sur", "dans", "mais", "ou", "donc", "or"}
+_ENGLISH_WORDS  = {"the", "is", "are", "was", "were", "have", "has", "do", "does", "i",
+                   "you", "he", "she", "we", "they", "can", "will", "how", "what", "when",
+                   "where", "why", "this", "that", "and", "but", "not", "it", "with", "for"}
+
+
+def detect_language(text: str) -> str:
+    """Détecte la langue dominante d'un message : 'french' | 'english' | 'pidgin'."""
+    words = set(text.lower().split())
+    if words & _PIDGIN_MARKERS:
+        return "pidgin"
+    fr_hits = len(words & _FRENCH_WORDS)
+    en_hits = len(words & _ENGLISH_WORDS)
+    if en_hits > fr_hits and en_hits > 0:
+        return "english"
+    return "french"
+
+
+def _language_instruction(ctx: UserContext) -> str:
+    lang = ctx.language
+    if not lang or lang == "french":
+        return ""
+    if lang == "english":
+        return "\n\n[Langue] L'utilisateur s'exprime en anglais — réponds en anglais."
+    if lang == "pidgin":
+        return (
+            "\n\n[Langue] L'utilisateur utilise le parler camerounais (pidgin/français mélangé) "
+            "— tu peux comprendre mais réponds toujours en français standard pour la clarté pédagogique."
+        )
+    return ""
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -139,7 +177,7 @@ Règles absolues :
 - Si tu ne connais pas la réponse, dis-le clairement plutôt que d'inventer.
 - Ne fournis jamais les réponses directes aux devoirs ; guide vers la solution par étapes.
 {_level_line(ctx)}{_subjects_line(ctx)}{_objectives_line(ctx)}{_learning_style_line(ctx)}{_performance_lines(ctx)}{_ai_memories_block(ctx)}
-Adapte systématiquement le niveau de vocabulaire et la profondeur des explications au profil ci-dessus."""
+Adapte systématiquement le niveau de vocabulaire et la profondeur des explications au profil ci-dessus.{_language_instruction(ctx)}"""
 
 
 def _children_block(ctx: UserContext) -> str:
@@ -177,7 +215,7 @@ Règles absolues :
 - Respecte la vie privée : ne stocke aucune information sensible.
 - Si tu connais les données des enfants (ci-dessous), utilise-les pour personnaliser tes réponses.
 {_children_block(ctx)}{_subjects_line(ctx)}{_performance_lines(ctx)}
-Ton objectif : donner confiance au parent et lui fournir des pistes claires pour soutenir la réussite de ses enfants."""
+Ton objectif : donner confiance au parent et lui fournir des pistes claires pour soutenir la réussite de ses enfants.{_language_instruction(ctx)}"""
 
 
 def _teacher_prompt(ctx: UserContext) -> str:
@@ -193,7 +231,7 @@ Règles absolues :
 - Respecte la progression pédagogique et le niveau des apprenants ciblés.
 - Ne génère jamais de contenu discriminatoire, inapproprié ou qui porterait atteinte au droit d'auteur.
 {_subjects_line(ctx)}{_level_line(ctx)}
-Ton rôle : être un partenaire de confiance qui amplifie l'expertise de l'enseignant, jamais un substitut."""
+Ton rôle : être un partenaire de confiance qui amplifie l'expertise de l'enseignant, jamais un substitut.{_language_instruction(ctx)}"""
 
 
 def _admin_prompt(ctx: UserContext) -> str:
@@ -208,7 +246,7 @@ Règles absolues :
 - Ne divulgue aucune information personnelle identifiable dans tes réponses.
 - Cite toujours la source ou la limitation des données que tu utilises.
 - Si une décision relève d'un arbitrage humain, indique-le explicitement.
-Ton rôle : fournir une vue claire, objective et exploitable pour faciliter les décisions de gouvernance."""
+Ton rôle : fournir une vue claire, objective et exploitable pour faciliter les décisions de gouvernance.{_language_instruction(ctx)}"""
 
 
 def _organization_prompt(ctx: UserContext) -> str:
@@ -223,7 +261,7 @@ Règles absolues :
 - Respecte les contraintes légales (RGPD) ; ne manipule jamais de données personnelles en clair.
 - Distingue clairement ce qui relève de tes capacités et ce qui nécessite une intervention humaine.
 - Adapte ton discours aux enjeux organisationnels : efficacité, conformité, impact, coût.
-Ton rôle : être le conseiller stratégique IA de l'organisation pour maximiser l'impact de sa formation."""
+Ton rôle : être le conseiller stratégique IA de l'organisation pour maximiser l'impact de sa formation.{_language_instruction(ctx)}"""
 
 
 # ── Point d'entrée principal ──────────────────────────────────────────────────

@@ -31,6 +31,7 @@ from routes.parent_extra_routes import parent_extra_router
 from routes.teacher_extra_routes import teacher_ai_router
 from routes.institution_routes import institution_router
 from routes.admin_routes import admin_router, _init_admin_tables
+from routes.smart_ai_routes import smart_ai_router
 import json
 from schemas import (
     HealthResponse, SubjectResponse, RecommendationResponse,
@@ -120,6 +121,7 @@ app.include_router(parent_extra_router, prefix="/api", tags=["parent-extra"])
 app.include_router(teacher_ai_router, prefix="/api", tags=["teacher-ai"])
 app.include_router(institution_router, prefix="/api", tags=["institution-ai"])
 app.include_router(admin_router, prefix="/api", tags=["admin-ai"])
+app.include_router(smart_ai_router, prefix="/api", tags=["smart-ai"])
 
 
 # ==================== HEALTH CHECK (Public) ====================

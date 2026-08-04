@@ -11,7 +11,7 @@ import logging
 from typing import Dict, Any, List, Optional
 
 from services.deepseek_client import get_deepseek_client
-from services.prompt_builder import build_system_prompt, UserContext
+from services.prompt_builder import build_system_prompt, UserContext, detect_language
 from auth import verify_token, UserTokenData
 from schemas import ChatRequest, ChatResponse, ChatbotHealthResponse, ChatMessage, ChatbotContextRequest
 from database import Database, Conversation, ChatMessage as ChatMessageDB, UserAIMemory, User, QuizAttempt, DailyScore
@@ -94,6 +94,9 @@ def _build_prompt_from_request(
         if raw_child_ids:
             children_data = _load_parent_children_data(list(raw_child_ids))
 
+    # Résoudre la langue : préférence explicite > auto-détection depuis le dernier message
+    force_lang = getattr(user_context, "force_language", None) if user_context else None
+
     ctx = UserContext(
         role=role,
         first_name=getattr(user_context, "first_name", None),
@@ -107,6 +110,7 @@ def _build_prompt_from_request(
         performance_history=dict(user_context.performance_history or {}) if user_context else {},
         ai_memories=memories,
         children_data=children_data,
+        language=force_lang,
     )
     return build_system_prompt(ctx), ctx.role
 
@@ -275,6 +279,12 @@ async def stream_chat(
         system_prompt = body.system_prompt
         winai_role = getattr(body.user_context, "role", None) or current_user.role or "student"
     else:
+        # Auto-détection de langue si non forcée : lit le dernier message utilisateur
+        if body.user_context and not getattr(body.user_context, "force_language", None):
+            last_user_msgs = [m for m in (body.messages or []) if isinstance(m, dict) and m.get("role") == "user"]
+            if last_user_msgs:
+                detected = detect_language(last_user_msgs[-1].get("content", ""))
+                body.user_context.force_language = detected  # type: ignore[assignment]
         system_prompt, winai_role = _build_prompt_from_request(body.user_context, current_user)
 
     logger.info(f"Stream request from user {current_user.user_id}, winai_role={winai_role}, conv_id={conv_id}")

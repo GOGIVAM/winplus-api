@@ -78,6 +78,10 @@ public class StreamChatRequest
 
     [MaxLength(20)]
     public string? Model { get; set; }
+
+    /// <summary>Préférence langue explicite : "french" | "english"</summary>
+    [MaxLength(10)]
+    public string? ForceLanguage { get; set; }
 }
 
 /// <summary>

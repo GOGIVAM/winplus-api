@@ -386,6 +386,7 @@ builder.Services.AddScoped<INotchPayService, NotchPayService>();
 // Forum
 builder.Services.AddScoped<IForumService, ForumService>();
 builder.Services.AddScoped<INtfyService, NtfyService>();
+builder.Services.AddScoped<ISmartNotificationService, SmartNotificationService>();
 
 // Background services for payment lifecycle
 builder.Services.AddHostedService<PaymentReconciliationService>();
