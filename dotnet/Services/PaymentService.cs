@@ -1,6 +1,8 @@
+using Backend.Data;
 using Backend.Models.DTOs;
 using Backend.Models.Entities;
 using Backend.Repositories;
+using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Services;
 
@@ -35,6 +37,8 @@ public class PaymentService : IPaymentService
     private readonly INotchPayService _notchPay;
     private readonly IUserService _userService;
     private readonly INtfyService _ntfy;
+    private readonly IEmailService _email;
+    private readonly ApplicationDbContext _db;
     private readonly ILogger<PaymentService> _logger;
 
     public PaymentService(
@@ -43,6 +47,8 @@ public class PaymentService : IPaymentService
         INotchPayService notchPay,
         IUserService userService,
         INtfyService ntfy,
+        IEmailService email,
+        ApplicationDbContext db,
         ILogger<PaymentService> logger)
     {
         _repository = repository;
@@ -50,6 +56,8 @@ public class PaymentService : IPaymentService
         _notchPay = notchPay;
         _userService = userService;
         _ntfy = ntfy;
+        _email = email;
+        _db = db;
         _logger = logger;
     }
 
@@ -156,6 +164,11 @@ public class PaymentService : IPaymentService
 
         if (payment.Status == "completed")
         {
+            // Mettre à jour le statut de la commande
+            try { await _orderService.UpdateOrderStatusAsync(payment.OrderId, "completed"); }
+            catch (Exception ex) { _logger.LogError(ex, "Impossible de mettre à jour le statut de la commande {OrderId}", payment.OrderId); }
+
+            // Notification push
             _ = _ntfy.PublishAsync(
                 topic: $"winplus-user-{payment.UserId}",
                 title: "Paiement reçu ✓",
@@ -164,6 +177,9 @@ public class PaymentService : IPaymentService
                 tags: new[] { "white_check_mark", "moneybag" },
                 userId: payment.UserId,
                 type: "payment");
+
+            // Email de confirmation avec liste des épreuves achetées
+            _ = SendConfirmationEmailAsync(payment);
         }
         else if (payment.Status == "failed")
         {
@@ -179,6 +195,58 @@ public class PaymentService : IPaymentService
 
         _logger.LogInformation("Webhook NotchPay {EventId} traité → statut {Status}", eventId, payment.Status);
         return true;
+    }
+
+    private async Task SendConfirmationEmailAsync(Payment payment)
+    {
+        try
+        {
+            // Résoudre email + prénom
+            string? recipientEmail = null;
+            string firstName = "là";
+
+            if (payment.UserId.HasValue)
+            {
+                var user = await _userService.GetUserByIdAsync(payment.UserId.Value);
+                if (user != null)
+                {
+                    recipientEmail = user.Email;
+                    firstName = user.FirstName ?? user.Email?.Split('@')[0] ?? "là";
+                }
+            }
+            else
+            {
+                recipientEmail = payment.GuestEmail;
+            }
+
+            if (string.IsNullOrEmpty(recipientEmail))
+            {
+                _logger.LogWarning("Impossible d'envoyer l'email de confirmation : email introuvable pour paiement {PaymentId}", payment.Id);
+                return;
+            }
+
+            // Charger les épreuves de la commande
+            var purchasedItems = await _db.OrderItems
+                .Where(oi => oi.OrderId == payment.OrderId)
+                .Join(_db.Subjects, oi => oi.SubjectId, s => s.Id, (oi, s) => new { s.Title, SubjectId = oi.SubjectId })
+                .ToListAsync();
+
+            var items = purchasedItems
+                .Where(i => !string.IsNullOrEmpty(i.Title))
+                .Select(i => (i.Title, i.SubjectId));
+
+            var reference = payment.NotchpayReference ?? $"WP-{payment.Id}";
+            var completedAt = payment.CompletedAt ?? DateTime.UtcNow;
+
+            await _email.SendPaymentConfirmationAsync(
+                recipientEmail, firstName, payment.Amount, reference, completedAt, items);
+
+            _logger.LogInformation("Email de confirmation envoyé à {Email} pour paiement {PaymentId}", recipientEmail, payment.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur lors de l'envoi de l'email de confirmation pour paiement {PaymentId}", payment.Id);
+        }
     }
 
     public async Task<PaymentStatusResponse> GetPaymentStatusAsync(int paymentId, int requestingUserId, bool isAdmin)

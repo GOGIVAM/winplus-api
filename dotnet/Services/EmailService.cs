@@ -12,7 +12,7 @@ public interface IEmailService
     Task<bool> SendNewDeviceLoginAsync(string email, string firstName, string deviceName, string ipAddress);
     Task<bool> SendTwoFactorCodeAsync(string email, string firstName, string code);
     Task<bool> SendEmailChangeVerificationAsync(string email, string firstName, string verificationCode);
-    Task<bool> SendPaymentConfirmationAsync(string email, string firstName, decimal amount, string reference, DateTime completedAt);
+    Task<bool> SendPaymentConfirmationAsync(string email, string firstName, decimal amount, string reference, DateTime completedAt, IEnumerable<(string Title, int SubjectId)>? items = null);
     Task<bool> SendSubscriptionExpiryReminderAsync(string email, string firstName, DateTime expiryDate);
     Task<bool> SendGenericEmailAsync(string to, string subject, string htmlContent);
 }
@@ -247,16 +247,46 @@ public class EmailService : IEmailService
     // ─────────────────────────────────────────────────────────────────────────
     //  EMAIL : Confirmation de paiement
     // ─────────────────────────────────────────────────────────────────────────
-    public async Task<bool> SendPaymentConfirmationAsync(string email, string firstName, decimal amount, string reference, DateTime completedAt)
+    public async Task<bool> SendPaymentConfirmationAsync(string email, string firstName, decimal amount, string reference, DateTime completedAt, IEnumerable<(string Title, int SubjectId)>? items = null)
     {
         var formattedAmount = amount.ToString("N0").Replace(",", " ");
         var formattedDate   = completedAt.ToString("dd/MM/yyyy à HH:mm") + " UTC";
+
+        // ── Liste des épreuves achetées ──────────────────────────────────────
+        var itemsList = items?.ToList() ?? new List<(string Title, int SubjectId)>();
+        var itemsHtml = new StringBuilder();
+        if (itemsList.Count > 0)
+        {
+            itemsHtml.Append(@"<table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td style=""padding:0 0 8px;"">
+          <p style=""margin:0;font-family:Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:0.09em;color:#4E7280;text-transform:uppercase;"">Épreuves achetées</p>
+        </td></tr>
+      </table>");
+            foreach (var (title, subjectId) in itemsList)
+            {
+                var subjectUrl = $"https://winplus.cm/catalog/{subjectId}";
+                itemsHtml.Append($@"
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"" style=""margin-bottom:8px;"">
+        <tr>
+          <td style=""background-color:#F9F6EE;border:1px solid #E8E0CE;border-radius:12px;padding:14px 16px;"">
+            <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0""><tr>
+              <td style=""font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:14px;font-weight:600;color:#0F2A35;vertical-align:middle;"">{EscapeHtml(title)}</td>
+              <td align=""right"" style=""white-space:nowrap;padding-left:12px;vertical-align:middle;"">
+                <a href=""{subjectUrl}"" style=""display:inline-block;padding:7px 16px;background-color:#0F2A35;color:#6BCFC6;font-family:'Bricolage Grotesque',-apple-system,Arial,sans-serif;font-size:12px;font-weight:700;text-decoration:none;border-radius:8px;"">Télécharger →</a>
+              </td>
+            </tr></table>
+          </td>
+        </tr>
+      </table>");
+            }
+            itemsHtml.Append(@"<table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0""><tr><td style=""padding:8px 0 24px;""></td></tr></table>");
+        }
 
         var body = $@"
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 4px 28px;"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
-            Bonjour <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, votre paiement a bien été reçu et validé. Vos cours sont maintenant accessibles.
+            Bonjour <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, votre paiement a bien été reçu et validé. {(itemsList.Count > 0 ? "Vos épreuves sont maintenant disponibles au téléchargement." : "Vos cours sont maintenant accessibles.")}
           </p>
         </td></tr>
       </table>
@@ -280,20 +310,25 @@ public class EmailService : IEmailService
               </td>
             </tr>
             <tr>
-              <td style=""padding:16px 0 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">Montant</td>
+              <td style=""padding:16px 0 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">Montant total</td>
               <td style=""padding:16px 0 0;text-align:right;font-family:'Bricolage Grotesque',-apple-system,'Helvetica Neue',Arial,sans-serif;font-size:26px;font-weight:700;color:#0F2A35;"">{formattedAmount} <span style=""font-size:14px;color:#259A8E;"">XAF</span></td>
             </tr>
           </table>
         </td></tr>
       </table>
 
+      {itemsHtml}
+
+      {Divider()}
+
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
-        <tr><td align=""center"">
-          {Button("Accéder à mes cours →", "https://winplus.cm/dashboard")}
+        <tr><td align=""center"" style=""padding:0 0 8px;"">
+          <p style=""margin:0 0 16px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;text-align:center;"">Retrouvez toutes vos épreuves dans votre espace personnel.</p>
+          {Button("Accéder à mes épreuves →", "https://winplus.cm/dashboard")}
         </td></tr>
       </table>";
 
-        var html = Wrapper("Paiement", "Paiement confirmé", body, "#1F9D6E");
+        var html = Wrapper("Paiement", "Paiement confirmé ✓", body, "#1F9D6E");
         return await SendGenericEmailAsync(email, $"Reçu de paiement — {formattedAmount} XAF", html);
     }
 

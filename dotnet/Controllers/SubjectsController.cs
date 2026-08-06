@@ -2,6 +2,7 @@ using Amazon.S3;
 using Amazon.S3.Model;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
+using Backend.Extensions;
 using Backend.Services;
 using Backend.Models.Entities;
 using Backend.Models.DTOs;
@@ -405,8 +406,20 @@ public class SubjectsController : ControllerBase
         if (subject == null)
             return NotFound(new { error = "Épreuve introuvable." });
 
-        if (subject.Price > 0 && string.Equals(role, "free", StringComparison.OrdinalIgnoreCase))
-            return StatusCode(403, new { error = "Un abonnement est requis pour télécharger cette épreuve." });
+        if (subject.Price > 0)
+        {
+            bool hasSubscription = !string.Equals(role, "free", StringComparison.OrdinalIgnoreCase);
+            if (!hasSubscription)
+            {
+                var userId = User.GetUserId();
+                bool hasPurchased = await _context.OrderItems
+                    .AnyAsync(oi => oi.SubjectId == id
+                                 && oi.Order.UserId == userId
+                                 && oi.Order.Status == "completed");
+                if (!hasPurchased)
+                    return StatusCode(403, new { error = "Veuillez acheter cette épreuve pour pouvoir la télécharger." });
+            }
+        }
 
         var exam = await _context.Exams
             .Where(e => e.SubjectId == id && !e.IsDeleted && e.DocumentUrl != null)

@@ -51,16 +51,10 @@ public class OrderService : IOrderService
             // Calculate total
             var totalAmount = cartItems.Sum(c => c.Price);
 
-            // Get user (for navigation property)
-            var user = cartItems.FirstOrDefault()?.User;
-            if (user == null)
-                throw new InvalidOperationException($"User {userId} not found in cart items");
-
             // Create order
             var order = new Order
             {
                 UserId = userId,
-                User = user,
                 OrderNumber = $"ORD-{DateTime.UtcNow:yyyyMMddHHmmss}-{Random.Shared.Next(1000, 9999)}",
                 TotalAmount = totalAmount,
                 Status = "pending",
