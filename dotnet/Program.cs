@@ -133,34 +133,17 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         {
             OnAuthenticationFailed = context =>
             {
+                // Uniquement logger — ne jamais écrire la réponse ici.
+                // Pour les routes [Authorize], OnChallenge gère le 401.
+                // Pour les routes [AllowAnonymous], le pipeline continue normalement.
                 var logger = context.HttpContext.RequestServices
                     .GetRequiredService<ILogger<Program>>();
-                
-                logger.LogError(
-                    "[JWT Auth Failed] ❌ Token invalide ou expiré\n" +
-                    "URL: {Url}\n" +
-                    "Method: {Method}\n" +
-                    "Authorization Header: {AuthHeader}\n" +
-                    "Error: {Error}",
+
+                logger.LogWarning(
+                    "[JWT Auth Failed] Token invalide ou expiré — URL: {Url} — Error: {Error}",
                     context.Request.Path,
-                    context.Request.Method,
-                    context.Request.Headers.Authorization.ToString().Length > 0 ? $"Bearer {context.Request.Headers.Authorization.ToString().Substring(7, Math.Min(20, context.Request.Headers.Authorization.ToString().Length - 7))}..." : "MISSING",
                     context.Exception?.Message
                 );
-                
-                // ✅ Laisser passer les requêtes anonymes aussi
-                if (!context.Request.Path.StartsWithSegments("/api/cart") && 
-                    !context.Request.Path.StartsWithSegments("/api/subjects"))
-                {
-                    context.Response.StatusCode = 401;
-                    context.Response.ContentType = "application/json";
-                    context.Response.WriteAsJsonAsync(new 
-                    { 
-                        error = "Authentication failed",
-                        message = context.Exception?.Message,
-                        timestamp = DateTime.UtcNow
-                    }).Wait();
-                }
                 return Task.CompletedTask;
             },
             OnTokenValidated = context =>
