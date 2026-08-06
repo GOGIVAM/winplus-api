@@ -109,9 +109,11 @@ async def generate_notification(
         logger.warning(f"Could not load user for notification: {e}")
 
     ctx_str = "\n".join(f"  {k}: {v}" for k, v in body.context_data.items())
+    prenom_affiche = first_name or "l'utilisateur"
+
     prompt = (
         f"Tu es WinAI, l'assistant IA de WinPlus. Génère une notification mobile courte et personnalisée.\n\n"
-        f"Prénom de l'utilisateur : {first_name or 'l\\'utilisateur'}\n"
+        f"Prénom de l'utilisateur : {prenom_affiche}\n"
         f"Type de notification : {body.notification_type}\n"
         f"Données contextuelles :\n{ctx_str}\n\n"
         f"Génère UNIQUEMENT un JSON avec deux champs :\n"
