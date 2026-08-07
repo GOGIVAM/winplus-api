@@ -119,7 +119,9 @@ public class PaymentsController : ControllerBase
             payload = await reader.ReadToEndAsync();
         Request.Body.Position = 0;
 
-        var signature = Request.Headers["X-Notchpay-Signature"].FirstOrDefault()
+        var signature = Request.Headers["x-notch-signature"].FirstOrDefault()
+            ?? Request.Headers["X-Notch-Signature"].FirstOrDefault()
+            ?? Request.Headers["X-Notchpay-Signature"].FirstOrDefault()
             ?? Request.Headers["x-notchpay-signature"].FirstOrDefault();
 
         _logger.LogInformation(
