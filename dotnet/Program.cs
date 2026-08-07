@@ -333,6 +333,7 @@ builder.Services.AddHttpClient("FastApiClient", client =>
 });
 
 builder.Services.AddScoped<IFastApiClient, FastApiClient>();
+builder.Services.AddScoped<IAIService, AIService>();
 
 // Resend email client
 builder.Services.AddHttpClient("ResendClient", client =>
