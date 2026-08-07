@@ -11,7 +11,7 @@ public interface IPaymentService
     // NotchPay operations
     Task<InitiatePaymentResponse> InitiateNotchPayAsync(int? userId, InitiatePaymentRequest request);
     Task<bool> HandleNotchPayWebhookAsync(string eventId, string eventType, NotchPayWebhookTransaction transaction);
-    Task<PaymentStatusResponse> GetPaymentStatusAsync(int paymentId, int requestingUserId, bool isAdmin);
+    Task<PaymentStatusResponse> GetPaymentStatusAsync(int paymentId, int? requestingUserId, bool isAdmin);
     Task<PaymentHistoryResponse> GetUserPaymentHistoryAsync(int userId, int page, int limit);
     Task<PaymentHistoryResponse> GetAllPaymentsAsync(int page, int limit, string? status);
     Task<PaymentHistoryResponse> GetPaymentsByUserAsync(int userId, int page, int limit);
@@ -100,9 +100,10 @@ public class PaymentService : IPaymentService
 
         try
         {
+            var channel = MapToNotchPayChannel(order.PaymentMethod);
             var result = await _notchPay.InitiatePaymentAsync(
                 request.Phone, request.Amount, orderId,
-                payment.Description!, email);
+                payment.Description!, email, channel);
 
             payment.NotchpayReference = result.Transaction?.Reference;
             payment.Status = MapNotchPayStatus(result.Transaction?.Status) ?? "pending";
@@ -252,12 +253,13 @@ public class PaymentService : IPaymentService
         }
     }
 
-    public async Task<PaymentStatusResponse> GetPaymentStatusAsync(int paymentId, int requestingUserId, bool isAdmin)
+    public async Task<PaymentStatusResponse> GetPaymentStatusAsync(int paymentId, int? requestingUserId, bool isAdmin)
     {
         var payment = await _repository.GetByIdAsync(paymentId)
             ?? throw new ArgumentException("Paiement introuvable");
 
-        if (!isAdmin && payment.UserId != requestingUserId)
+        // Anonymous can poll guest payments (UserId == null); logged-in users can poll their own
+        if (!isAdmin && payment.UserId != null && payment.UserId != requestingUserId)
             throw new UnauthorizedAccessException("Accès refusé");
 
         // Sync with NotchPay if still pending and reference exists
@@ -358,9 +360,10 @@ public class PaymentService : IPaymentService
         try
         {
             var email = user.Email ?? $"user{requestingUserId}@winplus.cm";
+            var channel = DetectChannelFromPhone(payment.PhoneNumber ?? "");
             var result = await _notchPay.InitiatePaymentAsync(
                 payment.PhoneNumber!, payment.Amount, payment.OrderId,
-                payment.Description ?? $"Paiement commande #{payment.OrderId}", email);
+                payment.Description ?? $"Paiement commande #{payment.OrderId}", email, channel);
 
             payment.NotchpayReference = result.Transaction?.Reference;
             payment.Status = MapNotchPayStatus(result.Transaction?.Status) ?? "pending";
@@ -511,6 +514,24 @@ public class PaymentService : IPaymentService
     }
 
     // ─── Mapping helpers ─────────────────────────────────────────────────────
+
+    private static string MapToNotchPayChannel(string? paymentMethod) => paymentMethod switch
+    {
+        "orange" => "cm.orange",
+        _        => "cm.mtn",
+    };
+
+    private static string DetectChannelFromPhone(string phone)
+    {
+        // Strip country code if present ("237XXXXXXXXX" or "+237XXXXXXXXX")
+        var s = phone.TrimStart('+');
+        if (s.StartsWith("237") && s.Length > 9) s = s[3..];
+        if (s.Length < 3) return "cm.mtn";
+
+        var pfx = s[..3];
+        string[] orangePrefixes = ["655","656","657","658","659","690","691","692","693","694","695","696","697","698","699"];
+        return Array.IndexOf(orangePrefixes, pfx) >= 0 ? "cm.orange" : "cm.mtn";
+    }
 
     private static string? MapNotchPayStatus(string? notchpayStatus) => notchpayStatus switch
     {

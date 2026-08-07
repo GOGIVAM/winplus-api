@@ -174,8 +174,13 @@ public class PaymentsController : ControllerBase
     {
         try
         {
-            var userId = User.GetUserId();
-            var isAdmin = User.IsInRole("admin");
+            int? userId = null;
+            var isAdmin = false;
+            if (User.Identity?.IsAuthenticated == true)
+            {
+                try { userId = User.GetUserId(); isAdmin = User.IsInRole("admin"); }
+                catch { /* claims manquants — traiter comme anonyme */ }
+            }
             var result = await _paymentService.GetPaymentStatusAsync(id, userId, isAdmin);
             return Ok(result);
         }

@@ -53,7 +53,7 @@ public class NotchPayTransaction
 
 public interface INotchPayService
 {
-    Task<NotchPayInitiateResponse> InitiatePaymentAsync(string phone, decimal amount, int orderId, string description, string customerEmail);
+    Task<NotchPayInitiateResponse> InitiatePaymentAsync(string phone, decimal amount, int orderId, string description, string customerEmail, string channel);
     Task<NotchPayTransaction> GetTransactionStatusAsync(string reference);
     bool VerifyWebhookSignature(string payload, string signature);
 }
@@ -78,7 +78,7 @@ public class NotchPayService : INotchPayService
         _logger = logger;
     }
 
-    public async Task<NotchPayInitiateResponse> InitiatePaymentAsync(string phone, decimal amount, int orderId, string description, string customerEmail)
+    public async Task<NotchPayInitiateResponse> InitiatePaymentAsync(string phone, decimal amount, int orderId, string description, string customerEmail, string channel)
     {
         var reference = $"WP-{orderId}-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
 
@@ -86,8 +86,8 @@ public class NotchPayService : INotchPayService
         {
             amount = (int)Math.Round(amount),
             currency = _config.Currency,
-            email = customerEmail,
-            phone = phone,
+            customer = new { email = customerEmail, phone = phone },
+            channel = channel,
             reference = reference,
             description = description,
             callback = _config.CallbackUrl
