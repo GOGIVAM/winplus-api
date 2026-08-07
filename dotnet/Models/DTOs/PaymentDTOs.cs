@@ -14,7 +14,7 @@ public class InitiatePaymentRequest
     public string Phone { get; set; } = string.Empty;
 
     [Required(ErrorMessage = "Le montant est requis")]
-    [Range(100, double.MaxValue, ErrorMessage = "Le montant minimum est 100 XAF")]
+    [Range(1, double.MaxValue, ErrorMessage = "Le montant doit être supérieur à 0")]
     public decimal Amount { get; set; }
 
     [MaxLength(255)]
