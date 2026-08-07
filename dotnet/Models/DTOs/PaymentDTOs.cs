@@ -5,14 +5,15 @@ namespace Backend.Models.DTOs;
 
 public class InitiatePaymentRequest
 {
-    [Required]
-    public int OrderId { get; set; }
+    [Required(ErrorMessage = "L'identifiant de la commande est requis")]
+    [Range(1, int.MaxValue, ErrorMessage = "L'identifiant de la commande est invalide")]
+    public int? OrderId { get; set; }
 
-    [Required]
+    [Required(ErrorMessage = "Le numéro de téléphone est requis")]
     [MaxLength(20)]
     public string Phone { get; set; } = string.Empty;
 
-    [Required]
+    [Required(ErrorMessage = "Le montant est requis")]
     [Range(100, double.MaxValue, ErrorMessage = "Le montant minimum est 100 XAF")]
     public decimal Amount { get; set; }
 

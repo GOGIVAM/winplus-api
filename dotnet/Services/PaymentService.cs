@@ -65,7 +65,10 @@ public class PaymentService : IPaymentService
 
     public async Task<InitiatePaymentResponse> InitiateNotchPayAsync(int? userId, InitiatePaymentRequest request)
     {
-        var order = await _orderService.GetOrderByIdAsync(request.OrderId)
+        // [Required] + [Range(1,...)] garantissent que OrderId est non-null et valide ici
+        var orderId = request.OrderId!.Value;
+
+        var order = await _orderService.GetOrderByIdAsync(orderId)
             ?? throw new ArgumentException("Commande introuvable");
 
         // Résoudre l'email : depuis le compte si connecté, depuis la requête sinon
@@ -82,14 +85,14 @@ public class PaymentService : IPaymentService
 
         var payment = await _repository.CreateAsync(new Payment
         {
-            OrderId    = request.OrderId,
+            OrderId    = orderId,
             UserId     = userId,
             GuestEmail = userId.HasValue ? null : email,
             Amount     = request.Amount,
             Currency   = "XAF",
             PaymentMethod = "notchpay",
             PhoneNumber   = request.Phone,
-            Description   = request.Description ?? $"Paiement commande #{request.OrderId}",
+            Description   = request.Description ?? $"Paiement commande #{orderId}",
             Status      = "pending",
             InitiatedAt = DateTime.UtcNow,
             ExpiresAt   = DateTime.UtcNow.AddHours(1)
@@ -98,7 +101,7 @@ public class PaymentService : IPaymentService
         try
         {
             var result = await _notchPay.InitiatePaymentAsync(
-                request.Phone, request.Amount, request.OrderId,
+                request.Phone, request.Amount, orderId,
                 payment.Description!, email);
 
             payment.NotchpayReference = result.Transaction?.Reference;
@@ -121,7 +124,7 @@ public class PaymentService : IPaymentService
             payment.Status = "failed";
             payment.ErrorMessage = ex.Message;
             await _repository.UpdateAsync(payment);
-            _logger.LogError(ex, "Échec initiation NotchPay pour commande {OrderId}", request.OrderId);
+            _logger.LogError(ex, "Échec initiation NotchPay pour commande {OrderId}", orderId);
             throw;
         }
     }
