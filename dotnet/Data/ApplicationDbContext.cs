@@ -190,8 +190,6 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.TotalAmount).HasPrecision(12, 2);
             entity.Property(e => e.Status).HasMaxLength(50);
             entity.Property(e => e.PaymentMethod).HasMaxLength(50);
-            // ✅ CORRECTION: Mapper CreatedAt vers la colonne PostreSQL existante OrderDate
-            entity.Property(e => e.CreatedAt).HasColumnName("OrderDate");
             entity.HasOne(e => e.User)
                 .WithMany(u => u.Orders)
                 .HasForeignKey(e => e.UserId)

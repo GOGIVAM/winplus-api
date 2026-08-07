@@ -112,7 +112,8 @@ public class OrderRepository : IOrderRepository
     {
         try
         {
-            order.OrderDate = DateTime.UtcNow;
+            order.OrderDate  = DateTime.UtcNow;
+            order.CreatedAt  = DateTime.UtcNow;
             if (string.IsNullOrEmpty(order.OrderNumber))
             {
                 order.OrderNumber = $"ORD-{DateTime.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid().ToString().Substring(0, 6).ToUpper()}";
