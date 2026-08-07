@@ -64,7 +64,11 @@ public class NotchPayService : INotchPayService
     private readonly NotchPayConfig _config;
     private readonly INtfyService _ntfy;
     private readonly ILogger<NotchPayService> _logger;
-    private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private readonly JsonSerializerOptions _jsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+    };
 
     public NotchPayService(IHttpClientFactory httpClientFactory, NotchPayConfig config, INtfyService ntfy, ILogger<NotchPayService> logger)
     {
@@ -132,11 +136,38 @@ public class NotchPayService : INotchPayService
     {
         if (string.IsNullOrEmpty(_config.WebhookSecret)) return false;
 
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_config.WebhookSecret));
-        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(payload));
-        var expected = Convert.ToHexString(hash).ToLowerInvariant();
+        var payloadBytes = Encoding.UTF8.GetBytes(payload);
 
-        return string.Equals(expected, signature?.ToLowerInvariant(), StringComparison.Ordinal);
+        // Tentative 1 : clé complète hsk.xxx
+        if (TryHmac(_config.WebhookSecret, payloadBytes, signature)) return true;
+
+        // Tentative 2 : clé sans le préfixe "hsk." (certaines implémentations le strippent)
+        var dotIdx = _config.WebhookSecret.IndexOf('.');
+        var stripped = dotIdx >= 0 ? _config.WebhookSecret[(dotIdx + 1)..] : _config.WebhookSecret;
+        if (stripped != _config.WebhookSecret && TryHmac(stripped, payloadBytes, signature)) return true;
+
+        // Tentative 3 : SecretKey (sk.xxx) comme clé de signature
+        if (!string.IsNullOrEmpty(_config.SecretKey) && TryHmac(_config.SecretKey, payloadBytes, signature)) return true;
+
+        using var hmacLog = new HMACSHA256(Encoding.UTF8.GetBytes(_config.WebhookSecret));
+        var expectedHex = Convert.ToHexString(hmacLog.ComputeHash(payloadBytes)).ToLowerInvariant();
+        _logger.LogWarning(
+            "NotchPay webhook signature mismatch — receivedLen={RcvLen} received60={Rcv60} expectedHex60={Exp60}",
+            signature?.Length,
+            signature?.Length > 60 ? signature[..60] : signature,
+            expectedHex.Length > 60 ? expectedHex[..60] : expectedHex);
+
+        return false;
+    }
+
+    private static bool TryHmac(string key, byte[] payloadBytes, string signature)
+    {
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(key));
+        var hash = hmac.ComputeHash(payloadBytes);
+        var hex = Convert.ToHexString(hash).ToLowerInvariant();
+        var b64 = Convert.ToBase64String(hash);
+        return string.Equals(hex, signature?.ToLowerInvariant(), StringComparison.Ordinal)
+            || string.Equals(b64, signature, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> action)

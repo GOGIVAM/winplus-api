@@ -144,40 +144,25 @@ public class CartController : ControllerBase
             // ✅ Convertir en DTO avec la structure complète du panier
             // ✅ CORRECTION: Validation STRICTE et enrichissement des données d'items
             var validatedItems = items
-                .Where(item => 
+                .Where(item =>
                 {
-                    // Valider que l'item a un SubjectId valide
                     if (item.SubjectId <= 0)
                     {
-                        _logger.LogWarning(
-                            "[GetCart] ⚠️ CartItem {CartItemId} has invalid SubjectId: {SubjectId}",
-                            item.Id, item.SubjectId
-                        );
+                        _logger.LogWarning("[GetCart] ⚠️ CartItem {CartItemId} has invalid SubjectId: {SubjectId}", item.Id, item.SubjectId);
                         return false;
                     }
-                    
-                    // Valider que le Subject est chargé
                     if (item.Subject == null)
-                    {
-                        _logger.LogWarning(
-                            "[GetCart] ⚠️ CartItem {CartItemId} missing Subject data",
-                            item.Id
-                        );
-                        return false;
-                    }
-                    
+                        _logger.LogWarning("[GetCart] ⚠️ CartItem {CartItemId} Subject still null after load — keeping with stored price", item.Id);
                     return true;
                 })
                 .Select(item => new CartItemDto
                 {
-                    Id = item.Id > 0 ? item.Id : 0, // Mapper l'ID ou 0 si invalide
+                    Id = item.Id > 0 ? item.Id : 0,
                     SubjectId = item.SubjectId,
-                    // ✅ Utiliser le titre du Subject, jamais une chaîne vide
-                    Title = !string.IsNullOrWhiteSpace(item.Subject?.Title) 
-                        ? item.Subject.Title 
-                        : $"Subject #{item.SubjectId}",
+                    Title = !string.IsNullOrWhiteSpace(item.Subject?.Title)
+                        ? item.Subject.Title
+                        : $"Article #{item.SubjectId}",
                     Description = item.Subject?.Description,
-                    // ✅ Utiliser le prix du Subject si celui du CartItem est 0 ou invalide
                     Price = item.Price > 0 ? item.Price : (item.Subject?.Price ?? 0),
                     Image = item.Subject?.ThumbnailUrl,
                     Quantity = 1,

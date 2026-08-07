@@ -113,16 +113,24 @@ public class PaymentsController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> NotchPayWebhook()
     {
+        Request.EnableBuffering();
         string payload;
-        using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
+        using (var reader = new StreamReader(Request.Body, Encoding.UTF8, leaveOpen: true))
             payload = await reader.ReadToEndAsync();
+        Request.Body.Position = 0;
 
         var signature = Request.Headers["X-Notchpay-Signature"].FirstOrDefault()
             ?? Request.Headers["x-notchpay-signature"].FirstOrDefault();
 
+        _logger.LogInformation(
+            "Webhook NotchPay reçu — signature={Sig} payloadLen={Len} hasHeaders={Headers}",
+            signature ?? "(aucune)",
+            payload.Length,
+            string.Join(", ", Request.Headers.Keys));
+
         if (string.IsNullOrEmpty(signature) || !_notchPay.VerifyWebhookSignature(payload, signature))
         {
-            _logger.LogWarning("Webhook NotchPay: signature invalide");
+            _logger.LogWarning("Webhook NotchPay: signature invalide — signature={Sig}", signature ?? "(aucune)");
             return Unauthorized(new { error = "Signature invalide" });
         }
 

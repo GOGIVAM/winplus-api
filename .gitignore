@@ -5,11 +5,9 @@
 *.suo
 .vs/
 
-# Sensitive config (use appsettings.Development.json / appsettings.Production.json locally)
-**/appsettings.Development.json
-**/appsettings.Production.json
+# Sensitive config — tous les appsettings ignorés (secrets en prod)
+**/appsettings.json
 **/appsettings.*.json
-!**/appsettings.json
 
 # Python
 **/__pycache__/
