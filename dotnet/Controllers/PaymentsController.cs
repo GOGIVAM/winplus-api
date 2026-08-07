@@ -167,9 +167,9 @@ public class PaymentsController : ControllerBase
         }
     }
 
-    /// <summary>GET /api/payments/{id}/status — Statut d'un paiement (avec sync NotchPay)</summary>
+    /// <summary>GET /api/payments/{id}/status — Statut d'un paiement (polling depuis le frontend)</summary>
     [HttpGet("{id:int}/status")]
-    [Authorize]
+    [AllowAnonymous]
     public async Task<IActionResult> GetStatus(int id)
     {
         try
