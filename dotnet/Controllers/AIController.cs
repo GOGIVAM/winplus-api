@@ -199,9 +199,9 @@ namespace Backend.Controllers;
         /// Récupérer les recommandations IA pour un sujet spécifique
         /// </summary>
         [HttpGet("recommendations/{id}")]
+        [AllowAnonymous]
         [ProducesResponseType(typeof(RecommendationResponse), 200)]
         [ProducesResponseType(400)]
-        [ProducesResponseType(401)]
         [ProducesResponseType(500)]
         public async Task<IActionResult> GetRecommendationsById(
             [FromRoute] int id,

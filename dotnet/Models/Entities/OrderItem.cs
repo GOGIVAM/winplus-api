@@ -13,6 +13,6 @@ public class OrderItem
     public decimal PriceAtPurchase { get; set; }
 
     [JsonIgnore]
-    public required Order Order { get; set; }
+    public Order Order { get; set; } = null!;
     public Subject? Subject { get; set; }
 }
