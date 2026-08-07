@@ -360,7 +360,7 @@ builder.Services.AddHttpClient("NotchPayClient", (sp, client) =>
 {
     var config = sp.GetRequiredService<NotchPayConfig>();
     client.BaseAddress = new Uri(config.BaseUrl);
-    client.DefaultRequestHeaders.Add("Authorization", config.SecretKey);
+    client.DefaultRequestHeaders.Add("Authorization", config.PublicKey);
     client.DefaultRequestHeaders.Add("Accept", "application/json");
     client.Timeout = TimeSpan.FromSeconds(30);
 });

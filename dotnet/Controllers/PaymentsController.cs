@@ -92,6 +92,11 @@ public class PaymentsController : ControllerBase
         {
             return BadRequest(new { error = ex.Message });
         }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogError(ex, "NotchPay a refusé la demande de paiement");
+            return BadRequest(new { error = "payment_rejected", message = ex.Message });
+        }
         catch (HttpRequestException)
         {
             return StatusCode(503, new { error = "operator_unavailable", message = "Service de paiement temporairement indisponible. Réessayez dans quelques instants." });

@@ -100,6 +100,9 @@ public class NotchPayService : INotchPayService
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("NotchPay initiate failed: {Status} {Body}", response.StatusCode, responseBody);
+                // 4xx = permanent client/auth error, don't retry
+                if ((int)response.StatusCode < 500)
+                    throw new InvalidOperationException($"NotchPay rejected request: {response.StatusCode} — {responseBody}");
                 throw new HttpRequestException($"NotchPay error: {response.StatusCode}");
             }
 
@@ -116,6 +119,8 @@ public class NotchPayService : INotchPayService
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogWarning("NotchPay status check failed: {Status} {Body}", response.StatusCode, responseBody);
+            if ((int)response.StatusCode < 500)
+                throw new InvalidOperationException($"NotchPay rejected status request: {response.StatusCode} — {responseBody}");
             throw new HttpRequestException($"NotchPay error: {response.StatusCode}");
         }
 
