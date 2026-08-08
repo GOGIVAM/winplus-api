@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using Backend.Data;
 using Backend.Models.Entities;
@@ -53,7 +54,7 @@ public class NotchPayTransaction
 
 public interface INotchPayService
 {
-    Task<NotchPayInitiateResponse> InitiatePaymentAsync(string phone, decimal amount, int orderId, string description, string customerEmail, string channel);
+    Task<NotchPayInitiateResponse> InitiatePaymentAsync(string phone, decimal amount, int orderId, string description, string customerEmail, string customerName, string channel);
     Task<NotchPayTransaction> GetTransactionStatusAsync(string reference);
     bool VerifyWebhookSignature(string payload, string signature);
 }
@@ -78,47 +79,70 @@ public class NotchPayService : INotchPayService
         _logger = logger;
     }
 
-    public async Task<NotchPayInitiateResponse> InitiatePaymentAsync(string phone, decimal amount, int orderId, string description, string customerEmail, string channel)
+    public async Task<NotchPayInitiateResponse> InitiatePaymentAsync(string phone, decimal amount, int orderId, string description, string customerEmail, string customerName, string channel)
     {
         var reference = $"WP-{orderId}-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
 
         // NotchPay requires E.164 phone format (+237XXXXXXXXX)
         var e164Phone = phone.StartsWith('+') ? phone : $"+{phone}";
 
-        var payload = new
+        // Use UnsafeRelaxedJsonEscaping so '+' is not encoded as '+'
+        var serializeOptions = new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+        // Step 1: Initialize the payment session with customer info
+        var initPayload = new
         {
-            amount    = (int)Math.Round(amount),
-            currency  = _config.Currency,
-            email     = customerEmail,
-            phone     = e164Phone,
-            channel   = channel,
-            reference = reference,
+            amount      = (int)Math.Round(amount),
+            currency    = _config.Currency,
+            customer    = new { name = customerName, email = customerEmail, phone = e164Phone },
+            reference   = reference,
             description = description,
-            callback  = _config.CallbackUrl
+            callback    = _config.CallbackUrl
         };
 
         return await ExecuteWithRetryAsync(async () =>
         {
-            var json = JsonSerializer.Serialize(payload);
-            _logger.LogInformation("NotchPay initiate → channel={Channel} phone={Phone} amount={Amount} json={Json}",
+            var json = JsonSerializer.Serialize(initPayload, serializeOptions);
+            _logger.LogInformation("NotchPay step1 → channel={Channel} phone={Phone} amount={Amount} json={Json}",
                 channel, e164Phone, (int)Math.Round(amount), json);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             var response = await _httpClient.PostAsync("/payments", content);
             var responseBody = await response.Content.ReadAsStringAsync();
-            _logger.LogInformation("NotchPay initiate ← status={Status} body={Body}", response.StatusCode, responseBody);
+            _logger.LogInformation("NotchPay step1 ← status={Status} body={Body}", response.StatusCode, responseBody);
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("NotchPay initiate failed: {Status} {Body}", response.StatusCode, responseBody);
-                // 4xx = permanent client/auth error, don't retry
+                _logger.LogWarning("NotchPay step1 failed: {Status} {Body}", response.StatusCode, responseBody);
                 if ((int)response.StatusCode < 500)
                     throw new InvalidOperationException($"NotchPay rejected request: {response.StatusCode} — {responseBody}");
                 throw new HttpRequestException($"NotchPay error: {response.StatusCode}");
             }
 
-            return JsonSerializer.Deserialize<NotchPayInitiateResponse>(responseBody, _jsonOptions)
+            var initResult = JsonSerializer.Deserialize<NotchPayInitiateResponse>(responseBody, _jsonOptions)
                 ?? throw new InvalidOperationException("Invalid NotchPay response");
+
+            // Step 2: Charge via Mobile Money to trigger USSD push to customer phone
+            var paymentRef = initResult.Transaction?.Reference ?? reference;
+            var chargePayload = new { channel = channel, data = new { phone = e164Phone } };
+            var chargeJson = JsonSerializer.Serialize(chargePayload, serializeOptions);
+            _logger.LogInformation("NotchPay step2 → ref={Ref} channel={Channel} phone={Phone} json={Json}",
+                paymentRef, channel, e164Phone, chargeJson);
+            var chargeContent = new StringContent(chargeJson, Encoding.UTF8, "application/json");
+
+            var chargeResponse = await _httpClient.PostAsync($"/payments/{Uri.EscapeDataString(paymentRef)}", chargeContent);
+            var chargeBody = await chargeResponse.Content.ReadAsStringAsync();
+            _logger.LogInformation("NotchPay step2 ← status={Status} body={Body}", chargeResponse.StatusCode, chargeBody);
+
+            if (!chargeResponse.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("NotchPay step2 failed: {Status} {Body}", chargeResponse.StatusCode, chargeBody);
+                if ((int)chargeResponse.StatusCode < 500)
+                    throw new InvalidOperationException($"NotchPay charge rejected: {chargeResponse.StatusCode} — {chargeBody}");
+                throw new HttpRequestException($"NotchPay charge error: {chargeResponse.StatusCode}");
+            }
+
+            return initResult;
         });
     }
 

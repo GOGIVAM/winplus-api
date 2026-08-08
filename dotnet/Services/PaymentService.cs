@@ -71,16 +71,20 @@ public class PaymentService : IPaymentService
         var order = await _orderService.GetOrderByIdAsync(orderId)
             ?? throw new ArgumentException("Commande introuvable");
 
-        // Résoudre l'email : depuis le compte si connecté, depuis la requête sinon
+        // Résoudre l'email et le nom : depuis le compte si connecté, depuis la requête sinon
         string email;
+        string customerName;
         if (userId.HasValue)
         {
             var user = await _userService.GetUserByIdAsync(userId.Value);
             email = user?.Email ?? request.Email ?? $"user{userId}@winplus.cm";
+            var fullName = $"{user?.FirstName} {user?.LastName}".Trim();
+            customerName = !string.IsNullOrWhiteSpace(fullName) ? fullName : email.Split('@')[0];
         }
         else
         {
             email = request.Email ?? order.GuestEmail ?? "guest@winplus.cm";
+            customerName = !string.IsNullOrWhiteSpace(order.GuestName) ? order.GuestName : email.Split('@')[0];
         }
 
         var payment = await _repository.CreateAsync(new Payment
@@ -103,7 +107,7 @@ public class PaymentService : IPaymentService
             var channel = MapToNotchPayChannel(order.PaymentMethod);
             var result = await _notchPay.InitiatePaymentAsync(
                 request.Phone, request.Amount, orderId,
-                payment.Description!, email, channel);
+                payment.Description!, email, customerName, channel);
 
             payment.NotchpayReference = result.Transaction?.Reference;
             payment.Status = MapNotchPayStatus(result.Transaction?.Status) ?? "pending";
@@ -360,10 +364,12 @@ public class PaymentService : IPaymentService
         try
         {
             var email = user.Email ?? $"user{requestingUserId}@winplus.cm";
+            var fullName = $"{user.FirstName} {user.LastName}".Trim();
+            var customerName = !string.IsNullOrWhiteSpace(fullName) ? fullName : email.Split('@')[0];
             var channel = DetectChannelFromPhone(payment.PhoneNumber ?? "");
             var result = await _notchPay.InitiatePaymentAsync(
                 payment.PhoneNumber!, payment.Amount, payment.OrderId,
-                payment.Description ?? $"Paiement commande #{payment.OrderId}", email, channel);
+                payment.Description ?? $"Paiement commande #{payment.OrderId}", email, customerName, channel);
 
             payment.NotchpayReference = result.Transaction?.Reference;
             payment.Status = MapNotchPayStatus(result.Transaction?.Status) ?? "pending";
