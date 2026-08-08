@@ -96,7 +96,7 @@ public class PaymentService : IPaymentService
             Currency   = "XAF",
             PaymentMethod = "notchpay",
             PhoneNumber   = request.Phone,
-            Description   = request.Description ?? $"Paiement commande #{orderId}",
+            Description   = request.Description ?? $"WinPlus — Épreuves scolaires",
             Status      = "pending",
             InitiatedAt = DateTime.UtcNow,
             ExpiresAt   = DateTime.UtcNow.AddHours(1)
@@ -369,7 +369,7 @@ public class PaymentService : IPaymentService
             var channel = DetectChannelFromPhone(payment.PhoneNumber ?? "");
             var result = await _notchPay.InitiatePaymentAsync(
                 payment.PhoneNumber!, payment.Amount, payment.OrderId,
-                payment.Description ?? $"Paiement commande #{payment.OrderId}", email, customerName, channel);
+                payment.Description ?? $"WinPlus — Épreuves scolaires", email, customerName, channel);
 
             payment.NotchpayReference = result.Transaction?.Reference;
             payment.Status = MapNotchPayStatus(result.Transaction?.Status) ?? "pending";
