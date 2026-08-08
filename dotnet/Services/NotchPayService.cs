@@ -82,24 +82,31 @@ public class NotchPayService : INotchPayService
     {
         var reference = $"WP-{orderId}-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
 
+        // NotchPay requires E.164 phone format (+237XXXXXXXXX)
+        var e164Phone = phone.StartsWith('+') ? phone : $"+{phone}";
+
         var payload = new
         {
-            amount = (int)Math.Round(amount),
-            currency = _config.Currency,
-            customer = new { email = customerEmail, phone = phone },
-            channel = channel,
+            amount    = (int)Math.Round(amount),
+            currency  = _config.Currency,
+            email     = customerEmail,
+            phone     = e164Phone,
+            channel   = channel,
             reference = reference,
             description = description,
-            callback = _config.CallbackUrl
+            callback  = _config.CallbackUrl
         };
 
         return await ExecuteWithRetryAsync(async () =>
         {
             var json = JsonSerializer.Serialize(payload);
+            _logger.LogInformation("NotchPay initiate → channel={Channel} phone={Phone} amount={Amount} json={Json}",
+                channel, e164Phone, (int)Math.Round(amount), json);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             var response = await _httpClient.PostAsync("/payments", content);
             var responseBody = await response.Content.ReadAsStringAsync();
+            _logger.LogInformation("NotchPay initiate ← status={Status} body={Body}", response.StatusCode, responseBody);
 
             if (!response.IsSuccessStatusCode)
             {
