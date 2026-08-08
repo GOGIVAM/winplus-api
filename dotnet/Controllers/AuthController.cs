@@ -103,6 +103,7 @@ public class AuthController : ControllerBase
                 Message = result.Message,
                 User = new
                 {
+                    id = result.User?.Id,
                     email = result.User?.Email,
                     firstName = result.User?.FirstName,
                     lastName = result.User?.LastName,
