@@ -140,7 +140,11 @@ public class PaymentsController : ControllerBase
         try
         {
             webhookData = JsonSerializer.Deserialize<NotchPayWebhookPayload>(payload,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                    PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+                });
         }
         catch (JsonException ex)
         {
@@ -150,6 +154,12 @@ public class PaymentsController : ControllerBase
 
         if (webhookData?.Transaction == null)
             return BadRequest(new { error = "Transaction manquante dans le payload" });
+
+        _logger.LogInformation(
+            "Webhook NotchPay event={Event} ref={Ref} status={Status} operator={Op} amount={Amount}",
+            webhookData.Event, webhookData.Transaction.Reference,
+            webhookData.Transaction.Status, webhookData.Transaction.Operator,
+            webhookData.Transaction.Amount);
 
         var eventId = webhookData.Transaction.Reference
             ?? $"notchpay-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";

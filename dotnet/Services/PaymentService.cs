@@ -533,12 +533,12 @@ public class PaymentService : IPaymentService
         return Array.IndexOf(orangePrefixes, pfx) >= 0 ? "cm.orange" : "cm.mtn";
     }
 
-    private static string? MapNotchPayStatus(string? notchpayStatus) => notchpayStatus switch
+    private static string? MapNotchPayStatus(string? notchpayStatus) => notchpayStatus?.ToLowerInvariant() switch
     {
-        "complete" or "completed" or "success" => "completed",
-        "failed" or "failure" or "canceled" => "failed",
-        "pending" or "processing" => "pending",
-        "expired" => "expired",
+        "complete" or "completed" or "success" or "successful" => "completed",
+        "failed" or "failure" or "canceled" or "cancelled" or "rejected" => "failed",
+        "pending" or "processing" or "initiated" => "pending",
+        "expired" or "timeout" => "expired",
         _ => null
     };
 
