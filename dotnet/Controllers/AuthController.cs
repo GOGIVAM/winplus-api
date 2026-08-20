@@ -4,6 +4,7 @@ using Backend.Services;
 using Backend.Models;
 using Backend.Models.DTOs;
 using Backend.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Security.Claims;
 
@@ -17,17 +18,20 @@ public class AuthController : ControllerBase
     private readonly ICartService _cartService;
     private readonly IAnonymousCartService _anonymousCartService;
     private readonly ILogger<AuthController> _logger;
+    private readonly ApplicationDbContext _dbContext;
 
     public AuthController(
         ICustomAuthService customAuthService,
         ICartService cartService,
         IAnonymousCartService anonymousCartService,
-        ILogger<AuthController> logger)
+        ILogger<AuthController> logger,
+        ApplicationDbContext dbContext)
     {
         _customAuthService = customAuthService;
         _cartService = cartService;
         _anonymousCartService = anonymousCartService;
         _logger = logger;
+        _dbContext = dbContext;
     }
 
     [HttpPost("signup")]
@@ -103,6 +107,7 @@ public class AuthController : ControllerBase
                 Message = result.Message,
                 User = new
                 {
+                    id = result.User?.Id,
                     email = result.User?.Email,
                     firstName = result.User?.FirstName,
                     lastName = result.User?.LastName,
@@ -271,25 +276,31 @@ public class AuthController : ControllerBase
     [ProducesResponseType(400)]
     public async Task<IActionResult> VerifyEmail([FromBody] VerifyEmailRequestDto request)
     {
-        if (request.UserId <= 0 || string.IsNullOrWhiteSpace(request.VerificationCode))
+        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.VerificationCode))
         {
-            return BadRequest(new { error = "User ID and verification code are required" });
+            return BadRequest(new { error = "Email and verification code are required" });
         }
 
         try
         {
-            _logger.LogInformation("VerifyEmail attempt for user: {UserId}", request.UserId);
+            _logger.LogInformation("VerifyEmail attempt for email: {Email}", request.Email);
 
-            var result = await _customAuthService.VerifyEmailAsync(request.UserId, request.VerificationCode);
+            var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
+            if (user == null)
+            {
+                return BadRequest(new { error = "User not found" });
+            }
+
+            var result = await _customAuthService.VerifyEmailAsync(user.Id, request.VerificationCode);
 
             if (!result.Success)
             {
-                _logger.LogWarning("VerifyEmail failed for user: {UserId}. Message: {Message}",
-                    request.UserId, result.Message);
+                _logger.LogWarning("VerifyEmail failed for email: {Email}. Message: {Message}",
+                    request.Email, result.Message);
                 return BadRequest(new { error = result.Message, details = result.Errors });
             }
 
-            _logger.LogInformation("Email verified for user: {UserId}", request.UserId);
+            _logger.LogInformation("Email verified for email: {Email}", request.Email);
 
             return Ok(new VerifyEmailResponse
             {
@@ -299,7 +310,7 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error verifying email for user: {UserId}", request.UserId);
+            _logger.LogError(ex, "Error verifying email for email: {Email}", request.Email);
             return StatusCode(500, new { error = "An error occurred during verification", details = ex.Message });
         }
     }
