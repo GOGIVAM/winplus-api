@@ -59,6 +59,9 @@ public class User
     
     public int? DeletedByUserId { get; set; } // UserId qui a supprimé (for audit trail)
     
+    /// <summary>Dernière reconfirmation périodique validée (mobile — style WhatsApp, tous les 30-45j)</summary>
+    public DateTime? LastPeriodicConfirmAt { get; set; }
+
     // Email change workflow
     public string? PendingEmail { get; set; } // New email pending verification
     public string? EmailChangeToken { get; set; } // Verification token for email change

@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Backend.Data;
@@ -26,6 +27,8 @@ public interface ICustomAuthService
     Task<AuthResult> RefreshAccessTokenAsync(string refreshToken);
     Task<bool> LogoutAsync(string refreshToken);
     Task<bool> ChangePasswordAsync(int userId, string currentPassword, string newPassword);
+    Task<AuthResult> SendPeriodicConfirmationAsync(int userId);
+    Task<AuthResult> VerifyPeriodicConfirmationAsync(int userId, string code);
 }
 
 public class CustomAuthService : ICustomAuthService
@@ -849,6 +852,136 @@ public class CustomAuthService : ICustomAuthService
         {
             _logger.LogError(ex, "Error changing password for user: {UserId}", userId);
             return false;
+        }
+    }
+
+    // ============ Reconfirmation périodique mobile (style WhatsApp) ============
+
+    /// <summary>
+    /// Génère un code à 6 chiffres, l'enregistre en base et l'envoie par email.
+    /// Fréquence recommandée : tous les 30-45 jours (vérification côté mobile).
+    /// </summary>
+    public async Task<AuthResult> SendPeriodicConfirmationAsync(int userId)
+    {
+        try
+        {
+            var user = await _dbContext.Users.FindAsync(userId);
+            if (user == null || !user.IsActive)
+                return new AuthResult { Success = false, Message = "Utilisateur introuvable", ErrorCode = "USER_NOT_FOUND" };
+
+            // Invalider tout code periodic_confirm non expiré existant pour cet utilisateur
+            var existing = _dbContext.EmailVerificationTokens
+                .Where(t => t.UserId == userId && t.Purpose == "periodic_confirm" && !t.IsVerified)
+                .ToList();
+            _dbContext.EmailVerificationTokens.RemoveRange(existing);
+
+            var code = GenerateVerificationCode();
+            var token = new EmailVerificationToken
+            {
+                UserId = userId,
+                VerificationCode = code,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+                IsVerified = false,
+                Purpose = "periodic_confirm"
+            };
+
+            _dbContext.EmailVerificationTokens.Add(token);
+            await _dbContext.SaveChangesAsync();
+
+            await _emailService.SendPeriodicConfirmationAsync(user.Email, user.FirstName ?? "", code);
+
+            _logger.LogInformation("[PeriodicConfirm] Code envoyé — userId={UserId} email={Email}", userId, user.Email);
+
+            return new AuthResult { Success = true, Message = "Code de confirmation envoyé par email." };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[PeriodicConfirm] Erreur lors de l'envoi du code — userId={UserId}", userId);
+            return new AuthResult { Success = false, Message = "Erreur lors de l'envoi du code.", Errors = new() { { "send", ex.Message } } };
+        }
+    }
+
+    /// <summary>
+    /// Valide le code de reconfirmation périodique, met à jour LastPeriodicConfirmAt
+    /// et réémet un JWT + RefreshToken frais.
+    /// </summary>
+    public async Task<AuthResult> VerifyPeriodicConfirmationAsync(int userId, string code)
+    {
+        try
+        {
+            var token = await _dbContext.EmailVerificationTokens
+                .Where(t => t.UserId == userId && t.Purpose == "periodic_confirm" && !t.IsVerified)
+                .OrderByDescending(t => t.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (token == null)
+                return new AuthResult { Success = false, Message = "Aucun code en attente.", ErrorCode = "NO_PENDING_CODE" };
+
+            token.AttemptCount++;
+
+            if (token.IsBlocked)
+            {
+                _dbContext.EmailVerificationTokens.Update(token);
+                await _dbContext.SaveChangesAsync();
+                return new AuthResult { Success = false, Message = "Trop de tentatives. Demande un nouveau code.", ErrorCode = "TOO_MANY_ATTEMPTS" };
+            }
+
+            if (token.IsExpired)
+            {
+                _dbContext.EmailVerificationTokens.Update(token);
+                await _dbContext.SaveChangesAsync();
+                return new AuthResult { Success = false, Message = "Code expiré. Demande un nouveau code.", ErrorCode = "CODE_EXPIRED" };
+            }
+
+            if (token.VerificationCode != code)
+            {
+                _dbContext.EmailVerificationTokens.Update(token);
+                await _dbContext.SaveChangesAsync();
+                return new AuthResult { Success = false, Message = "Code incorrect.", ErrorCode = "INVALID_CODE" };
+            }
+
+            // Code valide — marquer et mettre à jour la date de reconfirmation
+            token.IsVerified = true;
+            token.VerifiedAt = DateTime.UtcNow;
+
+            var user = await _dbContext.Users.FindAsync(userId)
+                ?? throw new InvalidOperationException("User not found");
+
+            user.LastPeriodicConfirmAt = DateTime.UtcNow;
+            user.UpdatedAt = DateTime.UtcNow;
+
+            // Émettre un nouveau couple de tokens
+            var accessToken = _jwtService.GenerateAccessToken(user.Id, user.Email, user.Role, user.IsEmailVerified);
+            var refreshToken = _jwtService.GenerateRefreshToken();
+
+            _dbContext.RefreshTokens.Add(new RefreshToken
+            {
+                UserId = user.Id,
+                Token = refreshToken,
+                ExpiresAt = DateTime.UtcNow.AddDays(30),
+                CreatedAt = DateTime.UtcNow
+            });
+
+            _dbContext.EmailVerificationTokens.Update(token);
+            _dbContext.Users.Update(user);
+            await _dbContext.SaveChangesAsync();
+
+            _logger.LogInformation("[PeriodicConfirm] Reconfirmation validée — userId={UserId}", userId);
+
+            return new AuthResult
+            {
+                Success = true,
+                Message = "Identité confirmée avec succès.",
+                AccessToken = accessToken,
+                RefreshToken = refreshToken,
+                ExpiresIn = 86400,
+                User = new UserDto { Id = user.Id, Email = user.Email, Role = user.Role, IsEmailVerified = user.IsEmailVerified }
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[PeriodicConfirm] Erreur lors de la vérification — userId={UserId}", userId);
+            return new AuthResult { Success = false, Message = "Erreur lors de la vérification.", Errors = new() { { "verify", ex.Message } } };
         }
     }
 
