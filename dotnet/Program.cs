@@ -90,7 +90,7 @@ builder.Services.AddCors(options =>
             .WithOrigins(allowedOrigins)
             .AllowCredentials()
             .WithMethods("GET", "POST", "PUT", "DELETE", "PATCH")
-                .WithHeaders("Content-Type", "Authorization", "X-Requested-With")
+                .WithHeaders("Content-Type", "Authorization", "X-Requested-With", "Accept")
             .WithExposedHeaders("Content-Disposition");
     });
 });
@@ -277,6 +277,8 @@ builder.Services.AddScoped<IReviewRepository, ReviewRepository>();
 builder.Services.AddScoped<IReviewService, ReviewService>();
 builder.Services.AddScoped<IPromoCodeService, PromoCodeService>();
 builder.Services.AddScoped<IFavoriteCollectionService, FavoriteCollectionService>();
+builder.Services.AddScoped<IFavoriteService, FavoriteService>();
+builder.Services.AddScoped<IFavoriteRepository, FavoriteRepository>();
 builder.Services.AddScoped<ICertificateService, CertificateService>();
 builder.Services.AddScoped<IPdfService, PdfService>();
 

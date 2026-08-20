@@ -117,9 +117,10 @@ public class SubjectRepository : ISubjectRepository
             var term = searchTerm.ToLower();
             return await _context.Subjects
                 .WhereNotDeleted()
-                .Where(s => s.IsPublished && 
-                    (s.Title.ToLower().Contains(term) || 
-                     s.Description.ToLower().Contains(term)))
+                .Where(s => s.IsPublished &&
+                    (s.Title.ToLower().Contains(term) ||
+                     (s.Description != null && s.Description.ToLower().Contains(term)) ||
+                     (s.Category != null && s.Category.ToLower().Contains(term))))
                 .AsNoTracking()
                 .Include(s => s.Contents)
                 .OrderByDescending(s => s.EnrollmentCount)
