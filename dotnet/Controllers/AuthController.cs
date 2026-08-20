@@ -305,7 +305,10 @@ public class AuthController : ControllerBase
             return Ok(new VerifyEmailResponse
             {
                 Message = result.Message,
-                IsVerified = true
+                IsVerified = true,
+                AccessToken = result.AccessToken,
+                RefreshToken = result.RefreshToken,
+                User = result.User
             });
         }
         catch (Exception ex)

@@ -413,6 +413,18 @@ public class CustomAuthService : ICustomAuthService
             token.IsVerified = true;
             token.VerifiedAt = DateTime.UtcNow;
 
+            // Generate tokens so user is logged in immediately after verification
+            var accessToken = _jwtService.GenerateAccessToken(user.Id, user.Email, user.Role, user.IsEmailVerified);
+            var refreshToken = _jwtService.GenerateRefreshToken();
+
+            _dbContext.RefreshTokens.Add(new RefreshToken
+            {
+                UserId = user.Id,
+                Token = refreshToken,
+                ExpiresAt = DateTime.UtcNow.AddDays(7),
+                CreatedAt = DateTime.UtcNow
+            });
+
             _dbContext.Update(user);
             _dbContext.Update(token);
             await _dbContext.SaveChangesAsync();
@@ -423,12 +435,16 @@ public class CustomAuthService : ICustomAuthService
             {
                 Success = true,
                 Message = "Email verified successfully",
+                AccessToken = accessToken,
+                RefreshToken = refreshToken,
+                ExpiresIn = 86400,
                 User = new UserDto
                 {
                     Id = user.Id,
                     Email = user.Email,
                     FirstName = user.FirstName,
                     LastName = user.LastName,
+                    Role = user.Role,
                     IsEmailVerified = true
                 }
             };
