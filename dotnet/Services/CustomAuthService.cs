@@ -354,9 +354,9 @@ public class CustomAuthService : ICustomAuthService
                 };
             }
 
-            // Get most recent verification token
+            // Get most recent verification token (verify_email purpose only)
             var token = _dbContext.EmailVerificationTokens
-                .Where(t => t.UserId == userId && !t.IsVerified)
+                .Where(t => t.UserId == userId && !t.IsVerified && t.Purpose == "verify_email")
                 .OrderByDescending(t => t.CreatedAt)
                 .FirstOrDefault();
 
