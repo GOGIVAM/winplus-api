@@ -37,6 +37,10 @@ public class EmailVerificationToken
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>"verify_email" (défaut) ou "periodic_confirm" (reconfirmation périodique mobile)</summary>
+    [MaxLength(30)]
+    public string Purpose { get; set; } = "verify_email";
+
     [ForeignKey("UserId")]
     public virtual User User { get; set; } = null!;
 }

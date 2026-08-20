@@ -14,6 +14,7 @@ public interface IEmailService
     Task<bool> SendEmailChangeVerificationAsync(string email, string firstName, string verificationCode);
     Task<bool> SendPaymentConfirmationAsync(string email, string firstName, decimal amount, string reference, DateTime completedAt, IEnumerable<(string Title, int SubjectId)>? items = null);
     Task<bool> SendSubscriptionExpiryReminderAsync(string email, string firstName, DateTime expiryDate);
+    Task<bool> SendPeriodicConfirmationAsync(string email, string firstName, string code);
     Task<bool> SendGenericEmailAsync(string to, string subject, string htmlContent);
 }
 
@@ -403,6 +404,38 @@ public class EmailService : IEmailService
             _logger.LogError(ex, "Erreur envoi email Resend vers {Email}", to);
             return false;
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  EMAIL : Reconfirmation périodique mobile (style WhatsApp — tous les 30-45 jours)
+    // ─────────────────────────────────────────────────────────────────────────
+    public async Task<bool> SendPeriodicConfirmationAsync(string email, string firstName, string code)
+    {
+        var body = $@"
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 8px 24px;"">
+          <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
+            Bonjour <strong>{EscapeHtml(firstName)}</strong>,<br>
+            pour sécuriser ton accès WinPlus, saisis ce code dans l'application.<br>
+            Il expire dans <strong>10 minutes</strong>.
+          </p>
+        </td></tr>
+      </table>
+
+      {OtpBlock(code)}
+
+      {InfoBox("Si tu n'as pas ouvert l'application WinPlus, ignore cet email. Ton compte est en sécurité.")}
+
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"" style=""margin-top:24px;"">
+        <tr><td style=""padding-top:16px;border-top:1px solid #E8E0CE;"">
+          <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:12px;line-height:1.6;color:#97AAB2;text-align:center;"">
+            Cette vérification est requise périodiquement pour maintenir la sécurité de ton compte.
+          </p>
+        </td></tr>
+      </table>";
+
+        var html = Wrapper("Vérification de sécurité", "Confirme ton identité", body);
+        return await SendGenericEmailAsync(email, "Ton code de confirmation WinPlus", html);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

@@ -520,6 +520,83 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
+    /// Envoie un code de reconfirmation périodique par email (mobile — tous les 30-45 jours)
+    /// </summary>
+    [HttpPost("send-confirmation-code")]
+    [Authorize]
+    [ProducesResponseType(200)]
+    [ProducesResponseType(401)]
+    public async Task<IActionResult> SendConfirmationCode()
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!int.TryParse(userIdClaim, out var userId))
+            return Unauthorized(new { error = "Token invalide" });
+
+        try
+        {
+            _logger.LogInformation("[PeriodicConfirm] Demande d'envoi du code — userId={UserId}", userId);
+            var result = await _customAuthService.SendPeriodicConfirmationAsync(userId);
+
+            if (!result.Success)
+                return BadRequest(new { error = result.Message, errorCode = result.ErrorCode });
+
+            return Ok(new { message = result.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[PeriodicConfirm] Erreur — userId={UserId}", userId);
+            return StatusCode(500, new { error = "Une erreur est survenue", details = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Valide le code de reconfirmation périodique et réémet un JWT frais
+    /// </summary>
+    [HttpPost("verify-confirmation")]
+    [Authorize]
+    [ProducesResponseType(typeof(VerifyConfirmationCodeResponse), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)]
+    public async Task<IActionResult> VerifyConfirmationCode([FromBody] VerifyConfirmationCodeRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Code))
+            return BadRequest(new { error = "Le code est requis" });
+
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!int.TryParse(userIdClaim, out var userId))
+            return Unauthorized(new { error = "Token invalide" });
+
+        try
+        {
+            _logger.LogInformation("[PeriodicConfirm] Vérification du code — userId={UserId}", userId);
+            var result = await _customAuthService.VerifyPeriodicConfirmationAsync(userId, request.Code);
+
+            if (!result.Success)
+            {
+                _logger.LogWarning("[PeriodicConfirm] Échec vérification — userId={UserId} errorCode={Code}", userId, result.ErrorCode);
+                return BadRequest(new { error = result.Message, errorCode = result.ErrorCode });
+            }
+
+            _logger.LogInformation("[PeriodicConfirm] Reconfirmation réussie — userId={UserId}", userId);
+
+            return Ok(new VerifyConfirmationCodeResponse
+            {
+                Message = result.Message,
+                AccessToken = result.AccessToken,
+                RefreshToken = result.RefreshToken,
+                ExpiresIn = result.ExpiresIn ?? 86400,
+                TokenType = "Bearer",
+                ConfirmedAt = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[PeriodicConfirm] Erreur — userId={UserId}", userId);
+            return StatusCode(500, new { error = "Une erreur est survenue", details = ex.Message });
+        }
+    }
+
+    /// <summary>
     /// Get current user info
     /// </summary>
     [HttpGet("me")]
