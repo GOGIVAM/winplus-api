@@ -229,6 +229,42 @@ namespace Backend.Controllers;
         }
 
         /// <summary>
+        /// GET /api/ai/success-prediction/{userId}
+        /// Proxy → Python /api/success-prediction/{userId}
+        /// </summary>
+        [HttpGet("success-prediction/{userId:int}")]
+        public async Task<IActionResult> GetSuccessPrediction(int userId, CancellationToken ct)
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(TimeSpan.FromSeconds(10));
+                var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+                using var req = new HttpRequestMessage(HttpMethod.Get, $"/api/success-prediction/{userId}");
+                // Forward the user's JWT so FastAPI can validate it (shared secret)
+                if (Request.Headers.TryGetValue("Authorization", out var auth))
+                    req.Headers.TryAddWithoutValidation("Authorization", (string?)auth);
+                var res = await httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+                var content = await res.Content.ReadAsStringAsync(cts.Token);
+                if (!res.IsSuccessStatusCode)
+                {
+                    _logger.LogWarning("FastAPI success-prediction returned {Status} for user {UserId}", res.StatusCode, userId);
+                    return StatusCode((int)res.StatusCode, content);
+                }
+                return Content(content, "application/json");
+            }
+            catch (OperationCanceledException)
+            {
+                return StatusCode(504, new { message = "Le service IA ne répond pas." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erreur success-prediction pour userId {UserId}", userId);
+                return StatusCode(503, new { message = "Service IA temporairement indisponible." });
+            }
+        }
+
+        /// <summary>
         /// POST /api/ai/predict-success
         /// Prédire le succès de l'utilisateur pour un sujet
         /// </summary>

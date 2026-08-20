@@ -38,6 +38,7 @@ public class CustomAuthService : ICustomAuthService
     private readonly IEmailService _emailService;
     private readonly IDeviceTrackingService _deviceTrackingService;
     private readonly ILogger<CustomAuthService> _logger;
+    private readonly ISessionService _sessionService;
     private readonly int _emailVerificationExpirationHours;
     private readonly int _passwordResetExpirationHours;
 
@@ -46,6 +47,7 @@ public class CustomAuthService : ICustomAuthService
         IJwtService jwtService,
         IEmailService emailService,
         IDeviceTrackingService deviceTrackingService,
+        ISessionService sessionService,
         IConfiguration configuration,
         ILogger<CustomAuthService> logger)
     {
@@ -53,6 +55,7 @@ public class CustomAuthService : ICustomAuthService
         _jwtService = jwtService;
         _emailService = emailService;
         _deviceTrackingService = deviceTrackingService;
+        _sessionService = sessionService;
         _logger = logger;
         _emailVerificationExpirationHours = int.TryParse(
             configuration["Auth:EmailVerificationExpirationHours"], out var hours) ? hours : 24;
@@ -278,6 +281,22 @@ public class CustomAuthService : ICustomAuthService
 
             // Track device and check if it's recognized
             var device = await _deviceTrackingService.TrackDeviceAsync(user.Id, request, rememberMe);
+
+            // Create session
+            var ipAddress = request.Headers["X-Forwarded-For"].FirstOrDefault()
+                ?? request.HttpContext.Connection.RemoteIpAddress?.ToString()
+                ?? "Unknown";
+            var userAgent = request.Headers["User-Agent"].ToString();
+            var deviceType = userAgent.Contains("Mobile", StringComparison.OrdinalIgnoreCase) ? "mobile"
+                : userAgent.Contains("Tablet", StringComparison.OrdinalIgnoreCase) ? "tablet"
+                : "desktop";
+            _ = _sessionService.CreateSessionAsync(
+                user.Id,
+                device?.DeviceName ?? "Navigateur",
+                deviceType,
+                ipAddress,
+                userAgent,
+                "Cameroun");
 
             // Generate tokens
             var accessToken = _jwtService.GenerateAccessToken(user.Id, user.Email, user.Role, user.IsEmailVerified);
