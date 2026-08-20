@@ -1,4 +1,4 @@
-# WinPlus AI Features — Developer Guide
+# WinPlus AI Features  Developer Guide
 
 Four AI features powered by the Python FastAPI backend (port 8000) and wired into the React frontend.
 
@@ -90,7 +90,7 @@ POST /api/adaptive-quiz
 ```
 
 ### Frontend
-- Component: `src/components/Quiz/QuizHubMain.tsx` — "WinAI" card at top of "Disponibles" tab
+- Component: `src/components/Quiz/QuizHubMain.tsx`  "WinAI" card at top of "Disponibles" tab
 - Uses the existing `QuizActive` screen after generating
 - `correct_answer` (snake_case from Python) is normalized to `correctAnswer` (camelCase) on the frontend
 

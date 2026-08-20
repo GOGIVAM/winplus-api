@@ -769,7 +769,7 @@ Results are returned in rank order based on the sorting criteria.
 
 **Who uses it:** System (automatic).
 
-**How it works:** Whenever a student performs a learning activity—viewing a lesson, watching a video, completing a quiz, submitting an assignment, or accessing discussion forums—the system automatically creates a history entry. The entry captures the activity type, timestamp, duration (if applicable), course, and any relevant score or status information.
+**How it works:** Whenever a student performs a learning activityviewing a lesson, watching a video, completing a quiz, submitting an assignment, or accessing discussion forumsthe system automatically creates a history entry. The entry captures the activity type, timestamp, duration (if applicable), course, and any relevant score or status information.
 
 **Implementation Status:** ✅ **Implemented**
 

@@ -133,14 +133,14 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         {
             OnAuthenticationFailed = context =>
             {
-                // Uniquement logger — ne jamais écrire la réponse ici.
+                // Uniquement logger  ne jamais écrire la réponse ici.
                 // Pour les routes [Authorize], OnChallenge gère le 401.
                 // Pour les routes [AllowAnonymous], le pipeline continue normalement.
                 var logger = context.HttpContext.RequestServices
                     .GetRequiredService<ILogger<Program>>();
 
                 logger.LogWarning(
-                    "[JWT Auth Failed] Token invalide ou expiré — URL: {Url} — Error: {Error}",
+                    "[JWT Auth Failed] Token invalide ou expiré  URL: {Url}  Error: {Error}",
                     context.Request.Path,
                     context.Exception?.Message
                 );

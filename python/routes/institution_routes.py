@@ -1,5 +1,5 @@
 """
-WinAI — Endpoints IA pour le compte Institution.
+WinAI  Endpoints IA pour le compte Institution.
 
 - POST /institution/class-prediction       → Analyse prédictive de réussite
 - GET  /institution/benchmark/{id}         → Benchmarking anonyme vs national
@@ -156,7 +156,7 @@ async def class_prediction(
 
         risk_factors = []
         if avg < 50:
-            risk_factors.append(f"Score moyen faible ({avg:.1f}%) — objectif 60%")
+            risk_factors.append(f"Score moyen faible ({avg:.1f}%)  objectif 60%")
         if inactive_count > total * 0.3:
             risk_factors.append(f"{inactive_count} étudiant(s) inactifs depuis +{RISK_INACTIVITY_DAYS}j")
         if at_risk > 0:
@@ -216,7 +216,7 @@ async def benchmark(
             sum(1 for s in inst_scores if (s["quiz_count"] or 0) > 0) / len(inst_scores) * 100, 1
         ) if inst_scores else 0
 
-        # National avg — tous les étudiants dans la base (sauf l'institution elle-même)
+        # National avg  tous les étudiants dans la base (sauf l'institution elle-même)
         nat_q = session.query(
             func.avg(DailyScore.AverageScore).label("national_avg"),
             func.count(DailyScore.UserId.distinct()).label("national_count"),
@@ -249,8 +249,8 @@ async def benchmark(
         else:
             subj_rows = []
 
-        strongest_subject = subj_rows[0].Title if subj_rows else "—"
-        weakest_subject = subj_rows[-1].Title if len(subj_rows) > 1 else "—"
+        strongest_subject = subj_rows[0].Title if subj_rows else ""
+        weakest_subject = subj_rows[-1].Title if len(subj_rows) > 1 else ""
 
         percentile = 50
         if national_avg > 0:

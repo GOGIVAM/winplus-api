@@ -138,7 +138,7 @@ public sealed class WeeklyParentReportService : BackgroundService
 
         if (!children.Any())
         {
-            _logger.LogInformation("Parent {Email} has no linked children — skipping report.", parentEmail);
+            _logger.LogInformation("Parent {Email} has no linked children  skipping report.", parentEmail);
             return;
         }
 
@@ -189,7 +189,7 @@ public sealed class WeeklyParentReportService : BackgroundService
   </td></tr>
   <tr><td style=""background:#fff;border-radius:20px;padding:40px 36px;"">
     <p style=""margin:0 0 8px;font-family:Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:0.09em;color:#259A8E;text-transform:uppercase;"">Rapport hebdomadaire</p>
-    <h1 style=""margin:0 0 24px;font-family:-apple-system,Arial,sans-serif;font-size:22px;color:#0F2A35;"">Bonjour {System.Net.WebUtility.HtmlEncode(parentFirstName)} — voici la semaine de vos enfants</h1>
+    <h1 style=""margin:0 0 24px;font-family:-apple-system,Arial,sans-serif;font-size:22px;color:#0F2A35;"">Bonjour {System.Net.WebUtility.HtmlEncode(parentFirstName)}  voici la semaine de vos enfants</h1>
     <table width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"" style=""margin:0 0 28px;"">
       {childRows}
     </table>
@@ -216,7 +216,7 @@ public sealed class WeeklyParentReportService : BackgroundService
 
         await emailService.SendGenericEmailAsync(
             parentEmail,
-            $"Rapport hebdomadaire WinPlus — semaine du {cutoff:dd/MM}",
+            $"Rapport hebdomadaire WinPlus  semaine du {cutoff:dd/MM}",
             html
         );
 
@@ -267,6 +267,6 @@ public sealed class WeeklyParentReportService : BackgroundService
 
     private static string FallbackSynthesis(List<string> summaries)
         => summaries.Any()
-            ? "Vos enfants ont été actifs cette semaine sur WinPlus. Continuez à les encourager — chaque effort compte ! Un message de votre part peut faire toute la différence dans leur motivation."
+            ? "Vos enfants ont été actifs cette semaine sur WinPlus. Continuez à les encourager  chaque effort compte ! Un message de votre part peut faire toute la différence dans leur motivation."
             : "Aucune activité enregistrée cette semaine. Invitez vos enfants à démarrer une session de révision dès aujourd'hui.";
 }

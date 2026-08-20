@@ -533,7 +533,7 @@ async def generate_adaptive_quiz(
         }
     except json.JSONDecodeError as e:
         logger.error(f"[API] ❌ JSON parse error in adaptive quiz: {str(e)}")
-        raise HTTPException(status_code=500, detail='Erreur de génération des questions — réessayez.')
+        raise HTTPException(status_code=500, detail='Erreur de génération des questions  réessayez.')
     except Exception as e:
         logger.error(f"[API] ❌ POST /api/adaptive-quiz - Error: {str(e)}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
@@ -577,7 +577,7 @@ async def analyze_learning_style(
             'tips': [
                 "Priorise les cours en vidéo sur WinPlus plutôt que les PDFs",
                 "Lis tes résumés à voix haute avant un examen",
-                "Explique les notions à un ami — enseigner consolide ta mémoire",
+                "Explique les notions à un ami  enseigner consolide ta mémoire",
                 "Utilise WinAI pour te faire réexpliquer les concepts oralement",
             ]
         },
@@ -693,7 +693,7 @@ async def init_database(
     """Initialiser la base de donnÃ©es (admin only)"""
     try:
         init_db()
-        logger.info(f"[API] ðŸ—„ï¸ Database initialized by admin {admin_user.user_id}")
+        logger.info(f"[API] ðŸ„ï¸ Database initialized by admin {admin_user.user_id}")
         return {
             'success': True,
             'message': 'Database initialized successfully'

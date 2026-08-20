@@ -475,7 +475,7 @@ public class SubjectsController : ControllerBase
     }
 
     /// <summary>
-    /// Récupère les cours similaires — proxy vers le service Python IA
+    /// Récupère les cours similaires  proxy vers le service Python IA
     /// </summary>
     [HttpGet("{id}/similar")]
     public async Task<IActionResult> GetSimilar(int id, [FromQuery] int limit = 5)

@@ -1,4 +1,4 @@
-# CHECKLIST D'ALIGNEMENT BACKEND ↔ FRONTEND — WinPlus
+# CHECKLIST D'ALIGNEMENT BACKEND ↔ FRONTEND  WinPlus
 > Générée le 2026-05-22 | Branche : `api` | Frontend : master (JSX) | Backend : .NET (C#)
 > 
 > **Légende :** ✅ Fait · 🔄 En cours · ⚠️ Partiel · ❌ Manquant · 🧪 À tester
@@ -90,7 +90,7 @@
 
 ### 3.1 🔐 AUTHENTIFICATION
 
-**Frontend :** `components/AuthModal.jsx` — modes : `login`, `signup`, `verify`, `forgot`, `reset`
+**Frontend :** `components/AuthModal.jsx`  modes : `login`, `signup`, `verify`, `forgot`, `reset`
 
 **Backend :** `AuthController.cs`
 
@@ -227,7 +227,7 @@
 
 ### 3.8 💬 FORUM
 
-**Frontend :** `pages/Forum/Forum.jsx` — **Aucun endpoint branché**
+**Frontend :** `pages/Forum/Forum.jsx`  **Aucun endpoint branché**
 
 **Backend :** `ForumController` *(à créer ou vérifier s'il existe)*
 
@@ -245,7 +245,7 @@
 
 ### 3.9 🤖 ASSISTANT IA (CHATBOT)
 
-**Frontend :** `pages/Chat/Chat.jsx` — utilise `window.claude.complete()` directement
+**Frontend :** `pages/Chat/Chat.jsx`  utilise `window.claude.complete()` directement
 
 **Backend :** `ChatbotController`, `AIController`
 
@@ -362,60 +362,60 @@ Toutes ces données sont actuellement statiques. Elles doivent être remplacées
 
 ```
 services/
-  auth.js         — signin, signup, verify, refresh, logout
-  subjects.js     — getAll, getById, search, byCategory
-  exams.js        — getAll, byType, byYear, search
-  quizzes.js      — getBySubject, submit, getAttempt, history
-  revisions.js    — getBySubject, start, complete, progress
-  cart.js         — get, add, remove, clear, count
-  orders.js       — create, getAll, getById
-  payments.js     — create, getStatus, verify, history
-  users.js        — getProfile, update, getStats, getSubscriptions
-  favorites.js    — getAll, add, remove
-  history.js      — getAll, byType
-  chatbot.js      — sendMessage, getThreads, getThread
-  forum.js        — getThreads, createThread, getPosts, reply
-  admin.js        — users, analytics, subjects CRUD
-  pricing.js      — getPlans
-  analytics.js    — getDashboard (student/parent/teacher/admin)
+  auth.js          signin, signup, verify, refresh, logout
+  subjects.js      getAll, getById, search, byCategory
+  exams.js         getAll, byType, byYear, search
+  quizzes.js       getBySubject, submit, getAttempt, history
+  revisions.js     getBySubject, start, complete, progress
+  cart.js          get, add, remove, clear, count
+  orders.js        create, getAll, getById
+  payments.js      create, getStatus, verify, history
+  users.js         getProfile, update, getStats, getSubscriptions
+  favorites.js     getAll, add, remove
+  history.js       getAll, byType
+  chatbot.js       sendMessage, getThreads, getThread
+  forum.js         getThreads, createThread, getPosts, reply
+  admin.js         users, analytics, subjects CRUD
+  pricing.js       getPlans
+  analytics.js     getDashboard (student/parent/teacher/admin)
 ```
 
 ---
 
 ## 6. ORDRE D'EXÉCUTION RECOMMANDÉ
 
-### Sprint A — Fondations (Priorité CRITIQUE) ✅ TERMINÉ
+### Sprint A  Fondations (Priorité CRITIQUE) ✅ TERMINÉ
 1. ✅ Infrastructure API : `config/api.js`, intercepteurs JWT, gestion erreurs
 2. ✅ Auth : signin + signup + redirect par rôle
 3. ✅ Profil utilisateur : GET profile au login + session restore
 4. ✅ Catalogue : GET subjects avec normalisation + fallback mock
 5. ✅ Panier : synchronisation API (add/remove/clear + load au login)
 
-### Sprint B — Core Features (Priorité HAUTE) ✅ TERMINÉ
+### Sprint B  Core Features (Priorité HAUTE) ✅ TERMINÉ
 6. ✅ Auth avancée : verify email, forgot/reset password, refresh token (intercepteur 401)
 7. ✅ SubjectPage : détail API + sujets similaires (fallback mock)
 8. ☐ Quiz : brancher QuizzesController (services présents, UI à brancher)
 9. ☐ Révisions : brancher RevisionsController (services présents, UI à brancher)
 10. ✅ Dashboard Student : statistics API + fallback mock
 
-### Sprint C — Rôles & Transactions (Priorité HAUTE) ✅ TERMINÉ
+### Sprint C  Rôles & Transactions (Priorité HAUTE) ✅ TERMINÉ
 11. ✅ Paiements : POST /api/payments + polling statut réel
 12. ✅ Commandes : POST /api/orders au checkout (avec fallback)
 13. ✅ Dashboard Parent : GET /api/parent/children + fallback mock
 14. ✅ Dashboard Teacher : GET publications + revenus (fallback mock)
 15. ✅ Dashboard Admin : GET /api/admin/analytics (fallback mock)
 
-### Sprint D — Enrichissement (Priorité MOYENNE) ✅ TERMINÉ
+### Sprint D  Enrichissement (Priorité MOYENNE) ✅ TERMINÉ
 16. ✅ Forum : GET /api/forums/threads + fallback mock (CRUD threads restant)
 17. ✅ Chatbot : POST /api/chatbot + fallback window.claude
 18. ✅ Favoris : GET/POST/DELETE + sync au login
 19. ✅ Home stats & testimonials dynamiques via API
 20. ☐ Pricing dynamique : GET /api/pricing (plans hardcodés, fonctionnels)
 
-### Sprint E — Polish & Production (Priorité FAIBLE/QUALITÉ) 🔄 PARTIEL
-21. ⚠️ États de chargement (skeletons) sur appels API — non implémentés
-22. ⚠️ Messages d'erreur via toast — présents sur auth, non partout
-23. 🧪 Responsive mobile — design existant, non testé
+### Sprint E  Polish & Production (Priorité FAIBLE/QUALITÉ) 🔄 PARTIEL
+21. ⚠️ États de chargement (skeletons) sur appels API  non implémentés
+22. ⚠️ Messages d'erreur via toast  présents sur auth, non partout
+23. 🧪 Responsive mobile  design existant, non testé
 24. ☐ SEO : meta tags dans index.html
 25. ☐ Certificats, Enrollments, Institutions (features avancées)
 

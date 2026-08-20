@@ -151,7 +151,7 @@ public class UsersController : ControllerBase
         }
     }
 
-    // Legacy route — redirect to /api/users/profile/avatar
+    // Legacy route  redirect to /api/users/profile/avatar
     [HttpPost("avatar")]
     [Authorize]
     public IActionResult UploadAvatarLegacy()

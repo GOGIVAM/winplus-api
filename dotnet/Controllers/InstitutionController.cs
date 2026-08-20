@@ -96,7 +96,7 @@ public class InstitutionController : ControllerBase
 
     // ── AI proxy endpoints ────────────────────────────────────────────────────
 
-    /// <summary>Analyse prédictive de réussite — proxy vers Python FastAPI</summary>
+    /// <summary>Analyse prédictive de réussite  proxy vers Python FastAPI</summary>
     [HttpPost("class-prediction")]
     [Authorize]
     public async Task<IActionResult> ClassPrediction([FromBody] JsonElement body)
@@ -117,7 +117,7 @@ public class InstitutionController : ControllerBase
         }
     }
 
-    /// <summary>Benchmarking anonyme vs national — proxy vers Python FastAPI</summary>
+    /// <summary>Benchmarking anonyme vs national  proxy vers Python FastAPI</summary>
     [HttpGet("{institutionId}/benchmark")]
     [Authorize]
     public async Task<IActionResult> Benchmark(int institutionId, [FromQuery] string? studentIds = null)
@@ -140,7 +140,7 @@ public class InstitutionController : ControllerBase
         }
     }
 
-    /// <summary>Plan d'action institutionnel IA — proxy vers Python FastAPI</summary>
+    /// <summary>Plan d'action institutionnel IA  proxy vers Python FastAPI</summary>
     [HttpPost("action-plan")]
     [Authorize]
     public async Task<IActionResult> ActionPlan([FromBody] JsonElement body)
@@ -161,7 +161,7 @@ public class InstitutionController : ControllerBase
         }
     }
 
-    /// <summary>Détection des étudiants à risque — proxy vers Python FastAPI</summary>
+    /// <summary>Détection des étudiants à risque  proxy vers Python FastAPI</summary>
     [HttpGet("{institutionId}/at-risk-students")]
     [Authorize]
     public async Task<IActionResult> AtRiskStudents(int institutionId, [FromQuery] string? studentIds = null)

@@ -164,7 +164,7 @@ class QuizAttempt(Base):
 
 
 class RecommendationFeedbackDB(Base):
-    """Feedback utilisateur sur les recommandations — mappé sur RecommendationFeedbacks (.NET)"""
+    """Feedback utilisateur sur les recommandations  mappé sur RecommendationFeedbacks (.NET)"""
     __tablename__ = 'RecommendationFeedbacks'
 
     Id = Column(Integer, primary_key=True)
@@ -176,7 +176,7 @@ class RecommendationFeedbackDB(Base):
 
 
 class DailyScore(Base):
-    """Score journalier agrégé — mappé sur la table DailyScores (.NET)"""
+    """Score journalier agrégé  mappé sur la table DailyScores (.NET)"""
     __tablename__ = 'DailyScores'
 
     Id = Column(Integer, primary_key=True)
@@ -190,7 +190,7 @@ class DailyScore(Base):
 
 
 class ExamCoachPlanAI(Base):
-    """Plan de révision WinAI — stockage Python indépendant du .NET"""
+    """Plan de révision WinAI  stockage Python indépendant du .NET"""
     __tablename__ = 'ExamCoachPlansAI'
 
     Id = Column(Integer, primary_key=True)
@@ -205,7 +205,7 @@ class ExamCoachPlanAI(Base):
 
 
 class UserAIMemory(Base):
-    """Mémoire persistante WinAI par étudiant — mappé sur UserAIMemories (.NET)"""
+    """Mémoire persistante WinAI par étudiant  mappé sur UserAIMemories (.NET)"""
     __tablename__ = 'UserAIMemories'
 
     Id = Column(Integer, primary_key=True)
@@ -217,7 +217,7 @@ class UserAIMemory(Base):
 
 
 class StudySession(Base):
-    """Session d'étude guidée — mappé sur StudySessions (.NET)"""
+    """Session d'étude guidée  mappé sur StudySessions (.NET)"""
     __tablename__ = 'StudySessions'
 
     Id = Column(Integer, primary_key=True)

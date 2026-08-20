@@ -87,12 +87,12 @@ public class SmartNotificationService : ISmartNotificationService
             }
             else
             {
-                _logger.LogWarning("[SmartNotif] Python returned {Status} — using fallback", response.StatusCode);
+                _logger.LogWarning("[SmartNotif] Python returned {Status}  using fallback", response.StatusCode);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[SmartNotif] AI call failed — using fallback for user {UserId}", userId);
+            _logger.LogWarning(ex, "[SmartNotif] AI call failed  using fallback for user {UserId}", userId);
         }
 
         await _ntfy.PublishAsync(topic, title, body, priority, tags, userId, type);

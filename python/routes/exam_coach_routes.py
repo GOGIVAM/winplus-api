@@ -1,9 +1,9 @@
 """
-WinAI — Exam Coach: plan de révision personnalisé Ebbinghaus.
+WinAI  Exam Coach: plan de révision personnalisé Ebbinghaus.
 
-POST /api/exam-coach/generate        — Génère un plan de révision
-POST /api/exam-coach/recalibrate     — Recalibre un plan existant
-GET  /api/exam-coach/today/{user_id} — Session du jour + message WinAI
+POST /api/exam-coach/generate         Génère un plan de révision
+POST /api/exam-coach/recalibrate      Recalibre un plan existant
+GET  /api/exam-coach/today/{user_id}  Session du jour + message WinAI
 """
 
 import json
@@ -60,7 +60,7 @@ def _generate_plan(user_id, exam_type, exam_date_str, hours_per_day, weak_areas,
     exam_dt = date.fromisoformat(exam_date_str)
     days_remaining = (exam_dt - today).days
 
-    # Normalize subjects — weak areas first
+    # Normalize subjects  weak areas first
     all_subjects = list(dict.fromkeys((weak_areas or []) + (enrolled_subjects or [])))[:8]
     if not all_subjects:
         all_subjects = ['Mathématiques', 'Français', 'Physique-Chimie', 'Sciences de la Vie']
@@ -88,7 +88,7 @@ def _generate_plan(user_id, exam_type, exam_date_str, hours_per_day, weak_areas,
             plan.append({
                 'day': day,
                 'date': current_date.isoformat(),
-                'focus_area': 'Repos — Recharge mentale',
+                'focus_area': 'Repos  Recharge mentale',
                 'activity_type': 'rest',
                 'duration_minutes': 0,
                 'subject_ids': [],
@@ -173,7 +173,7 @@ async def generate_plan(
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="exam_date invalide — format attendu: YYYY-MM-DD",
+            detail="exam_date invalide  format attendu: YYYY-MM-DD",
         )
 
     days_remaining = (exam_dt - date.today()).days
@@ -287,7 +287,7 @@ async def recalibrate_plan(
             day_entry = next((d for d in all_days_flat if d['day'] == result.day), None)
             if day_entry:
                 subject = day_entry.get('focus_area', '')
-                if subject and subject != 'Repos — Recharge mentale':
+                if subject and subject != 'Repos  Recharge mentale':
                     poor_score = (
                         result.quiz_score_if_applicable is not None
                         and result.quiz_score_if_applicable < 60
@@ -492,7 +492,7 @@ async def predict_grade(
 
         scores = [float(a.Score) for a in attempts if a.Score is not None]
         if not scores:
-            # No data — return estimate based on enrollment only
+            # No data  return estimate based on enrollment only
             return {
                 'success': True,
                 'data': {
@@ -675,7 +675,7 @@ async def get_micro_intervention(
             message = result.get('content', '').strip()
         except Exception as exc:
             logger.warning(f"[micro-intervention] DeepSeek failed: {exc}")
-            message = f"Tu y es presque ! {days_to_exam} jours avant {exam_type} — chaque révision compte. Commence par 25 minutes de {suggested_subject} maintenant."
+            message = f"Tu y es presque ! {days_to_exam} jours avant {exam_type}  chaque révision compte. Commence par 25 minutes de {suggested_subject} maintenant."
 
         return {
             'success': True,

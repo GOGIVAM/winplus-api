@@ -34,7 +34,7 @@ public class UpdateUserStatusRequest
 
 /// <summary>
 /// DTO pour la mise à jour générique d'un utilisateur depuis l'admin
-/// (tous les champs sont optionnels — seuls ceux fournis sont modifiés)
+/// (tous les champs sont optionnels  seuls ceux fournis sont modifiés)
 /// </summary>
 public class AdminUpdateUserRequest
 {
@@ -51,7 +51,7 @@ public class AdminUpdateUserRequest
     [MaxLength(50)]
     public string? Role { get; set; }
 
-    /// <summary>"active" ou "suspended" — autre valeur ignorée</summary>
+    /// <summary>"active" ou "suspended"  autre valeur ignorée</summary>
     public string? Status { get; set; }
 }
 

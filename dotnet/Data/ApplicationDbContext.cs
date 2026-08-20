@@ -814,7 +814,7 @@ modelBuilder.Entity<Exam>(entity =>
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-        // Configure ForumVote entity — contrainte unique (PostId, UserId)
+        // Configure ForumVote entity  contrainte unique (PostId, UserId)
         modelBuilder.Entity<ForumVote>(entity =>
         {
             entity.HasKey(e => e.Id);

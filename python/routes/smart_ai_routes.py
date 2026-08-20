@@ -1,8 +1,8 @@
 """
-WinAI Smart Routes — Fonctionnalités IA cross-comptes
-  POST /api/ai/generate-notification   — notification personnalisée DeepSeek
-  POST /api/ai/summarize-notifications — résumé bullet-points des notifications non lues
-  POST /api/ai/content-fit-analysis   — analyse d'adéquation contenu/profil utilisateur
+WinAI Smart Routes  Fonctionnalités IA cross-comptes
+  POST /api/ai/generate-notification    notification personnalisée DeepSeek
+  POST /api/ai/summarize-notifications  résumé bullet-points des notifications non lues
+  POST /api/ai/content-fit-analysis    analyse d'adéquation contenu/profil utilisateur
 """
 
 from fastapi import APIRouter, HTTPException, status, Depends, Request
@@ -63,7 +63,7 @@ class GenerateNotificationRequest(BaseModel):
 
 class SummarizeNotificationsRequest(BaseModel):
     notification_ids: List[int] = []
-    notification_texts: List[str]   # [title + " — " + body, ...]
+    notification_texts: List[str]   # [title + "  " + body, ...]
 
 
 class ContentFitRequest(BaseModel):
@@ -147,7 +147,7 @@ async def generate_notification(
         return out
     except Exception as e:
         logger.error(f"[smart-notif] DeepSeek error: {e}")
-        # Fallback générique — ne jamais lever d'erreur pour les notifications
+        # Fallback générique  ne jamais lever d'erreur pour les notifications
         return {"success": False, "title": None, "body": None}
 
 
@@ -243,7 +243,7 @@ async def content_fit_analysis(
         confidence_note = (
             f"Confiance élevée ({quiz_count} données)"
             if quiz_count >= 10
-            else f"Données limitées ({quiz_count} quiz — résultat indicatif)"
+            else f"Données limitées ({quiz_count} quiz  résultat indicatif)"
         )
     finally:
         session.close()

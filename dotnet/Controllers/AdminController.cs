@@ -647,17 +647,17 @@ public class AdminController : ControllerBase
                         "order",
                         o.CreatedAt,
                         $"Commande #{o.OrderNumber}",
-                        o.GuestEmail ?? "—",
+                        o.GuestEmail ?? "",
                         o.Status == "Completed" ? "success" : o.Status == "Failed" ? "failure" : "warning",
                         o.GuestName ?? "Anonyme",
-                        o.GuestEmail ?? "—",
+                        o.GuestEmail ?? "",
                         $"Commande #{o.OrderNumber} · {o.TotalAmount:N0} XAF"
                     ))
                     .ToListAsync();
             }
             catch (Exception exOrders)
             {
-                // Colonnes GuestEmail/GuestName absentes — appliquer: dotnet ef database update 20260614_AddGuestOrderSupport
+                // Colonnes GuestEmail/GuestName absentes  appliquer: dotnet ef database update 20260614_AddGuestOrderSupport
                 _logger.LogWarning("activities/recent: Orders query failed (migration 20260614 likely missing). Falling back to users only. Exception: {Msg}", exOrders.Message);
                 orders = await _db.Orders
                     .Where(o => !o.IsDeleted)
@@ -668,10 +668,10 @@ public class AdminController : ControllerBase
                         "order",
                         o.CreatedAt,
                         $"Commande #{o.OrderNumber}",
-                        "—",
+                        "",
                         o.Status == "Completed" ? "success" : o.Status == "Failed" ? "failure" : "warning",
                         "Anonyme",
-                        "—",
+                        "",
                         $"Commande #{o.OrderNumber} · {o.TotalAmount:N0} XAF"
                     ))
                     .ToListAsync();
@@ -924,7 +924,7 @@ public class AdminController : ControllerBase
                 lastMonthRevenue = await _db.Payments.Where(p => p.Status == "completed" && p.CreatedAt >= lastMonthStart && p.CreatedAt < thisMonthStart).SumAsync(p => (decimal?)p.Amount) ?? 0m;
                 revenueGrowth    = lastMonthRevenue > 0 ? Math.Round((double)((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue * 100), 1) : 0.0;
             }
-            catch (Exception exPay) { _logger.LogWarning("Analytics: Payments query failed — {Msg}", exPay.Message); }
+            catch (Exception exPay) { _logger.LogWarning("Analytics: Payments query failed  {Msg}", exPay.Message); }
 
             int subscribedUsers = 0;
             double conversionRate = 0.0;
@@ -933,7 +933,7 @@ public class AdminController : ControllerBase
                 subscribedUsers = await _db.Subscriptions.Where(s => s.Status == "active" && !s.IsDeleted).Select(s => s.UserId).Distinct().CountAsync();
                 conversionRate  = totalUsers > 0 ? Math.Round((double)subscribedUsers / totalUsers * 100, 2) : 0.0;
             }
-            catch (Exception exSub) { _logger.LogWarning("Analytics: Subscriptions query failed — {Msg}", exSub.Message); }
+            catch (Exception exSub) { _logger.LogWarning("Analytics: Subscriptions query failed  {Msg}", exSub.Message); }
 
             return Ok(new
             {
@@ -952,7 +952,7 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>GET /admin/analytics/geo — Distribution géographique des utilisateurs (villes)</summary>
+    /// <summary>GET /admin/analytics/geo  Distribution géographique des utilisateurs (villes)</summary>
     [HttpGet("analytics/geo")]
     public async Task<IActionResult> GetGeoDistribution()
     {
@@ -1046,7 +1046,7 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>GET /admin/subjects/pending — Sujets non publiés en attente de validation</summary>
+    /// <summary>GET /admin/subjects/pending  Sujets non publiés en attente de validation</summary>
     [HttpGet("subjects/pending")]
     public async Task<IActionResult> GetPendingSubjects(
         [FromQuery] int limit = 50,
@@ -1088,7 +1088,7 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>POST /admin/subjects/{id}/approve — Publier un sujet</summary>
+    /// <summary>POST /admin/subjects/{id}/approve  Publier un sujet</summary>
     [HttpPost("subjects/{id}/approve")]
     public async Task<IActionResult> ApproveSubject(int id)
     {
@@ -1109,7 +1109,7 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>POST /admin/subjects/{id}/reject — Rejeter un sujet</summary>
+    /// <summary>POST /admin/subjects/{id}/reject  Rejeter un sujet</summary>
     [HttpPost("subjects/{id}/reject")]
     public async Task<IActionResult> RejectSubject(int id, [FromBody] RejectSubjectRequest request)
     {
@@ -1130,7 +1130,7 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>POST /admin/emails/send — Envoyer un email groupé aux utilisateurs</summary>
+    /// <summary>POST /admin/emails/send  Envoyer un email groupé aux utilisateurs</summary>
     [HttpPost("emails/send")]
     public async Task<IActionResult> SendAdminEmail([FromBody] AdminEmailRequest request)
     {
@@ -1164,7 +1164,7 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>POST /admin/users/{id}/delete — Supprimer (soft-delete) un utilisateur</summary>
+    /// <summary>POST /admin/users/{id}/delete  Supprimer (soft-delete) un utilisateur</summary>
     [HttpPost("users/{id}/delete")]
     public async Task<IActionResult> DeleteUser(int id)
     {
@@ -1179,7 +1179,7 @@ public class AdminController : ControllerBase
 
     // ─── WinAI Admin ────────────────────────────────────────────────────────────
 
-    /// <summary>GET /admin/winai/stats — Statistiques WinAI agrégées depuis les tables de chat</summary>
+    /// <summary>GET /admin/winai/stats  Statistiques WinAI agrégées depuis les tables de chat</summary>
     [HttpGet("winai/stats")]
     public async Task<IActionResult> GetWinAIStats()
     {
@@ -1222,7 +1222,7 @@ public class AdminController : ControllerBase
 
     // ─── Chat Admin ──────────────────────────────────────────────────────────────
 
-    /// <summary>GET /admin/chat/sessions — Liste paginée des sessions de chat</summary>
+    /// <summary>GET /admin/chat/sessions  Liste paginée des sessions de chat</summary>
     [HttpGet("chat/sessions")]
     public async Task<IActionResult> GetChatSessions([FromQuery] int limit = 100, [FromQuery] int page = 1)
     {
@@ -1261,7 +1261,7 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>GET /admin/chat/stats — Statistiques globales des sessions de chat</summary>
+    /// <summary>GET /admin/chat/stats  Statistiques globales des sessions de chat</summary>
     [HttpGet("chat/stats")]
     public async Task<IActionResult> GetChatStats()
     {
@@ -1293,7 +1293,7 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>GET /admin/chat/sessions/{id}/messages — Messages d'une session spécifique</summary>
+    /// <summary>GET /admin/chat/sessions/{id}/messages  Messages d'une session spécifique</summary>
     [HttpGet("chat/sessions/{id}/messages")]
     public async Task<IActionResult> GetSessionMessages(int id)
     {
@@ -1327,7 +1327,7 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>PATCH /admin/chat/sessions/{id}/close — Ferme une session de chat</summary>
+    /// <summary>PATCH /admin/chat/sessions/{id}/close  Ferme une session de chat</summary>
     [HttpPatch("chat/sessions/{id}/close")]
     public async Task<IActionResult> CloseSession(int id)
     {
@@ -1347,7 +1347,7 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>DELETE /admin/chat/messages/{id} — Supprime (soft-delete) un message</summary>
+    /// <summary>DELETE /admin/chat/messages/{id}  Supprime (soft-delete) un message</summary>
     [HttpDelete("chat/messages/{id}")]
     public async Task<IActionResult> DeleteChatMessage(int id)
     {
@@ -1368,7 +1368,7 @@ public class AdminController : ControllerBase
 
     // ─── Subscriptions Admin ─────────────────────────────────────────────────────
 
-    /// <summary>GET /admin/subscriptions/plans — Plans de tarification avec comptage d'abonnés actifs</summary>
+    /// <summary>GET /admin/subscriptions/plans  Plans de tarification avec comptage d'abonnés actifs</summary>
     [HttpGet("subscriptions/plans")]
     public async Task<IActionResult> GetSubscriptionPlans()
     {
@@ -1407,7 +1407,7 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>GET /admin/subscriptions/stats — Statistiques globales d'abonnements</summary>
+    /// <summary>GET /admin/subscriptions/stats  Statistiques globales d'abonnements</summary>
     [HttpGet("subscriptions/stats")]
     public async Task<IActionResult> GetSubscriptionStats()
     {
@@ -1451,7 +1451,7 @@ public class AdminController : ControllerBase
 
     // ─── Certificates Admin ──────────────────────────────────────────────────────
 
-    /// <summary>GET /admin/certificates — Liste des certificats avec infos utilisateur et cours</summary>
+    /// <summary>GET /admin/certificates  Liste des certificats avec infos utilisateur et cours</summary>
     [HttpGet("certificates")]
     public async Task<IActionResult> GetCertificates([FromQuery] int page = 1, [FromQuery] int limit = 50)
     {
@@ -1492,7 +1492,7 @@ public class AdminController : ControllerBase
 
     // ─── Application Logs Admin ──────────────────────────────────────────────────
 
-    /// <summary>GET /admin/logs — Logs d'erreurs applicatifs paginés</summary>
+    /// <summary>GET /admin/logs  Logs d'erreurs applicatifs paginés</summary>
     [HttpGet("logs")]
     public async Task<IActionResult> GetLogs([FromQuery] int page = 1, [FromQuery] int limit = 50, [FromQuery] string? level = null)
     {
@@ -1534,7 +1534,7 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>POST /admin/chat/sessions/{id}/messages — Envoyer un message admin dans une session ouverte</summary>
+    /// <summary>POST /admin/chat/sessions/{id}/messages  Envoyer un message admin dans une session ouverte</summary>
     [HttpPost("chat/sessions/{id}/messages")]
     public async Task<IActionResult> SendSessionMessage(int id, [FromBody] AdminChatMessageRequest request)
     {
@@ -1584,7 +1584,7 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>PATCH /admin/logs/{id}/resolve — Marque un log comme résolu</summary>
+    /// <summary>PATCH /admin/logs/{id}/resolve  Marque un log comme résolu</summary>
     [HttpPatch("logs/{id}/resolve")]
     public async Task<IActionResult> ResolveLog(int id)
     {
@@ -1604,7 +1604,7 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>POST /admin/subjects/{id}/pdf — Upload du PDF d'un sujet vers S3</summary>
+    /// <summary>POST /admin/subjects/{id}/pdf  Upload du PDF d'un sujet vers S3</summary>
     [HttpPost("subjects/{id}/pdf")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

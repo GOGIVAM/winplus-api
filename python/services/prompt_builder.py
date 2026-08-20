@@ -1,8 +1,8 @@
 """
-WinAI — Constructeur de prompts système différenciés par rôle utilisateur.
+WinAI  Constructeur de prompts système différenciés par rôle utilisateur.
 
 Exposes:
-    UserContext   — dataclass transportant le profil de l'utilisateur
+    UserContext    dataclass transportant le profil de l'utilisateur
     build_system_prompt(user_context) -> str
 """
 
@@ -24,7 +24,7 @@ class UserContext:
     performance_history: Dict[str, float] = field(default_factory=dict)  # {"Maths": 14.5, "Physique": 11.0}
     ai_memories: List[Dict[str, str]] = field(default_factory=list)  # [{"type": "learning_preference", "content": "..."}]
     children_data: List[Dict] = field(default_factory=list)  # [{"name": "Marie", "level": "Terminale", "avg_score": 14.2, "subjects": [...]}]
-    language: Optional[str] = None                 # "french" | "english" | "pidgin" — détecté ou forcé par l'utilisateur
+    language: Optional[str] = None                 # "french" | "english" | "pidgin"  détecté ou forcé par l'utilisateur
 
 
 # ── Language detection ────────────────────────────────────────────────────────
@@ -55,11 +55,11 @@ def _language_instruction(ctx: UserContext) -> str:
     if not lang or lang == "french":
         return ""
     if lang == "english":
-        return "\n\n[Langue] L'utilisateur s'exprime en anglais — réponds en anglais."
+        return "\n\n[Langue] L'utilisateur s'exprime en anglais  réponds en anglais."
     if lang == "pidgin":
         return (
             "\n\n[Langue] L'utilisateur utilise le parler camerounais (pidgin/français mélangé) "
-            "— tu peux comprendre mais réponds toujours en français standard pour la clarté pédagogique."
+            " tu peux comprendre mais réponds toujours en français standard pour la clarté pédagogique."
         )
     return ""
 
@@ -106,7 +106,7 @@ _VARK_INSTRUCTIONS = {
         "- Utilise des connecteurs parlés : 'd'abord', 'ensuite', 'donc', 'en d'autres termes', 'pour résumer'.\n"
         "- Propose des mnémotechniques, des rimes ou des formules à mémoriser oralement.\n"
         "- Reformule les concepts avec des analogies et des métaphores vivantes.\n"
-        "- Évite les tableaux et listes sèches sans explication verbale — commente toujours."
+        "- Évite les tableaux et listes sèches sans explication verbale  commente toujours."
     ),
     "reading_writing": (
         "Cet étudiant est un apprenant LECTEUR/SCRIPTEUR.\n"
@@ -114,7 +114,7 @@ _VARK_INSTRUCTIONS = {
         "- Propose systématiquement des définitions précises des termes clés.\n"
         "- Utilise des listes numérotées, des sous-sections avec titres clairs.\n"
         "- Encourage la prise de notes : propose des résumés rédigés que l'étudiant peut recopier.\n"
-        "- Évite les raccourcis visuels sans texte d'accompagnement — explique toujours par écrit."
+        "- Évite les raccourcis visuels sans texte d'accompagnement  explique toujours par écrit."
     ),
     "kinesthetic": (
         "Cet étudiant est un apprenant KINESTHÉSIQUE.\n"
@@ -196,7 +196,7 @@ def _children_block(ctx: UserContext) -> str:
             parts.append(f"score moyen {avg:.1f}/20")
         if subjects:
             parts.append(f"matières : {', '.join(str(s) for s in subjects[:4])}")
-        lines.append(" — ".join(parts))
+        lines.append("  ".join(parts))
     return "\n\n[Enfants suivis]\n" + "\n".join(lines)
 
 

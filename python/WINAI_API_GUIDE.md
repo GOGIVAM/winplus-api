@@ -1,4 +1,4 @@
-# WinAI — Guide d'intégration API
+# WinAI  Guide d'intégration API
 
 WinAI est l'assistant IA de la plateforme WinPlus. Il adapte automatiquement son comportement, son registre et ses capacités au **rôle de l'utilisateur connecté**. Côté utilisateur, il s'appelle toujours **WinAI** ; le modèle sous-jacent (DeepSeek) n'est jamais exposé.
 

@@ -132,7 +132,7 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
         }
         catch
         {
-            // InstitutionId column may not exist — skip detailed stats
+            // InstitutionId column may not exist  skip detailed stats
             studentIds = new List<int>();
         }
 
@@ -149,7 +149,7 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
             : 0.0;
         var totalQuizzes = monthScores.Sum(s => s.QuizCount);
 
-        // Build AI narrative via Python (optional — fire-and-forget)
+        // Build AI narrative via Python (optional  fire-and-forget)
         string aiNarrative;
         try
         {
@@ -184,7 +184,7 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
 
         await emailService.SendGenericEmailAsync(
             to: institutionEmail,
-            subject: $"[WinPlus] Rapport mensuel de pilotage — {monthLabel}",
+            subject: $"[WinPlus] Rapport mensuel de pilotage  {monthLabel}",
             htmlContent: body);
 
         _logger.LogInformation(

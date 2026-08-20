@@ -749,7 +749,7 @@ namespace Backend.Controllers;
             return raw;
         }
 
-        // ── Feature 1b — POST /api/ai/optimize-title ──────────────────────────
+        // ── Feature 1b  POST /api/ai/optimize-title ──────────────────────────
 
         /// <summary>Optimisation SEO du titre d'un contenu par WinAI</summary>
         [HttpPost("optimize-title")]
@@ -764,7 +764,7 @@ namespace Backend.Controllers;
             return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
         }
 
-        // ── Feature 1c — POST /api/ai/generate-description ───────────────────
+        // ── Feature 1c  POST /api/ai/generate-description ───────────────────
 
         /// <summary>Génère une description catalogue 2-3 phrases par WinAI</summary>
         [HttpPost("generate-description")]
@@ -781,7 +781,7 @@ namespace Backend.Controllers;
 
         // ── Smart AI cross-compte ─────────────────────────────────────────────
 
-        /// <summary>POST /api/ai/summarize-notifications — résumé bullet-points via DeepSeek</summary>
+        /// <summary>POST /api/ai/summarize-notifications  résumé bullet-points via DeepSeek</summary>
         [HttpPost("summarize-notifications")]
         public async Task<IActionResult> SummarizeNotifications([FromBody] object body, CancellationToken ct)
         {
@@ -794,7 +794,7 @@ namespace Backend.Controllers;
             return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
         }
 
-        /// <summary>POST /api/ai/content-fit-analysis — adéquation contenu/profil utilisateur</summary>
+        /// <summary>POST /api/ai/content-fit-analysis  adéquation contenu/profil utilisateur</summary>
         [HttpPost("content-fit-analysis")]
         public async Task<IActionResult> ContentFitAnalysis([FromBody] object body, CancellationToken ct)
         {

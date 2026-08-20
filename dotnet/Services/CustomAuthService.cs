@@ -925,13 +925,13 @@ public class CustomAuthService : ICustomAuthService
 
             await _emailService.SendPeriodicConfirmationAsync(user.Email, user.FirstName ?? "", code);
 
-            _logger.LogInformation("[PeriodicConfirm] Code envoyé — userId={UserId} email={Email}", userId, user.Email);
+            _logger.LogInformation("[PeriodicConfirm] Code envoyé  userId={UserId} email={Email}", userId, user.Email);
 
             return new AuthResult { Success = true, Message = "Code de confirmation envoyé par email." };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[PeriodicConfirm] Erreur lors de l'envoi du code — userId={UserId}", userId);
+            _logger.LogError(ex, "[PeriodicConfirm] Erreur lors de l'envoi du code  userId={UserId}", userId);
             return new AuthResult { Success = false, Message = "Erreur lors de l'envoi du code.", Errors = new() { { "send", ex.Message } } };
         }
     }
@@ -975,7 +975,7 @@ public class CustomAuthService : ICustomAuthService
                 return new AuthResult { Success = false, Message = "Code incorrect.", ErrorCode = "INVALID_CODE" };
             }
 
-            // Code valide — marquer et mettre à jour la date de reconfirmation
+            // Code valide  marquer et mettre à jour la date de reconfirmation
             token.IsVerified = true;
             token.VerifiedAt = DateTime.UtcNow;
 
@@ -1001,7 +1001,7 @@ public class CustomAuthService : ICustomAuthService
             _dbContext.Users.Update(user);
             await _dbContext.SaveChangesAsync();
 
-            _logger.LogInformation("[PeriodicConfirm] Reconfirmation validée — userId={UserId}", userId);
+            _logger.LogInformation("[PeriodicConfirm] Reconfirmation validée  userId={UserId}", userId);
 
             return new AuthResult
             {
@@ -1015,7 +1015,7 @@ public class CustomAuthService : ICustomAuthService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[PeriodicConfirm] Erreur lors de la vérification — userId={UserId}", userId);
+            _logger.LogError(ex, "[PeriodicConfirm] Erreur lors de la vérification  userId={UserId}", userId);
             return new AuthResult { Success = false, Message = "Erreur lors de la vérification.", Errors = new() { { "verify", ex.Message } } };
         }
     }

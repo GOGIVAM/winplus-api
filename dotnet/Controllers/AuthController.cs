@@ -534,7 +534,7 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Envoie un code de reconfirmation périodique par email (mobile — tous les 30-45 jours)
+    /// Envoie un code de reconfirmation périodique par email (mobile  tous les 30-45 jours)
     /// </summary>
     [HttpPost("send-confirmation-code")]
     [Authorize]
@@ -548,7 +548,7 @@ public class AuthController : ControllerBase
 
         try
         {
-            _logger.LogInformation("[PeriodicConfirm] Demande d'envoi du code — userId={UserId}", userId);
+            _logger.LogInformation("[PeriodicConfirm] Demande d'envoi du code  userId={UserId}", userId);
             var result = await _customAuthService.SendPeriodicConfirmationAsync(userId);
 
             if (!result.Success)
@@ -558,7 +558,7 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[PeriodicConfirm] Erreur — userId={UserId}", userId);
+            _logger.LogError(ex, "[PeriodicConfirm] Erreur  userId={UserId}", userId);
             return StatusCode(500, new { error = "Une erreur est survenue", details = ex.Message });
         }
     }
@@ -582,16 +582,16 @@ public class AuthController : ControllerBase
 
         try
         {
-            _logger.LogInformation("[PeriodicConfirm] Vérification du code — userId={UserId}", userId);
+            _logger.LogInformation("[PeriodicConfirm] Vérification du code  userId={UserId}", userId);
             var result = await _customAuthService.VerifyPeriodicConfirmationAsync(userId, request.Code);
 
             if (!result.Success)
             {
-                _logger.LogWarning("[PeriodicConfirm] Échec vérification — userId={UserId} errorCode={Code}", userId, result.ErrorCode);
+                _logger.LogWarning("[PeriodicConfirm] Échec vérification  userId={UserId} errorCode={Code}", userId, result.ErrorCode);
                 return BadRequest(new { error = result.Message, errorCode = result.ErrorCode });
             }
 
-            _logger.LogInformation("[PeriodicConfirm] Reconfirmation réussie — userId={UserId}", userId);
+            _logger.LogInformation("[PeriodicConfirm] Reconfirmation réussie  userId={UserId}", userId);
 
             return Ok(new VerifyConfirmationCodeResponse
             {
@@ -605,7 +605,7 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[PeriodicConfirm] Erreur — userId={UserId}", userId);
+            _logger.LogError(ex, "[PeriodicConfirm] Erreur  userId={UserId}", userId);
             return StatusCode(500, new { error = "Une erreur est survenue", details = ex.Message });
         }
     }

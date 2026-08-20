@@ -1,4 +1,4 @@
-# État du Dashboard Admin — WinPlus
+# État du Dashboard Admin  WinPlus
 > Généré le 2026-06-16 · Branch frontend: `master` · Branch backend: `main`
 
 ---
@@ -9,9 +9,9 @@
 AdminDashboard.tsx  (layout + routing)
   ├── AdminPeriodProvider     (contexte période : 7d/30d/90d)
   ├── AdminTopBar             (breadcrumb, statut IA, search, notifications)
-  ├── Sidebar                 (NAV_GROUPS — 26 entrées, 6 sections)
+  ├── Sidebar                 (NAV_GROUPS  26 entrées, 6 sections)
   ├── <AdminXxx />            (composant actif selon activeView)
-  └── AdminChatbot            (floating chatbot — toutes les vues)
+  └── AdminChatbot            (floating chatbot  toutes les vues)
 ```
 
 ### Hooks partagés (module-level cache, anti-doublon)
@@ -29,34 +29,34 @@ Au montage et sur refresh manuel, `AdminDashboard` lance en parallèle :
 
 ---
 
-## 2. Sidebar — Navigation
+## 2. Sidebar  Navigation
 
 | Section | Vue (`AdminView`) | Composant | Icône | Badge |
 |---------|-------------------|-----------|-------|-------|
-| **Pilotage** | `overview` | AdminOverview | LayoutGrid | — |
-| | `map` | AdminMap | MapPin | — |
-| | `analytics` | AdminAnalytics | BarChart2 | — |
-| | `journey` | AdminJourney | GitBranch | — |
-| **Comptes** | `users` | AdminUsers | Users | — |
-| | `students` | AdminStudents | GraduationCap | — |
-| | `teachers` | AdminTeachers | BookOpen | — |
-| | `parents` | AdminParents | Heart | — |
-| | `institutions` | AdminInstitutions | Building2 | — |
+| **Pilotage** | `overview` | AdminOverview | LayoutGrid |  |
+| | `map` | AdminMap | MapPin |  |
+| | `analytics` | AdminAnalytics | BarChart2 |  |
+| | `journey` | AdminJourney | GitBranch |  |
+| **Comptes** | `users` | AdminUsers | Users |  |
+| | `students` | AdminStudents | GraduationCap |  |
+| | `teachers` | AdminTeachers | BookOpen |  |
+| | `parents` | AdminParents | Heart |  |
+| | `institutions` | AdminInstitutions | Building2 |  |
 | **Contenu** | `contents` | AdminContents | FileCheck | `pendingContents` |
-| | `catalogue` | AdminCatalogue | Layers | — |
-| | `upload` | AdminUpload | UploadCloud | — |
-| | `certificates` | AdminCertificates | Award | — |
+| | `catalogue` | AdminCatalogue | Layers |  |
+| | `upload` | AdminUpload | UploadCloud |  |
+| | `certificates` | AdminCertificates | Award |  |
 | **Commerce** | `orders` | AdminOrders | ShoppingBag | `pendingOrders` |
-| | `revenues` | AdminRevenues | TrendingUp | — |
-| | `promo` | AdminPromoCodes | Tag | — |
-| | `subscriptions` | AdminSubscriptions | Repeat | — |
-| **Communication** | `announcements` | AdminAnnouncements | Megaphone | — |
-| | `emails` | AdminEmails | Mail | — |
+| | `revenues` | AdminRevenues | TrendingUp |  |
+| | `promo` | AdminPromoCodes | Tag |  |
+| | `subscriptions` | AdminSubscriptions | Repeat |  |
+| **Communication** | `announcements` | AdminAnnouncements | Megaphone |  |
+| | `emails` | AdminEmails | Mail |  |
 | | `winai` | AdminWinAI | Sparkles | dot pulsant |
-| **Système** | `health` | AdminSystemHealth | Activity | — |
-| | `logs` | AdminLogs | Terminal | — |
-| | `audit` | AdminAudit | ClipboardList | — |
-| | `settings` | AdminSettings | Settings | — |
+| **Système** | `health` | AdminSystemHealth | Activity |  |
+| | `logs` | AdminLogs | Terminal |  |
+| | `audit` | AdminAudit | ClipboardList |  |
+| | `settings` | AdminSettings | Settings |  |
 
 > **Note** : La vue `chat` existe dans le type `AdminView` mais n'est plus dans la sidebar. Elle est rendue comme onglet "Modération chat" à l'intérieur de `AdminWinAI`.
 
@@ -101,7 +101,7 @@ Au montage et sur refresh manuel, `AdminDashboard` lance en parallèle :
 ### 3.4 AdminJourney
 **Appel** : `GET /admin/analytics`  
 **Rendu** : KPI row (totalUsers, subscribedUsers, revenue, conversionRate, newUsersThisWeek, activeSubjects) + funnel visualisation pleine largeur  
-**Note** : La carte géographique Cameroun a été **supprimée** dans cette session — seul le funnel est affiché.  
+**Note** : La carte géographique Cameroun a été **supprimée** dans cette session  seul le funnel est affiché.  
 **Statut** : ✅ Opérationnel
 
 ---
@@ -183,7 +183,7 @@ Au montage et sur refresh manuel, `AdminDashboard` lance en parallèle :
 - Métriques plateforme croisées (activeUsers, publishedContent, conversionRate depuis props)
 
 **Onglet "Modération chat"** : rend `<AdminChat />` directement  
-**404 handling** : Set module-level `notImplemented404` — évite les doubles appels après remount  
+**404 handling** : Set module-level `notImplemented404`  évite les doubles appels après remount  
 **Statut** : ✅ Frontend prêt · ✅ Backend livré (`ad76668`)
 
 ---
@@ -199,7 +199,7 @@ Au montage et sur refresh manuel, `AdminDashboard` lance en parallèle :
 
 **Rendu** : liste sessions (user, titre, nb messages, statut), vue messages avec suppression, fermeture session  
 **404 handling** : Set module-level `chatEndpoints404`  
-**Statut** : ✅ Frontend prêt · ✅ Backend livré partiellement — `POST /admin/chat/sessions/{id}/messages` manquant
+**Statut** : ✅ Frontend prêt · ✅ Backend livré partiellement  `POST /admin/chat/sessions/{id}/messages` manquant
 
 ---
 
@@ -236,7 +236,7 @@ Au montage et sur refresh manuel, `AdminDashboard` lance en parallèle :
 ---
 
 ### 3.20 AdminTopBar
-**Aucun appel** — affiche les props passées par `AdminDashboard` :
+**Aucun appel**  affiche les props passées par `AdminDashboard` :
 - Breadcrumb de la vue active
 - Chip "Service IA indisponible" (rouge pulsant) si `iaDown === true`
 - Compteur commandes en attente
@@ -252,7 +252,7 @@ Au montage et sur refresh manuel, `AdminDashboard` lance en parallèle :
 
 ---
 
-## 4. Tableau des endpoints — Statut complet
+## 4. Tableau des endpoints  Statut complet
 
 | Endpoint | Méthode | Composant(s) | Backend | Notes |
 |----------|---------|--------------|---------|-------|
@@ -280,7 +280,7 @@ Au montage et sur refresh manuel, `AdminDashboard` lance en parallèle :
 | `/admin/chat/sessions/{id}/messages` | GET | AdminChat | ✅ **NOUVEAU** | Livré `ad76668` |
 | `/admin/chat/sessions/{id}/close` | PATCH | AdminChat | ✅ **NOUVEAU** | Livré `ad76668` |
 | `/admin/chat/messages/{id}` | DELETE | AdminChat | ✅ **NOUVEAU** | Livré `ad76668` |
-| `/admin/chat/sessions/{id}/messages` | POST | AdminChat | ❌ **MANQUANT** | Reply admin — non implémenté |
+| `/admin/chat/sessions/{id}/messages` | POST | AdminChat | ❌ **MANQUANT** | Reply admin  non implémenté |
 | `/admin/subscriptions/plans` | GET | AdminSubscriptions | ✅ **NOUVEAU** | Livré `ad76668` |
 | `/admin/subscriptions/stats` | GET | AdminSubscriptions | ✅ **NOUVEAU** | Livré `ad76668` |
 | `/admin/certificates` | GET | AdminCertificates | ✅ **NOUVEAU** | Livré `ad76668` |
@@ -291,7 +291,7 @@ Au montage et sur refresh manuel, `AdminDashboard` lance en parallèle :
 
 ## 5. Actions à faire côté serveur
 
-### 5.1 — SQL à exécuter (migration ApplicationLogs)
+### 5.1  SQL à exécuter (migration ApplicationLogs)
 ```sql
 CREATE TABLE IF NOT EXISTS "ApplicationLogs" (
     "Id"          SERIAL PRIMARY KEY,
@@ -314,7 +314,7 @@ VALUES ('20260615_AddApplicationLogs', '8.0.0')
 ON CONFLICT DO NOTHING;
 ```
 
-### 5.2 — appsettings.Production.json (section AIService)
+### 5.2  appsettings.Production.json (section AIService)
 ```json
 "AIService": {
   "BaseUrl": "http://172.31.1.71:8000",
@@ -326,7 +326,7 @@ ON CONFLICT DO NOTHING;
 }
 ```
 
-### 5.3 — Redémarrer les services
+### 5.3  Redémarrer les services
 ```bash
 sudo systemctl restart winplus-api
 sudo systemctl restart winplus-fastapi
@@ -338,20 +338,20 @@ sudo systemctl restart winplus-fastapi
 
 | Priorité | Item | Type |
 |----------|------|------|
-| 🔴 Critique | `POST /admin/chat/sessions/{id}/messages` — reply admin dans chat | Backend |
+| 🔴 Critique | `POST /admin/chat/sessions/{id}/messages`  reply admin dans chat | Backend |
 | 🔴 Critique | Investiguer 500 sur `/admin/analytics` et `/admin/activities/recent` en prod (colonnes GuestEmail/GuestName de la migration `20260614` appliquée ?) | Diagnostic |
 | 🟠 Haute | Écrire dans `ApplicationLogs` depuis le middleware d'erreur .NET | Backend |
-| 🟠 Haute | FastAPI : `/admin/winai/stats` probe — s'assurer que c'est le même port 8000 que `AIService:BaseUrl` | Config |
+| 🟠 Haute | FastAPI : `/admin/winai/stats` probe  s'assurer que c'est le même port 8000 que `AIService:BaseUrl` | Config |
 | 🟡 Moyenne | AdminAudit : migrer vers `useAdminRecentActivities` pour bénéficier du cache partagé | Frontend |
-| 🟡 Moyenne | `AdminChat` : onglet "Signalements" (messages reportés) — endpoint non défini | Backend + Frontend |
+| 🟡 Moyenne | `AdminChat` : onglet "Signalements" (messages reportés)  endpoint non défini | Backend + Frontend |
 | 🟡 Moyenne | Pagination serveur pour `/admin/certificates` (actuellement `limit=200`) | Backend |
-| 🟢 Basse | `AdminMap` : connecter à `/admin/analytics/geographic` (actuellement différent de `/admin/analytics/geo`) — aligner les URLs | Frontend ou Backend |
+| 🟢 Basse | `AdminMap` : connecter à `/admin/analytics/geographic` (actuellement différent de `/admin/analytics/geo`)  aligner les URLs | Frontend ou Backend |
 | 🟢 Basse | `AdminSettings` : persister les paramètres via API | Backend |
 | 🟢 Basse | Tests E2E des nouveaux endpoints chat/winai/subscriptions | QA |
 
 ---
 
-## 7. Branding — État des remplacements
+## 7. Branding  État des remplacements
 
 | Fichier | Occurrences "DeepSeek/Claude/GPT/OpenAI" | Statut |
 |---------|------------------------------------------|--------|
@@ -368,8 +368,8 @@ sudo systemctl restart winplus-fastapi
 | `python/schemas.py` | `deepseek` → `ai_service` dans `ChatbotHealthResponse` | ✅ |
 | `python/routes/chatbot_routes.py` | champ `model` retiré des réponses | ✅ |
 | `python/app.py` | `models_used` retiré des réponses | ✅ |
-| `python/services/deepseek_client.py` | Nom interne — **intentionnellement conservé** | ℹ️ |
-| `src/hooks/useChatbot.ts` | Types internes — **intentionnellement conservés** | ℹ️ |
+| `python/services/deepseek_client.py` | Nom interne  **intentionnellement conservé** | ℹ️ |
+| `src/hooks/useChatbot.ts` | Types internes  **intentionnellement conservés** | ℹ️ |
 
 ---
 

@@ -5,7 +5,7 @@
 *.suo
 .vs/
 
-# Sensitive config — tous les appsettings ignorés (secrets en prod)
+# Sensitive config  tous les appsettings ignorés (secrets en prod)
 **/appsettings.json
 **/appsettings.*.json
 
