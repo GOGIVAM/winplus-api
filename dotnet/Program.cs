@@ -416,6 +416,10 @@ app.UseRateLimiting();
 app.UseAuthentication();  // Doit être avant UseAuthorization
 app.UseAuthorization();
 
+// Suivi de présence : met à jour UserSessions.LastActivityAt à chaque requête
+// authentifiée. C'est la source du « qui est en ligne » du dashboard admin.
+app.UsePresenceTracking();
+
 app.MapControllers();
 
 // Health check endpoint
