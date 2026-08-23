@@ -30,7 +30,10 @@ public class UserSession
     [MaxLength(100)]
     public string? Location { get; set; } // "City, Country"
 
-    public string? RefreshTokenId { get; set; } // Reference to RefreshToken
+    // La colonne SQL est INTEGER et RefreshToken.Id est un int : déclarer ce
+    // champ en string faisait envoyer un paramètre texte à PostgreSQL, qui
+    // rejetait tout INSERT (42804) et faisait donc échouer chaque connexion.
+    public int? RefreshTokenId { get; set; } // Reference to RefreshToken.Id
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

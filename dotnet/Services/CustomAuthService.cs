@@ -290,13 +290,30 @@ public class CustomAuthService : ICustomAuthService
             var deviceType = userAgent.Contains("Mobile", StringComparison.OrdinalIgnoreCase) ? "mobile"
                 : userAgent.Contains("Tablet", StringComparison.OrdinalIgnoreCase) ? "tablet"
                 : "desktop";
-            _ = _sessionService.CreateSessionAsync(
-                user.Id,
-                device?.DeviceName ?? "Navigateur",
-                deviceType,
-                ipAddress,
-                userAgent,
-                "Cameroun");
+            // Le suivi de session partage ce DbContext : lancé sans await, son
+            // entité restait suivie et un échec d'insertion faisait rejeter le
+            // SaveChangesAsync de la connexion elle-même. On l'attend, et on
+            // isole l'erreur : ne pas pouvoir tracer l'appareil ne doit jamais
+            // empêcher l'utilisateur de se connecter.
+            try
+            {
+                await _sessionService.CreateSessionAsync(
+                    user.Id,
+                    device?.DeviceName ?? "Navigateur",
+                    deviceType,
+                    ipAddress,
+                    userAgent,
+                    "Cameroun");
+            }
+            catch (Exception sessionEx)
+            {
+                _logger.LogWarning(sessionEx,
+                    "Session non enregistrée pour {Email} — connexion poursuivie", email);
+                // L'entité en échec doit être détachée, sinon le SaveChanges
+                // suivant tenterait de la réinsérer.
+                foreach (var entry in _dbContext.ChangeTracker.Entries<UserSession>().ToList())
+                    entry.State = EntityState.Detached;
+            }
 
             // Generate tokens
             var accessToken = _jwtService.GenerateAccessToken(user.Id, user.Email, user.Role, user.IsEmailVerified);
