@@ -475,7 +475,7 @@ class UserPerformanceAnalyzer:
         try:
             analysis = self.analyze_user_progress(user_id)
             if not analysis.get('success'):
-                return {'success': False, 'error': 'Analyse impossible — vérifiez les enrollments'}
+                return {'success': False, 'error': 'Analyse impossible  vérifiez les enrollments'}
 
             overview = analysis['overview']
             analysis_data = analysis['analysis']
@@ -530,7 +530,7 @@ class UserPerformanceAnalyzer:
                                          'detail': f'{total_hours:.1f}h de travail enregistrées'})
             elif total_hours < 2:
                 negative_factors.append({'label': 'Temps d\'étude insuffisant', 'impact': 'negative',
-                                         'detail': f'Seulement {total_hours:.1f}h — visez 20h minimum'})
+                                         'detail': f'Seulement {total_hours:.1f}h  visez 20h minimum'})
 
             # Matières fortes
             if strengths:

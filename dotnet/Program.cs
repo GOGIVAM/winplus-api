@@ -90,7 +90,7 @@ builder.Services.AddCors(options =>
             .WithOrigins(allowedOrigins)
             .AllowCredentials()
             .WithMethods("GET", "POST", "PUT", "DELETE", "PATCH")
-                .WithHeaders("Content-Type", "Authorization", "X-Requested-With")
+                .WithHeaders("Content-Type", "Authorization", "X-Requested-With", "Accept")
             .WithExposedHeaders("Content-Disposition");
     });
 });
@@ -133,14 +133,14 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         {
             OnAuthenticationFailed = context =>
             {
-                // Uniquement logger — ne jamais écrire la réponse ici.
+                // Uniquement logger  ne jamais écrire la réponse ici.
                 // Pour les routes [Authorize], OnChallenge gère le 401.
                 // Pour les routes [AllowAnonymous], le pipeline continue normalement.
                 var logger = context.HttpContext.RequestServices
                     .GetRequiredService<ILogger<Program>>();
 
                 logger.LogWarning(
-                    "[JWT Auth Failed] Token invalide ou expiré — URL: {Url} — Error: {Error}",
+                    "[JWT Auth Failed] Token invalide ou expiré  URL: {Url}  Error: {Error}",
                     context.Request.Path,
                     context.Exception?.Message
                 );
@@ -277,6 +277,8 @@ builder.Services.AddScoped<IReviewRepository, ReviewRepository>();
 builder.Services.AddScoped<IReviewService, ReviewService>();
 builder.Services.AddScoped<IPromoCodeService, PromoCodeService>();
 builder.Services.AddScoped<IFavoriteCollectionService, FavoriteCollectionService>();
+builder.Services.AddScoped<IFavoriteService, FavoriteService>();
+builder.Services.AddScoped<IFavoriteRepository, FavoriteRepository>();
 builder.Services.AddScoped<ICertificateService, CertificateService>();
 builder.Services.AddScoped<IPdfService, PdfService>();
 

@@ -1,11 +1,11 @@
 """
-WinAI — Alertes parent basées sur la détection d'anomalies réelle.
+WinAI  Alertes parent basées sur la détection d'anomalies réelle.
 
 GET /api/parent-alerts/{child_id}
-  — Analyse les scores des 14 derniers jours (QuizAttempts)
-  — Détecte : baisse de performance, inactivité, excellente semaine
-  — Génère un message WinAI court via DeepSeek (max_tokens=120)
-  — Retourne { alerts: [{ type, severity, message, detected_at, child_stats }] }
+   Analyse les scores des 14 derniers jours (QuizAttempts)
+   Détecte : baisse de performance, inactivité, excellente semaine
+   Génère un message WinAI court via DeepSeek (max_tokens=120)
+   Retourne { alerts: [{ type, severity, message, detected_at, child_stats }] }
 """
 
 import logging
@@ -80,11 +80,11 @@ def _winai_message(alert_type: str, child_name: str, stat_value: float | int | N
 
 def _fallback_message(alert_type: str, child_name: str) -> str:
     fallbacks = {
-        "performance_drop": f"Les scores de {child_name} ont baissé cette semaine — un petit encouragement peut faire toute la différence !",
+        "performance_drop": f"Les scores de {child_name} ont baissé cette semaine  un petit encouragement peut faire toute la différence !",
         "inactivity":       f"{child_name} n'a pas étudié depuis quelques jours. Un message de votre part pourrait l'aider à reprendre.",
         "excellent_week":   f"Bravo à {child_name} pour cette excellente semaine ! Partagez-lui votre fierté.",
         "exam_anxiety":     f"{child_name} révise très tard le soir. Encouragez-le à se reposer : le sommeil est essentiel avant un examen.",
-        "surmenage":        f"{child_name} travaille beaucoup mais ses résultats baissent. Invitez-le à faire une pause — la qualité prime sur la quantité.",
+        "surmenage":        f"{child_name} travaille beaucoup mais ses résultats baissent. Invitez-le à faire une pause  la qualité prime sur la quantité.",
     }
     return fallbacks.get(alert_type, f"WinAI a détecté quelque chose à surveiller pour {child_name}.")
 

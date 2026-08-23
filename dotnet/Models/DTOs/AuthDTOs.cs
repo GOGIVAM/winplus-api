@@ -34,7 +34,7 @@ public class SignInResponse
 
 public class VerifyEmailRequestDto
 {
-    public int UserId { get; set; }
+    public string Email { get; set; } = string.Empty;
     public string VerificationCode { get; set; } = string.Empty;
 }
 
@@ -42,6 +42,9 @@ public class VerifyEmailResponse
 {
     public string Message { get; set; } = string.Empty;
     public bool IsVerified { get; set; }
+    public string? AccessToken { get; set; }
+    public string? RefreshToken { get; set; }
+    public UserDto? User { get; set; }
 }
 
 public class ResendVerificationRequestDto
@@ -89,6 +92,30 @@ public class CurrentUserResponse
     public int Id { get; set; }
     public string? Email { get; set; }
     public string? Role { get; set; }
+}
+
+// ==================== RECONFIRMATION PÉRIODIQUE MOBILE ====================
+
+/// <summary>Demande d'envoi du code de reconfirmation périodique (nécessite JWT valide)</summary>
+public class SendConfirmationCodeRequestDto
+{
+    // Vide intentionnellement : l'userId est extrait du JWT
+}
+
+/// <summary>Vérification du code de reconfirmation reçu par email</summary>
+public class VerifyConfirmationCodeRequestDto
+{
+    public string Code { get; set; } = string.Empty;
+}
+
+public class VerifyConfirmationCodeResponse
+{
+    public string Message { get; set; } = string.Empty;
+    public string? AccessToken { get; set; }
+    public string? RefreshToken { get; set; }
+    public int ExpiresIn { get; set; }
+    public string? TokenType { get; set; } = "Bearer";
+    public DateTime ConfirmedAt { get; set; }
 }
 
 // Legacy DTOs for backward compatibility

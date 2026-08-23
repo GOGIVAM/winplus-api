@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace Backend.Models.Entities;
 
 /// <summary>
-/// Liaison parent-enfant — un parent peut avoir plusieurs enfants (étudiants)
+/// Liaison parent-enfant  un parent peut avoir plusieurs enfants (étudiants)
 /// </summary>
 public class ParentStudentLink
 {

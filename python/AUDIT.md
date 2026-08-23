@@ -1,4 +1,4 @@
-# Audit — Backend Python WinPlus
+# Audit  Backend Python WinPlus
 > Date : 2026-06-04
 
 ---
@@ -44,10 +44,10 @@ backend/python/
 | Database | `DB_PORT` | 5432 |
 | Database | `DB_NAME` | winplus_db |
 | Database | `DB_USER` | miguel |
-| JWT | `JWT_SECRET_KEY` | — |
+| JWT | `JWT_SECRET_KEY` |  |
 | JWT | `JWT_ALGORITHM` | HS256 |
-| DeepSeek | `DEEPSEEK_BASE_URL` | — |
-| DeepSeek | `DEEPSEEK_API_KEY` | — |
+| DeepSeek | `DEEPSEEK_BASE_URL` |  |
+| DeepSeek | `DEEPSEEK_API_KEY` |  |
 | DeepSeek | `DEEPSEEK_MODEL` | deepseek-chat |
 | NLP | `NLP_MODEL` | camembert-base |
 | NLP | `MODEL_CACHE_DIR` | ./models_cache |
@@ -70,7 +70,7 @@ backend/python/
 | Monitoring | `prometheus-client==0.19.0`, `python-json-logger==2.0.7` |
 | Tests | `pytest==7.4.3`, `pytest-cov==4.1.0` |
 
-> **Note :** PyTorch est commenté dans `requirements.txt` — il est installé séparément dans le Dockerfile avec support CUDA.
+> **Note :** PyTorch est commenté dans `requirements.txt`  il est installé séparément dans le Dockerfile avec support CUDA.
 
 ---
 
@@ -107,7 +107,7 @@ backend/python/
 |-------|---------|-------------|-------------|
 | `/api/admin/init-db` | POST | `admin` | Initialise les tables PostgreSQL |
 
-### Problème identifié — code Flask legacy
+### Problème identifié  code Flask legacy
 Le fichier `app.py` contient du code **Flask résiduel** (lignes ~442–834) avec des décorateurs `@app.route()` et des `jsonify()`. Ces routes doublonnent les endpoints FastAPI mais ne sont jamais appelées. Elles doivent être supprimées.
 
 ---
@@ -213,7 +213,7 @@ Encode plusieurs textes en batch.
 |---------|-------------|
 | `get_similar_subjects(id, top_n=5)` | Top-N sujets similaires au contenu |
 | `get_popular_subjects(limit=10)` | Sujets populaires (enrollment + rating) |
-| `get_personalized_recommendations(user_id)` | **Non implémenté** — retourne popular |
+| `get_personalized_recommendations(user_id)` | **Non implémenté**  retourne popular |
 | `recommend_by_category(category)` | Sujets d'une catégorie |
 | `get_trending_subjects(limit)` | Trending par EnrollmentCount |
 
@@ -285,9 +285,9 @@ Génère un parcours en 3 phases basé sur la vélocité d'apprentissage réelle
 
 | Phase | Durée | Focus | Cible |
 |-------|-------|-------|-------|
-| 1 — Renforcement | 14j / vélocité | Faiblesses, facile | 60 % |
-| 2 — Approfondissement | 21j / vélocité | Forces, moyen | 85 % |
-| 3 — Maîtrise | 28j / vélocité | Diversification, difficile | 95 % |
+| 1  Renforcement | 14j / vélocité | Faiblesses, facile | 60 % |
+| 2  Approfondissement | 21j / vélocité | Forces, moyen | 85 % |
+| 3  Maîtrise | 28j / vélocité | Diversification, difficile | 95 % |
 
 ---
 
@@ -307,7 +307,7 @@ Réseau personnalisé `winplus_network` (bridge).
 Build multi-stage (builder + runtime) sur Python 3.11-slim. Healthcheck sur `GET /health` toutes les 30 s.
 
 ### `Dockerfile.aws`
-**Attention :** ce fichier est un Dockerfile **.NET** (EducationalAI.dll) mal nommé — pas Python.
+**Attention :** ce fichier est un Dockerfile **.NET** (EducationalAI.dll) mal nommé  pas Python.
 
 ---
 
@@ -376,8 +376,8 @@ Services externes :
 | `auth.py` | ~110 | Vérification JWT + contrôle de rôle |
 | `database.py` | ~510 | ORM SQLAlchemy + requêtes métier |
 | `schemas.py` | ~250 | Schémas Pydantic request/response |
-| `models/nlp_analyzer.py` | ~355 | CamemBERT — difficulté, tags, durée |
-| `models/recommender.py` | ~175 | TF-IDF — similarité de contenu |
+| `models/nlp_analyzer.py` | ~355 | CamemBERT  difficulté, tags, durée |
+| `models/recommender.py` | ~175 | TF-IDF  similarité de contenu |
 | `routes/chatbot_routes.py` | ~350 | Chatbot + streaming SSE |
 | `services/deepseek_client.py` | ~250 | Client DeepSeek avec retry |
 | `services/user_performance_analyzer.py` | ~465 | Analyse progression + parcours |

@@ -147,7 +147,7 @@ public class PricingController : ControllerBase
                 features = JsonSerializer.Deserialize<string[]>(plan.Features, _jsonOpts)
                            ?? Array.Empty<string>();
             }
-            catch { /* malformed JSON — keep empty */ }
+            catch { /* malformed JSON  keep empty */ }
         }
 
         return new PricingPlanResponse

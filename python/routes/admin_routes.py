@@ -1,5 +1,5 @@
 """
-WinAI — Endpoints IA pour le compte Administrateur.
+WinAI  Endpoints IA pour le compte Administrateur.
 
 - POST /admin/anomaly-detection          → Détection d'anomalies plateforme
 - GET  /admin/anomalies/active           → Liste des anomalies non résolues
@@ -262,7 +262,7 @@ async def detect_anomalies(
                 {
                     "type": s["type"],
                     "severity": s["severity"],
-                    "description": f"Signal détecté : {s['type']} — données : {json.dumps(s['raw'], ensure_ascii=False)}",
+                    "description": f"Signal détecté : {s['type']}  données : {json.dumps(s['raw'], ensure_ascii=False)}",
                     "action_suggestion": "Investiguer manuellement.",
                 }
                 for s in signals
@@ -393,7 +393,7 @@ async def content_health_check(
             "quality_score": 65 if has_pdf else 40,
             "issues": [] if has_pdf else [{"type": "incomplete_content", "severity": "high", "detail": "Aucun fichier PDF fourni."}],
             "recommendation": "request_revision" if not has_pdf else "approve",
-            "auto_moderation_note": "Analyse automatique non disponible — révision manuelle recommandée.",
+            "auto_moderation_note": "Analyse automatique non disponible  révision manuelle recommandée.",
         }
 
     # Ensure recommendation matches quality_score
@@ -484,19 +484,19 @@ async def growth_insights(
         if not isinstance(insights_raw, list) or len(insights_raw) == 0:
             insights_raw = [
                 {
-                    "insight": f"{stats.get('new_enrollments', 0)} nouveaux enrollments en {stats.get('period_days', 7)} jours — croissance à analyser.",
+                    "insight": f"{stats.get('new_enrollments', 0)} nouveaux enrollments en {stats.get('period_days', 7)} jours  croissance à analyser.",
                     "category": "acquisition",
                     "action": "Identifier les sources d'acquisition les plus performantes.",
                     "priority": "high",
                 },
                 {
-                    "insight": f"Score moyen plateforme : {stats.get('avg_score', 0)}% — objectif 70%.",
+                    "insight": f"Score moyen plateforme : {stats.get('avg_score', 0)}%  objectif 70%.",
                     "category": "content",
                     "action": "Renforcer les contenus pour les matières sous-performantes.",
                     "priority": "medium",
                 },
                 {
-                    "insight": "Taux de rétention à analyser — indicateur clé de santé plateforme.",
+                    "insight": "Taux de rétention à analyser  indicateur clé de santé plateforme.",
                     "category": "retention",
                     "action": "Mettre en place des emails de réengagement à J+7 et J+30.",
                     "priority": "high",

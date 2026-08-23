@@ -1,29 +1,56 @@
 # Gestion des utilisateurs — admin
 
-Fichiers **prêts à copier**, aucune modification manuelle à faire.
+Fichiers **prêts à copier**, rebasés sur `origin/main` (commit `8b3675c`).
+Aucune modification manuelle à faire.
 
 | Fichier fourni | Destination | Nature |
 | --- | --- | --- |
+| `Controllers/AdminController.cs` | `dotnet/Controllers/AdminController.cs` | **remplace** — conflit résolu |
+| `Program.cs` | `dotnet/Program.cs` | **remplace** |
 | `Controllers/AdminUsersController.cs` | `dotnet/Controllers/AdminUsersController.cs` | nouveau |
 | `Middlewares/PresenceTrackingMiddleware.cs` | `dotnet/Middlewares/PresenceTrackingMiddleware.cs` | nouveau |
-| `Controllers/AdminController.cs` | `dotnet/Controllers/AdminController.cs` | **remplace** l'existant |
-| `Program.cs` | `dotnet/Program.cs` | **remplace** l'existant |
 
-Aucune migration EF : `Users`, `UserSessions`, `Subscriptions`, `Payments`,
-`Orders`, `PricingPlans`, `RefreshTokens` et `PasswordResetTokens` existent déjà
-et sont exposés en `DbSet` par `ApplicationDbContext`.
+## Résoudre le conflit du `git pull`
 
-```bash
-cd winplus-api/dotnet
+```bat
+cd C:\Users\User\Desktop\winplus-api
+git merge --abort
+git pull origin main
+```
+
+Le pull passe maintenant sans conflit (rien de local ne s'y oppose plus).
+Copiez ensuite les quatre fichiers ci-dessus par-dessus, puis :
+
+```bat
+cd dotnet
 dotnet build
 dotnet run
 ```
 
-## Ce qui a été corrigé dans `AdminController.cs`
+Et pour valider :
+
+```bat
+cd C:\Users\User\Desktop\winplus-api
+git add -A
+git commit -m "Gestion complete des utilisateurs cote admin"
+git push origin main
+```
+
+Si vous préférez ne pas abandonner le merge en cours, copiez directement les
+quatre fichiers par-dessus les fichiers en conflit, puis `git add -A` et
+`git commit` : les marqueurs de conflit disparaissent avec l'écrasement.
+
+## Ce qui a été fait sur `AdminController.cs`
+
+Le conflit venait de deux modifications concurrentes du même fichier : votre
+copie locale supprimait les méthodes `users…`, l'amont les modifiait encore.
+La résolution repart de **la version amont** (celle de `origin/main`, la plus
+récente) et y ré-applique la suppression des dix doublons. Rien du travail
+amont n'est perdu.
 
 `AdminUsersController` prend en charge toutes les routes `api/admin/users…`.
-Les dix méthodes homonymes ont été **supprimées** d'`AdminController.cs`
-(384 lignes retirées, 1 777 → 1 393), ce qui évite l'`AmbiguousMatchException`
+Les dix méthodes homonymes ont donc été retirées d'`AdminController.cs`
+(1 777 → 1 393 lignes, 384 retirées), ce qui évite l'`AmbiguousMatchException`
 qu'ASP.NET lève au démarrage sur deux méthodes déclarant la même route :
 
 | Attribut supprimé | Méthode | Reprise dans le nouveau controller |
@@ -39,18 +66,19 @@ qu'ASP.NET lève au démarrage sur deux méthodes déclarant la même route :
 | `[HttpDelete("users/{id}/hard")]` | `HardDeleteUser` | `HardDelete` — transactionnel |
 | `[HttpPost("users/{id}/delete")]` | `DeleteUser` | `SoftDeletePost` (alias) |
 
-Toutes les routes, alias historiques compris, sont reprises : aucun client
-existant ne casse. Les routes `user/{userId}/block` et `user/{userId}/unblock`
-(préfixe singulier `user/`) n'étaient pas en conflit et ont été conservées
-telles quelles. Le reste d'`AdminController.cs` — analytics, contenus,
-commandes, chat, WinAI, logs, santé système — est inchangé.
+Contrôles passés après la coupe : plus aucune route `users…` dans ce controller,
+**40 routes conservées**, accolades équilibrées à zéro. Le reste du fichier —
+analytics, contenus, commandes, chat, WinAI, logs, santé système — est inchangé,
+y compris les ajouts récents de l'amont. Les routes `user/{userId}/block` et
+`user/{userId}/unblock` (préfixe singulier `user/`) n'étaient pas en conflit et
+sont conservées telles quelles.
 
 Les DTO `AdminUserListResponse`, `AdminUserResponse`, `UpdateUserRoleRequest` et
 `UpdateUserStatusRequest` ne sont plus utilisés par ce controller mais restent
 dans `Models/DTOs` : d'autres controllers peuvent s'en servir, et un type non
 référencé ne gêne pas la compilation.
 
-## Ce qui a été corrigé dans `Program.cs`
+## Ce qui a été fait sur `Program.cs`
 
 Une ligne ajoutée après `app.UseAuthorization()` :
 
@@ -58,13 +86,18 @@ Une ligne ajoutée après `app.UseAuthorization()` :
 app.UsePresenceTracking();
 ```
 
-`using Backend.Middlewares;` était déjà présent en tête de fichier. Rien d'autre
-n'a été touché.
+`using Backend.Middlewares;` était déjà présent. Rien d'autre n'a été touché.
+Ce fichier s'était auto-mergé sans conflit lors de votre pull ; le correctif a
+été ré-appliqué sur la version amont par sécurité.
 
 Ce middleware met à jour `UserSessions.LastActivityAt` à chaque requête
 authentifiée (une écriture par minute et par session au maximum, anti-rebond en
 mémoire). Sans lui, `isOnline` reste faux pour tout le monde et la vue
 « Utilisateurs connectés » reste vide.
+
+Aucune migration EF n'est nécessaire : `Users`, `UserSessions`, `Subscriptions`,
+`Payments`, `Orders`, `PricingPlans`, `RefreshTokens` et `PasswordResetTokens`
+existent déjà et sont exposés en `DbSet` par `ApplicationDbContext`.
 
 ## Endpoints exposés
 

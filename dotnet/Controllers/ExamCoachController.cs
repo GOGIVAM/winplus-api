@@ -87,7 +87,7 @@ public class ExamCoachController : ControllerBase
 
             var responseText = await res.Content.ReadAsStringAsync();
             var fullResponse = JsonSerializer.Deserialize<JsonElement>(responseText);
-            // Python wraps responses in { success, data } — extract inner plan
+            // Python wraps responses in { success, data }  extract inner plan
             planJson = fullResponse.TryGetProperty("data", out var dataEl) ? dataEl : fullResponse;
         }
         catch (Exception ex)

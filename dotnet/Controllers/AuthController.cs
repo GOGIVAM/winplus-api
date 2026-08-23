@@ -4,6 +4,7 @@ using Backend.Services;
 using Backend.Models;
 using Backend.Models.DTOs;
 using Backend.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Security.Claims;
 
@@ -17,17 +18,20 @@ public class AuthController : ControllerBase
     private readonly ICartService _cartService;
     private readonly IAnonymousCartService _anonymousCartService;
     private readonly ILogger<AuthController> _logger;
+    private readonly ApplicationDbContext _dbContext;
 
     public AuthController(
         ICustomAuthService customAuthService,
         ICartService cartService,
         IAnonymousCartService anonymousCartService,
-        ILogger<AuthController> logger)
+        ILogger<AuthController> logger,
+        ApplicationDbContext dbContext)
     {
         _customAuthService = customAuthService;
         _cartService = cartService;
         _anonymousCartService = anonymousCartService;
         _logger = logger;
+        _dbContext = dbContext;
     }
 
     [HttpPost("signup")]
@@ -103,6 +107,7 @@ public class AuthController : ControllerBase
                 Message = result.Message,
                 User = new
                 {
+                    id = result.User?.Id,
                     email = result.User?.Email,
                     firstName = result.User?.FirstName,
                     lastName = result.User?.LastName,
@@ -271,35 +276,44 @@ public class AuthController : ControllerBase
     [ProducesResponseType(400)]
     public async Task<IActionResult> VerifyEmail([FromBody] VerifyEmailRequestDto request)
     {
-        if (request.UserId <= 0 || string.IsNullOrWhiteSpace(request.VerificationCode))
+        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.VerificationCode))
         {
-            return BadRequest(new { error = "User ID and verification code are required" });
+            return BadRequest(new { error = "Email and verification code are required" });
         }
 
         try
         {
-            _logger.LogInformation("VerifyEmail attempt for user: {UserId}", request.UserId);
+            _logger.LogInformation("VerifyEmail attempt for email: {Email}", request.Email);
 
-            var result = await _customAuthService.VerifyEmailAsync(request.UserId, request.VerificationCode);
+            var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
+            if (user == null)
+            {
+                return BadRequest(new { error = "User not found" });
+            }
+
+            var result = await _customAuthService.VerifyEmailAsync(user.Id, request.VerificationCode);
 
             if (!result.Success)
             {
-                _logger.LogWarning("VerifyEmail failed for user: {UserId}. Message: {Message}",
-                    request.UserId, result.Message);
+                _logger.LogWarning("VerifyEmail failed for email: {Email}. Message: {Message}",
+                    request.Email, result.Message);
                 return BadRequest(new { error = result.Message, details = result.Errors });
             }
 
-            _logger.LogInformation("Email verified for user: {UserId}", request.UserId);
+            _logger.LogInformation("Email verified for email: {Email}", request.Email);
 
             return Ok(new VerifyEmailResponse
             {
                 Message = result.Message,
-                IsVerified = true
+                IsVerified = true,
+                AccessToken = result.AccessToken,
+                RefreshToken = result.RefreshToken,
+                User = result.User
             });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error verifying email for user: {UserId}", request.UserId);
+            _logger.LogError(ex, "Error verifying email for email: {Email}", request.Email);
             return StatusCode(500, new { error = "An error occurred during verification", details = ex.Message });
         }
     }
@@ -516,6 +530,83 @@ public class AuthController : ControllerBase
         {
             _logger.LogError(ex, "Error changing password");
             return StatusCode(500, new { error = "An error occurred", details = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Envoie un code de reconfirmation périodique par email (mobile  tous les 30-45 jours)
+    /// </summary>
+    [HttpPost("send-confirmation-code")]
+    [Authorize]
+    [ProducesResponseType(200)]
+    [ProducesResponseType(401)]
+    public async Task<IActionResult> SendConfirmationCode()
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!int.TryParse(userIdClaim, out var userId))
+            return Unauthorized(new { error = "Token invalide" });
+
+        try
+        {
+            _logger.LogInformation("[PeriodicConfirm] Demande d'envoi du code  userId={UserId}", userId);
+            var result = await _customAuthService.SendPeriodicConfirmationAsync(userId);
+
+            if (!result.Success)
+                return BadRequest(new { error = result.Message, errorCode = result.ErrorCode });
+
+            return Ok(new { message = result.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[PeriodicConfirm] Erreur  userId={UserId}", userId);
+            return StatusCode(500, new { error = "Une erreur est survenue", details = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Valide le code de reconfirmation périodique et réémet un JWT frais
+    /// </summary>
+    [HttpPost("verify-confirmation")]
+    [Authorize]
+    [ProducesResponseType(typeof(VerifyConfirmationCodeResponse), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)]
+    public async Task<IActionResult> VerifyConfirmationCode([FromBody] VerifyConfirmationCodeRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Code))
+            return BadRequest(new { error = "Le code est requis" });
+
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!int.TryParse(userIdClaim, out var userId))
+            return Unauthorized(new { error = "Token invalide" });
+
+        try
+        {
+            _logger.LogInformation("[PeriodicConfirm] Vérification du code  userId={UserId}", userId);
+            var result = await _customAuthService.VerifyPeriodicConfirmationAsync(userId, request.Code);
+
+            if (!result.Success)
+            {
+                _logger.LogWarning("[PeriodicConfirm] Échec vérification  userId={UserId} errorCode={Code}", userId, result.ErrorCode);
+                return BadRequest(new { error = result.Message, errorCode = result.ErrorCode });
+            }
+
+            _logger.LogInformation("[PeriodicConfirm] Reconfirmation réussie  userId={UserId}", userId);
+
+            return Ok(new VerifyConfirmationCodeResponse
+            {
+                Message = result.Message,
+                AccessToken = result.AccessToken,
+                RefreshToken = result.RefreshToken,
+                ExpiresIn = result.ExpiresIn ?? 86400,
+                TokenType = "Bearer",
+                ConfirmedAt = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[PeriodicConfirm] Erreur  userId={UserId}", userId);
+            return StatusCode(500, new { error = "Une erreur est survenue", details = ex.Message });
         }
     }
 

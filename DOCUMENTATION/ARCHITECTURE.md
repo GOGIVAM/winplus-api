@@ -1,6 +1,6 @@
-# WinPlus — Architecture Système (État cible)
+# WinPlus  Architecture Système (État cible)
 
-> Document de référence — généré le 2026-06-04  
+> Document de référence  généré le 2026-06-04  
 > Reflète les décisions d'architecture arrêtées et l'état cible de l'union front/back/BD/IA.
 
 ---
@@ -16,7 +16,7 @@ WinPlus est une plateforme éducative camerounaise permettant aux élèves, pare
 │  FRONTEND  (React + Vite, hash-router)          │
 │  m:/win/winplus/frontend/                       │
 └─────────────────────┬──────────────────────────┘
-                      │ HTTPS — Bearer JWT
+                      │ HTTPS  Bearer JWT
 ┌─────────────────────▼──────────────────────────┐
 │  BACKEND .NET  (ASP.NET Core 8, port 5001/7023) │
 │  m:/win/winplus/backend/dotnet/                 │
@@ -44,8 +44,8 @@ WinPlus est une plateforme éducative camerounaise permettant aux élèves, pare
 | **NotchPay** | Paiements Mobile Money (MTN + Orange) | MtnMomoService, OrangeMoneyService, WaveService, Stripe, PayPal |
 | **Resend** | Emails transactionnels | SendGrid |
 | **ntfy** (self-hosted) | Push notifications in-app + alertes internes | Twilio, Cognito notifications |
-| **DeepSeek** | LLM chatbot | — |
-| **AWS S3** | Stockage fichiers PDF, avatars | — (conservé) |
+| **DeepSeek** | LLM chatbot |  |
+| **AWS S3** | Stockage fichiers PDF, avatars |  (conservé) |
 
 ---
 
@@ -111,10 +111,10 @@ L'authentification est **entièrement gérée par le backend .NET** via JWT HS25
 | POST | `/api/auth/change-password` | ✅ | Changer le mot de passe |
 
 ### Rôles
-- `student` — accès dashboard, chat, panier, téléchargements
-- `parent` — accès espace parent, suivi enfants
-- `teacher` — accès espace enseignant, publications
-- `admin` — accès total + panel d'administration
+- `student`  accès dashboard, chat, panier, téléchargements
+- `parent`  accès espace parent, suivi enfants
+- `teacher`  accès espace enseignant, publications
+- `admin`  accès total + panel d'administration
 
 ---
 
@@ -134,7 +134,7 @@ L'authentification est **entièrement gérée par le backend .NET** via JWT HS25
 
 ---
 
-## 5. Paiements — NotchPay
+## 5. Paiements  NotchPay
 
 ### Principe
 **Tous les paiements passent exclusivement par NotchPay.** Il n'y a plus de MtnMomoService, OrangeMoneyService, WaveService, Stripe, ni PayPal. Les paiements bancaires sont hors scope pour le lancement.
@@ -164,8 +164,8 @@ L'authentification est **entièrement gérée par le backend .NET** via JWT HS25
 | Solde insuffisant | Webhook `status: failed`, code `insufficient_balance` | "Solde Mobile Money insuffisant" |
 | Timeout (> 3 min sans action) | Webhook `status: expired` | "Délai de confirmation dépassé, réessayez" |
 | Opérateur down | Erreur réseau NotchPay → retry x3 → 503 | "Service Mobile Money temporairement indisponible" |
-| Webhook manqué | Job de reconciliation toutes les 15 min via `GET /transactions/{ref}` | — (transparent) |
-| Transaction expirée (> 24h pending) | Cron job → mark as `expired`, libère le stock | — (transparent) |
+| Webhook manqué | Job de reconciliation toutes les 15 min via `GET /transactions/{ref}` |  (transparent) |
+| Transaction expirée (> 24h pending) | Cron job → mark as `expired`, libère le stock |  (transparent) |
 | Double paiement | Unicité `orderId` côté NotchPay + BD | "Cette commande a déjà été payée" |
 
 ### Routes canoniques Paiements
@@ -181,22 +181,22 @@ L'authentification est **entièrement gérée par le backend .NET** via JWT HS25
 | GET | `/api/admin/payments/user/{userId}` | ✅ Admin | Paiements d'un utilisateur spécifique |
 
 ### Champs requis dans la table `Payments`
-- `notchpayReference` VARCHAR(255) — référence unique NotchPay
-- `phoneNumber` VARCHAR(20) — numéro appelé
-- `operator` VARCHAR(50) — `mtn` | `orange` (détecté par NotchPay)
+- `notchpayReference` VARCHAR(255)  référence unique NotchPay
+- `phoneNumber` VARCHAR(20)  numéro appelé
+- `operator` VARCHAR(50)  `mtn` | `orange` (détecté par NotchPay)
 - `currency` VARCHAR(3) DEFAULT `'XAF'` (remplace `'EUR'`)
 - Les anciens champs Stripe/PayPal (`clientSecret`, `paymentMethodId`) sont supprimés
 
 ---
 
-## 6. Notifications — ntfy + Resend
+## 6. Notifications  ntfy + Resend
 
 ### ntfy (push in-app)
 ntfy est auto-hébergé sur l'instance AWS existante. Le backend .NET publie des messages via l'API HTTP de ntfy. Le frontend s'abonne au topic de l'utilisateur pour recevoir les notifications en temps réel.
 
 **Topics ntfy :**
-- `winplus-user-{userId}` — notifications personnelles (paiement confirmé, nouveau message forum, etc.)
-- `winplus-admin` — alertes internes pour l'administrateur (transaction échouée, erreur critique, nouvel utilisateur)
+- `winplus-user-{userId}`  notifications personnelles (paiement confirmé, nouveau message forum, etc.)
+- `winplus-admin`  alertes internes pour l'administrateur (transaction échouée, erreur critique, nouvel utilisateur)
 
 **Événements déclenchant une notification ntfy :**
 | Événement | Topic | Titre | Priorité |
@@ -205,7 +205,7 @@ ntfy est auto-hébergé sur l'instance AWS existante. Le backend .NET publie des
 | Paiement échoué | `winplus-user-{id}` | "Paiement échoué" | high |
 | Téléchargement disponible | `winplus-user-{id}` | "Votre épreuve est prête" | default |
 | Réponse sur son fil forum | `winplus-user-{id}` | "Nouvelle réponse à votre discussion" | default |
-| Nouveau message chatbot | — | (géré par SSE) | — |
+| Nouveau message chatbot |  | (géré par SSE) |  |
 | Transaction suspecte | `winplus-admin` | "Alerte paiement" | urgent |
 | Erreur service IA | `winplus-admin` | "Module IA indisponible" | high |
 
@@ -234,7 +234,7 @@ Resend remplace SendGrid et l'ancien SMTP Gmail.
 
 ---
 
-## 7. Chatbot IA — DeepSeek + SSE Streaming
+## 7. Chatbot IA  DeepSeek + SSE Streaming
 
 ### Architecture
 
@@ -356,7 +356,7 @@ Le forum est entièrement géré côté backend .NET. Les entités `ForumThread`
 ### Tables BD à créer
 - `ForumThreads` : id, userId, title, content, category, tag, isPinned, isSolved, viewsCount, repliesCount, upvotes, createdAt, updatedAt, isDeleted
 - `ForumPosts` : id, threadId, userId, content, upvotes, isAccepted, createdAt, updatedAt, isDeleted
-- `ForumVotes` : id, postId, userId, type (`up`|`down`), createdAt — UNIQUE(postId, userId)
+- `ForumVotes` : id, postId, userId, type (`up`|`down`), createdAt  UNIQUE(postId, userId)
 
 ---
 
@@ -487,7 +487,7 @@ Le forum est entièrement géré côté backend .NET. Les entités `ForumThread`
 
 ---
 
-## 14. Module IA Python — Endpoints
+## 14. Module IA Python  Endpoints
 
 | Méthode | Route | Auth | Description |
 |---------|-------|------|-------------|
@@ -504,7 +504,7 @@ Le forum est entièrement géré côté backend .NET. Les entités `ForumThread`
 
 ---
 
-## 15. Base de données — Tables cibles
+## 15. Base de données  Tables cibles
 
 ### Modifications à apporter au schéma existant
 
@@ -599,12 +599,12 @@ VITE_NTFY_URL=https://ntfy.winplus.cm  # ou URL publique ntfy
 ## 17. Règles d'architecture retenues
 
 1. **L'ID utilisateur vient toujours du JWT**, jamais d'un paramètre URL côté user.
-2. **Tous les paiements passent par NotchPay** — aucun provider direct.
-3. **Les emails transactionnels passent par Resend** — pas de SMTP direct.
-4. **Les notifications push passent par ntfy** — un topic par utilisateur.
-5. **Le streaming chatbot est SSE via FastAPI** — le frontend consomme le stream natif, sans `revealText`.
-6. **Le forum existe en base de données** — tables `ForumThreads`, `ForumPosts`, `ForumVotes` à migrer.
-7. **Les routes admin incluent l'ID** : `/admin/users/{id}` — les routes user non : `/users/profile`.
+2. **Tous les paiements passent par NotchPay**  aucun provider direct.
+3. **Les emails transactionnels passent par Resend**  pas de SMTP direct.
+4. **Les notifications push passent par ntfy**  un topic par utilisateur.
+5. **Le streaming chatbot est SSE via FastAPI**  le frontend consomme le stream natif, sans `revealText`.
+6. **Le forum existe en base de données**  tables `ForumThreads`, `ForumPosts`, `ForumVotes` à migrer.
+7. **Les routes admin incluent l'ID** : `/admin/users/{id}`  les routes user non : `/users/profile`.
 8. **La devise est `XAF`** partout (base de données, API, affichage).
-9. **S3 est conservé** pour les PDFs et avatars — bucket `winplus-bucket` existant.
-10. **Le module Python partage la même BD PostgreSQL** que le .NET — pas de BD séparée.
+9. **S3 est conservé** pour les PDFs et avatars  bucket `winplus-bucket` existant.
+10. **Le module Python partage la même BD PostgreSQL** que le .NET  pas de BD séparée.

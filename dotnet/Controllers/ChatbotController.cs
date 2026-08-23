@@ -318,7 +318,7 @@ public class ChatbotController : ControllerBase
 
     /// <summary>
     /// POST /api/chatbot/stream
-    /// SSE — crée la conversation/message utilisateur, proxie le stream FastAPI, ré-émet les chunks.
+    /// SSE  crée la conversation/message utilisateur, proxie le stream FastAPI, ré-émet les chunks.
     /// </summary>
     [HttpPost("stream")]
     public async Task StreamChat([FromBody] StreamChatRequest request, CancellationToken cancellationToken)

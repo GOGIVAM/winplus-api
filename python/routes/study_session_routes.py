@@ -1,7 +1,7 @@
 """
-WinAI — Guided Study Sessions
-POST /api/study-session/generate   — Generate briefing + quiz + synthesis
-POST /api/study-session/complete   — Save completed session to DB
+WinAI  Guided Study Sessions
+POST /api/study-session/generate    Generate briefing + quiz + synthesis
+POST /api/study-session/complete    Save completed session to DB
 """
 
 import json

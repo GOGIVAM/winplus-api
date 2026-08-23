@@ -40,7 +40,7 @@ public class TeacherController : ControllerBase
             req.Headers.TryAddWithoutValidation("Authorization", auth);
     }
 
-    // ── Feature 2 — POST /api/teacher/class-analysis ─────────────────────────
+    // ── Feature 2  POST /api/teacher/class-analysis ─────────────────────────
 
     /// <summary>Analyse collective WinAI des apprenants d'un contenu</summary>
     [HttpPost("class-analysis")]
@@ -53,7 +53,7 @@ public class TeacherController : ControllerBase
         return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
     }
 
-    // ── Feature 3 — GET /api/teacher/content-impact/{contentId} ─────────────
+    // ── Feature 3  GET /api/teacher/content-impact/{contentId} ─────────────
 
     /// <summary>Score d'impact pédagogique d'un contenu</summary>
     [HttpGet("content-impact/{contentId:int}")]
@@ -65,7 +65,7 @@ public class TeacherController : ControllerBase
         return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
     }
 
-    // ── Feature 4 — POST /api/teacher/generate-correction ───────────────────
+    // ── Feature 4  POST /api/teacher/generate-correction ───────────────────
 
     /// <summary>Génère une correction IA d'une épreuve</summary>
     [HttpPost("generate-correction")]
@@ -78,7 +78,7 @@ public class TeacherController : ControllerBase
         return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
     }
 
-    // ── Feature 5 — POST /api/teacher/predict-popularity ────────────────────
+    // ── Feature 5  POST /api/teacher/predict-popularity ────────────────────
 
     /// <summary>Prédiction de popularité d'un contenu avant publication</summary>
     [HttpPost("predict-popularity")]
@@ -91,7 +91,7 @@ public class TeacherController : ControllerBase
         return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
     }
 
-    // ── Feature 6 — POST /api/teacher/analyze-submission ────────────────────
+    // ── Feature 6  POST /api/teacher/analyze-submission ────────────────────
 
     /// <summary>Analyse IA d'une soumission d'élève</summary>
     [HttpPost("analyze-submission")]

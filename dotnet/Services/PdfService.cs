@@ -133,7 +133,7 @@ public class PdfService : IPdfService
                 // ── Pied de page ─────────────────────────────────────────────
                 page.Footer().AlignCenter().Text(text =>
                 {
-                    text.Span("WinPlus · Cameroun  —  Page ").FontSize(8).FontColor(Colors.Grey.Medium);
+                    text.Span("WinPlus · Cameroun    Page ").FontSize(8).FontColor(Colors.Grey.Medium);
                     text.CurrentPageNumber().FontSize(8).FontColor(Colors.Grey.Medium);
                     text.Span(" / ").FontSize(8).FontColor(Colors.Grey.Medium);
                     text.TotalPages().FontSize(8).FontColor(Colors.Grey.Medium);
@@ -162,7 +162,7 @@ public class PdfService : IPdfService
                            .Bold().FontSize(13).FontColor(Colors.Teal.Medium);
 
                         col.Item().PaddingTop(4).AlignCenter()
-                           .Text("— Plateforme éducative camerounaise —")
+                           .Text(" Plateforme éducative camerounaise ")
                            .Italic().FontSize(9).FontColor(Colors.Grey.Medium);
 
                         // Titre principal

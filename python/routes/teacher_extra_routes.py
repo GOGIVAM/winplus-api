@@ -1,5 +1,5 @@
 """
-WinAI — Endpoints IA pour le compte Professeur.
+WinAI  Endpoints IA pour le compte Professeur.
 
 - POST /ai/generate-quiz-questions   → Génération de questions calibrées (subject+level)
 - POST /ai/optimize-title            → Optimisation SEO du titre de contenu
@@ -81,8 +81,8 @@ def _deepseek_text(prompt: str, system: str, max_tokens: int = 200) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Feature 1a — POST /ai/generate-quiz-questions
-# Accepts {topic?, subject?, level?, topics?} — returns 10 calibrated QCM
+# Feature 1a  POST /ai/generate-quiz-questions
+# Accepts {topic?, subject?, level?, topics?}  returns 10 calibrated QCM
 # ─────────────────────────────────────────────────────────────────────────────
 
 class QuizOptionOut(BaseModel):
@@ -155,14 +155,14 @@ async def generate_quiz_questions(
                 QuizOptionOut(id="d", text="Option D"),
             ],
             correctOptionId="a",
-            explanation="WinAI n'a pas pu générer les questions — réessayez ou formulez le sujet différemment.",
+            explanation="WinAI n'a pas pu générer les questions  réessayez ou formulez le sujet différemment.",
         ) for i in range(5)]
 
     return {"questions": questions}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Feature 1b — POST /ai/optimize-title
+# Feature 1b  POST /ai/optimize-title
 # ─────────────────────────────────────────────────────────────────────────────
 
 class OptimizeTitleRequest(BaseModel):
@@ -191,7 +191,7 @@ async def optimize_title(
         f'Type : {type_labels.get(body.type or "", "Contenu")}\n\n'
         "Propose un titre plus attractif, précis et mieux référencé pour le catalogue WinPlus. "
         "Le titre doit : indiquer clairement matière + niveau + type + année si pertinent. "
-        "Exemple de bon titre : « Épreuves BAC C Mathématiques 2023 — Probabilités et Analyse ».\n"
+        "Exemple de bon titre : « Épreuves BAC C Mathématiques 2023  Probabilités et Analyse ».\n"
         'Format JSON strict : {"optimized_title":"...","rationale":"..."}'
     )
     system = (
@@ -210,13 +210,13 @@ async def optimize_title(
     subject_part = f" {body.subject}" if body.subject else ""
     level_part = f" {body.level}" if body.level else ""
     return {
-        "optimized_title": f"{type_label}{subject_part}{level_part} — {body.title}",
+        "optimized_title": f"{type_label}{subject_part}{level_part}  {body.title}",
         "rationale": "Titre enrichi avec le type et le niveau pour une meilleure visibilité.",
     }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Feature 1c — POST /ai/generate-description
+# Feature 1c  POST /ai/generate-description
 # ─────────────────────────────────────────────────────────────────────────────
 
 class GenerateDescriptionRequest(BaseModel):
@@ -272,7 +272,7 @@ async def generate_description(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Feature 2 — POST /teacher/class-analysis
+# Feature 2  POST /teacher/class-analysis
 # ─────────────────────────────────────────────────────────────────────────────
 
 class HardQuestion(BaseModel):
@@ -386,7 +386,7 @@ async def get_class_analysis(
             f"{dist['struggling']} en difficulté, {dist['at_risk']} à risque"
         )
         ai_prompt = (
-            f"Classe de {student_count} élèves — contenu « {subject_title} ».\n"
+            f"Classe de {student_count} élèves  contenu « {subject_title} ».\n"
             f"Score moyen : {overall_avg}%\nDistribution : {dist_str}\n"
             f"Nombre de quiz avec taux d'erreur >50% : {len(hard_questions)}\n\n"
             "Génère des insights pédagogiques actionnables :\n"
@@ -432,7 +432,7 @@ async def get_class_analysis(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Feature 3 — GET /teacher/content-impact/{content_id}
+# Feature 3  GET /teacher/content-impact/{content_id}
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ContentImpactResponse(BaseModel):
@@ -463,7 +463,7 @@ async def get_content_impact(
         if not enrollments:
             return {
                 "impact_score": 0,
-                "interpretation": "Aucun apprenant inscrit — partagez ce contenu pour obtenir votre score d'impact.",
+                "interpretation": "Aucun apprenant inscrit  partagez ce contenu pour obtenir votre score d'impact.",
                 "completion_rate": 0.0,
                 "avg_score_improvement": 0.0,
                 "student_retention": 0.0,
@@ -528,11 +528,11 @@ async def get_content_impact(
         score = min(100, max(0, score))
 
         if score >= 70:
-            interpretation = "Excellent — ce contenu améliore significativement les scores des apprenants."
+            interpretation = "Excellent  ce contenu améliore significativement les scores des apprenants."
         elif score >= 50:
-            interpretation = "Bon impact — ajoutez des exercices associés pour amplifier les résultats."
+            interpretation = "Bon impact  ajoutez des exercices associés pour amplifier les résultats."
         else:
-            interpretation = "Impact limité pour l'instant — enrichissez le contenu ou ajoutez un quiz associé."
+            interpretation = "Impact limité pour l'instant  enrichissez le contenu ou ajoutez un quiz associé."
 
         return {
             "impact_score": score,
@@ -552,7 +552,7 @@ async def get_content_impact(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Feature 4 — POST /teacher/generate-correction
+# Feature 4  POST /teacher/generate-correction
 # ─────────────────────────────────────────────────────────────────────────────
 
 class CorrectionQuestionItem(BaseModel):
@@ -608,14 +608,14 @@ async def generate_correction(
             question="Épreuve analysée",
             correct_answer="WinAI n'a pas pu structurer la correction. Vérifiez que l'épreuve contient des numéros de questions clairs (Q1, Q2…) et réessayez.",
             explanation="Pour de meilleurs résultats, numérotez clairement chaque question de l'épreuve.",
-            scoring_guide="—",
+            scoring_guide="",
         )]
 
     return {"correction_by_question": corrections}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Feature 5 — POST /teacher/predict-popularity
+# Feature 5  POST /teacher/predict-popularity
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PredictPopularityRequest(BaseModel):
@@ -671,7 +671,7 @@ async def predict_popularity(
             peak_names = " et ".join(MONTHS_FR[m] for m in peak_months[:2])
             if current_month in peak_months:
                 timing_msg = (
-                    f"Excellente période pour publier — les contenus {body.level or 'BAC'} "
+                    f"Excellente période pour publier  les contenus {body.level or 'BAC'} "
                     f"sont très recherchés en {MONTHS_FR[current_month]}."
                 )
             else:
@@ -682,7 +682,7 @@ async def predict_popularity(
                     f"Publiez en {pre_month} pour maximiser la visibilité."
                 )
         else:
-            timing_msg = "Ce type de contenu est consulté toute l'année — publiez dès que possible."
+            timing_msg = "Ce type de contenu est consulté toute l'année  publiez dès que possible."
 
         # Price recommendation
         price_rec = avg_price
@@ -720,7 +720,7 @@ async def predict_popularity(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Feature 6 — POST /teacher/analyze-submission
+# Feature 6  POST /teacher/analyze-submission
 # ─────────────────────────────────────────────────────────────────────────────
 
 class AnalyzeSubmissionRequest(BaseModel):
@@ -745,7 +745,7 @@ async def analyze_submission(
         if body.expected_answer else ""
     )
     prompt = (
-        f"Matière : {body.subject or 'non précisée'} — Niveau : {body.level or 'non précisé'}\n\n"
+        f"Matière : {body.subject or 'non précisée'}  Niveau : {body.level or 'non précisé'}\n\n"
         f"TRAVAIL DE L'ÉLÈVE :\n{body.submission_text[:2000]}\n\n"
         + expected_block
         + "Analyse ce travail et génère :\n"
@@ -769,13 +769,13 @@ async def analyze_submission(
         return {
             "error_type": error_type,
             "error_details": str(raw.get("error_details", "Vérifiez la démarche utilisée.")),
-            "suggested_comment": str(raw.get("suggested_comment", "Bon travail — quelques points à consolider.")),
+            "suggested_comment": str(raw.get("suggested_comment", "Bon travail  quelques points à consolider.")),
             "score_suggestion": max(0, min(20, int(raw.get("score_suggestion", 12)))),
         }
 
     return {
         "error_type": "methodological",
-        "error_details": "WinAI a analysé le travail — vérifiez manuellement la démarche appliquée.",
+        "error_details": "WinAI a analysé le travail  vérifiez manuellement la démarche appliquée.",
         "suggested_comment": "Vous montrez une bonne compréhension générale. Revoyez la démarche étape par étape pour consolider vos acquis.",
         "score_suggestion": 12,
     }

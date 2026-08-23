@@ -1,5 +1,5 @@
 """
-WinAI — Explications pédagogiques pour les erreurs de quiz.
+WinAI  Explications pédagogiques pour les erreurs de quiz.
 
 POST /api/quiz/explain-error
   - Auth via verify_token
@@ -86,7 +86,7 @@ async def explain_error(
         "Explique en 3-5 phrases maximum, en français simple et encourageant, "
         "pourquoi sa réponse est incorrecte et pourquoi la bonne réponse est juste. "
         "Sois concis et pédagogique. "
-        "Ne commence pas par « La réponse est... » — commence par expliquer le concept."
+        "Ne commence pas par « La réponse est... »  commence par expliquer le concept."
     )
 
     def generate():

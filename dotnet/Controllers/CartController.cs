@@ -152,7 +152,7 @@ public class CartController : ControllerBase
                         return false;
                     }
                     if (item.Subject == null)
-                        _logger.LogWarning("[GetCart] ⚠️ CartItem {CartItemId} Subject still null after load — keeping with stored price", item.Id);
+                        _logger.LogWarning("[GetCart] ⚠️ CartItem {CartItemId} Subject still null after load  keeping with stored price", item.Id);
                     return true;
                 })
                 .Select(item => new CartItemDto
@@ -307,7 +307,7 @@ public class CartController : ControllerBase
             }
             
             // ✅ For authenticated users, save to DB. For anonymous, add to in-memory service.
-            // Both paths return CartResponseDto (unified format — audit section 8.4 ✅)
+            // Both paths return CartResponseDto (unified format  audit section 8.4 ✅)
             if (isAuthenticated && userId > 0)
             {
                 var added = await _cartService.AddToCartAsync(userId, request.SubjectId, request.Price);
@@ -355,7 +355,7 @@ public class CartController : ControllerBase
                     {
                         Id = item.Id,
                         SubjectId = item.SubjectId,
-                        Title = item.Subject?.Title ?? string.Empty, // Subject non chargé pour panier anonyme — enrichi par le frontend
+                        Title = item.Subject?.Title ?? string.Empty, // Subject non chargé pour panier anonyme  enrichi par le frontend
                         Description = item.Subject?.Description,
                         Price = item.Price,
                         Image = item.Subject?.ThumbnailUrl,

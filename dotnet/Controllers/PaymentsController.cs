@@ -57,7 +57,7 @@ public class PaymentsController : ControllerBase
         return false;
     }
 
-    /// <summary>POST /api/payments/initiate — Initier un paiement NotchPay (max 5 / 10 min)</summary>
+    /// <summary>POST /api/payments/initiate  Initier un paiement NotchPay (max 5 / 10 min)</summary>
     [HttpPost("initiate")]
     [AllowAnonymous]
     public async Task<IActionResult> Initiate([FromBody] InitiatePaymentRequest request)
@@ -76,7 +76,7 @@ public class PaymentsController : ControllerBase
 
             if (IsPaymentRateLimited(rateLimitKey))
             {
-                _logger.LogWarning("Rate limit dépassé pour les paiements — key={Key}", rateLimitKey);
+                _logger.LogWarning("Rate limit dépassé pour les paiements  key={Key}", rateLimitKey);
                 return StatusCode(429, new
                 {
                     error = "too_many_requests",
@@ -108,7 +108,7 @@ public class PaymentsController : ControllerBase
         }
     }
 
-    /// <summary>POST /api/payments/webhook/notchpay — Webhook NotchPay (signature HMAC-SHA256)</summary>
+    /// <summary>POST /api/payments/webhook/notchpay  Webhook NotchPay (signature HMAC-SHA256)</summary>
     [HttpPost("webhook/notchpay")]
     [AllowAnonymous]
     public async Task<IActionResult> NotchPayWebhook()
@@ -125,14 +125,14 @@ public class PaymentsController : ControllerBase
             ?? Request.Headers["x-notchpay-signature"].FirstOrDefault();
 
         _logger.LogInformation(
-            "Webhook NotchPay reçu — signature={Sig} payloadLen={Len} hasHeaders={Headers}",
+            "Webhook NotchPay reçu  signature={Sig} payloadLen={Len} hasHeaders={Headers}",
             signature ?? "(aucune)",
             payload.Length,
             string.Join(", ", Request.Headers.Keys));
 
         if (string.IsNullOrEmpty(signature) || !_notchPay.VerifyWebhookSignature(payload, signature))
         {
-            _logger.LogWarning("Webhook NotchPay: signature invalide — signature={Sig}", signature ?? "(aucune)");
+            _logger.LogWarning("Webhook NotchPay: signature invalide  signature={Sig}", signature ?? "(aucune)");
             return Unauthorized(new { error = "Signature invalide" });
         }
 
@@ -177,7 +177,7 @@ public class PaymentsController : ControllerBase
         }
     }
 
-    /// <summary>GET /api/payments/{id}/status — Statut d'un paiement (polling depuis le frontend)</summary>
+    /// <summary>GET /api/payments/{id}/status  Statut d'un paiement (polling depuis le frontend)</summary>
     [HttpGet("{id:int}/status")]
     [AllowAnonymous]
     public async Task<IActionResult> GetStatus(int id)
@@ -189,7 +189,7 @@ public class PaymentsController : ControllerBase
             if (User.Identity?.IsAuthenticated == true)
             {
                 try { userId = User.GetUserId(); isAdmin = User.IsInRole("admin"); }
-                catch { /* claims manquants — traiter comme anonyme */ }
+                catch { /* claims manquants  traiter comme anonyme */ }
             }
             var result = await _paymentService.GetPaymentStatusAsync(id, userId, isAdmin);
             return Ok(result);
@@ -209,7 +209,7 @@ public class PaymentsController : ControllerBase
         }
     }
 
-    /// <summary>GET /api/payments/history — Historique des paiements de l'utilisateur connecté</summary>
+    /// <summary>GET /api/payments/history  Historique des paiements de l'utilisateur connecté</summary>
     [HttpGet("history")]
     [Authorize]
     public async Task<IActionResult> GetHistory([FromQuery] int page = 1, [FromQuery] int limit = 20)
@@ -227,7 +227,7 @@ public class PaymentsController : ControllerBase
         }
     }
 
-    /// <summary>POST /api/payments/{id}/retry — Réessayer un paiement échoué</summary>
+    /// <summary>POST /api/payments/{id}/retry  Réessayer un paiement échoué</summary>
     [HttpPost("{id:int}/retry")]
     [Authorize]
     public async Task<IActionResult> Retry(int id)
@@ -261,7 +261,7 @@ public class PaymentsController : ControllerBase
         }
     }
 
-    /// <summary>GET /api/admin/payments — Liste tous les paiements (admin)</summary>
+    /// <summary>GET /api/admin/payments  Liste tous les paiements (admin)</summary>
     [HttpGet("/api/admin/payments")]
     [Authorize(Policy = "AdminOnly")]
     public async Task<IActionResult> GetAllPayments(
@@ -281,7 +281,7 @@ public class PaymentsController : ControllerBase
         }
     }
 
-    /// <summary>GET /api/admin/payments/user/{userId} — Paiements d'un utilisateur spécifique (admin)</summary>
+    /// <summary>GET /api/admin/payments/user/{userId}  Paiements d'un utilisateur spécifique (admin)</summary>
     [HttpGet("/api/admin/payments/user/{userId:int}")]
     [Authorize(Policy = "AdminOnly")]
     public async Task<IActionResult> GetPaymentsByUser(int userId, [FromQuery] int page = 1, [FromQuery] int limit = 50)

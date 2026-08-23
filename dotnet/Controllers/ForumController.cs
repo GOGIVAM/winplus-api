@@ -163,7 +163,7 @@ public class ForumController : ControllerBase
     }
 
     /// <summary>
-    /// Vote sur un post (up/down) — HTTP 409 si déjà voté
+    /// Vote sur un post (up/down)  HTTP 409 si déjà voté
     /// </summary>
     [HttpPost("posts/{id}/vote")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -196,7 +196,7 @@ public class ForumController : ControllerBase
     }
 
     /// <summary>
-    /// Marque un post comme réponse acceptée — réservé à l'auteur du thread
+    /// Marque un post comme réponse acceptée  réservé à l'auteur du thread
     /// </summary>
     [HttpPost("posts/{id}/accept")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -226,7 +226,7 @@ public class ForumController : ControllerBase
     }
 
     /// <summary>
-    /// Soft-delete un thread — réservé à l'auteur ou aux admins
+    /// Soft-delete un thread  réservé à l'auteur ou aux admins
     /// </summary>
     [HttpDelete("threads/{id}")]
     [ProducesResponseType(StatusCodes.Status200OK)]

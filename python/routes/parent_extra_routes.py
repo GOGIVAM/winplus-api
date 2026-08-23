@@ -1,5 +1,5 @@
 """
-WinAI — Endpoints complémentaires pour le compte Parent.
+WinAI  Endpoints complémentaires pour le compte Parent.
 
 - GET  /parent-engagement/{parent_id}   → Score de mobilisation parental
 - POST /parent/educational-roi           → ROI éducatif
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 parent_extra_router = APIRouter()
 
 
-# ── Feature 3 — Score de Mobilisation Parental ────────────────────────────────
+# ── Feature 3  Score de Mobilisation Parental ────────────────────────────────
 
 class EngagementResponse(BaseModel):
     score: int
@@ -114,7 +114,7 @@ async def get_parent_engagement(
         else:
             level = "En démarrage"
             tips = [
-                "Commencez par consulter WinAI — il connaît déjà le profil de votre enfant.",
+                "Commencez par consulter WinAI  il connaît déjà le profil de votre enfant.",
                 "Même 5 minutes de suivi par semaine ont un impact réel sur la motivation.",
             ]
 
@@ -132,7 +132,7 @@ async def get_parent_engagement(
         session.close()
 
 
-# ── Feature 5 — ROI Éducatif ─────────────────────────────────────────────────
+# ── Feature 5  ROI Éducatif ─────────────────────────────────────────────────
 
 class ROIRequest(BaseModel):
     parent_id: int
@@ -273,7 +273,7 @@ async def get_educational_roi(
             recommendation = result.get("content", "").strip()
         except Exception:
             if avg_improvement > 0:
-                recommendation = f"Votre investissement porte ses fruits : {avg_improvement} points de progression en moyenne. Continuez à encourager vos enfants — chaque session compte !"
+                recommendation = f"Votre investissement porte ses fruits : {avg_improvement} points de progression en moyenne. Continuez à encourager vos enfants  chaque session compte !"
             else:
                 recommendation = "Chaque cours inscrit est une opportunité. Encouragez vos enfants à explorer les contenus disponibles pour démarrer leur progression."
 
@@ -292,7 +292,7 @@ async def get_educational_roi(
         session.close()
 
 
-# ── Feature 6 — Comparaison inter-enfants (insights) ─────────────────────────
+# ── Feature 6  Comparaison inter-enfants (insights) ─────────────────────────
 
 class ChildrenInsightsResponse(BaseModel):
     insights: List[str]
@@ -305,7 +305,7 @@ async def get_children_insights(
     current_user: UserTokenData = Depends(verify_token),
 ):
     """
-    Comparaison bienveillante inter-enfants — jamais un classement, toujours des insights.
+    Comparaison bienveillante inter-enfants  jamais un classement, toujours des insights.
     Retourne des observations actionnables pour chaque enfant.
     """
     ids = [int(x.strip()) for x in child_ids.split(",") if x.strip().isdigit()]
@@ -394,7 +394,7 @@ async def get_children_insights(
             most_active = max(children_data, key=lambda c: c["quiz_count"])
             most_consistent = max(children_data, key=lambda c: c["active_days"])
             insights.append(
-                f"{most_active['child_name']} est particulièrement assidu(e) avec {most_active['quiz_count']} exercices ce mois — félicitez-le/la !"
+                f"{most_active['child_name']} est particulièrement assidu(e) avec {most_active['quiz_count']} exercices ce mois  félicitez-le/la !"
             )
             if most_consistent["child_id"] != most_active["child_id"]:
                 insights.append(
@@ -403,7 +403,7 @@ async def get_children_insights(
             for c in children_data:
                 if c["quiz_count"] < 3:
                     insights.append(
-                        f"{c['child_name']} pourrait bénéficier d'un petit coup de pouce — proposez-lui une session de 15 minutes ensemble."
+                        f"{c['child_name']} pourrait bénéficier d'un petit coup de pouce  proposez-lui une session de 15 minutes ensemble."
                     )
 
         return {

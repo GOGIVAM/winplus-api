@@ -115,7 +115,7 @@ public class NotchPayService : INotchPayService
             {
                 _logger.LogWarning("NotchPay step1 failed: {Status} {Body}", response.StatusCode, responseBody);
                 if ((int)response.StatusCode < 500)
-                    throw new InvalidOperationException($"NotchPay rejected request: {response.StatusCode} — {responseBody}");
+                    throw new InvalidOperationException($"NotchPay rejected request: {response.StatusCode}  {responseBody}");
                 throw new HttpRequestException($"NotchPay error: {response.StatusCode}");
             }
 
@@ -138,7 +138,7 @@ public class NotchPayService : INotchPayService
             {
                 _logger.LogWarning("NotchPay step2 failed: {Status} {Body}", chargeResponse.StatusCode, chargeBody);
                 if ((int)chargeResponse.StatusCode < 500)
-                    throw new InvalidOperationException($"NotchPay charge rejected: {chargeResponse.StatusCode} — {chargeBody}");
+                    throw new InvalidOperationException($"NotchPay charge rejected: {chargeResponse.StatusCode}  {chargeBody}");
                 throw new HttpRequestException($"NotchPay charge error: {chargeResponse.StatusCode}");
             }
 
@@ -155,7 +155,7 @@ public class NotchPayService : INotchPayService
         {
             _logger.LogWarning("NotchPay status check failed: {Status} {Body}", response.StatusCode, responseBody);
             if ((int)response.StatusCode < 500)
-                throw new InvalidOperationException($"NotchPay rejected status request: {response.StatusCode} — {responseBody}");
+                throw new InvalidOperationException($"NotchPay rejected status request: {response.StatusCode}  {responseBody}");
             throw new HttpRequestException($"NotchPay error: {response.StatusCode}");
         }
 
@@ -183,7 +183,7 @@ public class NotchPayService : INotchPayService
         using var hmacLog = new HMACSHA256(Encoding.UTF8.GetBytes(_config.WebhookSecret));
         var expectedHex = Convert.ToHexString(hmacLog.ComputeHash(payloadBytes)).ToLowerInvariant();
         _logger.LogWarning(
-            "NotchPay webhook signature mismatch — receivedLen={RcvLen} received60={Rcv60} expectedHex60={Exp60}",
+            "NotchPay webhook signature mismatch  receivedLen={RcvLen} received60={Rcv60} expectedHex60={Exp60}",
             signature?.Length,
             signature?.Length > 60 ? signature[..60] : signature,
             expectedHex.Length > 60 ? expectedHex[..60] : expectedHex);

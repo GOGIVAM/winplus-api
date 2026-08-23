@@ -249,7 +249,7 @@ public class ParentController : ControllerBase
     }
 
     /// <summary>
-    /// Récupère les analytiques d'un enfant — vérifie que l'enfant appartient bien au parent
+    /// Récupère les analytiques d'un enfant  vérifie que l'enfant appartient bien au parent
     /// </summary>
     [HttpGet("analytics/{childId}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -327,7 +327,7 @@ public class ParentController : ControllerBase
 
     /// <summary>
     /// GET /api/parent/engagement/{parentId}
-    /// Proxy → Python /api/parent-engagement/{parentId} — Score de mobilisation parental
+    /// Proxy → Python /api/parent-engagement/{parentId}  Score de mobilisation parental
     /// </summary>
     [HttpGet("engagement/{parentId:int}")]
     public async Task<IActionResult> GetEngagementScore([FromRoute] int parentId, CancellationToken ct)
@@ -343,7 +343,7 @@ public class ParentController : ControllerBase
 
     /// <summary>
     /// POST /api/parent/educational-roi
-    /// Proxy → Python /api/parent/educational-roi — ROI éducatif
+    /// Proxy → Python /api/parent/educational-roi  ROI éducatif
     /// </summary>
     [HttpPost("educational-roi")]
     public async Task<IActionResult> GetEducationalROI([FromBody] object body, CancellationToken ct)
@@ -360,7 +360,7 @@ public class ParentController : ControllerBase
 
     /// <summary>
     /// GET /api/parent/children-insights
-    /// Proxy → Python /api/parent/children-insights — Comparaison inter-enfants
+    /// Proxy → Python /api/parent/children-insights  Comparaison inter-enfants
     /// </summary>
     [HttpGet("children-insights")]
     public async Task<IActionResult> GetChildrenInsights([FromQuery] string childIds, CancellationToken ct)
@@ -411,7 +411,7 @@ public class ParentController : ControllerBase
 
     /// <summary>
     /// GET /api/parent/ai-alerts/{childId}
-    /// Proxy vers Python /api/parent-alerts/{childId} — détection d'anomalies + messages WinAI
+    /// Proxy vers Python /api/parent-alerts/{childId}  détection d'anomalies + messages WinAI
     /// </summary>
     [HttpGet("ai-alerts/{childId:int}")]
     [ProducesResponseType(200)]
