@@ -386,6 +386,45 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
+    /// Vérifie qu'un lien de réinitialisation est encore valide, sans le consommer.
+    /// Permet à la page de réinitialisation d'afficher immédiatement « lien expiré »
+    /// au lieu de laisser l'utilisateur saisir un mot de passe pour rien.
+    /// </summary>
+    [HttpPost("verify-reset-token")]
+    [AllowAnonymous]
+    [ProducesResponseType(200)]
+    [ProducesResponseType(400)]
+    public async Task<IActionResult> VerifyResetToken([FromBody] VerifyResetTokenRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request?.ResetToken))
+        {
+            return BadRequest(new { error = "Le lien est incomplet", valid = false });
+        }
+
+        try
+        {
+            var entry = await _dbContext.PasswordResetTokens
+                .AsNoTracking()
+                .FirstOrDefaultAsync(t => t.Token == request.ResetToken);
+
+            // Réponse volontairement identique pour un jeton inconnu, déjà utilisé
+            // ou expiré : rien ne doit permettre de distinguer les trois cas.
+            if (entry == null || entry.IsUsed || entry.IsExpired)
+            {
+                _logger.LogInformation("VerifyResetToken: lien refusé (inconnu, utilisé ou expiré)");
+                return Ok(new { valid = false, message = "Ce lien n'est plus valide. Demandez-en un nouveau." });
+            }
+
+            return Ok(new { valid = true, expiresAt = entry.ExpiresAt });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur lors de la vérification du lien de réinitialisation");
+            return StatusCode(500, new { error = "Une erreur est survenue", valid = false });
+        }
+    }
+
+    /// <summary>
     /// Reset password with token
     /// </summary>
     [HttpPost("reset-password")]
@@ -396,7 +435,20 @@ public class AuthController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(request.ResetToken) || string.IsNullOrWhiteSpace(request.NewPassword))
         {
-            return BadRequest(new { error = "Reset token and new password are required" });
+            return BadRequest(new { error = "Le lien et le nouveau mot de passe sont requis" });
+        }
+
+        // La confirmation est vérifiée en plus côté serveur : un client modifié
+        // ne doit pas pouvoir contourner le contrôle de saisie.
+        if (!string.IsNullOrEmpty(request.ConfirmPassword) &&
+            request.ConfirmPassword != request.NewPassword)
+        {
+            return BadRequest(new { error = "Les deux mots de passe ne correspondent pas" });
+        }
+
+        if (request.NewPassword.Length < 8)
+        {
+            return BadRequest(new { error = "Le mot de passe doit contenir au moins 8 caractères" });
         }
 
         try

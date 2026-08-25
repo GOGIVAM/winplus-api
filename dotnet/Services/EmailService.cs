@@ -24,6 +24,7 @@ public class EmailService : IEmailService
     private readonly string _fromEmail;
     private readonly string _fromName;
     private readonly string _logoUrl;
+    private readonly string _frontendUrl;
     private readonly ILogger<EmailService> _logger;
 
     private static readonly JsonSerializerOptions _json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -37,6 +38,7 @@ public class EmailService : IEmailService
         // Outlook web et Yahoo bloquent les images en data: URI, ce qui laissait
         // un cadre vide en tête de chaque email.
         _logoUrl   = configuration["Email:LogoUrl"]    ?? "https://winplus.cm/email/logo-winplus.png";
+        _frontendUrl = (configuration["App:FrontendUrl"] ?? "https://winplus.cm").TrimEnd('/');
 
         var apiKey = configuration["Resend:ApiKey"]
             ?? throw new InvalidOperationException("Resend:ApiKey non configuré");
@@ -82,7 +84,9 @@ public class EmailService : IEmailService
     // ─────────────────────────────────────────────────────────────────────────
     public async Task<bool> SendPasswordResetAsync(string email, string firstName, string resetToken)
     {
-        var resetUrl = $"https://winplus.cm/reset-password?token={Uri.EscapeDataString(resetToken)}";
+        // Jeton en segment de chemin, pas en query string : il ne fuite ainsi ni
+        // dans les journaux d'accès ni dans l'en-tête Referer des pages tierces.
+        var resetUrl = $"{_frontendUrl}/reset-password/{Uri.EscapeDataString(resetToken)}";
         var body = $@"
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 4px 32px;"">

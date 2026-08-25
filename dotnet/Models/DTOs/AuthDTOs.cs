@@ -61,6 +61,14 @@ public class ResetPasswordRequestDto
 {
     public string ResetToken { get; set; } = string.Empty;
     public string NewPassword { get; set; } = string.Empty;
+    /// <summary>Confirmation revérifiée côté serveur (optionnelle pour les clients anciens).</summary>
+    public string? ConfirmPassword { get; set; }
+}
+
+/// <summary>Validation d'un lien de réinitialisation sans le consommer.</summary>
+public class VerifyResetTokenRequestDto
+{
+    public string ResetToken { get; set; } = string.Empty;
 }
 
 public class RefreshTokenRequestDto
