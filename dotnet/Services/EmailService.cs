@@ -33,6 +33,9 @@ public class EmailService : IEmailService
         _logger = logger;
         _fromEmail = configuration["Resend:FromEmail"] ?? "support@winplus.cm";
         _fromName  = configuration["Resend:FromName"]  ?? "WinPlus";
+        // Le logo est servi par une URL publique, jamais en base64 : Gmail,
+        // Outlook web et Yahoo bloquent les images en data: URI, ce qui laissait
+        // un cadre vide en tête de chaque email.
         _logoUrl   = configuration["Email:LogoUrl"]    ?? "https://winplus.cm/email/logo-winplus.png";
 
         var apiKey = configuration["Resend:ApiKey"]
@@ -70,7 +73,7 @@ public class EmailService : IEmailService
 
       {InfoBox("Tu n'as pas créé de compte WinPlus&nbsp;? Tu peux ignorer cet e-mail en toute sécurité.")}";
 
-        var html = Wrapper("Vérification d'email", "Vérifie ton adresse email", body);
+        var html = Wrapper("Vérification d'email", "Vérifie ton adresse email", body, _logoUrl);
         return await SendGenericEmailAsync(email, "Ton code de vérification WinPlus", html);
     }
 
@@ -106,7 +109,7 @@ public class EmailService : IEmailService
 
       {WarningBox("Vous n'avez pas fait cette demande&nbsp;?", "Votre compte reste en sécurité  ignorez simplement cet e-mail.")}";
 
-        var html = Wrapper("Sécurité du compte", "Réinitialise ton mot de passe", body);
+        var html = Wrapper("Sécurité du compte", "Réinitialise ton mot de passe", body, _logoUrl);
         return await SendGenericEmailAsync(email, "Réinitialisation de votre mot de passe WinPlus", html);
     }
 
@@ -132,7 +135,7 @@ public class EmailService : IEmailService
         </td></tr>
       </table>";
 
-        var html = Wrapper("Sécurité du compte", "Mot de passe modifié", body);
+        var html = Wrapper("Sécurité du compte", "Mot de passe modifié", body, _logoUrl);
         return await SendGenericEmailAsync(email, "Votre mot de passe WinPlus a été modifié", html);
     }
 
@@ -179,7 +182,7 @@ public class EmailService : IEmailService
         </td></tr>
       </table>";
 
-        var html = Wrapper("Sécurité du compte", "Nouvelle connexion détectée", body);
+        var html = Wrapper("Sécurité du compte", "Nouvelle connexion détectée", body, _logoUrl);
         return await SendGenericEmailAsync(email, "Nouvelle connexion sur votre compte WinPlus", html);
     }
 
@@ -211,7 +214,7 @@ public class EmailService : IEmailService
 
       {InfoBox("Tu n'as pas tenté de te connecter&nbsp;? Ignore cet e-mail et vérifie la sécurité de ton compte.")}";
 
-        var html = Wrapper("Double authentification", "Ton code de connexion", body);
+        var html = Wrapper("Double authentification", "Ton code de connexion", body, _logoUrl);
         return await SendGenericEmailAsync(email, "Ton code de connexion WinPlus", html);
     }
 
@@ -243,7 +246,7 @@ public class EmailService : IEmailService
 
       {InfoBox("Tu n'as pas fait cette demande&nbsp;? Ignore cet e-mail  ton adresse actuelle reste inchangée.")}";
 
-        var html = Wrapper("Changement d'email", "Confirme ta nouvelle adresse", body);
+        var html = Wrapper("Changement d'email", "Confirme ta nouvelle adresse", body, _logoUrl);
         return await SendGenericEmailAsync(email, "Vérification de votre nouvel e-mail WinPlus", html);
     }
 
@@ -331,7 +334,7 @@ public class EmailService : IEmailService
         </td></tr>
       </table>";
 
-        var html = Wrapper("Paiement", "Paiement confirmé ✓", body, "#1F9D6E");
+        var html = Wrapper("Paiement", "Paiement confirmé ✓", body, _logoUrl, "#1F9D6E");
         return await SendGenericEmailAsync(email, $"Reçu de paiement  {formattedAmount} XAF", html);
     }
 
@@ -367,7 +370,7 @@ public class EmailService : IEmailService
         </td></tr>
       </table>";
 
-        var html = Wrapper("Abonnement", "Ton abonnement expire bientôt", body);
+        var html = Wrapper("Abonnement", "Ton abonnement expire bientôt", body, _logoUrl);
         return await SendGenericEmailAsync(email, "Votre abonnement WinPlus expire dans 3 jours", html);
     }
 
@@ -436,17 +439,13 @@ public class EmailService : IEmailService
         </td></tr>
       </table>";
 
-        var html = Wrapper("Vérification de sécurité", "Confirme ton identité", body);
+        var html = Wrapper("Vérification de sécurité", "Confirme ton identité", body, _logoUrl);
         return await SendGenericEmailAsync(email, "Ton code de confirmation WinPlus", html);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     //  IDENTITÉ VISUELLE  logo WinPlus encodé en base64 (autonome, sans hébergement)
     // ─────────────────────────────────────────────────────────────────────────
-    // Le logo est servi par une URL publique, jamais en base64 : Gmail, Outlook
-    // web et Yahoo bloquent les images en data: URI, ce qui laissait un cadre
-    // vide en tête de chaque email. Surchargeable par Email:LogoUrl.
-    private string LogoUrl => _logoUrl;
 
     // Police d'affichage WinPlus + responsive (petits écrans)  injecté dans le <head>.
     // Constante "plain" (pas d'interpolation) : les accolades CSS restent littérales, sans échappement.
@@ -551,7 +550,7 @@ public class EmailService : IEmailService
     ///  – pied de page avec liens, support@winplus.cm
     ///  – entièrement responsive (petits écrans / mobile)
     /// </summary>
-    private static string Wrapper(string eyebrow, string headline, string bodyHtml, string accentColor = "#259A8E")
+    private static string Wrapper(string eyebrow, string headline, string bodyHtml, string logoUrl, string accentColor = "#259A8E")
     {
         return $@"<!DOCTYPE html>
 <html lang=""fr"" xmlns=""http://www.w3.org/1999/xhtml"">
@@ -587,7 +586,7 @@ public class EmailService : IEmailService
               <table role=""presentation"" cellpadding=""0"" cellspacing=""0"" border=""0"">
                 <tr>
                   <td style=""padding:0 8px 0 0;vertical-align:middle;"">
-                    <img src=""{LogoUrl}"" width=""34"" height=""29"" alt=""W+"" style=""display:block;width:34px;height:auto;border:0;outline:none;text-decoration:none;font-family:Arial,sans-serif;font-size:18px;font-weight:700;color:#0F2A35;"">
+                    <img src=""{logoUrl}"" width=""34"" height=""29"" alt=""W+"" style=""display:block;width:34px;height:auto;border:0;outline:none;text-decoration:none;font-family:Arial,sans-serif;font-size:18px;font-weight:700;color:#0F2A35;"">
                   </td>
                   <td style=""vertical-align:middle;"">
                     <span style=""font-family:'Bricolage Grotesque',-apple-system,'Helvetica Neue',Arial,sans-serif;font-size:20px;font-weight:700;color:#0F2A35;letter-spacing:-0.02em;"">Win<em style=""font-family:'Instrument Serif',Georgia,serif;font-style:italic;color:#259A8E;"">+</em></span>
