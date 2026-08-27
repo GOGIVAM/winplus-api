@@ -38,6 +38,9 @@ public class User
     
     [MaxLength(500)]
     public string? AvatarUrl { get; set; } // Avatar URL for profile picture
+
+    [MaxLength(500)]
+    public string? CoverUrl { get; set; } // Image de couverture du profil
     
     public string? Bio { get; set; }
 

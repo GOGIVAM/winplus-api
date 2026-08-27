@@ -106,9 +106,39 @@ public class ApplicationDbContext : DbContext
     // Guided study sessions
     public DbSet<StudySession> StudySessions => Set<StudySession>();
 
+    // ── Objectifs hebdomadaires & historique des téléchargements ──
+    public DbSet<WeeklyGoal> WeeklyGoals => Set<WeeklyGoal>();
+    public DbSet<DownloadHistory> DownloadHistories => Set<DownloadHistory>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        // ── WeeklyGoal : un objectif par utilisateur et par semaine ──
+        modelBuilder.Entity<WeeklyGoal>(entity =>
+        {
+            entity.HasIndex(e => new { e.UserId, e.WeekStart }).IsUnique();
+            entity.HasIndex(e => e.UserId);
+            entity.HasOne(e => e.User)
+                  .WithMany()
+                  .HasForeignKey(e => e.UserId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── DownloadHistory : une ligne par téléchargement d'épreuve ──
+        modelBuilder.Entity<DownloadHistory>(entity =>
+        {
+            entity.HasIndex(e => new { e.UserId, e.CreatedAt });
+            entity.HasIndex(e => e.SubjectId);
+            entity.HasOne(e => e.User)
+                  .WithMany()
+                  .HasForeignKey(e => e.UserId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Subject)
+                  .WithMany()
+                  .HasForeignKey(e => e.SubjectId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
 
         // Configure User entity
         modelBuilder.Entity<User>(entity =>

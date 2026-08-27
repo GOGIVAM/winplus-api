@@ -60,6 +60,7 @@ public class UsersController : ControllerBase
                 Level = user.Level,
                 City = user.City,
                 AvatarUrl = user.AvatarUrl,
+                CoverUrl = user.CoverUrl,
                 Role = user.Role,
                 IsEmailVerified = user.IsEmailVerified,
                 CreatedAt = user.CreatedAt
@@ -102,6 +103,7 @@ public class UsersController : ControllerBase
                 Level = updated.Level,
                 City = updated.City,
                 AvatarUrl = updated.AvatarUrl,
+                CoverUrl = updated.CoverUrl,
                 Role = updated.Role,
                 IsEmailVerified = updated.IsEmailVerified,
                 CreatedAt = updated.CreatedAt

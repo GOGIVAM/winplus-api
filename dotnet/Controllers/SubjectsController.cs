@@ -453,6 +453,18 @@ public class SubjectsController : ControllerBase
         }
 
         exam.DownloadCount += 1;
+
+        // Historique du téléchargement : statistiques hebdomadaires,
+        // historique élève et rapports parents.
+        _context.DownloadHistories.Add(new DownloadHistory
+        {
+            UserId = User.GetUserId(),
+            SubjectId = id,
+            ExamId = exam.Id,
+            FileName = $"{subject.Title}.pdf",
+            CreatedAt = DateTime.UtcNow
+        });
+
         await _context.SaveChangesAsync();
 
         var filename = $"{subject.Title}.pdf";
