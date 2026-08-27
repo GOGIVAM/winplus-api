@@ -154,10 +154,9 @@ public class WeeklyGoalController : ControllerBase
     }
 
     /// <summary>
-    /// Réalisé de la semaine, lu dans les tables d'activité existantes :
-    /// StudySessions (Duration en minutes) et QuizAttempts (CompletedAt).
-    /// Les téléchargements ne sont pas encore historisés en base — voir
-    /// README-PATCH.md, section « Téléchargements ».
+    /// Réalisé de la semaine, lu dans les tables d'activité :
+    /// StudySessions (Duration en minutes), QuizAttempts (CompletedAt)
+    /// et DownloadHistory (CreatedAt).
     /// </summary>
     private async Task<WeeklyGoalResponse> BuildResponseAsync(WeeklyGoal goal, int userId, DateTime weekStart)
     {
@@ -173,6 +172,11 @@ public class WeeklyGoalController : ControllerBase
                           && q.CompletedAt >= weekStart
                           && q.CompletedAt < weekEnd);
 
+        var downloadsDone = await _db.DownloadHistories
+            .CountAsync(d => d.UserId == userId
+                          && d.CreatedAt >= weekStart
+                          && d.CreatedAt < weekEnd);
+
         return new WeeklyGoalResponse
         {
             StudyHoursTarget = goal.StudyHoursTarget,
@@ -180,7 +184,7 @@ public class WeeklyGoalController : ControllerBase
             DownloadsTarget = goal.DownloadsTarget,
             StudyHoursDone = Math.Round(minutes / 60d, 1),
             QuizDone = quizDone,
-            DownloadsDone = 0,   // TODO : brancher dès qu'une table d'historique de téléchargements existe
+            DownloadsDone = downloadsDone,
             WeekStart = weekStart
         };
     }
