@@ -50,6 +50,14 @@ public class User
     [MaxLength(100)]
     public string? City { get; set; }
 
+    /// <summary>
+    /// Institution rattachée (comptes institution et leurs élèves).
+    /// Avant cette colonne, le dashboard institution utilisait l'id de
+    /// l'utilisateur comme id d'établissement : les KPIs ne pouvaient pas
+    /// être justes.
+    /// </summary>
+    public int? InstitutionId { get; set; }
+
     public bool IsActive { get; set; } = true;
     
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
