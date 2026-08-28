@@ -110,9 +110,27 @@ public class ApplicationDbContext : DbContext
     public DbSet<WeeklyGoal> WeeklyGoals => Set<WeeklyGoal>();
     public DbSet<DownloadHistory> DownloadHistories => Set<DownloadHistory>();
 
+    // ── Forum : fils suivis ──
+    public DbSet<ForumThreadFollow> ForumThreadFollows => Set<ForumThreadFollow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        // ── ForumThreadFollow : un suivi par utilisateur et par fil ──
+        modelBuilder.Entity<ForumThreadFollow>(entity =>
+        {
+            entity.HasIndex(e => new { e.UserId, e.ThreadId }).IsUnique();
+            entity.HasIndex(e => e.ThreadId);
+            entity.HasOne(e => e.User)
+                  .WithMany()
+                  .HasForeignKey(e => e.UserId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Thread)
+                  .WithMany()
+                  .HasForeignKey(e => e.ThreadId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
 
         // ── WeeklyGoal : un objectif par utilisateur et par semaine ──
         modelBuilder.Entity<WeeklyGoal>(entity =>
