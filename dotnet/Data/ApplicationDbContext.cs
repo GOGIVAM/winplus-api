@@ -6,7 +6,7 @@ namespace Backend.Data;
 /// <summary>
 /// ApplicationDbContext - Entity Framework Core DbContext for the application
 /// </summary>
-public class ApplicationDbContext : DbContext
+public partial class ApplicationDbContext : DbContext
 {
     public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : base(options)
     {
@@ -1023,5 +1023,8 @@ modelBuilder.Entity<Exam>(entity =>
                 .HasForeignKey(e => e.SubjectId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
+
+        // ── Entités des sprints S1→S7 (voir ApplicationDbContext.Sprints.cs) ──
+        OnModelCreatingSprints(modelBuilder);
     }
 }

@@ -162,11 +162,11 @@ public class TeacherClassesController : ControllerBase
                     addedAt   = cs.AddedAt,
                     avgScore  = _db.QuizAttempts
                         .Where(a => a.UserId == cs.StudentId && a.IsCompleted)
-                        .Average(a => (double?)a.Score)
+                        .Average(a => (decimal?)a.Score)
                 })
                 .ToListAsync();
 
-            var classAvg = students.Where(s => s.avgScore.HasValue).Select(s => s.avgScore!.Value).ToList();
+            var classAvg = students.Where(s => s.avgScore.HasValue).Select(s => (double)s.avgScore!.Value).ToList();
 
             return Ok(new
             {

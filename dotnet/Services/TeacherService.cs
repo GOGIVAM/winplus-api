@@ -41,8 +41,11 @@ public class TeacherService : ITeacherService
     {
         try
         {
+            // Un enseignant ne doit voir que SES publications. Sans ce filtre,
+            // chaque professeur recevait les contenus de tous les autres.
             return await _context.CourseContents
                 .AsNoTracking()
+                .Where(c => c.CreatedByUserId == teacherId)
                 .OrderByDescending(c => c.CreatedAt)
                 .Take(limit)
                 .ToListAsync();

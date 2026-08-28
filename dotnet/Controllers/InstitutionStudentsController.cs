@@ -155,7 +155,7 @@ public class InstitutionStudentsController : ControllerBase
                     lastLoginAt = s.Student.LastLoginAt,
                     avgScore  = _db.QuizAttempts
                         .Where(a => a.UserId == s.StudentId && a.IsCompleted)
-                        .Average(a => (double?)a.Score)
+                        .Average(a => (decimal?)a.Score)
                 })
                 .ToListAsync();
 
@@ -290,7 +290,7 @@ public class InstitutionStudentsController : ControllerBase
 
             var scores = await _db.QuizAttempts.AsNoTracking()
                 .Where(a => studentIds.Contains(a.UserId) && a.IsCompleted)
-                .Select(a => (double)a.Score)
+                .Select(a => a.Score)
                 .ToListAsync();
 
             return Ok(new
@@ -375,7 +375,7 @@ public class InstitutionStudentsController : ControllerBase
 
             var attempts = await _db.QuizAttempts.AsNoTracking()
                 .Where(a => studentIds.Contains(a.UserId) && a.IsCompleted && a.CompletedAt >= since)
-                .Select(a => new { a.UserId, score = (double)a.Score })
+                .Select(a => new { a.UserId, a.Score })
                 .ToListAsync();
 
             object payload;
@@ -394,7 +394,7 @@ public class InstitutionStudentsController : ControllerBase
                                 group    = g.Key,
                                 students = g.Count(),
                                 quizzes  = slice.Count,
-                                avgScore = slice.Count == 0 ? (int?)null : (int)Math.Round(slice.Average(x => x.score))
+                                avgScore = slice.Count == 0 ? (int?)null : (int)Math.Round(slice.Average(x => x.Score))
                             };
                         })
                         .OrderBy(x => x.group)
@@ -417,7 +417,7 @@ public class InstitutionStudentsController : ControllerBase
                     {
                         student,
                         quizzes  = slice2.Count,
-                        avgScore = slice2.Count == 0 ? (int?)null : (int)Math.Round(slice2.Average(x => x.score)),
+                        avgScore = slice2.Count == 0 ? (int?)null : (int)Math.Round(slice2.Average(x => x.Score)),
                         studyMinutes = await _db.StudySessions
                             .Where(s => s.UserId == studentId && s.CreatedAt >= since)
                             .SumAsync(s => (int?)s.Duration) ?? 0
@@ -427,7 +427,7 @@ public class InstitutionStudentsController : ControllerBase
                 case "at-risk":
                     payload = attempts
                         .GroupBy(a => a.UserId)
-                        .Select(g => new { userId = g.Key, avg = g.Average(x => x.score), quizzes = g.Count() })
+                        .Select(g => new { userId = g.Key, avg = g.Average(x => x.Score), quizzes = g.Count() })
                         .Where(x => x.avg < 55)
                         .OrderBy(x => x.avg)
                         .Join(_db.Users.AsNoTracking(), x => x.userId, u => u.Id, (x, u) => new
@@ -447,8 +447,8 @@ public class InstitutionStudentsController : ControllerBase
                     {
                         studentsTotal = studentIds.Count,
                         quizzes       = attempts.Count,
-                        avgScore      = attempts.Count == 0 ? (int?)null : (int)Math.Round(attempts.Average(a => a.score)),
-                        successRate   = attempts.Count == 0 ? (int?)null : (int)Math.Round(attempts.Count(a => a.score >= 50) * 100d / attempts.Count)
+                        avgScore      = attempts.Count == 0 ? (int?)null : (int)Math.Round(attempts.Average(a => a.Score)),
+                        successRate   = attempts.Count == 0 ? (int?)null : (int)Math.Round(attempts.Count(a => a.Score >= 50) * 100d / attempts.Count)
                     };
                     break;
             }

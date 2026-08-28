@@ -24,7 +24,7 @@ namespace Backend.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/admin/supervision")]
-[Authorize(Roles = "admin")]
+[Authorize(Policy = "AdminOnly")]
 public class AdminSupervisionController : ControllerBase
 {
     private readonly ApplicationDbContext _db;

@@ -15,7 +15,7 @@ namespace Backend.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/admin/taxonomy")]
-[Authorize(Roles = "admin")]
+[Authorize(Policy = "AdminOnly")]
 public class AdminTaxonomyController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
@@ -40,7 +40,7 @@ public class AdminTaxonomyController : ControllerBase
                 .ToListAsync();
 
             var examTypes = await _db.Exams.AsNoTracking()
-                .Where(e => e.ExamType != null && e.ExamType != "")
+                .Where(e => e.ExamType != "")
                 .GroupBy(e => e.ExamType)
                 .Select(g => new { value = g.Key, count = g.Count() })
                 .OrderByDescending(x => x.count)
