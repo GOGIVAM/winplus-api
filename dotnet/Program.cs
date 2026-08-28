@@ -334,6 +334,12 @@ builder.Services.AddHttpClient("FastApiClient", client =>
     client.DefaultRequestHeaders.Add("Accept", "application/json");
 });
 
+// IHttpContextAccessor : indispensable à FastApiClient, qui relaie le jeton
+// de l'utilisateur courant vers FastAPI. Tous les endpoints IA du service
+// Python sont protégés par Depends(verify_token) ; sans ce relais, chaque
+// appel recevait 401. Enregistrement idempotent côté ASP.NET Core.
+builder.Services.AddHttpContextAccessor();
+
 builder.Services.AddScoped<IFastApiClient, FastApiClient>();
 builder.Services.AddScoped<IAIService, AIService>();
 

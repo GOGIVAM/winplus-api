@@ -1,7 +1,8 @@
-﻿using System.Net.Http;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using Backend.Models.DTOs;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Polly;
@@ -35,6 +36,14 @@ public class FastApiClient : IFastApiClient
     private readonly ILogger<FastApiClient> _logger;
     private readonly IConfiguration _configuration;
     private readonly INtfyService _ntfy;
+
+    /// <summary>
+    /// Sert à relayer le jeton de l'utilisateur courant vers FastAPI, dont
+    /// tous les endpoints IA sont protégés par Depends(verify_token).
+    /// Sans ce relais, chaque appel recevait 401.
+    /// </summary>
+    private readonly IHttpContextAccessor? _httpContextAccessor;
+
     private readonly string _baseUrl;
     private readonly AsyncRetryPolicy _retryPolicy;
     private readonly IAsyncPolicy _circuitBreakerPolicy;
@@ -43,12 +52,14 @@ public class FastApiClient : IFastApiClient
         HttpClient httpClient,
         ILogger<FastApiClient> logger,
         IConfiguration configuration,
-        INtfyService ntfy)
+        INtfyService ntfy,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         _ntfy = ntfy;
         _httpClient = httpClient;
         _logger = logger;
         _configuration = configuration;
+        _httpContextAccessor = httpContextAccessor;
 
         //  Configuration dynamique depuis appsettings
         _baseUrl = _configuration["AIService:BaseUrl"] ?? "http://localhost:8000";
@@ -61,8 +72,21 @@ public class FastApiClient : IFastApiClient
             _baseUrl, timeoutSeconds);
 
         //  Retry Policy: 3 tentatives avec backoff exponentiel
+        // ⚠ On ne réessaie que sur les échecs transitoires. Auparavant, toute
+        // HttpRequestException relançait 3 tentatives à 2, 4 puis 8 secondes —
+        // y compris sur 401 et 404, qui sont définitifs. Un endpoint absent
+        // coûtait ainsi 14 secondes par appel, répétées à chaque chargement.
+        static bool IsTransient(HttpRequestException ex) =>
+            ex.StatusCode is null                                  // panne réseau
+            or System.Net.HttpStatusCode.RequestTimeout            // 408
+            or System.Net.HttpStatusCode.TooManyRequests           // 429
+            or System.Net.HttpStatusCode.InternalServerError       // 500
+            or System.Net.HttpStatusCode.BadGateway                // 502
+            or System.Net.HttpStatusCode.ServiceUnavailable        // 503
+            or System.Net.HttpStatusCode.GatewayTimeout;           // 504
+
         _retryPolicy = Policy
-            .Handle<HttpRequestException>()
+            .Handle<HttpRequestException>(IsTransient)
             .Or<TaskCanceledException>()
             .WaitAndRetryAsync(
                 retryCount: 3,
@@ -85,7 +109,7 @@ public class FastApiClient : IFastApiClient
             var breakDuration = _configuration.GetValue<TimeSpan>("AIService:CircuitBreakerBreakDuration", TimeSpan.FromSeconds(30));
 
             _circuitBreakerPolicy = Policy
-                .Handle<HttpRequestException>()
+                .Handle<HttpRequestException>(IsTransient)
                 .CircuitBreakerAsync(
                     exceptionsAllowedBeforeBreaking: failureThreshold,
                     durationOfBreak: breakDuration,
@@ -114,6 +138,18 @@ public class FastApiClient : IFastApiClient
     }
 
     /// <summary>
+    /// Recopie l'en-tête Authorization de la requête entrante sur la requête
+    /// sortante. Les endpoints IA de FastAPI exigent un Bearer valide ; le
+    /// client ne l'envoyait pas, d'où des 401 systématiques.
+    /// </summary>
+    private void AttachAuthorization(HttpRequestMessage request)
+    {
+        var incoming = _httpContextAccessor?.HttpContext?.Request.Headers["Authorization"].ToString();
+        if (!string.IsNullOrWhiteSpace(incoming))
+            request.Headers.TryAddWithoutValidation("Authorization", incoming);
+    }
+
+    /// <summary>
     /// GET request avec retry + circuit breaker
     /// </summary>
     public async Task<T?> GetAsync<T>(string endpoint) where T : class
@@ -125,7 +161,10 @@ public class FastApiClient : IFastApiClient
                 {
                     _logger.LogDebug("GET {BaseUrl}{Endpoint}", _baseUrl, endpoint);
 
-                    var response = await _httpClient.GetAsync(endpoint);
+                    using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+                    AttachAuthorization(request);
+
+                    var response = await _httpClient.SendAsync(request);
                     response.EnsureSuccessStatusCode();
 
                     var content = await response.Content.ReadAsStringAsync();
@@ -163,9 +202,14 @@ public class FastApiClient : IFastApiClient
                     _logger.LogDebug("POST {BaseUrl}{Endpoint}", _baseUrl, endpoint);
 
                     var json = JsonSerializer.Serialize(data);
-                    var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                    var response = await _httpClient.PostAsync(endpoint, content);
+                    using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+                    {
+                        Content = new StringContent(json, Encoding.UTF8, "application/json")
+                    };
+                    AttachAuthorization(request);
+
+                    var response = await _httpClient.SendAsync(request);
                     response.EnsureSuccessStatusCode();
 
                     var responseContent = await response.Content.ReadAsStringAsync();
@@ -374,15 +418,16 @@ public class FastApiClient : IFastApiClient
         {
             _logger.LogInformation("Génération du parcours d'apprentissage pour l'utilisateur {UserId}", userId);
 
-            var request = new
-            {
-                user_id = userId,
-                goal_subject = goalSubject,
-                timeframe_weeks = weeks,
-                available_hours_per_week = hoursPerWeek
-            };
-
-            var response = await PostAsync<LearningPathResponse>("/api/generate-learning-path", request);
+            // ⚠ Route corrigée : le POST /api/generate-learning-path n'existe
+            // pas côté FastAPI, qui expose GET /api/learning-path/{user_id}
+            // (app.py). Chaque appel enchaînait 3 tentatives à 2, 4 puis 8
+            // secondes avant de retomber sur le fallback — 14 secondes perdues,
+            // répétées à chaque chargement du tableau de bord.
+            //
+            // Le service Python calcule le parcours depuis les performances
+            // réelles en base : il n'attend ni matière ni volume horaire, ces
+            // paramètres ne sont donc plus transmis.
+            var response = await GetAsync<LearningPathResponse>($"/api/learning-path/{userId}");
             
             if (response == null)
             {

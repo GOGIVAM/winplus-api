@@ -87,7 +87,14 @@ public class JwtService : IJwtService
                 }
             }
 
-            var credentials = new SigningCredentials(_key, SecurityAlgorithms.HmacSha256Signature);
+            // ⚠ HmacSha256 (et non HmacSha256Signature) : la variante « Signature »
+            // écrit l'URI XML-dsig complet dans l'en-tête alg du JWT
+            //   "http://www.w3.org/2001/04/xmldsig-more#hmac-sha256"
+            // au lieu de la forme compacte "HS256" attendue par la RFC 7518.
+            // PyJWT rejette cette forme : le service Python renvoyait 401 sur
+            // tous les appels IA, alors que .NET validait ses propres tokens
+            // sans erreur — ce qui rendait la cause invisible côté backend.
+            var credentials = new SigningCredentials(_key, SecurityAlgorithms.HmacSha256);
             var token = new JwtSecurityToken(
                 issuer: _issuer,
                 audience: _audience,
