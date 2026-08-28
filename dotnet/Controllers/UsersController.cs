@@ -39,6 +39,18 @@ public class UsersController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>
+    /// GET /api/users/me  alias de /api/users/profile.
+    ///
+    /// Le frontend (AuthContext.initializeAuth) appelle /api/users/me. Sans cette
+    /// route, la requête tombait sur le gabarit {id} de DELETE avec id="me" et
+    /// renvoyait 405 Method Not Allowed, ce qui empêchait la restauration de la
+    /// session : l'utilisateur restait connecté avec un profil vide.
+    /// </summary>
+    [HttpGet("me")]
+    [Authorize]
+    public Task<IActionResult> GetMe() => GetProfile();
+
     [HttpGet("profile")]
     [Authorize]
     public async Task<IActionResult> GetProfile()
@@ -281,7 +293,7 @@ public class UsersController : ControllerBase
         }
     }
 
-    [HttpDelete("{id}")]
+    [HttpDelete("{id:int}")]
     [Authorize(Policy = "AdminOnly")]
     public async Task<IActionResult> Delete(int id)
     {
@@ -301,7 +313,7 @@ public class UsersController : ControllerBase
         }
     }
 
-    [HttpPost("{id}/restore")]
+    [HttpPost("{id:int}/restore")]
     [Authorize(Policy = "AdminOnly")]
     public async Task<IActionResult> Restore(int id)
     {
@@ -320,7 +332,7 @@ public class UsersController : ControllerBase
         }
     }
 
-    [HttpDelete("{id}/permanent")]
+    [HttpDelete("{id:int}/permanent")]
     [Authorize(Policy = "AdminOnly")]
     public async Task<IActionResult> HardDelete(int id)
     {
@@ -339,7 +351,7 @@ public class UsersController : ControllerBase
         }
     }
 
-    [HttpGet("{id}/statistics")]
+    [HttpGet("{id:int}/statistics")]
     [Authorize]
     public async Task<IActionResult> GetUserStatistics(int id)
     {

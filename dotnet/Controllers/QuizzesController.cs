@@ -1,6 +1,7 @@
 using Backend.Models.DTOs;
 using Backend.Services;
 using Microsoft.AspNetCore.Mvc;
+using Backend.Extensions;
 using Microsoft.AspNetCore.Authorization;
 
 namespace Backend.Controllers;
@@ -320,10 +321,18 @@ public class QuizzesController : ControllerBase
 
     private int GetUserId()
     {
-        // Extraire l'ID utilisateur depuis le token JWT ou les claims
-        var userIdClaim = User.FindFirst("sub")?.Value ?? User.FindFirst("userid")?.Value;
-        if (int.TryParse(userIdClaim, out int userId))
-            return userId;
-        return 0;
+        // ⚠ Correctif : l'ancienne version lisait FindFirst("sub"), or ASP.NET Core
+        // remappe "sub" vers ClaimTypes.NameIdentifier à la validation du JWT.
+        // Le claim était donc toujours introuvable → 0 → 401, y compris avec un
+        // token parfaitement valide (d'où les boucles de refresh inutiles côté
+        // frontend). L'extension partagée essaie user_id, NameIdentifier puis sub.
+        try
+        {
+            return User.GetUserId();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return 0;
+        }
     }
 }

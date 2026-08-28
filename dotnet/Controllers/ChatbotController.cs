@@ -277,13 +277,25 @@ public class ChatbotController : ControllerBase
         {
             var userId = GetCurrentUserId();
             var context = await _chatbotService.GetContextAsync(userId);
-            
+
+            // Aucun contexte encore enregistré : on le construit à la volée depuis
+            // les données réelles de l'utilisateur, au lieu de renvoyer un 404.
+            // L'ancien comportement faisait échouer l'appel pour tout nouvel
+            // utilisateur, à chaque ouverture de l'application.
             if (context == null)
             {
-                return NotFound(new { error = "Context not found. Sync context first." });
+                try
+                {
+                    context = await _chatbotService.SyncContextAsync(userId, new SyncContextRequest());
+                }
+                catch (Exception syncEx)
+                {
+                    _logger.LogWarning(syncEx, "Auto-sync du contexte impossible pour {UserId}", userId);
+                }
             }
 
-            return Ok(context);
+            // Toujours 200 : un contexte vide est un état valide, pas une erreur.
+            return Ok(context ?? new ChatbotContextResponse());
         }
         catch (Exception ex)
         {
