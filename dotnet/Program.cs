@@ -21,6 +21,28 @@ QuestPDF.Settings.License = LicenseType.Community;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ── Taille des requêtes ─────────────────────────────────────────────────────
+// Les gros fichiers (vidéos de cours) ne passent plus par l'API : le navigateur
+// les envoie par parties directement à S3 (AdminUploadsController). Kestrel n'a
+// donc à accepter que les envois directs — images de vignette, PDF courts —
+// plafonnés à 32 Mio.
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 32L * 1024 * 1024;
+    // Un téléphone en 3G doit pouvoir finir son envoi : le débit minimal par
+    // défaut (240 octets/s) coupe des connexions honnêtes.
+    options.Limits.MinRequestBodyDataRate = new Microsoft.AspNetCore.Server.Kestrel.Core.MinDataRate(
+        bytesPerSecond: 100, gracePeriod: TimeSpan.FromSeconds(30));
+    options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(60);
+});
+
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o =>
+{
+    o.MultipartBodyLengthLimit = 32L * 1024 * 1024;
+    o.ValueLengthLimit         = int.MaxValue;
+    o.MemoryBufferThreshold    = 1024 * 1024;
+});
+
 // Add services to the container
 builder.Services.AddControllers()
     .AddJsonOptions(options =>

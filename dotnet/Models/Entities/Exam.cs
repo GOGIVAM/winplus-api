@@ -43,6 +43,14 @@ public class Exam
     [StringLength(500)]
     public string? CorrectionUrl { get; set; }
 
+    /// <summary>
+    /// Image représentative de l'épreuve (page de garde, photo du sujet).
+    /// Optionnelle : sans elle, le catalogue garde son motif coloré.
+    /// Colonne ajoutée par Migrations/sql/20260829_admin_fixes.sql.
+    /// </summary>
+    [StringLength(500)]
+    public string? ThumbnailUrl { get; set; }
+
     [StringLength(50)]
     public string? Difficulty { get; set; }
 

@@ -61,6 +61,9 @@ public class PresenceTrackingMiddleware
             {
                 session.LastActivityAt = now;
                 session.IpAddress = ip ?? session.IpAddress;
+                // Session vivante : on repousse l'échéance, ce qui répare aussi
+                // les lignes anciennes laissées sans date.
+                session.ExpiresAt = now.AddDays(30);
             }
             else
             {
@@ -73,6 +76,10 @@ public class PresenceTrackingMiddleware
                     UserAgent = string.IsNullOrWhiteSpace(userAgent) ? null : Truncate(userAgent, 500),
                     CreatedAt = now,
                     LastActivityAt = now,
+                    // La colonne est NOT NULL en base : sans cette valeur,
+                    // chaque requête levait « 23502 null value in column
+                    // ExpiresAt » et aucune session n'était enregistrée.
+                    ExpiresAt = now.AddDays(30),
                     IsActive = true,
                 });
             }
