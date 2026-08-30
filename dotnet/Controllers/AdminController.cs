@@ -3,6 +3,7 @@ using Amazon.S3.Model;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Backend.Data;
 using Backend.Extensions;
 using Backend.Models.DTOs;
@@ -825,6 +826,42 @@ public class AdminController : ControllerBase
                     avgResponseTimeMs = (int)Math.Round(avgRespTime),
                     satisfactionRate = satisfaction,
                     status    = "operational",
+                    modelName = "WinAI"
+                }
+            });
+        }
+        catch (PostgresException pg) when (pg.SqlState == PostgresErrorCodes.UndefinedTable
+                                        || pg.SqlState == PostgresErrorCodes.UndefinedColumn)
+        {
+            // Les tables de chat ont ete creees a la main, sans le schema complet
+            // des entites : des colonnes declarees dans Models/Entities (dont
+            // Messages.GenerationTimeMs) sont absentes en base, et EF genere du
+            // SQL qui les reference -> 42703.
+            // Correctif de la cause : Migrations/SQL_FixChatbotColumns.sql
+            //
+            // Ici, on evite le 500 : un module d'analytics degrade ne doit pas
+            // faire remonter une erreur dans la console d'administration alors
+            // que le reste de la plateforme fonctionne. Charge neutre, marquee
+            // indisponible, et la cause reste dans les logs.
+            _logger.LogWarning(
+                "WinAI stats indisponible: schema de chat incomplet ({SqlState} {Message}). Appliquer Migrations/SQL_FixChatbotColumns.sql.",
+                pg.SqlState, pg.MessageText);
+
+            return Ok(new
+            {
+                success = true,
+                data = new
+                {
+                    totalConversations = 0,
+                    activeConversations = 0,
+                    totalMessages = 0,
+                    avgMessagesPerConversation = 0.0,
+                    recentConversations = 0,
+                    avgTokensUsed = 0,
+                    avgResponseTimeMs = 0,
+                    satisfactionRate = 0.0,
+                    status = "unavailable",
+                    reason = "chat_schema_missing",
                     modelName = "WinAI"
                 }
             });

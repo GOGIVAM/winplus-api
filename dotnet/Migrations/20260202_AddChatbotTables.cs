@@ -7,6 +7,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace backend.Migrations
 {
     /// <inheritdoc />
+    // Sans cet attribut, EF Core ne reconnait pas la classe comme une migration :
+    // elle n'apparait pas dans `dotnet ef migrations list`, n'est jamais appliquee
+    // par `dotnet ef database update`, et les tables Conversations / Messages /
+    // ChatbotContexts n'existent donc pas dans la base deployee.
+    [Migration("20260202_AddChatbotTables")]
     public partial class AddChatbotTables : Migration
     {
         /// <inheritdoc />
