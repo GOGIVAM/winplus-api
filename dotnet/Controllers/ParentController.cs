@@ -8,6 +8,7 @@ using Backend.Data;
 using Backend.Services;
 using Backend.Extensions;
 using Backend.Models.DTOs;
+using Backend.Models.Entities;
 
 namespace Backend.Controllers;
 
@@ -517,8 +518,8 @@ public class ParentController : ControllerBase
                 {
                     type = "quiz",
                     description = a.Quiz != null ? a.Quiz.Title : "Quiz",
-                    occurredAt = a.CompletedAt ?? a.StartedAt,
-                    score = a.Score.HasValue ? (int?)((int)a.Score.Value) : null,
+                    occurredAt = a.CompletedAt,
+                    score = (int?)((int)a.Score),
                 })
                 .ToListAsync();
 
