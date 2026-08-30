@@ -11,6 +11,8 @@ using Backend.Models.DTOs;
 
 namespace Backend.Controllers;
 
+public record AddChildRequest(string Email);
+
 /// <summary>
 /// Controller pour les fonctionnalités des parents
 /// </summary>
@@ -39,20 +41,42 @@ public class ParentController : ControllerBase
     /// <param name="parentId">ID du parent</param>
     /// <param name="childId">ID de l'enfant</param>
     /// <returns>Statistiques de l'enfant</returns>
-    [HttpGet("children/{childId}/stats")]
+    [HttpGet("children/{childId:int}/stats")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetChildStats([FromQuery] int parentId, [FromRoute] int childId)
+    public async Task<IActionResult> GetChildStats([FromRoute] int childId)
     {
         try
         {
-            var stats = await _parentService.GetChildStatsAsync(parentId, childId);
-            return Ok(new { data = stats, success = true });
+            var parentId = User.GetUserId();
+            var linked = await _db.ParentStudentLinks.AnyAsync(l => l.ParentId == parentId && l.StudentId == childId);
+            if (!linked) return Forbid();
+
+            var now = DateTime.UtcNow;
+            var weekStart = now.AddDays(-(int)now.DayOfWeek);
+
+            var downloadsThisWeek = await _db.DownloadHistories
+                .CountAsync(d => d.UserId == childId && d.CreatedAt >= weekStart);
+
+            var quizzesThisWeek = await _db.QuizAttempts
+                .CountAsync(a => a.UserId == childId && a.CompletedAt >= weekStart);
+
+            var avgScore = await _db.QuizAttempts
+                .Where(a => a.UserId == childId && a.CompletedAt >= now.AddDays(-30))
+                .AverageAsync(a => (double?)a.Score) ?? 0;
+
+            return Ok(new
+            {
+                downloadsThisWeek,
+                quizzesThisWeek,
+                averageScore = Math.Round(avgScore, 1),
+                aiSessionsThisWeek = 0,
+            });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting child stats");
-            return StatusCode(500, new { success = false, error = "Internal server error" });
+            return StatusCode(500, new { error = "Internal server error" });
         }
     }
 
@@ -227,19 +251,21 @@ public class ParentController : ControllerBase
             var parentId = User.GetUserId();
             var children = await _db.ParentStudentLinks
                 .Where(l => l.ParentId == parentId)
+                .Include(l => l.Student)
                 .Select(l => new
                 {
-                    studentId  = l.StudentId,
+                    id         = l.StudentId,
                     firstName  = l.Student != null ? l.Student.FirstName : null,
                     lastName   = l.Student != null ? l.Student.LastName  : null,
                     email      = l.Student != null ? l.Student.Email     : null,
                     level      = l.Student != null ? l.Student.Level     : null,
                     avatarUrl  = l.Student != null ? l.Student.AvatarUrl : null,
+                    schoolName = (string?)null,
                     linkedAt   = l.CreatedAt
                 })
                 .ToListAsync();
 
-            return Ok(new { data = children, success = true });
+            return Ok(children);
         }
         catch (Exception ex)
         {
@@ -406,6 +432,167 @@ public class ParentController : ControllerBase
         {
             _logger.LogError(ex, "Error updating parent settings");
             return StatusCode(500, new { message = "An error occurred" });
+        }
+    }
+
+    /// <summary>POST /api/parent/children — lier un enfant au parent par email.</summary>
+    [HttpPost("children")]
+    public async Task<IActionResult> AddChild([FromBody] AddChildRequest req)
+    {
+        try
+        {
+            var parentId = User.GetUserId();
+            var student = await _db.Users.FirstOrDefaultAsync(u => u.Email == req.Email && u.Role == "student");
+            if (student == null) return NotFound(new { error = "Aucun élève trouvé avec cet email" });
+
+            var already = await _db.ParentStudentLinks.AnyAsync(l => l.ParentId == parentId && l.StudentId == student.Id);
+            if (already) return Conflict(new { error = "Cet enfant est déjà lié à votre compte" });
+
+            _db.ParentStudentLinks.Add(new ParentStudentLink { ParentId = parentId, StudentId = student.Id });
+            await _db.SaveChangesAsync();
+            return Ok(new { success = true, studentId = student.Id });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error adding child");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>DELETE /api/parent/children/{childId} — délier un enfant.</summary>
+    [HttpDelete("children/{childId:int}")]
+    public async Task<IActionResult> RemoveChild([FromRoute] int childId)
+    {
+        try
+        {
+            var parentId = User.GetUserId();
+            var link = await _db.ParentStudentLinks.FirstOrDefaultAsync(l => l.ParentId == parentId && l.StudentId == childId);
+            if (link == null) return NotFound(new { error = "Lien non trouvé" });
+            _db.ParentStudentLinks.Remove(link);
+            await _db.SaveChangesAsync();
+            return Ok(new { success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error removing child");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>GET /api/parent/children/{childId}/activity — activités récentes de l'enfant.</summary>
+    [HttpGet("children/{childId:int}/activity")]
+    public async Task<IActionResult> GetChildActivity([FromRoute] int childId,
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        try
+        {
+            var parentId = User.GetUserId();
+            var linked = await _db.ParentStudentLinks.AnyAsync(l => l.ParentId == parentId && l.StudentId == childId);
+            if (!linked) return Forbid();
+
+            if (pageSize > 50) pageSize = 50;
+
+            var downloads = await _db.DownloadHistories
+                .AsNoTracking()
+                .Where(d => d.UserId == childId)
+                .Include(d => d.Subject)
+                .OrderByDescending(d => d.CreatedAt)
+                .Take(pageSize)
+                .Select(d => new
+                {
+                    type = "download",
+                    description = d.Subject != null ? d.Subject.Title : d.FileName ?? "Téléchargement",
+                    occurredAt = d.CreatedAt,
+                    score = (int?)null,
+                })
+                .ToListAsync();
+
+            var quizzes = await _db.QuizAttempts
+                .AsNoTracking()
+                .Where(a => a.UserId == childId)
+                .Include(a => a.Quiz)
+                .OrderByDescending(a => a.CompletedAt)
+                .Take(pageSize)
+                .Select(a => new
+                {
+                    type = "quiz",
+                    description = a.Quiz != null ? a.Quiz.Title : "Quiz",
+                    occurredAt = a.CompletedAt ?? a.StartedAt,
+                    score = a.Score.HasValue ? (int?)((int)a.Score.Value) : null,
+                })
+                .ToListAsync();
+
+            var activity = downloads.Cast<object>()
+                .Concat(quizzes.Cast<object>())
+                .OrderByDescending(x => (DateTime)((dynamic)x).occurredAt)
+                .Take(pageSize)
+                .ToList();
+
+            return Ok(activity);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting child activity");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>GET /api/parent/alerts — alertes WinAI pour tous les enfants du parent.</summary>
+    [HttpGet("alerts")]
+    public async Task<IActionResult> GetAlerts()
+    {
+        try
+        {
+            var parentId = User.GetUserId();
+            var childIds = await _db.ParentStudentLinks
+                .Where(l => l.ParentId == parentId)
+                .Select(l => l.StudentId)
+                .ToListAsync();
+
+            var alerts = await _db.Notifications
+                .AsNoTracking()
+                .Where(n => n.UserId == parentId && n.Type == "ParentAlert")
+                .OrderByDescending(n => n.CreatedAt)
+                .Take(30)
+                .Select(n => new
+                {
+                    id = n.Id,
+                    type = n.RelatedEntityType ?? "tip",
+                    message = n.Message,
+                    createdAt = n.CreatedAt,
+                    isRead = n.IsRead,
+                    childId = n.RelatedEntityId,
+                    childName = (string?)null,
+                })
+                .ToListAsync();
+
+            return Ok(alerts);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting parent alerts");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>PUT /api/parent/alerts/{id}/read — marquer une alerte comme lue.</summary>
+    [HttpPut("alerts/{id:int}/read")]
+    public async Task<IActionResult> MarkAlertRead([FromRoute] int id)
+    {
+        try
+        {
+            var parentId = User.GetUserId();
+            var notif = await _db.Notifications.FirstOrDefaultAsync(n => n.Id == id && n.UserId == parentId);
+            if (notif == null) return NotFound(new { error = "Alerte introuvable" });
+            notif.IsRead = true;
+            notif.ReadAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return Ok(new { success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error marking alert read");
+            return StatusCode(500, new { error = "Internal server error" });
         }
     }
 

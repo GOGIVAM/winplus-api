@@ -85,6 +85,42 @@ public class UsersController : ControllerBase
         }
     }
 
+    /// <summary>GET /api/users/me/downloads — historique des téléchargements de l'utilisateur connecté.</summary>
+    [HttpGet("me/downloads")]
+    [Authorize]
+    public async Task<IActionResult> GetMyDownloads([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        try
+        {
+            var userId = User.GetUserId();
+            if (pageSize > 100) pageSize = 100;
+
+            var downloads = await _db.DownloadHistories
+                .AsNoTracking()
+                .Where(d => d.UserId == userId)
+                .Include(d => d.Subject)
+                .OrderByDescending(d => d.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(d => new
+                {
+                    id = d.Id,
+                    subjectId = d.SubjectId,
+                    title = d.Subject != null ? d.Subject.Title : d.FileName ?? "Téléchargement",
+                    fileName = d.FileName,
+                    downloadedAt = d.CreatedAt,
+                })
+                .ToListAsync();
+
+            return Ok(downloads);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting download history");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
     [HttpPut("profile")]
     [Authorize]
     public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileRequest request)
