@@ -198,6 +198,17 @@ public class SyncContextRequest
     /// Préférences utilisateur
     /// </summary>
     public Dictionary<string, object>? Preferences { get; set; }
+
+    /// <summary>
+    /// Scores moyens par matière sur les 30 derniers jours : {"Mathématiques": 14.5, "Physique": 11.0}
+    /// </summary>
+    public Dictionary<string, float>? PerformanceHistory { get; set; }
+
+    /// <summary>
+    /// Langue forcée : "french" | "english" | "pidgin"
+    /// </summary>
+    [MaxLength(10)]
+    public string? ForceLanguage { get; set; }
 }
 
 /// <summary>
@@ -338,6 +349,8 @@ public class ChatbotContextResponse
     public List<NavigationItemDto>? NavigationHistory { get; set; }
     public Dictionary<string, object>? Preferences { get; set; }
     public string? LearningStyle { get; set; }
+    public Dictionary<string, float>? PerformanceHistory { get; set; }
+    public string? ForceLanguage { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
@@ -356,6 +369,8 @@ public class FastApiChatRequest
     public ChatbotContextResponse? UserContext { get; set; }
     public int MaxTokens { get; set; } = 2000;
     public float Temperature { get; set; } = 0.7f;
+    public Dictionary<string, float>? PerformanceHistory { get; set; }
+    public string? ForceLanguage { get; set; }
 }
 
 /// <summary>

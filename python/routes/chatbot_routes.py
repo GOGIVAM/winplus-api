@@ -14,11 +14,66 @@ from services.deepseek_client import get_deepseek_client
 from services.prompt_builder import build_system_prompt, UserContext, detect_language
 from auth import verify_token, UserTokenData
 from schemas import ChatRequest, ChatResponse, ChatbotHealthResponse, ChatMessage, ChatbotContextRequest
-from database import Database, Conversation, ChatMessage as ChatMessageDB, UserAIMemory, User, QuizAttempt, DailyScore
+from database import Database, Conversation, ChatMessage as ChatMessageDB, UserAIMemory, User, QuizAttempt, DailyScore, QuizMistake
 
 logger = logging.getLogger(__name__)
 
 chatbot_router = APIRouter(tags=["chatbot"])
+
+
+def _load_performance_history(user_id: int) -> dict:
+    """Calcule le score moyen par matière sur les 30 derniers jours depuis QuizAttempts."""
+    try:
+        from datetime import datetime, timedelta, timezone
+        db = Database()
+        session = db.SessionLocal()
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        try:
+            attempts = (
+                session.query(QuizAttempt)
+                .filter(QuizAttempt.UserId == user_id, QuizAttempt.CompletedAt >= cutoff)
+                .all()
+            )
+            by_subject: dict[str, list[float]] = {}
+            for a in attempts:
+                subject = getattr(a, "SubjectTitle", None) or "Général"
+                score = float(a.Score or 0)
+                by_subject.setdefault(subject, []).append(score)
+            return {s: round(sum(v) / len(v), 1) for s, v in by_subject.items()}
+        finally:
+            session.close()
+    except Exception as e:
+        logger.warning(f"Could not load performance history for user {user_id}: {e}")
+        return {}
+
+
+def _load_quiz_mistakes(user_id: int, limit: int = 10) -> list:
+    """Charge les questions récentes ratées et non résolues pour enrichir le contexte WinAI."""
+    try:
+        db = Database()
+        session = db.SessionLocal()
+        try:
+            rows = (
+                session.query(QuizMistake)
+                .filter(QuizMistake.UserId == user_id, QuizMistake.IsResolved == False)
+                .order_by(QuizMistake.CreatedAt.desc())
+                .limit(limit)
+                .all()
+            )
+            return [
+                {
+                    "subject": r.Subject or "Général",
+                    "question": r.Question,
+                    "given_answer": r.GivenAnswer,
+                    "correct_answer": r.CorrectAnswer,
+                }
+                for r in rows
+            ]
+        finally:
+            session.close()
+    except Exception as e:
+        logger.warning(f"Could not load quiz mistakes for user {user_id}: {e}")
+        return []
 
 
 def _load_user_memories(user_id: int) -> list:
@@ -86,6 +141,12 @@ def _build_prompt_from_request(
     """
     role = getattr(user_context, "role", None) or token_data.role or "student"
     memories = _load_user_memories(token_data.user_id) if token_data.user_id else []
+    quiz_mistakes = _load_quiz_mistakes(token_data.user_id) if token_data.user_id and role == "student" else []
+    # performance_history : priorité au front (déjà calculé), sinon on calcule depuis la DB
+    perf_from_front = dict(getattr(user_context, "performance_history", None) or {})
+    performance_history = perf_from_front if perf_from_front else (
+        _load_performance_history(token_data.user_id) if token_data.user_id else {}
+    )
 
     # For parents, inject children context if child_ids are provided
     children_data: list = []
@@ -107,10 +168,11 @@ def _build_prompt_from_request(
         ] if user_context and user_context.enrolled_subjects else [],
         objectives=list(user_context.objectives or []) if user_context else [],
         learning_style=getattr(user_context, "learning_style", None),
-        performance_history=dict(user_context.performance_history or {}) if user_context else {},
+        performance_history=performance_history,
         ai_memories=memories,
         children_data=children_data,
         language=force_lang,
+        quiz_mistakes=quiz_mistakes,
     )
     return build_system_prompt(ctx), ctx.role
 

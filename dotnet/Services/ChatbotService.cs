@@ -264,7 +264,9 @@ public class ChatbotService : IChatbotService
             EnrolledSubjects = request.EnrolledSubjects != null ? JsonSerializer.Serialize(request.EnrolledSubjects) : null,
             RecentActivity = request.RecentActivity != null ? JsonSerializer.Serialize(request.RecentActivity) : null,
             NavigationHistory = request.NavigationHistory != null ? JsonSerializer.Serialize(request.NavigationHistory) : null,
-            Preferences = request.Preferences != null ? JsonSerializer.Serialize(request.Preferences) : null
+            Preferences = request.Preferences != null ? JsonSerializer.Serialize(request.Preferences) : null,
+            PerformanceHistory = request.PerformanceHistory != null ? JsonSerializer.Serialize(request.PerformanceHistory) : null,
+            ForceLanguage = request.ForceLanguage
         };
 
         var saved = await _repository.CreateOrUpdateContextAsync(context);
@@ -295,41 +297,12 @@ public class ChatbotService : IChatbotService
             if (context != null)
             {
                 request.UserContext = MapToChatbotContextResponse(context);
-                request.SystemPrompt = BuildSystemPrompt(request.UserContext);
+                // SystemPrompt délibérément null : FastAPI/prompt_builder.py construit le prompt
+                // différencié par rôle avec VARK, lacunes, mémoires, performances, etc.
             }
         }
 
         return request;
-    }
-
-    private string BuildSystemPrompt(ChatbotContextResponse context)
-    {
-        var prompt = """
-            Tu es un assistant pédagogique intelligent pour WinPlus, une plateforme d'apprentissage.
-            Tu aides les étudiants dans leurs révisions et préparation aux concours.
-            
-            Directives:
-            - Réponds toujours en français sauf si l'utilisateur parle une autre langue
-            - Sois pédagogue et encourage l'apprentissage
-            - Utilise le LaTeX pour les équations mathématiques (format $..$ ou $$..$$)
-            - Adapte ton niveau de langage au niveau de l'étudiant
-            - Fournis des explications claires et structurées
-            """;
-
-        if (!string.IsNullOrEmpty(context.EducationLevel))
-        {
-            prompt += $"\n\nL'étudiant est au niveau: {context.EducationLevel}";
-        }
-        if (!string.IsNullOrEmpty(context.Grade))
-        {
-            prompt += $", classe: {context.Grade}";
-        }
-        if (context.EnrolledSubjects?.Any() == true)
-        {
-            prompt += $"\nMatières suivies: {string.Join(", ", context.EnrolledSubjects.Select(s => s.Title))}";
-        }
-
-        return prompt;
     }
 
     private async Task<FastApiChatResponse> CallFastApiServiceAsync(FastApiChatRequest request)
@@ -439,6 +412,8 @@ public class ChatbotService : IChatbotService
             NavigationHistory = DeserializeJsonList<NavigationItemDto>(context.NavigationHistory),
             Preferences = DeserializeJsonDict(context.Preferences),
             LearningStyle = context.LearningStyle,
+            PerformanceHistory = DeserializeJsonDict<string, float>(context.PerformanceHistory),
+            ForceLanguage = context.ForceLanguage,
             CreatedAt = context.CreatedAt,
             UpdatedAt = context.UpdatedAt
         };
@@ -463,19 +438,17 @@ public class ChatbotService : IChatbotService
 
     private static Dictionary<string, object>? DeserializeJsonDict(string? json)
     {
-        if (string.IsNullOrEmpty(json))
-        {
-            return null;
-        }
+        if (string.IsNullOrEmpty(json)) return null;
+        try { return JsonSerializer.Deserialize<Dictionary<string, object>>(json); }
+        catch { return null; }
+    }
 
-        try
-        {
-            return JsonSerializer.Deserialize<Dictionary<string, object>>(json);
-        }
-        catch
-        {
-            return null;
-        }
+    private static Dictionary<TKey, TValue>? DeserializeJsonDict<TKey, TValue>(string? json)
+        where TKey : notnull
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try { return JsonSerializer.Deserialize<Dictionary<TKey, TValue>>(json); }
+        catch { return null; }
     }
 
     #endregion

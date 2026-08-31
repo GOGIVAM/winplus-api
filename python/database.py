@@ -204,6 +204,23 @@ class ExamCoachPlanAI(Base):
     IsActive = Column(Boolean, nullable=False, default=True)
 
 
+class QuizMistake(Base):
+    """Questions ratées par un élève — mappé sur QuizMistakes (.NET)"""
+    __tablename__ = 'QuizMistakes'
+
+    Id = Column(Integer, primary_key=True)
+    UserId = Column(Integer, ForeignKey('Users.Id'), nullable=False, index=True)
+    QuizId = Column(Integer, nullable=True)
+    QuizAttemptId = Column(Integer, nullable=True)
+    Subject = Column(String(100), nullable=True)
+    Question = Column(String(1000), nullable=False)
+    GivenAnswer = Column(String(500), nullable=True)
+    CorrectAnswer = Column(String(500), nullable=True)
+    IsResolved = Column(Boolean, nullable=False, default=False)
+    ResolvedAt = Column(DateTime(timezone=True), nullable=True)
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
 class UserAIMemory(Base):
     """Mémoire persistante WinAI par étudiant  mappé sur UserAIMemories (.NET)"""
     __tablename__ = 'UserAIMemories'

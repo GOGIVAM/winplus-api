@@ -25,6 +25,7 @@ class UserContext:
     ai_memories: List[Dict[str, str]] = field(default_factory=list)  # [{"type": "learning_preference", "content": "..."}]
     children_data: List[Dict] = field(default_factory=list)  # [{"name": "Marie", "level": "Terminale", "avg_score": 14.2, "subjects": [...]}]
     language: Optional[str] = None                 # "french" | "english" | "pidgin"  détecté ou forcé par l'utilisateur
+    quiz_mistakes: List[Dict] = field(default_factory=list)  # [{"subject": "Maths", "question": "...", "given_answer": "...", "correct_answer": "..."}]
 
 
 # ── Language detection ────────────────────────────────────────────────────────
@@ -162,6 +163,23 @@ def _ai_memories_block(ctx: UserContext) -> str:
     return "\n\n[Ce que WinAI sait déjà de toi]\n" + "\n".join(lines)
 
 
+def _mistakes_block(ctx: UserContext) -> str:
+    if not ctx.quiz_mistakes:
+        return ""
+    lines = []
+    for m in ctx.quiz_mistakes[:8]:
+        subject = m.get("subject", "Général")
+        question = m.get("question", "")[:120]
+        given = m.get("given_answer") or "sans réponse"
+        correct = m.get("correct_answer") or "?"
+        lines.append(f"  [{subject}] {question}… | Répondu : {given} | Correct : {correct}")
+    return (
+        "\n\n[Lacunes identifiées — questions récemment ratées]\n"
+        + "\n".join(lines)
+        + "\n→ Utilise ces lacunes directement pour proposer des exercices ciblés sans redemander la matière."
+    )
+
+
 # ── Prompts par rôle ──────────────────────────────────────────────────────────
 
 def _student_prompt(ctx: UserContext) -> str:
@@ -175,8 +193,9 @@ Règles absolues :
 - Utilise le LaTeX pour toute expression mathématique ($…$ inline, $$…$$ pour les blocs).
 - Propose des exercices, des exemples concrets, des mémentos et des fiches de révision à la demande.
 - Si tu ne connais pas la réponse, dis-le clairement plutôt que d'inventer.
-- Ne fournis jamais les réponses directes aux devoirs ; guide vers la solution par étapes.
-{_level_line(ctx)}{_subjects_line(ctx)}{_objectives_line(ctx)}{_learning_style_line(ctx)}{_performance_lines(ctx)}{_ai_memories_block(ctx)}
+- Pour les devoirs et exercices : aide activement l'étudiant. Tu peux résoudre avec lui, montrer la démarche complète, corriger ses erreurs et expliquer chaque étape. L'objectif est la compréhension, pas le blocage. Si l'étudiant demande la réponse directe, donne-la ET explique le raisonnement pour qu'il apprenne vraiment.
+- IMPORTANT : Tu connais déjà le profil de l'utilisateur (niveau, matières, lacunes, scores). Ne pose JAMAIS de questions sur des informations que tu possèdes déjà dans le contexte ci-dessous. Si l'utilisateur demande un quiz ou un exercice, lance-le immédiatement en utilisant ses matières et lacunes connues. Pose une question de clarification uniquement si le profil est totalement vide.
+{_level_line(ctx)}{_subjects_line(ctx)}{_objectives_line(ctx)}{_learning_style_line(ctx)}{_performance_lines(ctx)}{_mistakes_block(ctx)}{_ai_memories_block(ctx)}
 Adapte systématiquement le niveau de vocabulaire et la profondeur des explications au profil ci-dessus.{_language_instruction(ctx)}"""
 
 

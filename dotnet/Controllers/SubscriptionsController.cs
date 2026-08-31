@@ -4,11 +4,14 @@ using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Extensions;
 using Backend.Models.Entities;
+using Backend.Models.DTOs;
+using Backend.Services;
 using System.Text.Json;
 
 namespace Backend.Controllers;
 
 public record SubscribeRequest(int PlanId, string Billing = "monthly");
+public record PurchaseSubscriptionRequest(int PlanId, string Phone, string Billing = "monthly");
 
 [ApiController]
 [Route("api/subscriptions")]
@@ -17,12 +20,22 @@ public class SubscriptionsController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
     private readonly ILogger<SubscriptionsController> _logger;
+    private readonly IPaymentService _paymentService;
 
-    public SubscriptionsController(ApplicationDbContext db, ILogger<SubscriptionsController> logger)
+    public SubscriptionsController(ApplicationDbContext db, ILogger<SubscriptionsController> logger, IPaymentService paymentService)
     {
         _db = db;
         _logger = logger;
+        _paymentService = paymentService;
     }
+
+    private static int GetMonthlyTokenLimit(string? planName) => planName?.ToLower() switch
+    {
+        var p when p != null && p.Contains("famille") => 3000,
+        var p when p != null && p.Contains("premium") => 2000,
+        var p when p != null && p.Contains("standard") => 500,
+        _ => 0,
+    };
 
     /// <summary>GET /api/subscriptions/me  abonnement actif de l'utilisateur connecté.</summary>
     [HttpGet("me")]
@@ -58,20 +71,24 @@ public class SubscriptionsController : ControllerBase
             }
 
             var plan = sub.PricingPlan;
+            var effectivePlanName = sub.PlanName ?? plan?.Name;
+            var hardcodedLimit = GetMonthlyTokenLimit(effectivePlanName);
             return Ok(new
             {
                 id = sub.Id,
-                planName = plan?.Name ?? "Standard",
-                tier = plan?.Name?.ToLower() ?? "standard",
+                planName = effectivePlanName ?? "Standard",
+                tier = effectivePlanName?.ToLower() ?? "standard",
                 status = sub.Status,
                 expiresAt = sub.EndDate ?? sub.StartDate.AddMonths(1),
                 autoRenew = sub.EndDate == null,
+                price = plan?.Price ?? 0,
                 downloadsUsed = 0,
                 downloadsLimit = plan?.MaxDownloads ?? 30,
                 quizUsedToday = 0,
                 quizDailyLimit = 20,
-                aiMessagesUsed = 0,
-                aiMessagesLimit = plan?.MaxChatMessages ?? 100,
+                aiMessagesUsed = sub.TokensUsedThisMonth,
+                aiMessagesLimit = plan?.MaxChatMessages ?? (hardcodedLimit > 0 ? hardcodedLimit : 100),
+                tokensResetAt = sub.TokensResetAt,
             });
         }
         catch (Exception ex)
@@ -120,6 +137,55 @@ public class SubscriptionsController : ControllerBase
         {
             _logger.LogError(ex, "Error creating subscription");
             return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>POST /api/subscriptions/purchase  initie un paiement NotchPay pour un abonnement.</summary>
+    [HttpPost("purchase")]
+    public async Task<IActionResult> Purchase([FromBody] PurchaseSubscriptionRequest req)
+    {
+        try
+        {
+            var userId = User.GetUserId();
+            var plan = await _db.PricingPlans.FindAsync(req.PlanId);
+            if (plan == null) return NotFound(new { error = "Plan introuvable" });
+
+            var baseAmount = plan.Price;
+            var amount = req.Billing switch
+            {
+                "yearly"    => Math.Round(baseAmount * 12 * 0.8m),
+                "quarterly" => Math.Round(baseAmount * 3 * 0.9m),
+                _           => baseAmount,
+            };
+
+            // Créer un order de type subscription
+            var order = new Order
+            {
+                UserId = userId,
+                OrderNumber = $"SUB-{userId}-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}",
+                TotalAmount = amount,
+                Status = "Pending",
+                PaymentMethod = "notchpay",
+                Notes = $"subscription:{req.PlanId}:{req.Billing}",
+            };
+            _db.Orders.Add(order);
+            await _db.SaveChangesAsync();
+
+            var payReq = new InitiatePaymentRequest
+            {
+                OrderId = order.Id,
+                Phone = req.Phone,
+                Amount = amount,
+                Description = $"Abonnement {plan.Name} ({req.Billing})",
+            };
+            var result = await _paymentService.InitiateNotchPayAsync(userId, payReq);
+
+            return Ok(new { paymentId = result.PaymentId, amount, currency = "XAF" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error initiating subscription purchase");
+            return StatusCode(500, new { error = "Erreur lors du paiement de l'abonnement" });
         }
     }
 

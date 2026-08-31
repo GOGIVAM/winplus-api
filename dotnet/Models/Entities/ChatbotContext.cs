@@ -81,6 +81,18 @@ public class ChatbotContext
     public string? LearningStyle { get; set; }
 
     /// <summary>
+    /// Scores moyens par matière sur 30 jours - JSON object {"Maths": 14.5, "Physique": 11.0}
+    /// </summary>
+    [Column(TypeName = "jsonb")]
+    public string? PerformanceHistory { get; set; }
+
+    /// <summary>
+    /// Langue forcée pour WinAI : "french" | "english" | "pidgin"
+    /// </summary>
+    [MaxLength(10)]
+    public string? ForceLanguage { get; set; }
+
+    /// <summary>
     /// Date de création
     /// </summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

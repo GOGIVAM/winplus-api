@@ -35,6 +35,7 @@ public partial class ApplicationDbContext : DbContext
     public DbSet<Exam> Exams => Set<Exam>();
     public DbSet<Quiz> Quizzes => Set<Quiz>();
     public DbSet<QuizAttempt> QuizAttempts => Set<QuizAttempt>();
+    public DbSet<QuizMistake> QuizMistakes => Set<QuizMistake>();
     public DbSet<Revision> Revisions => Set<Revision>();
     public DbSet<RevisionEnrollment> RevisionEnrollments => Set<RevisionEnrollment>();
     
