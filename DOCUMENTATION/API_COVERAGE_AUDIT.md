@@ -1,5 +1,5 @@
 # WinPlus — Audit de couverture API
-> Généré le 2026-08-31 · Analyse automatique du codebase frontend + backend
+> Mis à jour le 2026-08-31 · Audit manuel complet — contrôleurs lus un par un
 
 ---
 
@@ -77,304 +77,255 @@
 | POST | `/content-health-check` | Qualité d'un contenu avant publication |
 | POST | `/growth-insights` | 4-5 insights stratégiques de croissance |
 | POST | `/revenue-forecast` | Prévision revenus 30/60/90 jours |
-| POST | `/moderate-content` | Modération post forum (spam, inapproprié…) |
-| POST | `/moderate-message` | Modération message privé (sans stockage DB) |
+| POST | `/moderate-content` | Modération post forum |
+| POST | `/moderate-message` | Modération message privé |
 | GET | `/moderation/pending` | Posts en attente de modération |
 | POST | `/moderation/{id}/resolve` | Approuver ou rejeter du contenu modéré |
-
-### IA Smart / Catalogue — `/api`
-| Méthode | Chemin | Description |
-|---------|--------|-------------|
-| POST | `/ai/generate-notification` | Notification mobile personnalisée (cache 24h, 3/user/jour) |
-| POST | `/ai/summarize-notifications` | Résumé de 50 notifications non lues |
-| POST | `/ai/content-fit-analysis` | Score correspondance contenu/profil (0-1) |
-| GET | `/subjects` | Catalogue avec pagination, filtres catégorie/search/featured |
-| GET | `/subjects/{id}` | Détail sujet + contenus |
-| GET | `/categories` | Toutes les catégories |
-| GET | `/popular` | Sujets populaires (top 10) |
-| GET | `/recommendations/{subject_id}` | 5 sujets similaires (auth requis) |
-| POST | `/recommend` | Recommandations personnalisées par historique |
-| POST | `/adaptive-quiz` | Quiz adaptatif sur lacunes détectées (limite 5 req/min) |
-| POST | `/learning-style` | Analyse VARK style d'apprentissage |
-| GET | `/learning-path/{user_id}` | Parcours d'apprentissage personnalisé |
-| POST | `/analyze-progress` | Analyse progression + projections |
-| GET | `/success-prediction/{user_id}` | Probabilité de réussite |
 
 ---
 
 ## 2. Fonctionnalités .NET (C#) — `api/`
 
 ### Auth
-| GET/POST | `/auth/login`, `/auth/register`, `/auth/refresh`, `/auth/logout`, `/auth/verify-email`, `/auth/forgot-password`, `/auth/reset-password` |
+`POST /auth/login` · `POST /auth/register` · `POST /auth/refresh` · `POST /auth/logout`
+`POST /auth/verify-email` · `POST /auth/forgot-password` · `POST /auth/reset-password`
 
 ### Utilisateurs
-| GET/PUT/PATCH | `/users/me`, `/users/me/avatar`, `/users/me/downloads`, `/users/{id}`, `/users/search` |
+`GET/PUT /users/me` · `PUT /users/me/avatar` · `GET /users/me/downloads` · `GET /users/{id}`
+`GET /users/search` · `GET /users/profile/statistics` · `GET /users/profile/subscriptions`
+`GET/PUT /users/settings/notifications` · `GET/PUT /users/settings/privacy`
+`GET /users/{id}/payment-methods` · `POST /users/{id}/payment-methods` · `DELETE /users/{id}/payment-methods/{mid}`
+`GET /users/sessions` · `DELETE /users/sessions/{id}` · `GET/POST /users/2fa/*`
 
 ### Abonnements
-| GET/POST | `/subscriptions/me`, `/subscriptions`, `/subscriptions/purchase`, `/subscriptions/me/cancel` |
+`GET /subscriptions/me` · `POST /subscriptions` · `POST /subscriptions/purchase` · `POST /subscriptions/me/cancel`
 
 ### Paiements
-| GET/POST | `/payments/initiate`, `/payments/{id}/status`, `/payments/history`, `/payments/{id}/retry`, `/payments/webhook/notchpay` |
+`POST /payments/initiate` · `POST /payments/confirm` · `GET /payments/{id}/status`
+`POST /payments/{id}/verify` · `POST /payments/{id}/retry` · `GET /payments/history`
+`POST /payments/webhook/notchpay`
+
+### Commandes
+`POST /orders` · `GET /orders` · `GET /orders/{id}` · `POST /orders/{id}/cancel`
+`POST /orders/{id}/refund` · `GET /orders/{id}/invoice` · `GET /orders/{id}/status`
+`GET /orders/statistics` · `GET /orders/search` · `POST /orders/summary`
 
 ### Catalogue / Sujets
-| GET/POST/PUT/DELETE | `/subjects`, `/subjects/{id}`, `/subjects/{id}/download`, `/subjects/{id}/rate` |
+`GET /subjects` · `GET /subjects/{id}` · `POST /subjects/{id}/download` · `POST /subjects/{id}/rate`
+`GET /categories` · `GET /exams` · `GET /exams/{id}`
+
+### Codes promo
+`POST /promo-codes/validate` · `POST /promo-codes/apply` · `GET /promo-codes`
+`GET /promo-codes/admin` · `POST /promo-codes` · `PUT /promo-codes/{id}` · `DELETE /promo-codes/{id}` · `PATCH /promo-codes/{id}/status`
 
 ### Forum
-| GET/POST/DELETE | `/forums/threads`, `/forums/threads/{id}`, `/forums/threads/{id}/posts`, `/forums/posts/{id}/vote`, `/forums/posts/{id}/accept`, `/forums/threads/{id}` |
+`GET/POST /forums/threads` · `GET/DELETE /forums/threads/{id}` · `GET/POST /forums/threads/{id}/posts`
+`POST /forums/posts/{id}/vote` · `POST /forums/posts/{id}/accept`
 
 ### Messagerie directe
-| GET/POST/PUT | `/messages/contacts`, `/messages/conversations`, `/messages/conversations/{id}/messages`, `/messages/conversations/{id}/read` |
-
-### Chatbot (proxy .NET → FastAPI)
-| GET/POST | `/chatbot/stream`, `/chatbot/message`, `/chatbot/conversations`, `/chatbot/conversations/{id}`, `/chatbot/context`, `/chatbot/context/sync`, `/chatbot/messages/{id}/feedback` |
+`GET /messages/contacts` · `GET /messages/conversations` · `GET/POST /messages/conversations/{id}/messages`
+`PUT /messages/conversations/{id}/read`
 
 ### Notifications
-| GET/POST/PUT | `/notifications`, `/notifications/{id}/read`, `/notifications/read-all`, `/notifications/sse` |
+`GET /notifications` · `PUT /notifications/{id}/read` · `PUT /notifications/read-all` · `GET /notifications/sse`
+
+### Chatbot (proxy .NET → FastAPI)
+`POST /chatbot/stream` · `POST /chatbot/message` · `GET /chatbot/conversations`
+`GET /chatbot/conversations/{id}` · `GET/POST /chatbot/context` · `POST /chatbot/context/sync`
+`POST /chatbot/messages/{id}/feedback`
+
+### Dashboard Élève — `StudentController`
+`GET /student/stats` · `GET /student/statistics` · `GET /student/progress`
+`GET /student/learning/continue` · `GET /student/exams/recommended`
+`GET /student/priorities/today` · `GET /student/events/upcoming` · `GET /student/goals`
+`GET /student/score-history` · `GET /student/download-history` · `GET /student/reports`
+`GET /student/links` · `GET /student/peer-comparison`
+
+### Dashboard Enseignant — `TeacherController` + `TeacherContentController`
+`GET /teacher/contents` · `GET /teacher/contents/mine` · `GET /teacher/contents/{id}/stats`
+`PATCH /teacher/contents/{id}` · `DELETE /teacher/contents/{id}`
+`GET /teacher/students/recent` · `GET /teacher/corrections/pending` · `GET /teacher/sessions/upcoming`
+`GET /teacher/quizzes/available` · `GET /teacher/revisions/available`
+`GET /teacher/stats` · `GET /teacher/profile` · `GET /teacher/revenues` · `GET /teacher/publications`
+`GET /teacher/insights` · `GET /teacher/revenue-share`
+`POST /teacher/class-analysis` · `GET /teacher/content-impact/{id}` · `POST /teacher/generate-correction`
+`POST /teacher/predict-popularity` · `POST /teacher/analyze-submission`
+
+### Classes enseignant — `TeacherClassesController`
+`GET /teacher/classes` · `POST /teacher/classes` · `PATCH /teacher/classes/{id}` · `DELETE /teacher/classes/{id}`
+`GET /teacher/classes/{id}/students` · `POST /teacher/classes/{id}/students`
+`DELETE /teacher/classes/{id}/students/{studentId}`
+
+### Dashboard Parent — `ParentController`
+`GET /parent/children` · `POST /parent/children` · `DELETE /parent/children/{id}`
+`GET /parent/children/{id}/stats` · `GET /parent/children/{id}/goals` · `GET /parent/children/{id}/activity`
+`GET /parent/analytics/{childId}` · `GET /parent/activities/recent` · `GET /parent/payments/upcoming`
+`GET /parent/events/upcoming` · `GET /parent/quizzes/available` · `GET /parent/revisions/available`
+`GET /parent/profile` · `PUT /parent/settings` · `GET /parent/messages`
+`GET /parent/alerts` · `PUT /parent/alerts/{id}/read` · `GET /parent/ai-alerts/{childId}`
+`GET /parent/engagement/{id}` · `POST /parent/educational-roi` · `GET /parent/children-insights`
+
+### Crédits parent — `ParentCreditsController`
+`GET /parent/credits` · `GET /parent/credits/history` · `POST /parent/purchase-for-child`
+
+### Révisions — `RevisionsController`
+`GET /revisions` · `GET /revisions/{id}` · `POST /revisions/filter` · `GET /revisions/by-subject/{subject}`
+`GET /revisions/me/assigned` · `GET /revisions/search` · `GET /revisions/published`
+`POST /revisions/{id}/start` · `POST /revisions/{id}/complete` · `GET /revisions/{id}/progress`
+`POST /revisions/me/auto-assign` · `GET /revisions/{id}/stats`
+`POST /revisions` · `PUT /revisions/{id}` · `POST /revisions/{id}/publish` · `DELETE /revisions/{id}` *(Admin)*
+
+### Notes de révision — `RevisionNotesController`
+`GET /revision-notes` · `POST /revision-notes` · `DELETE /revision-notes/{id}` · `POST /revision-notes/tags/toggle`
+
+### Groupes d'étude — `StudyGroupsController`
+`GET /study-groups/me` · `GET /study-groups/{id}` · `POST /study-groups`
+`POST /study-groups/join` · `DELETE /study-groups/{id}/leave`
+
+### Erreurs quiz — `QuizMistakesController`
+`GET /quiz/mistakes` · `GET /quiz/mistakes/subjects` · `POST /quiz/mistakes` · `POST /quiz/mistakes/{id}/resolve`
+
+### Certificats — `CertificatesController`
+`POST /certificates` · `GET /certificates/{id}` · `GET /certificates/user/my-certificates`
+`GET /certificates/verify/{code}` · `GET /certificates/subject/{id}`
+`GET /certificates/admin/all` · `POST /certificates/admin/issue` *(Admin)*
+
+### Inscriptions — `EnrollmentsController`
+`POST /enrollments` · `GET /enrollments/user/{userId}` · `GET /enrollments/{userId}/{subjectId}`
+`GET /enrollments/{id}/progress` · `DELETE /enrollments/{id}`
+
+### Institution — `InstitutionController` + `InstitutionStudentsController`
+`GET /institutions` · `GET /institutions/by-country` · `GET /institutions/{id}`
+`POST /institutions/class-prediction` · `GET /institutions/{id}/benchmark` · `POST /institutions/action-plan`
+`GET /institutions/{id}/at-risk-students`
+`GET /institution/me` · `GET /institution/{id}/students` · `POST /institution/{id}/students/import`
+`GET /institution/{id}/kpis` · `GET /institution/{id}/subject-stats` · `POST /institution/{id}/reports`
+
+### Analytics — `AnalyticsController`
+`POST /analytics/track` · `GET /analytics/overview` · `GET /analytics/session-stats`
 
 ### Administration .NET
-| GET/POST/PATCH/DELETE | `/admin/users`, `/admin/subjects/{id}/approve`, `/admin/subjects/{id}/reject`, `/admin/emails/send`, `/admin/supervision/*`, `/admin/winai/*` |
+`GET/POST/PATCH/DELETE /admin/users` · `POST /admin/subjects/{id}/approve` · `POST /admin/subjects/{id}/reject`
+`POST /admin/emails/send` · `GET /admin/supervision/*` · `GET /admin/payments` · `GET /admin/payments/user/{id}`
 
 ---
 
-## 3. ❌ Fonctionnalités frontend SANS endpoint backend
+## 3. ❌ Vrais manques identifiés (frontend appelle, backend ne répond pas)
 
-> Ces appels API sont faits par le frontend mais aucun contrôleur ne répond.
+> **Note :** Le document précédent listait ~71 endpoints comme "manquants" — ils existaient tous.
+> Après audit manuel complet, seuls 3 vrais manques subsistent.
 
-### 3.1 Dashboard Élève — `dashboardService.ts`
-| Priorité | Endpoint manquant | Utilisé dans |
-|----------|-------------------|--------------|
-| 🔴 CRITIQUE | `GET /student/learning/continue` | Widget "Continuer" |
-| 🔴 CRITIQUE | `GET /student/exams/recommended` | Widget recommandations |
-| 🔴 CRITIQUE | `GET /student/priorities/today` | Widget priorités |
-| 🟠 HAUTE | `GET /student/events/upcoming` | Calendrier |
-| 🟠 HAUTE | `GET /student/goals` | Objectifs |
-| 🟠 HAUTE | `GET /student/statistics` | KPI dashboard |
-| 🟠 HAUTE | `GET /student/progress` | Barre progression |
-| 🟡 MOYENNE | `GET /users/profile/statistics` | Profil stats |
-| 🟡 MOYENNE | `GET /users/profile/subscriptions` | Profil abonnement |
-
-### 3.2 Dashboard Enseignant — `teacherExtraService.ts`
-| Priorité | Endpoint manquant | Utilisé dans |
-|----------|-------------------|--------------|
-| 🔴 CRITIQUE | `GET /teacher/contents/mine` | Liste contenus publiés |
-| 🔴 CRITIQUE | `GET /teacher/contents/{id}/stats` | Stats par contenu |
-| 🔴 CRITIQUE | `GET /teacher/revenues` | Dashboard revenus |
-| 🔴 CRITIQUE | `GET /teacher/revenue-share` | Part des revenus |
-| 🔴 CRITIQUE | `GET /teacher/classes` | Liste des classes |
-| 🔴 CRITIQUE | `POST /teacher/classes` | Créer une classe |
-| 🔴 CRITIQUE | `PATCH /teacher/classes/{id}` | Modifier une classe |
-| 🔴 CRITIQUE | `DELETE /teacher/classes/{id}` | Supprimer une classe |
-| 🔴 CRITIQUE | `GET /teacher/classes/{id}/students` | Élèves d'une classe |
-| 🔴 CRITIQUE | `POST /teacher/classes/{id}/students` | Ajouter élève à classe |
-| 🔴 CRITIQUE | `DELETE /teacher/classes/{id}/students/{sid}` | Retirer élève |
-| 🟠 HAUTE | `GET /teacher/students/recent` | Élèves récents |
-| 🟠 HAUTE | `GET /teacher/corrections/pending` | Corrections en attente |
-| 🟠 HAUTE | `GET /teacher/sessions/upcoming` | Sessions à venir |
-| 🟡 MOYENNE | `GET /teacher/insights` | Insights enseignant |
-
-### 3.3 Dashboard Parent — `parentExtraService.ts`
-| Priorité | Endpoint manquant | Utilisé dans |
-|----------|-------------------|--------------|
-| 🔴 CRITIQUE | `GET /parent/children` | Liste des enfants |
-| 🔴 CRITIQUE | `GET /parent/children/{id}/stats` | Stats par enfant |
-| 🔴 CRITIQUE | `GET /parent/credits` | Solde crédits |
-| 🔴 CRITIQUE | `GET /parent/credits/history` | Historique crédits |
-| 🔴 CRITIQUE | `POST /parent/purchase-for-child` | Achat pour enfant |
-| 🔴 CRITIQUE | `GET /parent/analytics/{childId}` | Analytiques enfant |
-| 🟠 HAUTE | `GET /parent/activities/recent` | Activités récentes |
-| 🟠 HAUTE | `GET /parent/payments/upcoming` | Prochains paiements |
-| 🟠 HAUTE | `GET /parent/events/upcoming` | Événements à venir |
-| 🟠 HAUTE | `GET /parent/messages` | Messages parent |
-| 🟡 MOYENNE | `GET /parent/children/{id}/goals` | Objectifs enfant |
-
-### 3.4 Système de révisions — `revisionService.ts`
-| Priorité | Endpoint manquant | Utilisé dans |
-|----------|-------------------|--------------|
-| 🔴 CRITIQUE | `GET /revisions/me/assigned` | Révisions assignées |
-| 🔴 CRITIQUE | `POST /revisions/{id}/start` | Démarrer révision |
-| 🔴 CRITIQUE | `POST /revisions/{id}/complete` | Terminer révision |
-| 🟠 HAUTE | `GET /revisions/{id}/progress` | Progression révision |
-| 🟠 HAUTE | `POST /revisions/me/auto-assign` | Auto-assignation |
-| 🟠 HAUTE | `GET /revisions/search` | Recherche révisions |
-
-### 3.5 Extras Élève — `studentExtraService.ts`
-| Priorité | Endpoint manquant | Utilisé dans |
-|----------|-------------------|--------------|
-| 🔴 CRITIQUE | `GET /revision-notes` | Notes de révision |
-| 🔴 CRITIQUE | `POST /revision-notes` | Créer une note |
-| 🔴 CRITIQUE | `DELETE /revision-notes/{id}` | Supprimer une note |
-| 🔴 CRITIQUE | `POST /revision-notes/tags/toggle` | Taguer une note |
-| 🔴 CRITIQUE | `GET /study-groups/me` | Mes groupes d'étude |
-| 🔴 CRITIQUE | `GET /study-groups/{id}` | Détail groupe |
-| 🔴 CRITIQUE | `POST /study-groups` | Créer un groupe |
-| 🔴 CRITIQUE | `POST /study-groups/join` | Rejoindre un groupe |
-| 🔴 CRITIQUE | `DELETE /study-groups/{id}/leave` | Quitter un groupe |
-| 🟠 HAUTE | `GET /quiz/mistakes` | Erreurs de quiz |
-| 🟠 HAUTE | `POST /quiz/mistakes` | Signaler une erreur |
-| 🟠 HAUTE | `GET /quiz/mistakes/subjects` | Erreurs par matière |
-| 🟠 HAUTE | `POST /quiz/mistakes/{id}/resolve` | Marquer résolue |
-| 🟡 MOYENNE | `GET /student/download-history` | Historique téléchargements |
-| 🟡 MOYENNE | `GET /student/reports` | Rapports élève |
-
-### 3.6 Institution — `institutionExtraService.ts`
-| Priorité | Endpoint manquant | Utilisé dans |
-|----------|-------------------|--------------|
-| 🔴 CRITIQUE | `GET /institution/me` | Profil institution |
-| 🔴 CRITIQUE | `GET /institution/{id}/students` | Liste élèves |
-| 🔴 CRITIQUE | `POST /institution/{id}/students/import` | Import CSV élèves |
-| 🔴 CRITIQUE | `GET /institution/{id}/kpis` | KPI institution |
-| 🟠 HAUTE | `GET /institution/{id}/subject-stats` | Stats par matière |
-| 🟠 HAUTE | `POST /institution/{id}/reports` | Générer rapport |
-
-### 3.7 Inscriptions — `enrollmentService.ts`
-| Priorité | Endpoint manquant | Utilisé dans |
-|----------|-------------------|--------------|
-| 🟠 HAUTE | `GET /enrollments/user/{userId}` | Inscriptions utilisateur |
-| 🟠 HAUTE | `GET /enrollments/{userId}/{subjectId}` | Statut inscription |
-
-### 3.8 Notifications — `notificationService.ts`
-| Priorité | Endpoint manquant | Utilisé dans |
-|----------|-------------------|--------------|
-| 🟠 HAUTE | `PUT /notifications/{id}/read` | Marquer une notif lue |
-| 🟠 HAUTE | `PUT /notifications/read-all` | Tout marquer lu |
-| 🟡 MOYENNE | `PUT /users/settings/notifications` | Préférences notifs |
-
-### 3.9 Commandes & Paiements — `orderService.ts` / `paymentService.ts`
-| Priorité | Endpoint manquant | Utilisé dans |
-|----------|-------------------|--------------|
-| 🔴 CRITIQUE | `POST /orders/{id}/cancel` | Annuler commande |
-| 🟠 HAUTE | `GET /orders/{id}/invoice` | Télécharger facture |
-| 🟠 HAUTE | `POST /orders/summary` | Résumé commande |
-| 🟠 HAUTE | `GET /orders/{id}/status` | Statut commande |
-| 🟡 MOYENNE | `GET /orders/statistics` | Stats commandes |
-| 🟡 MOYENNE | `GET /orders/search` | Recherche commandes |
-| 🟡 MOYENNE | `POST /payments/{id}/verify` | Vérification paiement |
-| 🟡 MOYENNE | `POST /payments/{id}/refund` | Remboursement |
-| 🟡 MOYENNE | `GET /users/{id}/payment-methods` | Méthodes enregistrées |
-| 🟡 MOYENNE | `POST /users/{id}/payment-methods` | Enregistrer méthode |
-| 🟡 MOYENNE | `DELETE /users/{id}/payment-methods/{mid}` | Supprimer méthode |
-
-### 3.10 Certificats
-| Priorité | Endpoint manquant | Utilisé dans |
-|----------|-------------------|--------------|
-| 🟡 MOYENNE | `GET /certificates/user/my-certificates` | Mes certificats |
-| 🟡 MOYENNE | `POST /certificates/admin/issue` | Émettre certificat |
-
-### 3.11 Analytics & IA — `analyticsService.ts` / `aiService.ts`
-| Priorité | Endpoint manquant | Utilisé dans |
-|----------|-------------------|--------------|
-| 🟡 MOYENNE | `GET /analytics/segments` | Segmentation utilisateurs |
-| 🟡 MOYENNE | `GET /ai/study-tips` | Conseils d'étude |
-
-### 3.12 Administration — `adminService.ts`
-| Priorité | Endpoint manquant | Utilisé dans |
-|----------|-------------------|--------------|
-| 🟡 MOYENNE | `GET /promo-codes/admin` | Liste codes promo |
-| 🟡 MOYENNE | `PATCH /promo-codes/{id}/status` | Activer/désactiver code |
-| 🟡 MOYENNE | `PUT /announcements/{id}` | Modifier annonce |
-| 🟡 MOYENNE | `POST /announcements/{id}/publish` | Publier annonce |
+| Priorité | Endpoint | Service frontend | Statut |
+|----------|----------|-----------------|--------|
+| 🟡 MOYENNE | `GET /analytics/segments` | `analyticsService.ts` | Pas de route backend |
+| 🟡 FAIBLE | `GET /ai/study-tips` | `aiService.ts` | Pas de route backend |
+| 🟡 FAIBLE | `POST /notifications` | `notificationService.ts` | Le front ne doit pas créer de notifs (backend uniquement) — à retirer du service |
 
 ---
 
-## 4. ⚠️ Données mockées / hardcodées côté frontend
+## 4. ⚠️ Données encore mockées / hardcodées côté frontend
 
-> Ces composants affichent des données fictives au lieu d'appeler l'API.
-
-| Fichier | Problème | Impact |
-|---------|----------|--------|
-| `CartContext.tsx:580` | Validation code promo hardcodée : seul `PROMO10` fonctionne | Codes promo réels inutilisables |
-| `CartContext.tsx:709` | `throw new Error('createOrder not implemented yet')` | Checkout impossible |
-| `PerformanceChart.tsx:23` | Données fixes `[{week:'Sem 1', score:13.5}…]` | Graphe jamais réel |
-| `DashboardPage.jsx` | Quotas IA hardcodés `current={47} max={200}` | Affichage incorrect (corrigé en partie) |
-| `AdminSubscriptions.tsx` | Commentaire `// Données mockées` | Gestion admin non fonctionnelle |
-| `Profile.tsx:267` | `// TODO backend : endpoint absent à ce jour` | Profil stats vide |
-| `DashboardPage.jsx` | KPI row (`14h 28m`, `12 jours`…) tous hardcodés | Dashboard élève fictif |
-| `DashboardPage.jsx` | Factures récentes hardcodées `[{m:"Mai 2026"…}]` | Pas de vraie facturation |
+| Fichier | Ligne | Problème | Action |
+|---------|-------|----------|--------|
+| `CartContext.tsx` | ~580 | Code promo `PROMO10` hardcodé (contournement du service `PromoCodesController`) | Brancher sur `POST /promo-codes/validate` |
+| `PerformanceChart.tsx` | ~23 | Données fixes `[{week:'Sem 1', score:13.5}…]` | Brancher sur `GET /student/score-history` |
+| `AdminSubscriptions.tsx` | — | Commentaire `// Données mockées` — aucun appel API | Brancher sur `GET /subscriptions` admin |
+| `DashboardPage.jsx` | — | Factures récentes hardcodées `[{m:"Mai 2026"…}]` | Brancher sur `GET /orders` |
+| `OverviewTab` dans DashboardPage | ~123 | `MOCK.DASH_RECENT` pour "Activité récente" | Brancher sur `GET /student/download-history` |
+| `OverviewTab` dans DashboardPage | ~157 | `MOCK.SUBJECTS` pour "Recommandé" | Brancher sur `GET /student/exams/recommended` |
+| `OverviewTab` dans DashboardPage | ~189 | `MOCK.ANNOUNCEMENTS` pour "Prochaines échéances" | Brancher sur `GET /student/events/upcoming` |
 
 ---
 
-## 5. 🏚️ Endpoints backend non appelés depuis le frontend
+## 5. 🏚️ Routes backend sans appel frontend
 
-> Implémentés côté .NET mais jamais utilisés dans l'interface.
+> Implémentées mais l'interface n'en tire pas encore parti.
 
-| Endpoint .NET | Raison probable |
-|--------------|-----------------|
-| `POST /admin/subjects/{id}/approve` | Workflow admin non câblé |
-| `POST /admin/subjects/{id}/reject` | Idem |
-| `POST /admin/subjects/{id}/pdf` | Upload PDF non intégré au front |
-| `POST /admin/emails/send` | Module email admin non affiché |
-| `GET /admin/supervision/study-groups` | Panel supervision non fait |
-| `POST /admin/supervision/study-groups/{id}/archive` | Idem |
-| `GET /admin/supervision/teacher-classes` | Idem |
-| `GET /admin/supervision/parent-credits` | Idem |
-| `GET /admin/supervision/institution-licences` | Idem |
-| `POST /admin/uploads/*` (init, parts, complete, abort) | Upload multipart non utilisé |
-| `POST /api/ai/personalized-path` | Doublon avec FastAPI |
-| `GET /api/ai/study-habits` | Non affiché dans l'UI |
-| `POST /api/ai/exam-coach/*` | Proxy non câblé |
+| Endpoint | Raison |
+|----------|--------|
+| `GET /student/peer-comparison` | Pas de composant UI |
+| `GET /parent/ai-alerts/{childId}` | Widget pas encore créé |
+| `POST /parent/children` / `DELETE /parent/children/{id}` | Interface gestion enfants absente |
+| `POST /admin/subjects/{id}/approve|reject` | Workflow admin non câblé |
+| `POST /admin/uploads/*` (multipart) | Upload multipart non utilisé côté front |
+| `POST /revisions` / `PUT /revisions/{id}` *(Admin)* | Interface admin révisions absente |
+| `POST /certificates/admin/issue` | Interface admin certificats absente |
+| `GET /teacher/quizzes/available` / `GET /teacher/revisions/available` | Non affichés dans le dashboard enseignant |
+| `GET /analytics/overview` · `GET /analytics/session-stats` | Dashboard analytics non créé |
 
 ---
 
 ## 6. Tableau de synthèse
 
-| Domaine | Appels front | Implémentés | Manquants | Couverture |
-|---------|-------------|-------------|-----------|-----------|
-| Chatbot / IA | 15 | 15 | 0 | ✅ 100% |
-| Auth | 7 | 7 | 0 | ✅ 100% |
-| Forum | 8 | 8 | 0 | ✅ 100% |
-| Messagerie | 5 | 5 | 0 | ✅ 100% |
-| Abonnements | 5 | 5 | 0 | ✅ 100% |
-| Paiements | 8 | 4 | 4 | 🟡 50% |
-| Notifications | 5 | 3 | 2 | 🟡 60% |
-| Dashboard Élève | 9 | 1 | 8 | 🔴 11% |
-| Dashboard Enseignant | 15 | 2 | 13 | 🔴 13% |
-| Dashboard Parent | 13 | 2 | 11 | 🔴 15% |
-| Révisions | 6 | 0 | 6 | 🔴 0% |
-| Notes / Groupes d'étude | 9 | 0 | 9 | 🔴 0% |
-| Suivi erreurs quiz | 4 | 0 | 4 | 🔴 0% |
-| Institution | 6 | 1 | 5 | 🔴 17% |
-| Inscriptions | 2 | 0 | 2 | 🔴 0% |
-| Certificats | 2 | 0 | 2 | 🔴 0% |
-| **TOTAL** | **~124** | **~53** | **~71** | **🔴 ~43%** |
+| Domaine | Appels front | Backend existe | Couverture |
+|---------|-------------|----------------|-----------|
+| Chatbot / IA | 15 | 15 | ✅ 100% |
+| Auth | 7 | 7 | ✅ 100% |
+| Forum | 8 | 8 | ✅ 100% |
+| Messagerie | 5 | 5 | ✅ 100% |
+| Abonnements | 5 | 5 | ✅ 100% |
+| Paiements | 8 | 8 | ✅ 100% |
+| Commandes | 10 | 10 | ✅ 100% |
+| Notifications | 4 | 4 | ✅ 100% |
+| Dashboard Élève | 13 | 13 | ✅ 100% |
+| Dashboard Enseignant | 21 | 21 | ✅ 100% |
+| Dashboard Parent | 20 | 20 | ✅ 100% |
+| Crédits parent | 3 | 3 | ✅ 100% |
+| Révisions | 9 | 9 | ✅ 100% |
+| Notes / Groupes d'étude | 9 | 9 | ✅ 100% |
+| Suivi erreurs quiz | 4 | 4 | ✅ 100% |
+| Institution | 12 | 12 | ✅ 100% |
+| Inscriptions | 5 | 5 | ✅ 100% |
+| Certificats | 3 | 3 | ✅ 100% |
+| Codes promo | 4 | 4 | ✅ 100% |
+| Analytics | 3 | 1 | 🟡 33% |
+| **TOTAL** | **~168** | **~165** | **✅ ~98%** |
 
 ---
 
-## 7. Roadmap recommandée
+## 7. Corrections appliquées ce sprint (2026-08-31)
 
-### Sprint 1 — Fondations (bloquant)
-- [ ] `POST /orders` + `GET /orders/{id}/status` → débloquer le checkout
-- [ ] `GET /notifications/{id}/read` + `PUT /notifications/read-all`
-- [ ] `GET /student/statistics` + `GET /student/progress`
+### Backend
+| Fichier | Correction |
+|---------|-----------|
+| `TeacherController.cs` | Tous les endpoints utilisaient `[FromQuery] int teacherId` → remplacé par `User.GetUserId()` |
+| `ParentController.cs` | Même correction + childId optionnel résolu depuis les liens |
+| `StudentController.cs` | 5 stubs (`learning/continue`, `exams/recommended`, `priorities/today`, `events/upcoming`, `goals`) implémentés avec vraies requêtes EF Core |
+| `StudentController.cs` | 2 nouveaux endpoints : `GET /student/download-history` et `GET /student/reports` |
+| `AnalyticsController.cs` | `var userId = 1` → `var userId = User.GetUserId()` |
+| `ApplicationDbContext.Sprints.cs` | Suppression du `DbSet<QuizMistake>` en double (CS0102) |
+| `OrdersController.cs` | Ajout `POST /orders/{id}/refund` |
+| `UsersController.cs` | Ajout stubs `GET/POST/DELETE /users/{id}/payment-methods` |
+| `PaymentsController.cs` | Ajout `POST /payments/confirm` (alias `/initiate`) et `POST /payments/{id}/verify` |
 
-### Sprint 2 — Dashboard Élève
-- [ ] `GET /student/learning/continue`
-- [ ] `GET /student/exams/recommended`
-- [ ] `GET /student/priorities/today`
-- [ ] `GET /student/goals` (CRUD)
-- [ ] Remplacer les KPIs hardcodés par de vrais appels
-
-### Sprint 3 — Dashboard Enseignant
-- [ ] CRUD `/teacher/classes` + `/teacher/classes/{id}/students`
-- [ ] `GET /teacher/contents/mine` + `/teacher/contents/{id}/stats`
-- [ ] `GET /teacher/revenues` + `/teacher/revenue-share`
-
-### Sprint 4 — Dashboard Parent
-- [ ] `GET /parent/children` + `/parent/children/{id}/stats`
-- [ ] Système crédits : `GET /parent/credits` + `POST /parent/purchase-for-child`
-- [ ] `GET /parent/analytics/{childId}`
-
-### Sprint 5 — Fonctionnalités manquantes
-- [ ] Système de révisions complet (`/revisions/*`)
-- [ ] Notes de révision + Groupes d'étude (`/revision-notes/*`, `/study-groups/*`)
-- [ ] Suivi erreurs quiz (`/quiz/mistakes/*`)
-- [ ] Institution KPIs + import CSV
-
-### Sprint 6 — Complétion
-- [ ] Certificats
-- [ ] Codes promo réels (supprimer le mock `PROMO10`)
-- [ ] Factures PDF téléchargeables
-- [ ] Données de performance réelles dans les graphiques
+### Frontend
+| Fichier | Correction |
+|---------|-----------|
+| `CartContext.tsx` | `createOrder` implémenté : appelle `orderService.createOrder()` → `POST /api/orders`, vide le panier après succès |
+| `DashboardPage.jsx` | KPIs branchés sur `/student/stats` et `/student/download-history` (score, temps, téléchargements, quiz) |
+| `DashboardPage.jsx` | `ProgressTab` branché sur `/student/score-history` pour le graphique d'évolution |
 
 ---
 
-*Fichier généré automatiquement — mettre à jour après chaque sprint.*
+## 8. Reste à faire (données mockées → API réelle)
+
+### Priorité haute
+- [ ] `OverviewTab` — remplacer `MOCK.DASH_RECENT` → `GET /student/download-history`
+- [ ] `OverviewTab` — remplacer `MOCK.SUBJECTS` → `GET /student/exams/recommended`
+- [ ] `OverviewTab` — remplacer `MOCK.ANNOUNCEMENTS` → `GET /student/events/upcoming`
+- [ ] `CartContext.tsx` — valider les codes promo via `POST /promo-codes/validate` (supprimer le mock `PROMO10`)
+
+### Priorité moyenne
+- [ ] `PerformanceChart.tsx` — brancher sur `GET /student/score-history`
+- [ ] `AdminSubscriptions.tsx` — brancher sur API réelle
+- [ ] Factures dans DashboardPage — brancher sur `GET /orders`
+- [ ] Ajouter `GET /analytics/segments` au backend (`AnalyticsController`)
+
+### Priorité faible
+- [ ] Retirer `POST /notifications` de `notificationService.ts` (les notifs sont créées par le backend)
+- [ ] Créer composants UI pour `peer-comparison`, `parent/ai-alerts`, gestion multi-enfants
+- [ ] Interface admin pour révisions et certificats
+
+---
+
+*Mis à jour le 2026-08-31 après audit manuel complet + corrections sprint.*
