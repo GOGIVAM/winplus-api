@@ -18,6 +18,7 @@ public class ForumForbiddenException : Exception
 public interface IForumService
 {
     Task<ForumThreadListResponse> GetThreadsAsync(string? category, int page, int pageSize);
+    Task<ForumThreadResponse> GetThreadByIdAsync(int threadId);
     Task<ForumThreadResponse> CreateThreadAsync(int userId, CreateThreadRequest request);
     Task<ForumPostListResponse> GetPostsAsync(int threadId);
     Task<ForumPostResponse> CreatePostAsync(int threadId, int userId, CreatePostRequest request);
@@ -88,6 +89,36 @@ public class ForumService : IForumService
             PageSize = pageSize,
             TotalPages = (int)Math.Ceiling(total / (double)pageSize)
         };
+    }
+
+    public async Task<ForumThreadResponse> GetThreadByIdAsync(int threadId)
+    {
+        var t = await _db.ForumThreads
+            .Include(t => t.User)
+            .Where(t => t.Id == threadId && !t.IsDeleted)
+            .Select(t => new ForumThreadResponse
+            {
+                Id = t.Id,
+                UserId = t.UserId,
+                AuthorName = t.User != null ? (t.User.FirstName + " " + t.User.LastName).Trim() : null,
+                AuthorRole = t.User != null ? t.User.Role : null,
+                IsVerifiedInstitution = t.User != null && t.User.Role == "institution" && t.User.IsEmailVerified,
+                Title = t.Title,
+                Content = t.Content,
+                Category = t.Category,
+                Tag = t.Tag,
+                IsPinned = t.IsPinned,
+                IsSolved = t.IsSolved,
+                ViewsCount = t.ViewsCount,
+                RepliesCount = t.RepliesCount,
+                Upvotes = t.Upvotes,
+                CreatedAt = t.CreatedAt,
+                UpdatedAt = t.UpdatedAt
+            })
+            .FirstOrDefaultAsync();
+
+        if (t == null) throw new KeyNotFoundException($"Thread {threadId} not found");
+        return t;
     }
 
     public async Task<ForumThreadResponse> CreateThreadAsync(int userId, CreateThreadRequest request)

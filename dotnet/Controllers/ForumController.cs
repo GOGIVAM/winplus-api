@@ -97,6 +97,31 @@ public class ForumController : ControllerBase
     }
 
     /// <summary>
+    /// Récupère un thread par son identifiant
+    /// </summary>
+    [HttpGet("threads/{id}")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ForumThreadResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetThread(int id)
+    {
+        try
+        {
+            var result = await _forumService.GetThreadByIdAsync(id);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = "Thread not found" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting thread {ThreadId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
     /// Crée un nouveau thread
     /// </summary>
     [HttpPost("threads")]

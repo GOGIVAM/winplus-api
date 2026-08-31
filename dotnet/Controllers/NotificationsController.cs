@@ -55,7 +55,8 @@ public class NotificationsController : ControllerBase
 
         try
         {
-            using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var client = _http.CreateClient();
+            using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
             if (!resp.IsSuccessStatusCode)
             {
                 Response.StatusCode = (int)resp.StatusCode;
