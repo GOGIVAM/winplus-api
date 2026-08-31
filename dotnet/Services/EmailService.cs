@@ -590,7 +590,10 @@ public class EmailService : IEmailService
               <table role=""presentation"" cellpadding=""0"" cellspacing=""0"" border=""0"">
                 <tr>
                   <td style=""padding:0 10px 0 0;vertical-align:middle;"">
-                    <img src=""{logoUrl}"" width=""44"" alt=""WinPlus"" style=""display:block;width:44px;max-width:44px;height:auto;border:0;outline:none;text-decoration:none;font-family:Arial,sans-serif;font-size:18px;font-weight:700;color:#0F2A35;"">
+                    <!-- alt vide : si l'URL renvoie 404, le client de messagerie
+                         n'affiche ni icone d'image cassee ni texte de repli.
+                         Le wordmark ""Win+"" a droite porte alors seul l'identite. -->
+                    <img src=""{logoUrl}"" width=""44"" alt="""" style=""display:block;width:44px;max-width:44px;height:auto;border:0;outline:none;text-decoration:none;"">
                   </td>
                   <td style=""vertical-align:middle;"">
                     <span style=""font-family:'Bricolage Grotesque',-apple-system,'Helvetica Neue',Arial,sans-serif;font-size:20px;font-weight:700;color:#0F2A35;letter-spacing:-0.02em;"">Win<em style=""font-family:'Instrument Serif',Georgia,serif;font-style:italic;color:#259A8E;"">+</em></span>
