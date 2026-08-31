@@ -18,7 +18,6 @@ public partial class ApplicationDbContext
     public DbSet<StudyGroupMember> StudyGroupMembers => Set<StudyGroupMember>();
     public DbSet<RevisionNote> RevisionNotes => Set<RevisionNote>();
     public DbSet<RevisionTag> RevisionTags => Set<RevisionTag>();
-    public DbSet<QuizMistake> QuizMistakes => Set<QuizMistake>();
     public DbSet<TeacherClassStudent> TeacherClassStudents => Set<TeacherClassStudent>();
     public DbSet<ParentCreditLedger> ParentCreditLedgers => Set<ParentCreditLedger>();
     public DbSet<InstitutionStudent> InstitutionStudents => Set<InstitutionStudent>();
