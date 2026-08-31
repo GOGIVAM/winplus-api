@@ -93,8 +93,7 @@ public class AnalyticsController : ControllerBase
     {
         try
         {
-            // À remplacer par l'ID utilisateur authentifié
-            var userId = 1;
+            var userId = User.GetUserId();
 
             var response = await _analyticsService.GetSessionStatsAsync(userId);
             return Ok(response);
