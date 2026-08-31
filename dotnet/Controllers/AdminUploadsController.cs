@@ -227,7 +227,12 @@ public class AdminUploadsController : ControllerBase
     /// </summary>
     [HttpPost("direct")]
     [RequestSizeLimit(26 * 1024 * 1024)]
-    public async Task<IActionResult> Direct(IFormFile file, [FromQuery] string? folder = null)
+    // [FromForm] est indispensable : sans source de liaison explicite, un
+    // [ApiController] infere le parametre depuis le CORPS et confie la requete
+    // au formateur JSON, qui ne sait pas lire un multipart/form-data -> 415
+    // renvoye avant l'entree dans l'action. Meme forme que UploadAvatar et
+    // UploadCover, les deux uploads qui fonctionnent deja.
+    public async Task<IActionResult> Direct([FromForm] IFormFile file, [FromQuery] string? folder = null)
     {
         if (file == null || file.Length == 0)
             return BadRequest(new { error = "Fichier requis" });

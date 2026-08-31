@@ -1263,7 +1263,10 @@ public class AdminController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> UploadSubjectPdf(int id, IFormFile file)
+    // Meme correction que AdminUploadsController.Direct : sans [FromForm], le
+    // fichier est cherche dans un corps JSON et la requete multipart est
+    // refusee en 415.
+    public async Task<IActionResult> UploadSubjectPdf(int id, [FromForm] IFormFile file)
     {
         const long MaxPdfSize = 50L * 1024 * 1024;
 
