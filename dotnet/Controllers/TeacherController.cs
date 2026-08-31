@@ -113,10 +113,11 @@ public class TeacherController : ControllerBase
     [HttpGet("contents")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetContents([FromQuery] int teacherId, [FromQuery] int limit = 50)
+    public async Task<IActionResult> GetContents([FromQuery] int limit = 50)
     {
         try
         {
+            var teacherId = User.GetUserId();
             var contents = await _teacherService.GetTeacherContentsAsync(teacherId, limit);
             return Ok(new { data = contents, success = true });
         }
@@ -127,19 +128,14 @@ public class TeacherController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Récupère les étudiants récents du professeur
-    /// </summary>
-    /// <param name="teacherId">ID du professeur</param>
-    /// <param name="limit">Limite de résultats</param>
-    /// <returns>Étudiants récents</returns>
     [HttpGet("students/recent")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetRecentStudents([FromQuery] int teacherId, [FromQuery] int limit = 10)
+    public async Task<IActionResult> GetRecentStudents([FromQuery] int limit = 10)
     {
         try
         {
+            var teacherId = User.GetUserId();
             var students = await _teacherService.GetTeacherStudentsAsync(teacherId, limit);
             return Ok(new { data = students, success = true });
         }
@@ -150,18 +146,14 @@ public class TeacherController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Récupère les corrections en attente
-    /// </summary>
-    /// <param name="teacherId">ID du professeur</param>
-    /// <returns>Corrections en attente</returns>
     [HttpGet("corrections/pending")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetPendingCorrections([FromQuery] int teacherId)
+    public async Task<IActionResult> GetPendingCorrections()
     {
         try
         {
+            var teacherId = User.GetUserId();
             var corrections = await _teacherService.GetPendingCorrectionsAsync(teacherId);
             return Ok(new { data = corrections, success = true });
         }
@@ -181,10 +173,11 @@ public class TeacherController : ControllerBase
     [HttpGet("sessions/upcoming")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetUpcomingSessions([FromQuery] int teacherId, [FromQuery] int limit = 10)
+    public async Task<IActionResult> GetUpcomingSessions([FromQuery] int limit = 10)
     {
         try
         {
+            var teacherId = User.GetUserId();
             var sessions = await _teacherService.GetUpcomingSessionsAsync(teacherId, limit);
             return Ok(new { data = sessions, success = true });
         }
@@ -204,10 +197,11 @@ public class TeacherController : ControllerBase
     [HttpGet("quizzes/available")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetAvailableQuizzes([FromQuery] int teacherId, [FromQuery] int limit = 10)
+    public async Task<IActionResult> GetAvailableQuizzes([FromQuery] int limit = 10)
     {
         try
         {
+            var teacherId = User.GetUserId();
             var quizzes = await _teacherService.GetTeacherQuizzesAsync(teacherId, limit);
             return Ok(new { data = quizzes, success = true });
         }
@@ -227,10 +221,11 @@ public class TeacherController : ControllerBase
     [HttpGet("revisions/available")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetAvailableRevisions([FromQuery] int teacherId, [FromQuery] int limit = 10)
+    public async Task<IActionResult> GetAvailableRevisions([FromQuery] int limit = 10)
     {
         try
         {
+            var teacherId = User.GetUserId();
             var revisions = await _teacherService.GetTeacherRevisionsAsync(teacherId, limit);
             return Ok(new { data = revisions, success = true });
         }
@@ -249,10 +244,11 @@ public class TeacherController : ControllerBase
     [HttpGet("stats")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetStats([FromQuery] int teacherId)
+    public async Task<IActionResult> GetStats()
     {
         try
         {
+            var teacherId = User.GetUserId();
             var stats = await _teacherService.GetTeacherStatsAsync(teacherId);
             return Ok(new { data = stats, success = true });
         }
@@ -290,10 +286,11 @@ public class TeacherController : ControllerBase
     [HttpGet("revenues")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetRevenues([FromQuery] int teacherId)
+    public async Task<IActionResult> GetRevenues()
     {
         try
         {
+            var teacherId = User.GetUserId();
             var revenues = await _teacherService.GetTeacherRevenuesAsync(teacherId);
             return Ok(new { data = revenues, success = true });
         }
@@ -344,10 +341,11 @@ public class TeacherController : ControllerBase
     [HttpGet("publications")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetPublications([FromQuery] int teacherId, [FromQuery] int limit = 50)
+    public async Task<IActionResult> GetPublications([FromQuery] int limit = 50)
     {
         try
         {
+            var teacherId = User.GetUserId();
             var contents = await _teacherService.GetTeacherContentsAsync(teacherId, limit);
             return Ok(new { data = contents, success = true });
         }

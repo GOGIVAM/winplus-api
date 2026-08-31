@@ -131,6 +131,87 @@ def _load_parent_children_data(child_ids: list) -> list:
         return []
 
 
+_MEMORY_EXTRACTION_PROMPT = """Tu es un extracteur de mémoires pédagogiques. Analyse la réponse WinAI ci-dessous et extrait les informations mémorisables sur l'étudiant.
+
+Retourne un tableau JSON (peut être vide []) avec des objets :
+{"type": "<type>", "content": "<contenu court>"}
+
+Types autorisés :
+- struggling_topics : notion que l'étudiant a du mal à comprendre
+- understood_topics : notion que l'étudiant maîtrise bien
+- exam_context : examen ou objectif mentionné (ex: "Prépare le BAC C 2027")
+- learning_preference : préférence d'apprentissage détectée
+- motivation_style : style de motivation observé
+
+Règles :
+- Extrait uniquement ce qui est FACTUEL et DURABLE (pas les salutations, questions génériques)
+- Maximum 3 mémoires par réponse
+- Contenu concis (max 80 caractères)
+- Si rien de mémorisable, retourne []
+
+Réponse WinAI à analyser :
+"""
+
+
+def _extract_and_save_memories(user_id: int, assistant_content: str, session) -> None:
+    """Extrait les mémoires depuis la réponse WinAI et les persiste en DB."""
+    if not assistant_content or len(assistant_content) < 100:
+        return
+    try:
+        client = get_deepseek_client()
+        result = client.chat(
+            messages=[{"role": "user", "content": assistant_content[:2000]}],
+            system_prompt=_MEMORY_EXTRACTION_PROMPT,
+            max_tokens=300,
+            temperature=0.2,
+        )
+        if not result.get("success"):
+            return
+        raw = result.get("content", "").strip()
+        # Extraire le JSON même si entouré de markdown
+        if "```" in raw:
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        memories = json.loads(raw)
+        if not isinstance(memories, list):
+            return
+        valid_types = {"struggling_topics", "understood_topics", "exam_context",
+                       "learning_preference", "motivation_style"}
+        now = __import__("datetime").datetime.utcnow()
+        for m in memories[:3]:
+            if not isinstance(m, dict):
+                continue
+            mtype = m.get("type", "")
+            content = (m.get("content") or "").strip()
+            if mtype not in valid_types or not content:
+                continue
+            # Upsert : met à jour si même type + contenu similaire existe déjà
+            existing = session.query(UserAIMemory).filter(
+                UserAIMemory.UserId == user_id,
+                UserAIMemory.MemoryType == mtype,
+                UserAIMemory.Content == content,
+            ).first()
+            if existing:
+                existing.UpdatedAt = now
+            else:
+                session.add(UserAIMemory(
+                    UserId=user_id,
+                    MemoryType=mtype,
+                    Content=content,
+                    CreatedAt=now,
+                    UpdatedAt=now,
+                ))
+        session.commit()
+        logger.info(f"Saved {len(memories)} memories for user {user_id}")
+    except Exception as e:
+        logger.warning(f"Memory extraction failed for user {user_id}: {e}")
+        try:
+            session.rollback()
+        except Exception:
+            pass
+
+
 def _build_prompt_from_request(
     user_context: Optional[ChatbotContextRequest],
     token_data: UserTokenData,
@@ -173,6 +254,8 @@ def _build_prompt_from_request(
         children_data=children_data,
         language=force_lang,
         quiz_mistakes=quiz_mistakes,
+        recent_activity=list(getattr(user_context, "recent_activity", None) or []),
+        navigation_history=list(getattr(user_context, "navigation_history", None) or []),
     )
     return build_system_prompt(ctx), ctx.role
 
@@ -397,6 +480,9 @@ async def stream_chat(
                 except Exception as e:
                     logger.error(f"Failed to save assistant message: {e}")
                     session.rollback()
+            # Extraction asynchrone des mémoires (rôle étudiant seulement)
+            if full_content and current_user.user_id and winai_role == "student":
+                _extract_and_save_memories(current_user.user_id, full_content, session)
             session.close()
 
     return StreamingResponse(

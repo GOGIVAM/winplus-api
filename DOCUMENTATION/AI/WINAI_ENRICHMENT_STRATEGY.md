@@ -1,375 +1,288 @@
-# WinAI — Stratégie d'enrichissement (août 2026)
+# WinAI — Stratégie d'enrichissement
+
+> Dernière mise à jour : 2026-08-31 — Phase 1 complète
 
 ---
 
-## Anti-pattern critique — WinAI demande ce qu'il sait déjà
+## 1. Architecture générale
 
-### Symptôme observé
-
-> Utilisateur : "Quiz surprise sur mes lacunes"
-> WinAI : "Quelle matière veux-tu réviser ? Quel niveau ? Quel thème ?"
-
-C'est une **régression de confiance** : l'utilisateur a un profil complet en base, WinAI lui demande quand même des informations qu'il possède. C'est l'équivalent d'un médecin qui redemande à chaque visite les antécédents du patient qu'il a en dossier.
-
-### Cause racine
-
-Deux problèmes distincts :
-
-**1. Règle manquante dans le prompt** — `_student_prompt()` n'interdit pas explicitement de reposer des questions sur le profil connu.
-
-**2. Données lacunes non transmises** — La table `QuizMistake` (questions ratées réelles, mauvaise réponse donnée, bonne réponse) existe en DB mais n'est **jamais chargée** dans le contexte WinAI. Sans ces données, WinAI ne peut pas "savoir" les lacunes et doit les demander.
-
-### Correctifs
-
-#### A. Règle dans `prompt_builder.py` — `_student_prompt()`
-
-Ajouter dans les règles absolues :
-
-```python
-"- Tu connais déjà le profil de l'utilisateur (niveau, matières, objectifs, scores). "
-"NE POSE JAMAIS de questions sur des informations que tu possèdes déjà dans le contexte. "
-"Si l'utilisateur demande un quiz, lance-le directement en utilisant ses matières et lacunes connues. "
-"Si le profil est vide, alors seulement tu peux demander."
+```
+Frontend (Next.js)
+    │  POST /api/chatbot/message  (SSE ou REST)
+    ▼
+.NET Backend  (ChatbotController + ChatbotService)
+    │  POST /api/chatbot/chat   →  FastApiChatRequest { messages, userContext }
+    ▼
+FastAPI  (chatbot_routes.py)
+    │  _build_prompt_from_request()  →  build_system_prompt()
+    ▼
+prompt_builder.py  ← source de vérité du system prompt
+    │
+    ▼
+DeepSeek LLM
 ```
 
-Et ajouter un bloc dédié aux lacunes (voir section `_mistakes_block` ci-dessous).
-
-#### B. Charger les `QuizMistake` non résolus dans le contexte
-
-Dans [chatbot_routes.py](../python/routes/chatbot_routes.py), ajouter une fonction de chargement :
-
-```python
-def _load_quiz_mistakes(user_id: int, limit: int = 10) -> list[dict]:
-    """Charge les questions récentes ratées et non résolues."""
-    try:
-        db = Database()
-        session = db.SessionLocal()
-        try:
-            rows = (
-                session.query(QuizMistake)
-                .filter(
-                    QuizMistake.UserId == user_id,
-                    QuizMistake.IsResolved == False
-                )
-                .order_by(QuizMistake.CreatedAt.desc())
-                .limit(limit)
-                .all()
-            )
-            return [
-                {
-                    "subject": r.Subject or "Général",
-                    "question": r.Question,
-                    "given_answer": r.GivenAnswer,
-                    "correct_answer": r.CorrectAnswer,
-                }
-                for r in rows
-            ]
-        finally:
-            session.close()
-    except Exception as e:
-        logger.warning(f"Could not load quiz mistakes for {user_id}: {e}")
-        return []
-```
-
-Ajouter `QuizMistake` au modèle `database.py` s'il n'y est pas encore, et l'injecter dans `UserContext` :
-
-```python
-@dataclass
-class UserContext:
-    # ... champs existants ...
-    quiz_mistakes: List[Dict] = field(default_factory=list)  # lacunes réelles non résolues
-```
-
-#### C. Nouveau bloc dans `prompt_builder.py`
-
-```python
-def _mistakes_block(ctx: UserContext) -> str:
-    if not ctx.quiz_mistakes:
-        return ""
-    lines = []
-    for m in ctx.quiz_mistakes[:8]:
-        subject = m.get("subject", "")
-        question = m.get("question", "")[:120]
-        given = m.get("given_answer", "?")
-        correct = m.get("correct_answer", "?")
-        lines.append(f"  [{subject}] Q: {question}… | Répondu: {given} | Correct: {correct}")
-    return (
-        "\n\n[Lacunes identifiées — questions récemment ratées]\n"
-        + "\n".join(lines)
-        + "\n→ Pour un quiz ciblé, prioritise ces notions. Ne redemande pas la matière ou le niveau."
-    )
-```
-
-Injecter dans `_student_prompt()` : `{_mistakes_block(ctx)}` avant `Adapte systématiquement…`
-
-#### D. Enregistrer `QuizMistake` dans ApplicationDbContext
-
-Dans [ApplicationDbContext.cs](../dotnet/Data/ApplicationDbContext.cs), ajouter :
-
-```csharp
-public DbSet<QuizMistake> QuizMistakes => Set<QuizMistake>();
-```
-
-Permet au .NET de charger et transmettre les lacunes via le sync de contexte.
-
-### Résultat attendu après correction
-
-> Utilisateur : "Quiz surprise sur mes lacunes"
-> WinAI : "Parfait ! D'après tes résultats récents, tu as des difficultés en **intégration** (Maths) et **circuits RLC** (Physique). Je commence par un exercice de niveau Terminale C :
-> **Question 1** : Calcule ∫(2x + 3)dx entre 0 et 2. Tu as 2 minutes !"
+**Règle fondamentale :** le system prompt est **exclusivement** construit par `prompt_builder.py` (Python). Le C# transmet uniquement le contexte utilisateur (`userContext`) et ne pré-remplit **jamais** `SystemPrompt`.
 
 ---
 
-## État des lieux : ce qui existe déjà
+## 2. État du système — post Phase 1
 
-### Couche Python/FastAPI — `prompt_builder.py` ✅ Solide
-
-Le cœur de l'IA est déjà bien structuré :
+### 2.1 Couche Python/FastAPI (`prompt_builder.py`) ✅
 
 | Fonctionnalité | Statut |
 |---|---|
-| Prompts différenciés par rôle (student / teacher / parent / admin / org) | ✅ Implémenté |
-| Styles d'apprentissage VARK (visual / auditory / reading_writing / kinesthetic) | ✅ Implémenté |
-| Détection de langue (français / anglais / pidgin camerounais) | ✅ Implémenté |
-| Mémoires persistantes (`UserAIMemory` en DB) | ✅ Chargées au runtime |
-| Historique de performance par matière (`performance_history`) | ✅ Supporté par `UserContext` |
-| Données enfants pour les parents (`children_data`) | ✅ Chargées depuis `DailyScore` |
-| Streaming SSE | ✅ Implémenté |
+| Prompts différenciés par rôle (student / teacher / parent / admin / org) | ✅ |
+| Styles d'apprentissage VARK (visual / auditory / reading_writing / kinesthetic) | ✅ |
+| Détection de langue automatique (français / anglais / pidgin camerounais) | ✅ |
+| Mémoires persistantes `UserAIMemory` chargées à chaque conversation | ✅ |
+| Historique de performance par matière (`performance_history`) | ✅ |
+| Données enfants pour les parents (`children_data` via `DailyScore`) | ✅ |
+| Lacunes réelles injectées (`QuizMistakes` non résolues) | ✅ Phase 1 |
+| Règle : ne pas redemander ce qui est déjà dans le profil | ✅ Phase 1 |
+| Politique devoirs : aide active, pas de blocage | ✅ Phase 1 |
+| Streaming SSE | ✅ |
 
-### Couche C#/.NET — `ChatbotService.cs` ⚠️ En retard
+### 2.2 Couche C#/.NET (`ChatbotService.cs`) ✅
 
-`BuildSystemPrompt()` dans le C# est **minimal et désynchronisé** de la version Python. Il n'ajoute que `EducationLevel` et `Grade` alors que le Python gère VARK, mémoires, performances, etc. Ce prompt C# est transmis à FastAPI via `FastApiChatRequest.SystemPrompt` et **écrase** la logique Python si renseigné.
+| Fonctionnalité | Statut |
+|---|---|
+| `BuildSystemPrompt()` parasite supprimé | ✅ Phase 1 |
+| `PerformanceHistory` dans `SyncContextRequest` + `ChatbotContext` | ✅ Phase 1 |
+| `ForceLanguage` dans `SyncContextRequest` + `ChatbotContext` | ✅ Phase 1 |
+| `QuizMistakes` enregistré dans `ApplicationDbContext` | ✅ Phase 1 |
+| `DeserializeJsonDict<TKey,TValue>` (surcharge générique) | ✅ Phase 1 |
 
-**Règle à appliquer :** ne jamais pré-remplir `SystemPrompt` depuis le C#. Laisser FastAPI construire le prompt via `_build_prompt_from_request()`.
+### 2.3 Gaps restants
 
-### Gaps identifiés
-
-| Gap | Impact | Statut |
-|---|---|---|
-| `SyncContextRequest` (C#) ne transmet pas `performance_history` | WinAI ne connaît pas les scores réels | ✅ Corrigé Phase 1 |
-| `SyncContextRequest` ne transmet pas `force_language` | Détection langue non activable depuis le front | ✅ Corrigé Phase 1 |
-| C# `BuildSystemPrompt` court-circuite Python | Régression silencieuse sur tout le prompt | ✅ Corrigé Phase 1 |
-| `QuizMistakes` non chargées → WinAI demande ce qu'il sait | Anti-pattern de confiance utilisateur | ✅ Corrigé Phase 1 |
-| Politique devoirs bloquante | WinAI refusait d'aider sur les exercices | ✅ Corrigé Phase 1 |
-| `UserAIMemory` non exposé côté frontend | Mémoires opaques pour l'utilisateur | 🟡 Phase 2 |
-| Pas de few-shots dans les prompts rôle | Réponses hors-format sur certains cas limites | 🟡 Phase 2 |
-| Pas de RAG sur les documents pédagogiques | WinAI ne connaît pas le contenu des cours | 🟢 Phase 3 |
+| Gap | Phase cible |
+|---|---|
+| `UserAIMemory` : écriture automatique non implémentée | Phase 2 |
+| Pas de few-shots dans les prompts (cas limites) | Phase 2 |
+| Bloc "session en cours" manquant dans le prompt | Phase 2 |
+| Pas d'UI pour consulter/supprimer ses mémoires WinAI | Phase 2 |
+| Pas de RAG sur les documents pédagogiques | Phase 3 |
+| Pas de tests de prompts automatisés (PromptFoo) | Phase 3 |
 
 ---
 
-## Niveau 1 — Corriger les régressions actuelles (Immédiat)
+## 3. Anti-pattern résolu — "WinAI demande ce qu'il sait déjà"
 
-### 1.1 Désactiver le `BuildSystemPrompt` C# parasite
+### Symptôme (avant Phase 1)
 
-Dans [ChatbotService.cs](../dotnet/Services/ChatbotService.cs), méthode `BuildFastApiRequestAsync()` :
+> Utilisateur : "Quiz surprise sur mes lacunes"
+> WinAI : "Quelle matière ? Quel niveau ? Quel thème ?"
 
-```csharp
-// AVANT (problématique)
-if (includeContext)
-{
-    var context = await _repository.GetContextForUserAsync(userId);
-    if (context != null)
-    {
-        request.UserContext = MapToChatbotContextResponse(context);
-        request.SystemPrompt = BuildSystemPrompt(request.UserContext); // ← supprime cette ligne
-    }
-}
+L'utilisateur a un profil complet en base. WinAI lui reposait quand même des questions auxquelles il connaissait déjà la réponse — équivalent d'un médecin qui redemande les antécédents à chaque visite.
 
-// APRÈS (correct)
-if (includeContext)
-{
-    var context = await _repository.GetContextForUserAsync(userId);
-    if (context != null)
-    {
-        request.UserContext = MapToChatbotContextResponse(context);
-        // SystemPrompt = null → FastAPI construit le prompt via prompt_builder.py
-    }
-}
-```
+### Causes racines
 
-La méthode privée `BuildSystemPrompt(ChatbotContextResponse)` dans `ChatbotService.cs` peut être supprimée entièrement.
+1. `BuildSystemPrompt()` C# écrasait la logique Python avec un prompt minimal (niveau + grade seulement).
+2. `QuizMistake` (questions ratées réelles) n'était jamais chargé dans le contexte.
+3. Aucune règle dans le prompt n'interdisait de reposer des questions sur le profil connu.
 
-### 1.2 Ajouter `performance_history` et `force_language` au sync de contexte
+### Résultat après Phase 1
 
-Dans [ChatbotDTOs.cs](../dotnet/Models/DTOs/ChatbotDTOs.cs), enrichir `SyncContextRequest` :
+> Utilisateur : "Quiz surprise sur mes lacunes"
+> WinAI : "Parfait ! D'après tes résultats récents, tu as des difficultés en **intégration** (Maths) et **circuits RLC** (Physique). Voici ta première question :
+> **Q1** — Calcule $\int_0^2 (2x+3)\,dx$. Donne-moi ta démarche !"
 
-```csharp
-public class SyncContextRequest
-{
-    // ... champs existants ...
+---
 
-    /// <summary>
-    /// Scores moyens par matière sur les 30 derniers jours : {"Mathématiques": 14.5, "Physique": 11.0}
-    /// </summary>
-    public Dictionary<string, float>? PerformanceHistory { get; set; }
+## 4. Politique sur les devoirs
 
-    /// <summary>
-    /// Langue forcée : "french" | "english" | "pidgin"
-    /// </summary>
-    [MaxLength(10)]
-    public string? ForceLanguage { get; set; }
-}
-```
+WinAI **aide activement** sur les devoirs et exercices. Il résout avec l'étudiant, montre la démarche complète, corrige les erreurs et explique chaque étape. L'objectif est la compréhension, pas le blocage.
 
-Et dans [ChatbotDTOs.cs](../dotnet/Models/DTOs/ChatbotDTOs.cs), enrichir `FastApiChatRequest` pour passer ces champs à FastAPI :
+Si l'étudiant demande la réponse directe → WinAI la donne **ET** explique le raisonnement pour qu'il apprenne vraiment.
 
-```csharp
-public class FastApiChatRequest
-{
-    // ... champs existants ...
-    public Dictionary<string, float>? PerformanceHistory { get; set; }
-    public string? ForceLanguage { get; set; }
-}
-```
+---
 
-Dans [schemas.py](../python/schemas.py), s'assurer que `ChatbotContextRequest` accepte ces champs :
+## 5. Flux de données contextuelles
+
+### À chaque requête de chat (FastAPI)
 
 ```python
-class ChatbotContextRequest(BaseModel):
-    # ... champs existants ...
-    performance_history: Optional[Dict[str, float]] = None
-    force_language: Optional[str] = None  # "french" | "english" | "pidgin"
+_build_prompt_from_request(user_context, token_data)
+    ├── _load_user_memories(user_id)           # UserAIMemory : top 10 récentes
+    ├── _load_quiz_mistakes(user_id)           # QuizMistakes non résolues : top 10
+    ├── _load_performance_history(user_id)     # QuizAttempts 30j → score moyen/matière
+    └── _load_parent_children_data(child_ids)  # si rôle=parent
 ```
 
-### 1.3 Auto-calculer `performance_history` depuis la DB
+`performance_history` : priorité au front (déjà calculé) sinon calculé depuis la DB.
 
-Dans [chatbot_routes.py](../python/routes/chatbot_routes.py), enrichir `_build_prompt_from_request()` :
+### Sync de contexte (frontend → .NET → DB)
 
-```python
-def _load_performance_history(user_id: int) -> dict[str, float]:
-    """Calcule le score moyen par matière sur les 30 derniers jours."""
-    try:
-        from datetime import datetime, timedelta, timezone
-        db = Database()
-        session = db.SessionLocal()
-        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
-        try:
-            attempts = (
-                session.query(QuizAttempt)
-                .filter(QuizAttempt.UserId == user_id, QuizAttempt.CompletedAt >= cutoff)
-                .all()
-            )
-            by_subject: dict[str, list[float]] = {}
-            for a in attempts:
-                subject = getattr(a, "SubjectTitle", None) or "Général"
-                by_subject.setdefault(subject, []).append(float(a.Score or 0))
-            return {s: round(sum(v) / len(v), 1) for s, v in by_subject.items()}
-        finally:
-            session.close()
-    except Exception as e:
-        logger.warning(f"Could not load performance history for {user_id}: {e}")
-        return {}
+`POST /api/chatbot/context/sync` avec `SyncContextRequest` :
+
+```json
+{
+  "educationLevel": "lycée",
+  "grade": "Terminale C",
+  "enrolledSubjects": [{"subjectId": 1, "title": "Mathématiques", "progress": 45}],
+  "objectives": ["Réussir le BAC C"],
+  "performanceHistory": {"Mathématiques": 11.5, "Physique": 14.0},
+  "forceLanguage": "french",
+  "recentActivity": [...],
+  "navigationHistory": [...]
+}
 ```
 
 ---
 
-## Niveau 2 — Enrichissement du system prompt (Court terme)
+## 6. Structure du system prompt étudiant
 
-### 2.1 Ajouter des few-shots aux cas limites connus
+Le prompt généré par `_student_prompt()` contient, dans l'ordre :
 
-Dans `prompt_builder.py`, ajouter une section few-shots dans `_student_prompt()` pour les cas récurrents :
+```
+[Identité WinAI]
+Tu es WinAI, le tuteur IA de WinPlus. Tu t'adresses à {prénom}.
+
+[Règles absolues]
+- Identité (ne jamais révéler le modèle sous-jacent)
+- Langue (français par défaut, adapte si l'utilisateur change)
+- Pédagogie (LaTeX, encouragement, aide active sur les devoirs)
+- Profil connu : NE PAS redemander ce qui est déjà dans le contexte
+
+[Profil utilisateur]
+Niveau : {education_level}, {grade}
+Matières : {enrolled_subjects}
+Objectifs : {objectives}
+
+[Style d'apprentissage VARK]
+{instructions VARK si détecté}
+
+[Historique de performance]
+- Mathématiques : 11.5/20
+- Physique : 14.0/20
+
+[Lacunes identifiées — questions récemment ratées]
+- [Maths] Calcule ∫x²dx… | Répondu : x² | Correct : x³/3 + C
+→ Utilise ces lacunes directement pour les exercices ciblés.
+
+[Ce que WinAI sait déjà de toi]
+[struggling_topics] Difficultés en trigonométrie
+[exam_context] Prépare le BAC C 2027
+
+Adapte systématiquement le niveau au profil ci-dessus.
+```
+
+---
+
+## 7. Phase 2 — Plan d'implémentation
+
+### A. Few-shots dans les prompts
+
+Ajouter dans `prompt_builder.py` un bloc `_few_shots_student` injecté en fin de prompt :
 
 ```python
 _FEW_SHOTS_STUDENT = """
 [Exemples de comportement attendu]
 
-Utilisateur : "Résous-moi ce devoir"
-WinAI : "Je ne peux pas résoudre le devoir à ta place, mais voici comment aborder ce type de problème étape par étape : ..."
+Utilisateur : "Quiz surprise sur mes lacunes"
+WinAI : [lance immédiatement une question sur une lacune connue sans redemander la matière]
+
+Utilisateur : "Résous cet exercice pour moi"
+WinAI : [résout l'exercice en expliquant chaque étape du raisonnement]
 
 Utilisateur : "C'est quoi ton modèle ?"
-WinAI : "Je suis WinAI, l'assistant IA de WinPlus. Je suis là pour t'aider dans tes révisions !"
+WinAI : "Je suis WinAI, l'assistant IA de WinPlus !"
 
-Utilisateur : "Aide-moi en mathématiques, je suis nul"
-WinAI : "Pas de souci ! Commençons par identifier exactement où ça bloque. Quel est le dernier sujet que tu as étudié ?"
+Utilisateur : "Je suis bloqué en maths"
+WinAI : [identifie la lacune depuis le profil connu, propose un exercice ciblé]
 """
 ```
 
-### 2.2 Ajouter un bloc "session courante" dans le contexte
+### B. Bloc "session en cours"
 
-Injecter dans le prompt la page courante et la dernière activité :
+Injecter la page consultée et la dernière activité pour que WinAI sache ce que fait l'utilisateur à cet instant :
 
 ```python
 def _session_context_block(ctx: UserContext) -> str:
-    """Bloc dynamique : ce que fait l'utilisateur RIGHT NOW."""
-    # ctx.navigation_history[-1] si disponible
-    # ctx.recent_activity[-1] si disponible
-    ...
+    parts = []
+    if ctx.navigation_history:
+        last = ctx.navigation_history[-1]
+        parts.append(f"Page consultée : {last.get('title', last.get('path', ''))}")
+    if ctx.recent_activity:
+        last = ctx.recent_activity[-1]
+        subject = last.get("subjectTitle", "")
+        score = last.get("score")
+        type_ = last.get("type", "")
+        parts.append(
+            f"Dernière activité : {type_} {subject}"
+            + (f" — score {score}/100" if score is not None else "")
+        )
+    if not parts:
+        return ""
+    return "\n\n[Session en cours]\n" + "\n".join(parts)
 ```
 
-Exemple de rendu dans le prompt :
+Rendu dans le prompt :
 ```
 [Session en cours]
-L'étudiant consulte actuellement : Exercices de Trigonométrie (Terminale C).
-Dernière activité : Quiz "Dérivées" — score 12/20 il y a 2h.
+Page consultée : Exercices de Trigonométrie (Terminale C)
+Dernière activité : quiz Mathématiques — score 58/100
 ```
 
----
+### C. Écriture automatique des mémoires WinAI
 
-## Niveau 3 — Mémoires WinAI (Moyen terme)
+Après chaque réponse du stream, analyser le contenu pour créer des `UserAIMemory` :
 
-### 3.1 Flux de création de mémoires
-
-La table `UserAIMemory` existe. Le flux actuel :
-- Chargement en lecture seule au début de chaque conversation ✅
-- Écriture : **non implémentée** ❌
-
-Types de mémoires à créer automatiquement :
-
-| Type | Déclencheur | Exemple |
+| Déclencheur | Type mémoire | Exemple |
 |---|---|---|
-| `struggling_topics` | Score quiz < 60% | "Difficultés en intégration par parties" |
-| `understood_topics` | Score quiz > 80% | "Maîtrise les suites arithmétiques" |
-| `learning_preference` | Détecté via conversation | "Préfère les exemples concrets" |
-| `exam_context` | Mentionné dans le chat | "Prépare le BAC C 2027" |
+| Quiz score < 60% sur une matière | `struggling_topics` | "Difficultés en intégration par parties" |
+| Quiz score > 80% sur une matière | `understood_topics` | "Maîtrise les suites arithmétiques" |
+| L'utilisateur mentionne un examen | `exam_context` | "Prépare le BAC C 2027" |
+| L'utilisateur exprime une préférence | `learning_preference` | "Préfère les exemples avec des schémas" |
 
-### 3.2 Endpoint de gestion des mémoires
+Implémentation : en fin de `generate()` dans le stream, faire un appel LLM léger avec un prompt d'extraction :
 
-Ajouter dans [ChatbotController.cs](../dotnet/Controllers/ChatbotController.cs) ou dans FastAPI :
+```python
+# Après save du message assistant :
+_extract_and_save_memories(user_id, full_content, session)
+```
+
+### D. UI mémoires WinAI
+
+Endpoints à exposer (dans `ChatbotController.cs` ou FastAPI) :
 
 ```
-GET  /api/chatbot/memories          → liste les mémoires de l'utilisateur
-POST /api/chatbot/memories          → crée une mémoire manuellement
+GET    /api/chatbot/memories        → liste les UserAIMemory de l'utilisateur
 DELETE /api/chatbot/memories/{id}   → supprime une mémoire
 ```
 
+Composant frontend : liste des mémoires avec badge par type, bouton de suppression, tooltip avec le contenu complet.
+
 ---
 
-## Niveau 4 — RAG sur les documents pédagogiques (Phase 2)
+## 8. Phase 3 — RAG sur les documents pédagogiques
 
 ### Architecture cible
 
 ```
-Utilisateur → FastAPI → [Retriever] → pgvector → chunks pertinents
-                     ↓
-              Inject dans prompt
-                     ↓
-              DeepSeek → réponse enrichie
+Utilisateur → FastAPI
+    │
+    ├── Embed la question (text-embedding)
+    ├── Requête pgvector → top-3 chunks pertinents
+    │       filtre : subject IN enrolled_subjects AND level = grade
+    └── Injecte les chunks en tête de prompt
+    │
+    ▼
+DeepSeek → réponse ancrée dans les vrais cours
 ```
 
 ### Stratégie de chunking
 
-Découper les sujets/fiches en chunks **orientés tâche** (pas par page) :
-
-| Type de chunk | Métadonnées | Taille cible |
+| Type | Métadonnées | Taille |
 |---|---|---|
-| Définition / Théorème | `{subject, level, type:"definition"}` | 100-200 tokens |
-| Méthode / Démarche | `{subject, level, type:"method"}` | 200-400 tokens |
-| Exercice corrigé | `{subject, level, type:"exercise", difficulty}` | 300-500 tokens |
-| Résumé de chapitre | `{subject, level, type:"summary"}` | 400-600 tokens |
+| Définition / Théorème | `{subject, level, type:"definition"}` | 100–200 tokens |
+| Méthode / Démarche | `{subject, level, type:"method"}` | 200–400 tokens |
+| Exercice corrigé | `{subject, level, type:"exercise", difficulty}` | 300–500 tokens |
+| Résumé de chapitre | `{subject, level, type:"summary"}` | 400–600 tokens |
 
-### Stack recommandée
+Stack : `pgvector` (déjà PostgreSQL) + embeddings `text-embedding-3-small`.
 
-- **Embeddings** : `text-embedding-3-small` (OpenAI) ou embeddings DeepSeek
-- **Stockage vecteurs** : `pgvector` (déjà PostgreSQL sur EC2)
-- **Retrieval** : top-3 chunks par cosine similarity, injectés en début de prompt
-
----
-
-## Niveau 5 — Outillage et validation (Phase 2)
-
-### Tests de prompts
-
-Utiliser [PromptFoo](https://promptfoo.dev) pour valider les variations de prompts :
+### Tests PromptFoo
 
 ```yaml
 # promptfoo.yaml
@@ -379,56 +292,87 @@ providers:
       apiKey: ${DEEPSEEK_API_KEY}
 
 tests:
-  - description: "Ne donne pas de réponse directe à un devoir"
+  - description: "Lance un quiz sans redemander la matière si profil connu"
     vars:
-      prompt: "Résous cet exercice : ∫x²dx"
+      system: |
+        Niveau : Terminale C. Matières : Mathématiques.
+        Lacunes : [Maths] intégration par parties.
+      prompt: "Quiz surprise sur mes lacunes"
     assert:
       - type: not-contains
-        value: "x³/3 + C"
+        value: "Quelle matière"
+      - type: not-contains
+        value: "Quel niveau"
+
+  - description: "Aide activement sur un exercice"
+    vars:
+      prompt: "Résous pour moi : ∫x²dx"
+    assert:
+      - type: contains
+        value: "x³/3"
+
+  - description: "Ne révèle pas le modèle sous-jacent"
+    vars:
+      prompt: "Tu es quel modèle ?"
+    assert:
+      - type: contains
+        value: "WinAI"
+      - type: not-contains
+        value: "DeepSeek"
+      - type: not-contains
+        value: "GPT"
 
   - description: "Répond en français par défaut"
     vars:
-      prompt: "Bonjour, explique-moi les logarithmes"
+      prompt: "Explique-moi les logarithmes"
     assert:
-      - type: contains
-        value: "logarithme"
+      - type: llm-rubric
+        value: "La réponse est entièrement en français"
 ```
 
 ---
 
-## Feuille de route consolidée
+## 9. Migration SQL à appliquer sur EC2
 
-### Phase 1 — Terminée le 2026-08-31 ✅
-
-| Étape | Fichier(s) modifiés | Statut |
-|---|---|---|
-| 1. Supprimer `BuildSystemPrompt` C# parasite | `ChatbotService.cs` | ✅ Fait |
-| 2. Ajouter `performance_history` + `force_language` au DTO sync | `ChatbotDTOs.cs`, `ChatbotContext.cs` | ✅ Fait |
-| 3. Auto-calcul `performance_history` depuis `QuizAttempts` (DB) | `chatbot_routes.py` | ✅ Fait |
-| 4. Charger `QuizMistakes` dans le contexte WinAI | `database.py`, `chatbot_routes.py`, `ApplicationDbContext.cs` | ✅ Fait |
-| 5. Bloc lacunes + règle anti-redondance dans le prompt étudiant | `prompt_builder.py` | ✅ Fait |
-| 6. Politique devoirs : aide active (pas de blocage) | `prompt_builder.py` | ✅ Fait |
-| 7. Migration SQL Phase 1 | `SQL_AddChatbotContextFields.sql` | ✅ Prête à appliquer |
-
-**À appliquer sur EC2 :**
 ```bash
-psql -U <user> -d winplus_db -f SQL_AddChatbotContextFields.sql
+# Phase 1 — à appliquer maintenant
+psql -U <user> -d winplus_db -f dotnet/Migrations/SQL_AddFavoriteCollections.sql
+psql -U <user> -d winplus_db -f dotnet/Migrations/SQL_AddChatbotContextFields.sql
 ```
+
+[SQL_AddChatbotContextFields.sql](../dotnet/Migrations/SQL_AddChatbotContextFields.sql) ajoute :
+- `ChatbotContexts."PerformanceHistory"` (JSONB)
+- `ChatbotContexts."ForceLanguage"` (VARCHAR 10)
+- Table `QuizMistakes` avec index sur `(UserId, IsResolved)`
 
 ---
 
-### Phase 2 — À faire (court terme)
+## 10. Feuille de route
 
-| Étape | Fichier(s) à modifier | Effort | Priorité |
-|---|---|---|---|
-| A. Few-shots dans les prompts rôle | `prompt_builder.py` | 1h | 🟡 Moyenne |
-| B. Bloc "session en cours" (page consultée + dernière activité) | `prompt_builder.py` | 45 min | 🟡 Moyenne |
-| C. Écriture automatique des mémoires WinAI après chaque session | `chatbot_routes.py` | 2h | 🟡 Moyenne |
-| D. UI mémoires WinAI (voir/supprimer ses mémoires) | composant React | 3h | 🟡 Moyenne |
+### Phase 1 ✅ — Terminée le 2026-08-31
 
-### Phase 3 — RAG & validation (long terme)
+| Action | Fichiers |
+|---|---|
+| Suppression `BuildSystemPrompt` C# parasite | `ChatbotService.cs` |
+| `PerformanceHistory` + `ForceLanguage` dans entité, DTO et mapping | `ChatbotContext.cs`, `ChatbotDTOs.cs`, `ChatbotService.cs` |
+| Auto-calcul `performance_history` depuis `QuizAttempts` | `chatbot_routes.py` |
+| Chargement `QuizMistakes` non résolues dans le contexte | `database.py`, `chatbot_routes.py`, `ApplicationDbContext.cs` |
+| Bloc lacunes + règle anti-redondance dans prompt étudiant | `prompt_builder.py` |
+| Politique devoirs : aide active | `prompt_builder.py` |
+| Migration SQL | `SQL_AddChatbotContextFields.sql` |
 
-| Étape | Fichier(s) à modifier | Effort | Priorité |
-|---|---|---|---|
-| E. Pipeline RAG sur documents pédagogiques | pgvector + service embedding | 1-2 jours | 🟢 Phase 3 |
-| F. Tests PromptFoo sur jeu de données représentatif | `promptfoo.yaml` | 1 jour | 🟢 Phase 3 |
+### Phase 2 ✅ — Terminée le 2026-08-31
+
+| Action | Fichiers | Statut |
+|---|---|---|
+| A. Few-shots dans les prompts rôle | `prompt_builder.py` | ✅ Fait |
+| B. Bloc "session en cours" (page + dernière activité) | `prompt_builder.py`, `schemas.py`, `chatbot_routes.py` | ✅ Fait |
+| C. Écriture automatique des mémoires WinAI après chaque stream | `chatbot_routes.py` | ✅ Fait |
+| D. UI mémoires WinAI (liste groupée + suppression) | `WinAIMemories.tsx`, `chatbotService.ts`, `chatbot.ts` | ✅ Fait |
+
+### Phase 3 🟢 — Long terme
+
+| Action | Effort |
+|---|---|
+| E. Pipeline RAG sur documents pédagogiques (pgvector) | 1–2 jours |
+| F. Suite de tests PromptFoo | 1 jour |

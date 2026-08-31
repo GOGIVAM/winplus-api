@@ -144,8 +144,21 @@ public class StudentController : ControllerBase
     {
         try
         {
-            var studentId = User.GetUserId();
-            var courses = new List<dynamic>();
+            var userId = User.GetUserId();
+            var courses = await _db.Enrollments
+                .Where(e => e.UserId == userId && !e.IsCompleted)
+                .Include(e => e.Subject)
+                .OrderByDescending(e => e.EnrolledAt)
+                .Take(6)
+                .Select(e => new
+                {
+                    subjectId = e.SubjectId,
+                    title = e.Subject != null ? e.Subject.Title : null,
+                    progress = e.ProgressPercentage,
+                    thumbnailUrl = e.Subject != null ? e.Subject.ThumbnailUrl : null,
+                    category = e.Subject != null ? e.Subject.Category : null
+                })
+                .ToListAsync();
             return Ok(new { data = courses, success = true });
         }
         catch (Exception ex)
@@ -165,8 +178,39 @@ public class StudentController : ControllerBase
     {
         try
         {
-            var studentId = User.GetUserId();
-            var exams = new List<dynamic>();
+            var userId = User.GetUserId();
+            var user = await _db.Users.AsNoTracking()
+                .Select(u => new { u.Id, u.Level })
+                .FirstOrDefaultAsync(u => u.Id == userId);
+
+            var alreadyDownloaded = await _db.DownloadHistories
+                .Where(d => d.UserId == userId && d.ExamId != null)
+                .Select(d => d.ExamId!.Value)
+                .ToListAsync();
+
+            var query = _db.Exams
+                .Where(e => e.IsPublished && !e.IsDeleted && !alreadyDownloaded.Contains(e.Id));
+
+            if (!string.IsNullOrEmpty(user?.Level))
+                query = query.Where(e => e.Level == user.Level || e.Level == null);
+
+            var exams = await query
+                .OrderByDescending(e => e.DownloadCount)
+                .Take(5)
+                .Select(e => new
+                {
+                    e.Id,
+                    e.Title,
+                    e.Description,
+                    e.ExamType,
+                    e.Category,
+                    e.Level,
+                    e.Year,
+                    e.DurationMinutes,
+                    e.DownloadCount,
+                    e.ThumbnailUrl
+                })
+                .ToListAsync();
             return Ok(new { data = exams, success = true });
         }
         catch (Exception ex)
@@ -186,9 +230,43 @@ public class StudentController : ControllerBase
     {
         try
         {
-            var studentId = User.GetUserId();
-            var priorities = new List<dynamic>();
-            return Ok(new { data = priorities, success = true });
+            var userId = User.GetUserId();
+            var priorities = new List<object>();
+
+            // Active goals nearing deadline
+            var goals = await _db.Goals
+                .Where(g => g.UserId == userId && g.Status == "in_progress")
+                .OrderBy(g => g.TargetDate)
+                .Take(3)
+                .Select(g => new
+                {
+                    type = "goal",
+                    id = g.Id,
+                    title = g.Title,
+                    progress = g.Progress,
+                    targetDate = g.TargetDate
+                })
+                .ToListAsync();
+            priorities.AddRange(goals.Cast<object>());
+
+            // In-progress enrollments with low progress
+            var inProgress = await _db.Enrollments
+                .Where(e => e.UserId == userId && !e.IsCompleted && e.ProgressPercentage < 50)
+                .Include(e => e.Subject)
+                .OrderBy(e => e.ProgressPercentage)
+                .Take(3)
+                .Select(e => new
+                {
+                    type = "course",
+                    id = e.SubjectId,
+                    title = e.Subject != null ? e.Subject.Title : null,
+                    progress = (int)e.ProgressPercentage,
+                    targetDate = (DateTime?)null
+                })
+                .ToListAsync();
+            priorities.AddRange(inProgress.Cast<object>());
+
+            return Ok(new { data = priorities.Take(5), success = true });
         }
         catch (Exception ex)
         {
@@ -203,12 +281,26 @@ public class StudentController : ControllerBase
     [HttpGet("events/upcoming")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetUpcomingEvents()
+    public async Task<IActionResult> GetUpcomingEvents([FromQuery] int limit = 5)
     {
         try
         {
-            var studentId = User.GetUserId();
-            var events = new List<dynamic>();
+            if (limit < 1 || limit > 20) limit = 5;
+            var events = await _db.Events
+                .Where(e => e.StartDate > DateTime.UtcNow && !e.IsDeleted)
+                .OrderBy(e => e.StartDate)
+                .Take(limit)
+                .Select(e => new
+                {
+                    e.Id,
+                    e.Title,
+                    e.Description,
+                    e.StartDate,
+                    e.EndDate,
+                    e.Location,
+                    e.EventType
+                })
+                .ToListAsync();
             return Ok(new { data = events, success = true });
         }
         catch (Exception ex)
@@ -228,8 +320,23 @@ public class StudentController : ControllerBase
     {
         try
         {
-            var studentId = User.GetUserId();
-            var goals = new List<dynamic>();
+            var userId = User.GetUserId();
+            var goals = await _db.Goals
+                .Where(g => g.UserId == userId)
+                .OrderByDescending(g => g.CreatedAt)
+                .Select(g => new
+                {
+                    g.Id,
+                    g.Title,
+                    g.Description,
+                    g.Type,
+                    g.Progress,
+                    g.Status,
+                    g.TargetDate,
+                    g.CreatedAt,
+                    g.CompletedAt
+                })
+                .ToListAsync();
             return Ok(new { data = goals, success = true });
         }
         catch (Exception ex)
@@ -497,6 +604,77 @@ public class StudentController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting peer comparison");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    [HttpGet("download-history")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetDownloadHistory([FromQuery] int page = 1, [FromQuery] int limit = 20)
+    {
+        try
+        {
+            if (page < 1) page = 1;
+            if (limit < 1 || limit > 100) limit = 20;
+            var userId = User.GetUserId();
+
+            var total = await _db.DownloadHistories.CountAsync(d => d.UserId == userId);
+            var items = await _db.DownloadHistories
+                .Where(d => d.UserId == userId)
+                .OrderByDescending(d => d.CreatedAt)
+                .Skip((page - 1) * limit)
+                .Take(limit)
+                .Select(d => new
+                {
+                    d.Id,
+                    d.FileName,
+                    d.ExamId,
+                    d.SubjectId,
+                    d.CreatedAt
+                })
+                .ToListAsync();
+
+            return Ok(new { data = items, total, page, limit, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting download history");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    [HttpGet("reports")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetReports()
+    {
+        try
+        {
+            var userId = User.GetUserId();
+            // Monthly aggregated report from learning histories
+            var histories = await _db.LearningHistories
+                .Where(h => h.UserId == userId)
+                .ToListAsync();
+
+            var monthly = histories
+                .GroupBy(h => new { h.CreatedAt.Year, h.CreatedAt.Month })
+                .OrderByDescending(g => g.Key.Year).ThenByDescending(g => g.Key.Month)
+                .Take(12)
+                .Select(g => new
+                {
+                    period = $"{g.Key.Year}-{g.Key.Month:D2}",
+                    averageScore = g.Where(h => h.QuizScore.HasValue).Any()
+                        ? Math.Round(g.Where(h => h.QuizScore.HasValue).Average(h => (double)h.QuizScore!.Value), 1)
+                        : (double?)null,
+                    totalStudyHours = Math.Round(g.Sum(h => h.TimeSpentSeconds ?? 0) / 3600.0, 1),
+                    activitiesCount = g.Count()
+                })
+                .ToList();
+
+            return Ok(new { data = monthly, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting student reports");
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }

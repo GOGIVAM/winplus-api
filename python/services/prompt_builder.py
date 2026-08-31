@@ -26,6 +26,8 @@ class UserContext:
     children_data: List[Dict] = field(default_factory=list)  # [{"name": "Marie", "level": "Terminale", "avg_score": 14.2, "subjects": [...]}]
     language: Optional[str] = None                 # "french" | "english" | "pidgin"  détecté ou forcé par l'utilisateur
     quiz_mistakes: List[Dict] = field(default_factory=list)  # [{"subject": "Maths", "question": "...", "given_answer": "...", "correct_answer": "..."}]
+    recent_activity: List[Dict] = field(default_factory=list)  # [{"type": "quiz", "subjectTitle": "Maths", "score": 58, "at": "..."}]
+    navigation_history: List[Dict] = field(default_factory=list)  # [{"path": "/subjects/1", "title": "Trigonométrie", "at": "..."}]
 
 
 # ── Language detection ────────────────────────────────────────────────────────
@@ -163,6 +165,48 @@ def _ai_memories_block(ctx: UserContext) -> str:
     return "\n\n[Ce que WinAI sait déjà de toi]\n" + "\n".join(lines)
 
 
+def _session_context_block(ctx: UserContext) -> str:
+    parts = []
+    if ctx.navigation_history:
+        last = ctx.navigation_history[-1]
+        title = last.get("title") or last.get("path", "")
+        if title:
+            parts.append(f"Page consultée : {title}")
+    if ctx.recent_activity:
+        last = ctx.recent_activity[-1]
+        type_ = last.get("type", "")
+        subject = last.get("subjectTitle", "")
+        score = last.get("score")
+        desc = f"{type_} {subject}".strip()
+        if score is not None:
+            desc += f" — score {score}/100"
+        if desc:
+            parts.append(f"Dernière activité : {desc}")
+    if not parts:
+        return ""
+    return "\n\n[Session en cours]\n" + "\n".join(parts)
+
+
+_FEW_SHOTS_STUDENT = """
+[Comportements attendus — exemples]
+
+Utilisateur : "Quiz surprise sur mes lacunes"
+→ Lance immédiatement une question sur une lacune connue. Ne demande jamais la matière ou le niveau.
+
+Utilisateur : "Résous cet exercice pour moi"
+→ Résous-le en détaillant chaque étape du raisonnement, pour que l'étudiant comprenne vraiment.
+
+Utilisateur : "C'est quoi ton modèle IA ?"
+→ "Je suis WinAI, l'assistant IA de WinPlus !" — ne mentionne jamais DeepSeek, GPT ou autre.
+
+Utilisateur : "Je suis bloqué en maths"
+→ Identifie la notion depuis le profil connu, propose un exercice ciblé sur cette lacune précise.
+
+Utilisateur : "Explique-moi les logarithmes"
+→ Adapte la profondeur à son niveau (visible dans le contexte) sans redemander son niveau.
+"""
+
+
 def _mistakes_block(ctx: UserContext) -> str:
     if not ctx.quiz_mistakes:
         return ""
@@ -195,8 +239,9 @@ Règles absolues :
 - Si tu ne connais pas la réponse, dis-le clairement plutôt que d'inventer.
 - Pour les devoirs et exercices : aide activement l'étudiant. Tu peux résoudre avec lui, montrer la démarche complète, corriger ses erreurs et expliquer chaque étape. L'objectif est la compréhension, pas le blocage. Si l'étudiant demande la réponse directe, donne-la ET explique le raisonnement pour qu'il apprenne vraiment.
 - IMPORTANT : Tu connais déjà le profil de l'utilisateur (niveau, matières, lacunes, scores). Ne pose JAMAIS de questions sur des informations que tu possèdes déjà dans le contexte ci-dessous. Si l'utilisateur demande un quiz ou un exercice, lance-le immédiatement en utilisant ses matières et lacunes connues. Pose une question de clarification uniquement si le profil est totalement vide.
-{_level_line(ctx)}{_subjects_line(ctx)}{_objectives_line(ctx)}{_learning_style_line(ctx)}{_performance_lines(ctx)}{_mistakes_block(ctx)}{_ai_memories_block(ctx)}
-Adapte systématiquement le niveau de vocabulaire et la profondeur des explications au profil ci-dessus.{_language_instruction(ctx)}"""
+{_level_line(ctx)}{_subjects_line(ctx)}{_objectives_line(ctx)}{_learning_style_line(ctx)}{_performance_lines(ctx)}{_mistakes_block(ctx)}{_ai_memories_block(ctx)}{_session_context_block(ctx)}
+Adapte systématiquement le niveau de vocabulaire et la profondeur des explications au profil ci-dessus.
+{_FEW_SHOTS_STUDENT}{_language_instruction(ctx)}"""
 
 
 def _children_block(ctx: UserContext) -> str:

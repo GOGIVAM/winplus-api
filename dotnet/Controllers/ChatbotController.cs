@@ -560,4 +560,65 @@ public class ChatbotController : ControllerBase
             }
         }
     }
+
+    /// <summary>
+    /// GET /api/chatbot/memories
+    /// Liste les mémoires WinAI persistantes de l'utilisateur connecté.
+    /// </summary>
+    [HttpGet("memories")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> GetMemories()
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+            var memories = await _dbContext.UserAIMemories
+                .Where(m => m.UserId == userId)
+                .OrderByDescending(m => m.UpdatedAt)
+                .Select(m => new
+                {
+                    id = m.Id,
+                    type = m.MemoryType,
+                    content = m.Content,
+                    createdAt = m.CreatedAt,
+                    updatedAt = m.UpdatedAt,
+                })
+                .ToListAsync();
+            return Ok(memories);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in GetMemories");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// DELETE /api/chatbot/memories/{id}
+    /// Supprime une mémoire WinAI appartenant à l'utilisateur connecté.
+    /// </summary>
+    [HttpDelete("memories/{id:int}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> DeleteMemory(int id)
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+            var memory = await _dbContext.UserAIMemories
+                .FirstOrDefaultAsync(m => m.Id == id && m.UserId == userId);
+            if (memory == null)
+                return NotFound(new { error = "Memory not found" });
+            _dbContext.UserAIMemories.Remove(memory);
+            await _dbContext.SaveChangesAsync();
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in DeleteMemory");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
 }

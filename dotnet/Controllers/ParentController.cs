@@ -91,11 +91,17 @@ public class ParentController : ControllerBase
     [HttpGet("activities/recent")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetRecentActivities([FromQuery] int parentId, [FromQuery] int childId, [FromQuery] int limit = 10)
+    public async Task<IActionResult> GetRecentActivities([FromQuery] int? childId, [FromQuery] int limit = 10)
     {
         try
         {
-            var activities = await _parentService.GetChildActivitiesAsync(parentId, childId, limit);
+            var parentId = User.GetUserId();
+            // If no childId specified, pick the first linked child
+            var resolvedChildId = childId ?? await _db.ParentStudentLinks
+                .Where(l => l.ParentId == parentId)
+                .Select(l => (int?)l.StudentId)
+                .FirstOrDefaultAsync() ?? 0;
+            var activities = await _parentService.GetChildActivitiesAsync(parentId, resolvedChildId, limit);
             return Ok(new { data = activities, success = true });
         }
         catch (Exception ex)
@@ -113,10 +119,11 @@ public class ParentController : ControllerBase
     [HttpGet("payments/upcoming")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetUpcomingPayments([FromQuery] int parentId)
+    public async Task<IActionResult> GetUpcomingPayments()
     {
         try
         {
+            var parentId = User.GetUserId();
             var payments = await _parentService.GetUpcomingPaymentsAsync(parentId);
             return Ok(new { data = payments, success = true });
         }
@@ -136,10 +143,11 @@ public class ParentController : ControllerBase
     [HttpGet("events/upcoming")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetUpcomingEvents([FromQuery] int parentId, [FromQuery] int limit = 10)
+    public async Task<IActionResult> GetUpcomingEvents([FromQuery] int limit = 10)
     {
         try
         {
+            var parentId = User.GetUserId();
             var events = await _parentService.GetUpcomingEventsAsync(parentId, limit);
             return Ok(new { data = events, success = true });
         }
@@ -160,11 +168,16 @@ public class ParentController : ControllerBase
     [HttpGet("quizzes/available")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetAvailableQuizzes([FromQuery] int parentId, [FromQuery] int childId, [FromQuery] int limit = 10)
+    public async Task<IActionResult> GetAvailableQuizzes([FromQuery] int? childId, [FromQuery] int limit = 10)
     {
         try
         {
-            var quizzes = await _parentService.GetChildQuizzesAsync(parentId, childId, limit);
+            var parentId = User.GetUserId();
+            var resolvedChildId = childId ?? await _db.ParentStudentLinks
+                .Where(l => l.ParentId == parentId)
+                .Select(l => (int?)l.StudentId)
+                .FirstOrDefaultAsync() ?? 0;
+            var quizzes = await _parentService.GetChildQuizzesAsync(parentId, resolvedChildId, limit);
             return Ok(new { data = quizzes, success = true });
         }
         catch (Exception ex)
@@ -184,11 +197,16 @@ public class ParentController : ControllerBase
     [HttpGet("revisions/available")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetAvailableRevisions([FromQuery] int parentId,[FromQuery] int childId, [FromQuery] int limit = 10)
+    public async Task<IActionResult> GetAvailableRevisions([FromQuery] int? childId, [FromQuery] int limit = 10)
     {
         try
         {
-            var revisions = await _parentService.GetChildRevisionsAsync(parentId, childId, limit);
+            var parentId = User.GetUserId();
+            var resolvedChildId = childId ?? await _db.ParentStudentLinks
+                .Where(l => l.ParentId == parentId)
+                .Select(l => (int?)l.StudentId)
+                .FirstOrDefaultAsync() ?? 0;
+            var revisions = await _parentService.GetChildRevisionsAsync(parentId, resolvedChildId, limit);
             return Ok(new { data = revisions, success = true });
         }
         catch (Exception ex)
@@ -225,10 +243,11 @@ public class ParentController : ControllerBase
     [HttpGet("children/{childId}/goals")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetChildGoals([FromRoute] int childId, [FromQuery] int parentId)
+    public async Task<IActionResult> GetChildGoals([FromRoute] int childId)
     {
         try
         {
+            var parentId = User.GetUserId();
             var goals = await _parentService.GetChildGoalsAsync(parentId, childId);
             return Ok(new { data = goals, success = true });
         }
