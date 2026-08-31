@@ -631,6 +631,38 @@ public class UsersController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Méthodes de paiement sauvegardées (Mobile Money / cartes).
+    /// WinPlus utilise NotchPay – les tokens sont gérés côté NotchPay,
+    /// ces endpoints exposent une liste vide jusqu'à l'intégration complète.
+    /// </summary>
+    [HttpGet("{userId:int}/payment-methods")]
+    [Authorize]
+    public IActionResult GetPaymentMethods(int userId)
+    {
+        var callerId = User.GetUserId();
+        if (callerId != userId && !User.IsAdmin()) return Forbid();
+        return Ok(new { data = Array.Empty<object>(), success = true });
+    }
+
+    [HttpPost("{userId:int}/payment-methods")]
+    [Authorize]
+    public IActionResult SavePaymentMethod(int userId, [FromBody] object body)
+    {
+        var callerId = User.GetUserId();
+        if (callerId != userId && !User.IsAdmin()) return Forbid();
+        return StatusCode(501, new { success = false, error = "La sauvegarde de méthodes de paiement sera disponible dans une prochaine version." });
+    }
+
+    [HttpDelete("{userId:int}/payment-methods/{methodId}")]
+    [Authorize]
+    public IActionResult DeletePaymentMethod(int userId, string methodId)
+    {
+        var callerId = User.GetUserId();
+        if (callerId != userId && !User.IsAdmin()) return Forbid();
+        return Ok(new { success = true });
+    }
+
     [HttpPost("2fa/disable")]
     [Authorize]
     public async Task<IActionResult> Disable2FA([FromBody] Disable2FARequestDto request)

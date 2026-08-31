@@ -281,6 +281,39 @@ public class PaymentsController : ControllerBase
         }
     }
 
+    /// <summary>POST /api/payments/confirm  Alias de /initiate pour compatibilité frontend legacy.</summary>
+    [HttpPost("confirm")]
+    public async Task<IActionResult> ConfirmPayment([FromBody] InitiatePaymentRequest request)
+    {
+        try
+        {
+            return await Initiate(request);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur confirmation paiement");
+            return StatusCode(500, new { error = "Erreur serveur" });
+        }
+    }
+
+    /// <summary>POST /api/payments/{id}/verify  Vérifie le statut d'un paiement.</summary>
+    [HttpPost("{id:int}/verify")]
+    [Authorize]
+    public async Task<IActionResult> VerifyPayment(int id)
+    {
+        try
+        {
+            var userId = User.GetUserId();
+            var result = await _paymentService.GetPaymentStatusAsync(id, userId, false);
+            return Ok(new { data = result, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur vérification paiement {PaymentId}", id);
+            return StatusCode(500, new { error = "Erreur serveur" });
+        }
+    }
+
     /// <summary>GET /api/admin/payments/user/{userId}  Paiements d'un utilisateur spécifique (admin)</summary>
     [HttpGet("/api/admin/payments/user/{userId:int}")]
     [Authorize(Policy = "AdminOnly")]

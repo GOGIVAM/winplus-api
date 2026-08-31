@@ -259,6 +259,33 @@ public class OrdersController : ControllerBase
         }
     }
 
+    [HttpPost("{id}/refund")]
+    [Authorize]
+    public async Task<IActionResult> RequestRefund(int id)
+    {
+        try
+        {
+            var userId = User.GetUserId();
+            var order = await _db.Orders.FirstOrDefaultAsync(o => o.Id == id && o.UserId == userId);
+            if (order == null)
+                return NotFound(new { success = false, error = "Commande introuvable" });
+
+            if (!order.Status.Equals("completed", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { success = false, error = "Seules les commandes complétées peuvent faire l'objet d'un remboursement" });
+
+            order.Status = "refund_requested";
+            order.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+
+            return Ok(new { data = new { id, status = "refund_requested" }, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error requesting refund for order {OrderId}", id);
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
     [HttpPost("summary")]
     public async Task<IActionResult> GetOrderSummary([FromBody] List<int> subjectIds)
     {
