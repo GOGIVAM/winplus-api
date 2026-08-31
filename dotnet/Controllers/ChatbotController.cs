@@ -428,15 +428,17 @@ public class ChatbotController : ControllerBase
             conversationId = conv.Id;
         }
 
-        // Save user message
-        _dbContext.Messages.Add(new Message
+        // Save user message (text only in DB; images stay in-memory for this request)
+        var userMsg = new Message
         {
             ConversationId = conversationId,
             Role = "user",
             Content = request.Message,
             CreatedAt = DateTime.UtcNow
-        });
+        };
+        _dbContext.Messages.Add(userMsg);
         await _dbContext.SaveChangesAsync(cancellationToken);
+        var savedMsgId = userMsg.Id;
 
         // Setup SSE response headers
         Response.ContentType = "text/event-stream";
@@ -451,13 +453,29 @@ public class ChatbotController : ControllerBase
         }
 
         // Fetch last 20 messages for conversation context
-        var history = await _dbContext.Messages
+        var historyRaw = await _dbContext.Messages
             .Where(m => m.ConversationId == conversationId && !m.IsDeleted)
             .OrderByDescending(m => m.CreatedAt)
             .Take(20)
             .OrderBy(m => m.CreatedAt)
-            .Select(m => new { role = m.Role, content = m.Content })
+            .Select(m => new { m.Id, role = m.Role, content = m.Content })
             .ToListAsync(cancellationToken);
+
+        // Build messages: inject image attachments into the current user message
+        var hasImages = request.Attachments?.Any(a => a.Type == "image") == true;
+        var history = historyRaw.Select<dynamic, object>(h =>
+        {
+            if ((int)h.Id == savedMsgId && hasImages)
+            {
+                var parts = new List<object>();
+                if (!string.IsNullOrEmpty((string)h.content))
+                    parts.Add(new { type = "text", text = (string)h.content });
+                foreach (var att in request.Attachments!.Where(a => a.Type == "image"))
+                    parts.Add(new { type = "image_url", image_url = new { url = att.Data } });
+                return new { role = (string)h.role, content = (object)parts };
+            }
+            return new { role = (string)h.role, content = (object)(string)h.content };
+        }).ToList();
 
         // Forward request to FastAPI stream endpoint
         var fastApiBody = new

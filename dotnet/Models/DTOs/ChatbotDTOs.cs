@@ -64,6 +64,15 @@ public class AttachmentDto
     public string? MimeType { get; set; }
 }
 
+public class StreamAttachment
+{
+    public string Type { get; set; } = "image"; // "image" | "document"
+    /// <summary>Data URL (data:image/jpeg;base64,...) or raw base64</summary>
+    public string Data { get; set; } = string.Empty;
+    public string? MimeType { get; set; }
+    public string? FileName { get; set; }
+}
+
 /// <summary>
 /// DTO pour le streaming SSE du chatbot
 /// </summary>
@@ -82,6 +91,8 @@ public class StreamChatRequest
     /// <summary>Préférence langue explicite : "french" | "english"</summary>
     [MaxLength(10)]
     public string? ForceLanguage { get; set; }
+
+    public List<StreamAttachment>? Attachments { get; set; }
 }
 
 /// <summary>
