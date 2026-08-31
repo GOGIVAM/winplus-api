@@ -296,6 +296,17 @@ class AdaptiveQuizRequest(BaseModel):
     subject: str = ""
     count: int = Field(default=8, ge=3, le=20)
 
+    # Profil transmis par le front (tous optionnels : anciens clients compatibles)
+    education_level: Optional[str] = None
+    grade: Optional[str] = None
+    #  Moyenne des tentatives récentes, sur 100
+    recent_score: Optional[int] = Field(default=None, ge=0, le=100)
+    attempts_count: int = 0
+    weak_topics: List[str] = Field(default_factory=list)
+    strong_topics: List[str] = Field(default_factory=list)
+    #  remediation | consolidation | stretch
+    mode: str = "consolidation"
+
 
 class AdaptiveQuizQuestion(BaseModel):
     id: int
@@ -310,6 +321,8 @@ class AdaptiveQuizQuestion(BaseModel):
 class AdaptiveQuizResponse(BaseModel):
     success: bool
     subject: str
+    #  Palier réellement appliqué : remediation | consolidation | stretch
+    mode: str = "consolidation"
     weak_areas: List[str]
     questions: List[AdaptiveQuizQuestion]
     count: int

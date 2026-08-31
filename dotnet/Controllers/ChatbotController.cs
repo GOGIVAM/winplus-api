@@ -387,6 +387,53 @@ public class ChatbotController : ControllerBase
     }
 
     /// <summary>
+    /// Rend un document joint exploitable par le modèle.
+    ///
+    /// Les formats texte (txt, csv, md, json) sont décodés et insérés tels
+    /// quels. Les formats binaires (PDF, docx, xlsx) demandent une extraction
+    /// dédiée : voir la note ci-dessous. En attendant, le nom et le type sont
+    /// annoncés au modèle, ce qui vaut mieux que de laisser croire qu'aucun
+    /// fichier n'a été envoyé.
+    ///
+    /// TODO extraction PDF : ajouter le paquet PdfPig puis, pour
+    /// mimeType == "application/pdf" :
+    ///     using var pdf = UglyToad.PdfPig.PdfDocument.Open(bytes);
+    ///     var text = string.Join("\n", pdf.GetPages().Select(p => p.Text));
+    /// Même principe pour .docx avec DocumentFormat.OpenXml.
+    /// </summary>
+    private static string DescribeDocument(StreamAttachment att)
+    {
+        const int MaxChars = 20_000; // garde-fou sur la fenêtre de contexte
+        var name = string.IsNullOrWhiteSpace(att.FileName) ? "document" : att.FileName;
+        var mime = att.MimeType ?? "application/octet-stream";
+
+        var textual = mime.StartsWith("text/")
+            || mime is "application/json" or "application/csv" or "text/csv";
+
+        if (!textual)
+            return $"[Pièce jointe : {name} ({mime}). Le contenu binaire n'est pas encore extrait côté serveur — demande à l'élève de recopier le passage utile, ou de joindre une photo de la page.]";
+
+        try
+        {
+            // Le front envoie une data URL : data:<mime>;base64,<payload>
+            var payload = att.Data;
+            var comma = payload.IndexOf(',');
+            if (payload.StartsWith("data:") && comma > 0)
+                payload = payload[(comma + 1)..];
+
+            var text = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            if (text.Length > MaxChars)
+                text = text[..MaxChars] + "\n[…document tronqué]";
+
+            return $"[Contenu du fichier joint « {name} » ({mime})]\n{text}";
+        }
+        catch (Exception)
+        {
+            return $"[Pièce jointe : {name} ({mime}) — contenu illisible.]";
+        }
+    }
+
+    /// <summary>
     /// POST /api/chatbot/stream
     /// SSE  crée la conversation/message utilisateur, proxie le stream FastAPI, ré-émet les chunks.
     /// </summary>
@@ -402,12 +449,17 @@ public class ChatbotController : ControllerBase
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(request.Message))
+        // Envoyer une image seule, sans légende, est un usage normal : on ne
+        // refuse que si le message ET les pièces jointes sont vides.
+        var hasAttachments = request.Attachments?.Count > 0;
+        if (string.IsNullOrWhiteSpace(request.Message) && !hasAttachments)
         {
             Response.StatusCode = 400;
             await Response.WriteAsync("data: {\"error\": \"Message is required\"}\n\ndata: [DONE]\n\n", cancellationToken);
             return;
         }
+        if (string.IsNullOrWhiteSpace(request.Message))
+            request.Message = "Analyse le document ci-joint.";
 
         // Create or retrieve conversation
         int conversationId = request.ConversationId ?? 0;
@@ -461,20 +513,33 @@ public class ChatbotController : ControllerBase
             .Select(m => new { m.Id, role = m.Role, content = m.Content })
             .ToListAsync(cancellationToken);
 
-        // Build messages: inject image attachments into the current user message
-        var hasImages = request.Attachments?.Any(a => a.Type == "image") == true;
+        // Injection des pièces jointes dans le message utilisateur courant.
+        //
+        // Avant : seules les pièces de type "image" étaient transmises. Le
+        // composer du front crée des pièces de type "document" pour tout ce qui
+        // n'est pas une image (PDF, docx, csv…) : elles étaient donc jetées
+        // silencieusement et le modèle répondait comme si aucun fichier n'avait
+        // été envoyé — c'est le « le chatbot n'upload pas les fichiers ».
+        var images    = request.Attachments?.Where(a => a.Type == "image").ToList()    ?? new();
+        var documents = request.Attachments?.Where(a => a.Type != "image").ToList()    ?? new();
+        var hasAny    = images.Count > 0 || documents.Count > 0;
+
         var history = historyRaw.Select<dynamic, object>(h =>
         {
-            if ((int)h.Id == savedMsgId && hasImages)
-            {
-                var parts = new List<object>();
-                if (!string.IsNullOrEmpty((string)h.content))
-                    parts.Add(new { type = "text", text = (string)h.content });
-                foreach (var att in request.Attachments!.Where(a => a.Type == "image"))
-                    parts.Add(new { type = "image_url", image_url = new { url = att.Data } });
-                return new { role = (string)h.role, content = (object)parts };
-            }
-            return new { role = (string)h.role, content = (object)(string)h.content };
+            if ((int)h.Id != savedMsgId || !hasAny)
+                return new { role = (string)h.role, content = (object)(string)h.content };
+
+            var parts = new List<object>();
+            if (!string.IsNullOrEmpty((string)h.content))
+                parts.Add(new { type = "text", text = (string)h.content });
+
+            foreach (var att in images)
+                parts.Add(new { type = "image_url", image_url = new { url = att.Data } });
+
+            foreach (var att in documents)
+                parts.Add(new { type = "text", text = DescribeDocument(att) });
+
+            return new { role = (string)h.role, content = (object)parts };
         }).ToList();
 
         // Forward request to FastAPI stream endpoint

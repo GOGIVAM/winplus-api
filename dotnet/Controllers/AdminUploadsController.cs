@@ -234,8 +234,24 @@ public class AdminUploadsController : ControllerBase
     // UploadCover, les deux uploads qui fonctionnent deja.
     public async Task<IActionResult> Direct([FromForm] IFormFile file, [FromQuery] string? folder = null)
     {
-        if (file == null || file.Length == 0)
-            return BadRequest(new { error = "Fichier requis" });
+        if (file == null)
+        {
+            // Cas réel observé : le client poste un FormData mais avec
+            // Content-Type: application/json (défaut de l'instance axios du
+            // front). Sans frontière multipart, la liaison de modèle ne trouve
+            // aucun fichier et l'action répond 400 sans dire pourquoi.
+            _logger.LogWarning(
+                "Direct upload : aucun fichier lié. Content-Type reçu = {ContentType}, HasFormContentType = {HasForm}",
+                Request.ContentType, Request.HasFormContentType);
+            return BadRequest(new
+            {
+                error = Request.HasFormContentType
+                    ? "Champ « file » absent du formulaire"
+                    : "Requête non multipart : envoyez un FormData sans forcer Content-Type"
+            });
+        }
+        if (file.Length == 0)
+            return BadRequest(new { error = "Fichier vide" });
         if (file.Length > 25 * 1024 * 1024)
             return BadRequest(new { error = "Au-delà de 25 Mo, utilisez l'envoi en plusieurs parties" });
 

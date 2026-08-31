@@ -486,11 +486,81 @@ async def generate_adaptive_quiz(
             weak_areas = progress.get('analysis', {}).get('weak_areas', [])
 
         subject_label = body.subject.strip() or "les matières en cours"
-        weak_context = f"lacunes en : {', '.join(weak_areas[:3])}" if weak_areas else "niveau intermédiaire"
+
+        # Les lacunes calculées côté service ET celles observées côté front
+        # (quiz échoués) sont fusionnées : le front connaît les tentatives
+        # récentes, le service connaît l'historique complet.
+        merged_weak = list(dict.fromkeys([*(body.weak_topics or []), *weak_areas]))
+        weak_context = (
+            f"lacunes en : {', '.join(merged_weak[:3])}" if merged_weak else "niveau intermédiaire"
+        )
+
+        # Palier de difficulté. Le front l'envoie ; sans lui, on le déduit de la
+        # moyenne récente. Un élève faible reçoit des exercices élémentaires et
+        # progresse par paliers, au lieu d'un quiz de niveau moyen qu'il rate.
+        mode = (body.mode or "consolidation").strip().lower()
+        if mode not in ("remediation", "consolidation", "stretch"):
+            mode = "consolidation"
+        if body.recent_score is not None:
+            if body.recent_score < 50:
+                mode = "remediation"
+            elif body.recent_score >= 80:
+                mode = "stretch"
+
+        LEVEL_RULES = {
+            "remediation": (
+                "PALIER : REMÉDIATION. L'élève est en difficulté (moyenne "
+                f"{body.recent_score if body.recent_score is not None else 'inconnue'}/100).\n"
+                "- une seule notion par question, choisie parmi ses lacunes ;\n"
+                "- énoncés de deux lignes maximum, vocabulaire simple ;\n"
+                "- un seul pas de raisonnement, aucun calcul intermédiaire ;\n"
+                "- distracteurs clairement faux, jamais de piège ;\n"
+                "- explication qui rappelle d'abord la règle, puis l'applique ;\n"
+                "- difficulty = \"facile\" pour au moins 6 questions sur 8, les "
+                "dernières en \"moyen\" pour amorcer la progression."
+            ),
+            "consolidation": (
+                "PALIER : CONSOLIDATION. L'élève suit le programme "
+                f"(moyenne {body.recent_score if body.recent_score is not None else 'inconnue'}/100).\n"
+                "- niveau exact du programme de sa classe ;\n"
+                "- deux pas de raisonnement au plus ;\n"
+                "- moitié des questions sur ses lacunes, moitié en révision ;\n"
+                "- difficulty réparti entre \"facile\" et \"moyen\", une ou deux "
+                "\"difficile\" en fin de quiz."
+            ),
+            "stretch": (
+                "PALIER : APPROFONDISSEMENT. L'élève réussit "
+                f"(moyenne {body.recent_score if body.recent_score is not None else 'inconnue'}/100).\n"
+                "- au-dessus du programme, énoncés de type concours ;\n"
+                "- plusieurs pas de raisonnement, données à trier ;\n"
+                "- distracteurs correspondant à des erreurs de méthode plausibles ;\n"
+                "- éviter les notions déjà maîtrisées : "
+                f"{', '.join((body.strong_topics or [])[:5]) or 'aucune signalée'} ;\n"
+                "- difficulty majoritairement \"difficile\"."
+            ),
+        }
+
+        profile_lines = []
+        if body.education_level:
+            profile_lines.append(f"Niveau scolaire : {body.education_level}")
+        if body.grade:
+            profile_lines.append(f"Classe / série : {body.grade}")
+        if body.attempts_count:
+            profile_lines.append(f"Quiz déjà passés : {body.attempts_count}")
+        if merged_weak:
+            profile_lines.append(f"Chapitres échoués : {', '.join(merged_weak[:6])}")
+        if body.strong_topics:
+            profile_lines.append(f"Chapitres maîtrisés : {', '.join(body.strong_topics[:6])}")
+        profile_block = "\n".join(profile_lines) or "Aucun historique disponible."
 
         prompt = (
             f"Tu es un professeur expert en \"{subject_label}\".\n"
             f"Génère {body.count} questions QCM en français calibrées pour un étudiant avec des {weak_context}.\n\n"
+            f"PROFIL DE L'ÉLÈVE\n{profile_block}\n\n"
+            f"{LEVEL_RULES[mode]}\n\n"
+            "Le champ \"difficulty\" doit refléter la difficulté réelle de chaque "
+            "question (\"facile\", \"moyen\" ou \"difficile\") : il sert à mesurer "
+            "la progression d'un quiz au suivant.\n\n"
             "Retourne UNIQUEMENT un tableau JSON valide (sans texte ni markdown):\n"
             "[\n"
             "  {\n"
@@ -526,7 +596,8 @@ async def generate_adaptive_quiz(
         return {
             'success': True,
             'subject': subject_label,
-            'weak_areas': weak_areas,
+            'mode': mode,
+            'weak_areas': merged_weak,
             'questions': questions,
             'count': len(questions),
             'generated_at': datetime.utcnow().isoformat()

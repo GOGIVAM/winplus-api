@@ -78,8 +78,10 @@ public class StreamAttachment
 /// </summary>
 public class StreamChatRequest
 {
-    [Required]
-    [MinLength(1)]
+    // [Required] + [MinLength(1)] renvoyaient un 400 AVANT l'entree dans
+    // l'action : envoyer une image sans legende etait donc impossible, quelle
+    // que soit la logique du controleur. La verification « message vide ET
+    // aucune piece jointe » se fait maintenant dans StreamChat.
     [MaxLength(10000)]
     public string Message { get; set; } = string.Empty;
 

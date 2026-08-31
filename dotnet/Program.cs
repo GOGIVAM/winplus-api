@@ -351,8 +351,15 @@ builder.Services.AddHttpClient("FastApiClient", client =>
         ?? builder.Configuration["FastApi:BaseUrl"]
         ?? "http://172.31.1.71:5000";
     client.BaseAddress = new Uri(fastapiBaseUrl);
+    // Le défaut était 5 (+2 de marge) : SEPT secondes pour tout appel IA.
+    // Or la génération d'un quiz par le modèle prend 8-20 s (commentaire de
+    // app.py), et l'analyse d'une image davantage. Chaque appel expirait donc
+    // avant la première réponse, et le front basculait sur son message
+    // « WinAI est momentanément indisponible ».
+    // 180 s couvre un stream complet ; le circuit breaker de FastApiClient
+    // protège toujours contre un service réellement mort.
     client.Timeout = TimeSpan.FromSeconds(
-        builder.Configuration.GetValue<int>("AIService:TimeoutSeconds", 5) + 2); // grace margin
+        builder.Configuration.GetValue<int>("AIService:TimeoutSeconds", 180));
     client.DefaultRequestHeaders.Add("Accept", "application/json");
 });
 

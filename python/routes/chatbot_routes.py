@@ -428,7 +428,16 @@ async def stream_chat(
         if body.user_context and not getattr(body.user_context, "force_language", None):
             last_user_msgs = [m for m in (body.messages or []) if isinstance(m, dict) and m.get("role") == "user"]
             if last_user_msgs:
-                detected = detect_language(last_user_msgs[-1].get("content", ""))
+                # Avec une pièce jointe, "content" est une LISTE de blocs
+                # ({type:"text"…}, {type:"image_url"…}) et non une chaîne :
+                # detect_language recevait une liste. On extrait le texte.
+                raw = last_user_msgs[-1].get("content", "")
+                if isinstance(raw, list):
+                    raw = " ".join(
+                        b.get("text", "") for b in raw
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
+                detected = detect_language(raw or "")
                 body.user_context.force_language = detected  # type: ignore[assignment]
         system_prompt, winai_role = _build_prompt_from_request(body.user_context, current_user)
 
