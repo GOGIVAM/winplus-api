@@ -688,9 +688,13 @@ public class CustomAuthService : ICustomAuthService
             passwordResetToken.IsUsed = true;
             passwordResetToken.UsedAt = DateTime.UtcNow;
 
-            var refreshTokens = _dbContext.RefreshTokens
-                .Where(t => t.UserId == user.Id && !t.IsRevoked)
-                .ToList();
+            // IsRevoked est une propriete calculee (=> RevokedAt != null), non
+            // mappee : EF Core ne peut pas la traduire en SQL et jette une
+            // InvalidOperationException, attrapee plus bas -> reponse 400 alors
+            // que la reinitialisation est valide. On filtre sur la colonne.
+            var refreshTokens = await _dbContext.RefreshTokens
+                .Where(t => t.UserId == user.Id && t.RevokedAt == null)
+                .ToListAsync();
 
             foreach (var token in refreshTokens)
             {
@@ -882,9 +886,11 @@ public class CustomAuthService : ICustomAuthService
             _dbContext.Update(user);
 
             // Revoke all refresh tokens
-            var refreshTokens = _dbContext.RefreshTokens
-                .Where(t => t.UserId == userId && !t.IsRevoked)
-                .ToList();
+            // Meme correction que dans ResetPasswordAsync : IsRevoked n'est pas
+            // une colonne, on filtre sur RevokedAt.
+            var refreshTokens = await _dbContext.RefreshTokens
+                .Where(t => t.UserId == userId && t.RevokedAt == null)
+                .ToListAsync();
 
             foreach (var token in refreshTokens)
             {

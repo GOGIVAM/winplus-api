@@ -180,8 +180,8 @@ public class EmailService : IEmailService
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:28px 0 0;"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;line-height:1.6;color:#4E7280;text-align:center;"">
-            ✅&nbsp;<strong style=""color:#1F4A5A;"">C'était vous&nbsp;?</strong> Aucune action requise.<br>
-            ⚠️&nbsp;<strong style=""color:#1F4A5A;"">Ce n'était pas vous&nbsp;?</strong> Changez immédiatement votre mot de passe.
+            <strong style=""color:#1F4A5A;"">C'était vous&nbsp;?</strong> Aucune action requise.<br>
+            <strong style=""color:#1F4A5A;"">Ce n'était pas vous&nbsp;?</strong> Changez immédiatement votre mot de passe.
           </p>
         </td></tr>
       </table>";
@@ -282,7 +282,7 @@ public class EmailService : IEmailService
             <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0""><tr>
               <td style=""font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:14px;font-weight:600;color:#0F2A35;vertical-align:middle;"">{EscapeHtml(title)}</td>
               <td align=""right"" style=""white-space:nowrap;padding-left:12px;vertical-align:middle;"">
-                <a href=""{subjectUrl}"" style=""display:inline-block;padding:7px 16px;background-color:#0F2A35;color:#6BCFC6;font-family:'Bricolage Grotesque',-apple-system,Arial,sans-serif;font-size:12px;font-weight:700;text-decoration:none;border-radius:8px;"">Télécharger →</a>
+                <a href=""{subjectUrl}"" style=""display:inline-block;padding:7px 16px;background-color:#0F2A35;color:#6BCFC6;font-family:'Bricolage Grotesque',-apple-system,Arial,sans-serif;font-size:12px;font-weight:700;text-decoration:none;border-radius:8px;"">Télécharger</a>
               </td>
             </tr></table>
           </td>
@@ -316,7 +316,7 @@ public class EmailService : IEmailService
             <tr>
               <td style=""padding:10px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">Statut</td>
               <td style=""padding:10px 0;text-align:right;"">
-                <span style=""display:inline-block;background-color:#0F2A35;color:#6BCFC6;padding:4px 12px;border-radius:99px;font-family:Arial,sans-serif;font-size:11px;font-weight:700;"">✓ Confirmé</span>
+                <span style=""display:inline-block;background-color:#0F2A35;color:#6BCFC6;padding:4px 12px;border-radius:99px;font-family:Arial,sans-serif;font-size:11px;font-weight:700;"">Confirmé</span>
               </td>
             </tr>
             <tr>
@@ -334,11 +334,11 @@ public class EmailService : IEmailService
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 0 8px;"">
           <p style=""margin:0 0 16px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;text-align:center;"">Retrouvez toutes vos épreuves dans votre espace personnel.</p>
-          {Button("Accéder à mes épreuves →", "https://winplus.cm/dashboard")}
+          {Button("Accéder à mes épreuves", "https://winplus.cm/dashboard")}
         </td></tr>
       </table>";
 
-        var html = Wrapper("Paiement", "Paiement confirmé ✓", body, _logoUrl, "#1F9D6E");
+        var html = Wrapper("Paiement", "Paiement confirmé", body, _logoUrl, "#1F9D6E");
         return await SendGenericEmailAsync(email, $"Reçu de paiement  {formattedAmount} XAF", html);
     }
 
@@ -358,11 +358,11 @@ public class EmailService : IEmailService
         </td></tr>
       </table>
 
-      {WarningBox("Plus que 3 jours&nbsp;⏳", "Renouvelez avant la suspension de votre accès.")}
+      {WarningBox("Plus que 3 jours", "Renouvelez avant la suspension de votre accès.")}
 
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:24px 0 28px;"">
-          {Button("Renouveler mon abonnement →", "https://winplus.cm/pricing")}
+          {Button("Renouveler mon abonnement", "https://winplus.cm/pricing")}
         </td></tr>
       </table>
 
@@ -589,8 +589,8 @@ public class EmailService : IEmailService
             <td align=""center"" style=""padding:0 0 28px;"">
               <table role=""presentation"" cellpadding=""0"" cellspacing=""0"" border=""0"">
                 <tr>
-                  <td style=""padding:0 8px 0 0;vertical-align:middle;"">
-                    <img src=""{logoUrl}"" width=""34"" height=""29"" alt=""W+"" style=""display:block;width:34px;height:auto;border:0;outline:none;text-decoration:none;font-family:Arial,sans-serif;font-size:18px;font-weight:700;color:#0F2A35;"">
+                  <td style=""padding:0 10px 0 0;vertical-align:middle;"">
+                    <img src=""{logoUrl}"" width=""44"" alt=""WinPlus"" style=""display:block;width:44px;max-width:44px;height:auto;border:0;outline:none;text-decoration:none;font-family:Arial,sans-serif;font-size:18px;font-weight:700;color:#0F2A35;"">
                   </td>
                   <td style=""vertical-align:middle;"">
                     <span style=""font-family:'Bricolage Grotesque',-apple-system,'Helvetica Neue',Arial,sans-serif;font-size:20px;font-weight:700;color:#0F2A35;letter-spacing:-0.02em;"">Win<em style=""font-family:'Instrument Serif',Georgia,serif;font-style:italic;color:#259A8E;"">+</em></span>
