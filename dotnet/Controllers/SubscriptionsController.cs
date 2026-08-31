@@ -24,7 +24,7 @@ public class SubscriptionsController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>GET /api/subscriptions/me — abonnement actif de l'utilisateur connecté.</summary>
+    /// <summary>GET /api/subscriptions/me  abonnement actif de l'utilisateur connecté.</summary>
     [HttpGet("me")]
     public async Task<IActionResult> GetCurrent()
     {
@@ -81,7 +81,7 @@ public class SubscriptionsController : ControllerBase
         }
     }
 
-    /// <summary>POST /api/subscriptions — souscrire à un plan.</summary>
+    /// <summary>POST /api/subscriptions  souscrire à un plan.</summary>
     [HttpPost]
     public async Task<IActionResult> Subscribe([FromBody] SubscribeRequest req)
     {
@@ -123,7 +123,7 @@ public class SubscriptionsController : ControllerBase
         }
     }
 
-    /// <summary>POST /api/subscriptions/me/cancel — résilier l'abonnement actif.</summary>
+    /// <summary>POST /api/subscriptions/me/cancel  résilier l'abonnement actif.</summary>
     [HttpPost("me/cancel")]
     public async Task<IActionResult> Cancel()
     {

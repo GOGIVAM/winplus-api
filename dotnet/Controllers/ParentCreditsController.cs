@@ -85,7 +85,7 @@ public class ParentCreditsController : ControllerBase
                         EntryType   = "allocation",
                         Amount      = subscription.monthly.Value,
                         PeriodStart = periodStart,
-                        Label       = $"Dotation mensuelle — plan {subscription.planName}"
+                        Label       = $"Dotation mensuelle  plan {subscription.planName}"
                     });
                     await _db.SaveChangesAsync();
                 }

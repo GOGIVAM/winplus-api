@@ -12,7 +12,7 @@ namespace Backend.Controllers;
 ///   POST /api/auth/send-confirmation-code
 ///   POST /api/auth/verify-confirmation
 /// Il manquait le point d'entrée qui dit à l'app s'il faut demander la
-/// reconfirmation — sinon l'écran ne peut jamais s'afficher.
+/// reconfirmation  sinon l'écran ne peut jamais s'afficher.
 ///
 /// GET /api/auth/reconfirmation-status
 /// </summary>

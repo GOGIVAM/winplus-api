@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════
--- WinPlus — couverture de profil, objectif hebdomadaire, historique des téléchargements
+-- WinPlus  couverture de profil, objectif hebdomadaire, historique des téléchargements
 -- PostgreSQL. Noms de colonnes en PascalCase entre guillemets, comme
 -- le reste du schéma EF Core du projet.
 --

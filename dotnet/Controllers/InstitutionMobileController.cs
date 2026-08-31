@@ -37,7 +37,7 @@ public class InstitutionMobileController : ControllerBase
 
     // ── Groupes ──────────────────────────────────────────────────────────────
 
-    /// <summary>GET /api/institution/groups — liste les groupes de l'institution.</summary>
+    /// <summary>GET /api/institution/groups  liste les groupes de l'institution.</summary>
     [HttpGet("groups")]
     public async Task<IActionResult> GetGroups()
     {
@@ -66,7 +66,7 @@ public class InstitutionMobileController : ControllerBase
         }
     }
 
-    /// <summary>POST /api/institution/groups — créer un groupe.</summary>
+    /// <summary>POST /api/institution/groups  créer un groupe.</summary>
     [HttpPost("groups")]
     public async Task<IActionResult> CreateGroup([FromBody] CreateGroupRequest req)
     {
@@ -96,7 +96,7 @@ public class InstitutionMobileController : ControllerBase
         }
     }
 
-    /// <summary>DELETE /api/institution/groups/{id} — supprimer un groupe.</summary>
+    /// <summary>DELETE /api/institution/groups/{id}  supprimer un groupe.</summary>
     [HttpDelete("groups/{id:int}")]
     public async Task<IActionResult> DeleteGroup([FromRoute] int id)
     {
@@ -117,7 +117,7 @@ public class InstitutionMobileController : ControllerBase
         }
     }
 
-    /// <summary>GET /api/institution/groups/{id}/members — membres d'un groupe.</summary>
+    /// <summary>GET /api/institution/groups/{id}/members  membres d'un groupe.</summary>
     [HttpGet("groups/{id:int}/members")]
     public async Task<IActionResult> GetGroupMembers([FromRoute] int id)
     {
@@ -151,7 +151,7 @@ public class InstitutionMobileController : ControllerBase
         }
     }
 
-    /// <summary>POST /api/institution/groups/{id}/members — ajouter un membre par email.</summary>
+    /// <summary>POST /api/institution/groups/{id}/members  ajouter un membre par email.</summary>
     [HttpPost("groups/{id:int}/members")]
     public async Task<IActionResult> AddMember([FromRoute] int id, [FromBody] AddGroupMemberRequest req)
     {
@@ -183,7 +183,7 @@ public class InstitutionMobileController : ControllerBase
         }
     }
 
-    /// <summary>DELETE /api/institution/groups/{id}/members/{memberId} — retirer un membre.</summary>
+    /// <summary>DELETE /api/institution/groups/{id}/members/{memberId}  retirer un membre.</summary>
     [HttpDelete("groups/{id:int}/members/{memberId:int}")]
     public async Task<IActionResult> RemoveMember([FromRoute] int id, [FromRoute] int memberId)
     {
@@ -209,7 +209,7 @@ public class InstitutionMobileController : ControllerBase
 
     // ── Analytics ─────────────────────────────────────────────────────────────
 
-    /// <summary>GET /api/institution/analytics — KPIs agrégés de l'institution.</summary>
+    /// <summary>GET /api/institution/analytics  KPIs agrégés de l'institution.</summary>
     [HttpGet("analytics")]
     public async Task<IActionResult> GetAnalytics()
     {
@@ -292,7 +292,7 @@ public class InstitutionMobileController : ControllerBase
 
     // ── Élèves à risque ───────────────────────────────────────────────────────
 
-    /// <summary>GET /api/institution/at-risk — élèves à risque de décrochage.</summary>
+    /// <summary>GET /api/institution/at-risk  élèves à risque de décrochage.</summary>
     [HttpGet("at-risk")]
     public async Task<IActionResult> GetAtRisk()
     {
@@ -366,7 +366,7 @@ public class InstitutionMobileController : ControllerBase
 
     // ── Plan d'action ─────────────────────────────────────────────────────────
 
-    /// <summary>GET /api/institution/action-plan — plan d'action IA pour l'institution.</summary>
+    /// <summary>GET /api/institution/action-plan  plan d'action IA pour l'institution.</summary>
     [HttpGet("action-plan")]
     public async Task<IActionResult> GetActionPlan(CancellationToken ct)
     {

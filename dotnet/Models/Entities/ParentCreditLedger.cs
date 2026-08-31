@@ -6,7 +6,7 @@ namespace Backend.Models.Entities;
 /// <summary>
 /// Mouvement de crédits mensuels d'un parent (S3-1).
 /// Type "allocation" = dotation du plan, "consumption" = achat pour un enfant.
-/// Le solde est la somme des mouvements de la période courante — jamais une
+/// Le solde est la somme des mouvements de la période courante  jamais une
 /// valeur codée en dur.
 /// </summary>
 public class ParentCreditLedger

@@ -85,7 +85,7 @@ public class UsersController : ControllerBase
         }
     }
 
-    /// <summary>GET /api/users/me/downloads — historique des téléchargements de l'utilisateur connecté.</summary>
+    /// <summary>GET /api/users/me/downloads  historique des téléchargements de l'utilisateur connecté.</summary>
     [HttpGet("me/downloads")]
     [Authorize]
     public async Task<IActionResult> GetMyDownloads([FromQuery] int page = 1, [FromQuery] int pageSize = 20)

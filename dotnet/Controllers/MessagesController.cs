@@ -63,7 +63,7 @@ public class MessagesController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Message moderation check failed — message autorisé par défaut");
+            _logger.LogWarning(ex, "Message moderation check failed  message autorisé par défaut");
             return false;
         }
     }

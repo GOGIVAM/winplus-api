@@ -308,7 +308,7 @@ public class CustomAuthService : ICustomAuthService
             catch (Exception sessionEx)
             {
                 _logger.LogWarning(sessionEx,
-                    "Session non enregistrée pour {Email} — connexion poursuivie", email);
+                    "Session non enregistrée pour {Email}  connexion poursuivie", email);
                 // L'entité en échec doit être détachée, sinon le SaveChanges
                 // suivant tenterait de la réinsérer.
                 foreach (var entry in _dbContext.ChangeTracker.Entries<UserSession>().ToList())

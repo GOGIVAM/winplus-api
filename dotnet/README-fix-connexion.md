@@ -1,4 +1,4 @@
-# Connexion impossible — `42804: column "RefreshTokenId" is of type integer but expression is of type text`
+# Connexion impossible  `42804: column "RefreshTokenId" is of type integer but expression is of type text`
 
 ## Ce qui se passait
 
@@ -16,7 +16,7 @@ public string? RefreshTokenId { get; set; }
 alors que la colonne SQL est `INTEGER` (`Migrations/SQL_Migration_Tables.sql`,
 ligne 67) et que `RefreshToken.Id` est un `int`. Entity Framework envoyait donc
 un paramètre typé `text` à PostgreSQL, qui rejetait l'`INSERT` avec
-`42804`. Aucune session ne pouvait être créée — même avec la valeur `null`,
+`42804`. Aucune session ne pouvait être créée  même avec la valeur `null`,
 puisque EF envoie un `null` typé.
 
 **2. Un `await` manquant qui propageait la panne à la connexion.**
@@ -28,8 +28,8 @@ _ = _sessionService.CreateSessionAsync(...);
 
 `SessionService` partage le `DbContext` scopé de `CustomAuthService`. Lancé sans
 `await`, l'`UserSession` en échec **restait suivi par le ChangeTracker**. Le
-`SaveChangesAsync` de la ligne 320 — celui qui enregistre le refresh token et la
-date de dernière connexion — réessayait donc l'insertion fautive et échouait à
+`SaveChangesAsync` de la ligne 320  celui qui enregistre le refresh token et la
+date de dernière connexion  réessayait donc l'insertion fautive et échouait à
 son tour. C'est exactement ce que montrent vos logs : la même exception remonte
 successivement dans `SessionService`, puis dans `CustomAuthService`, puis en
 `[SignIn Failed]`.
@@ -47,7 +47,7 @@ public int? RefreshTokenId { get; set; } // Reference to RefreshToken.Id
 
 Le type correspond maintenant à la colonne. Aucune migration EF n'est nécessaire :
 la colonne est déjà `INTEGER` en base, et aucun snapshot de migration ne
-référence ce champ — c'est le code C# qui était faux, pas le schéma.
+référence ce champ  c'est le code C# qui était faux, pas le schéma.
 
 ### `Services/CustomAuthService.cs`
 
@@ -60,7 +60,7 @@ try
 }
 catch (Exception sessionEx)
 {
-    _logger.LogWarning(sessionEx, "Session non enregistrée pour {Email} — connexion poursuivie", email);
+    _logger.LogWarning(sessionEx, "Session non enregistrée pour {Email}  connexion poursuivie", email);
     foreach (var entry in _dbContext.ChangeTracker.Entries<UserSession>().ToList())
         entry.State = EntityState.Detached;
 }
@@ -68,7 +68,7 @@ catch (Exception sessionEx)
 
 Deux effets. La connexion n'est plus jamais bloquée par un incident de traçage
 de session. Et le détachement garantit qu'une entité en échec ne contamine plus
-le `SaveChangesAsync` suivant — la protection reste utile même si un autre
+le `SaveChangesAsync` suivant  la protection reste utile même si un autre
 problème d'insertion survient un jour.
 
 ## Déploiement

@@ -26,7 +26,7 @@ public class AdminUserRowDto
     public string Status { get; set; } = "active";
     public bool IsEmailVerified { get; set; }
 
-    // Présence — calculée côté serveur, jamais côté client
+    // Présence  calculée côté serveur, jamais côté client
     public bool IsOnline { get; set; }
     public DateTime? LastSeenAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
@@ -151,7 +151,7 @@ public class AdminGrantSubscriptionRequest
 /// Administration complète des comptes utilisateurs : CRUD, présence temps réel,
 /// état de paiement, sessions, historique et octroi d'abonnement.
 ///
-/// IMPORTANT — ce controller prend en charge TOUTES les routes « api/admin/users… ».
+/// IMPORTANT  ce controller prend en charge TOUTES les routes « api/admin/users… ».
 /// Les méthodes homonymes doivent être supprimées d'AdminController.cs
 /// (voir README-admin-users.md), sinon ASP.NET lève une AmbiguousMatchException.
 /// </summary>
@@ -676,7 +676,7 @@ public class AdminUsersController : ControllerBase
         await _db.SaveChangesAsync();
 
         _logger.LogInformation("Admin {AdminId} suspended user {UserId}. Reason: {Reason}",
-            CurrentAdminId(), id, req?.Reason ?? "—");
+            CurrentAdminId(), id, req?.Reason ?? "");
         return Ok(new { message = "Compte suspendu" });
     }
 
@@ -929,7 +929,7 @@ public class AdminUsersController : ControllerBase
         {
             Id = $"order-{o.Id}",
             Type = "order",
-            Label = $"Commande {o.OrderNumber} — {o.TotalAmount:N0} XAF ({o.Status})",
+            Label = $"Commande {o.OrderNumber}  {o.TotalAmount:N0} XAF ({o.Status})",
             At = o.CreatedAt,
         }));
 
@@ -943,7 +943,7 @@ public class AdminUsersController : ControllerBase
         {
             Id = $"payment-{p.Id}",
             Type = "payment",
-            Label = $"Paiement {p.Amount:N0} {p.Currency} — {p.Status}",
+            Label = $"Paiement {p.Amount:N0} {p.Currency}  {p.Status}",
             At = p.CreatedAt,
         }));
 
@@ -1005,7 +1005,7 @@ public class AdminUsersController : ControllerBase
 
         _logger.LogInformation(
             "Admin {AdminId} granted {Months} month(s) to user {UserId}. Note: {Note}",
-            CurrentAdminId(), months, id, req.Note ?? "—");
+            CurrentAdminId(), months, id, req.Note ?? "");
 
         return Ok(new { message = $"Abonnement de {months} mois accordé" });
     }

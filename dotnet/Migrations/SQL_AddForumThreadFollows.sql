@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════
--- Forum — fils suivis
+-- Forum  fils suivis
 --
 -- Une table, deux index. Idempotent : rejouable sans risque.
 --

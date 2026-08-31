@@ -1,11 +1,11 @@
-# Gestion des utilisateurs — admin
+# Gestion des utilisateurs  admin
 
 Fichiers **prêts à copier**, rebasés sur `origin/main` (commit `8b3675c`).
 Aucune modification manuelle à faire.
 
 | Fichier fourni | Destination | Nature |
 | --- | --- | --- |
-| `Controllers/AdminController.cs` | `dotnet/Controllers/AdminController.cs` | **remplace** — conflit résolu |
+| `Controllers/AdminController.cs` | `dotnet/Controllers/AdminController.cs` | **remplace**  conflit résolu |
 | `Program.cs` | `dotnet/Program.cs` | **remplace** |
 | `Controllers/AdminUsersController.cs` | `dotnet/Controllers/AdminUsersController.cs` | nouveau |
 | `Middlewares/PresenceTrackingMiddleware.cs` | `dotnet/Middlewares/PresenceTrackingMiddleware.cs` | nouveau |
@@ -55,20 +55,20 @@ qu'ASP.NET lève au démarrage sur deux méthodes déclarant la même route :
 
 | Attribut supprimé | Méthode | Reprise dans le nouveau controller |
 | --- | --- | --- |
-| `[HttpGet("users")]` | `GetAllUsers` | `List` — + filtres rôle, statut, paiement, présence |
-| `[HttpPut("users/{id}/role")]` | `UpdateUserRole` | `SetRole` — + garde-fou anti-auto-déclassement |
+| `[HttpGet("users")]` | `GetAllUsers` | `List`  + filtres rôle, statut, paiement, présence |
+| `[HttpPut("users/{id}/role")]` | `UpdateUserRole` | `SetRole`  + garde-fou anti-auto-déclassement |
 | `[HttpPut("users/{id}/status")]` | `UpdateUserStatus` | `Update` (champ `status`) |
 | `[HttpPut("users/{id}")]` | `UpdateUser` | `Update` |
-| `[HttpPost("users/{id}/suspend")]` | `SuspendUser` | `Suspend` — + révocation des sessions |
+| `[HttpPost("users/{id}/suspend")]` | `SuspendUser` | `Suspend`  + révocation des sessions |
 | `[HttpPost("users/{id}/reactivate")]` | `ReactivateUser` | `Reactivate` |
 | `[HttpDelete("users/{id}")]` | `SoftDeleteUser` | `SoftDelete` |
 | `[HttpPost("users/{id}/restore")]` | `RestoreUser` | `Restore` (alias de `Reactivate`) |
-| `[HttpDelete("users/{id}/hard")]` | `HardDeleteUser` | `HardDelete` — transactionnel |
+| `[HttpDelete("users/{id}/hard")]` | `HardDeleteUser` | `HardDelete`  transactionnel |
 | `[HttpPost("users/{id}/delete")]` | `DeleteUser` | `SoftDeletePost` (alias) |
 
 Contrôles passés après la coupe : plus aucune route `users…` dans ce controller,
-**40 routes conservées**, accolades équilibrées à zéro. Le reste du fichier —
-analytics, contenus, commandes, chat, WinAI, logs, santé système — est inchangé,
+**40 routes conservées**, accolades équilibrées à zéro. Le reste du fichier 
+analytics, contenus, commandes, chat, WinAI, logs, santé système  est inchangé,
 y compris les ajouts récents de l'amont. Les routes `user/{userId}/block` et
 `user/{userId}/unblock` (préfixe singulier `user/`) n'étaient pas en conflit et
 sont conservées telles quelles.

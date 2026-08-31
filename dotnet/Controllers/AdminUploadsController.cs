@@ -11,9 +11,9 @@ namespace Backend.Controllers;
 ///
 /// Le fichier ne traverse PAS l'API : le navigateur découpe le fichier et
 /// envoie chaque partie directement à S3 via une URL signée. On évite ainsi
-/// les trois murs qui faisaient échouer les envois volumineux — la limite de
+/// les trois murs qui faisaient échouer les envois volumineux  la limite de
 /// corps de requête de nginx, celle de Kestrel, et le délai d'attente du
-/// proxy — et une coupure réseau ne fait perdre qu'une partie, pas le fichier.
+/// proxy  et une coupure réseau ne fait perdre qu'une partie, pas le fichier.
 ///
 /// Cycle de vie :
 ///   1. POST   /api/admin/uploads/init        → key + uploadId + taille de partie
@@ -23,7 +23,7 @@ namespace Backend.Controllers;
 ///      GET    /api/admin/uploads/parts       → parties déjà reçues (reprise)
 ///
 /// ⚠️ Le bucket doit autoriser le PUT depuis le domaine du site (CORS) et les
-/// en-têtes ETag en lecture — voir README-PATCH.md.
+/// en-têtes ETag en lecture  voir README-PATCH.md.
 /// </summary>
 [ApiController]
 [Route("api/admin/uploads")]
@@ -137,7 +137,7 @@ public class AdminUploadsController : ControllerBase
         }
     }
 
-    /// <summary>Parties déjà reçues par S3 — sert à reprendre un envoi interrompu.</summary>
+    /// <summary>Parties déjà reçues par S3  sert à reprendre un envoi interrompu.</summary>
     [HttpGet("parts")]
     public async Task<IActionResult> Parts([FromQuery] string key, [FromQuery] string uploadId)
     {

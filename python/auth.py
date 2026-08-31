@@ -24,7 +24,7 @@ JWT_ALGORITHM = 'HS256'
 # Ils doivent être déclarés explicitement : PyJWT 2.x lève
 # InvalidAudienceError si le token porte un claim « aud » alors que
 # l'appelant n'en fournit aucun. Comme les tokens .NET en portent un, la
-# validation échouait avant même de vérifier la signature — deuxième cause des
+# validation échouait avant même de vérifier la signature  deuxième cause des
 # 401 sur tous les endpoints IA, après l'algorithme de signature.
 JWT_ISSUER = os.getenv('JWT_ISSUER', 'WinPlusApp')
 JWT_AUDIENCE = os.getenv('JWT_AUDIENCE', 'WinPlusUsers')
@@ -41,7 +41,7 @@ JWT_AUDIENCE = os.getenv('JWT_AUDIENCE', 'WinPlusUsers')
 #
 #  Le calcul de signature est rigoureusement le même : seul le NOM change.
 #  On enregistre donc l'URI comme alias de HMAC-SHA256 dans PyJWT, ce qui
-#  permet aux tokens déjà distribués de rester valides — personne n'est
+#  permet aux tokens déjà distribués de rester valides  personne n'est
 #  déconnecté par la correction côté .NET.
 #
 #  Réécrire l'en-tête à la volée ne marcherait pas : la signature couvre les
@@ -57,7 +57,7 @@ JWT_AUDIENCE = os.getenv('JWT_AUDIENCE', 'WinPlusUsers')
 #
 #  L'horloge démarre au premier lancement du processus et l'échéance est
 #  conservée sur disque : redémarrer le service ne la repousse pas. Le jour
-#  où le code sera relu, la tolérance aura disparu d'elle-même — et les
+#  où le code sera relu, la tolérance aura disparu d'elle-même  et les
 #  quelques lignes restantes pourront être supprimées sans précaution.
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -66,7 +66,7 @@ XMLDSIG_HMAC_SHA256 = 'http://www.w3.org/2001/04/xmldsig-more#hmac-sha256'
 LEGACY_ALG_WINDOW_HOURS = int(os.getenv('JWT_LEGACY_ALG_WINDOW_HOURS', '48'))
 
 # Fichier d'ancrage de l'échéance. /tmp est volontaire : si la machine
-# redémarre, le fichier disparaît et la fenêtre se réarme — un redémarrage
+# redémarre, le fichier disparaît et la fenêtre se réarme  un redémarrage
 # machine implique de toute façon une coupure, donc des tokens à renouveler.
 _DEADLINE_FILE = os.getenv(
     'JWT_LEGACY_ALG_DEADLINE_FILE',
@@ -217,7 +217,7 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
     except jwt.InvalidAlgorithmError as e:
         # Deux cas : soit le token vient d'un émetteur inattendu, soit la
         # fenêtre de compatibilité s'est refermée alors qu'un ancien token
-        # circule encore — ce qui signalerait un .NET non redéployé.
+        # circule encore  ce qui signalerait un .NET non redéployé.
         window_open = datetime.now(timezone.utc) < LEGACY_ALG_DEADLINE
         logger.error(
             "Algorithme non accepté (%s). Acceptés : %s. "

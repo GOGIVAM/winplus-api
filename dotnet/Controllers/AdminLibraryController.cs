@@ -9,7 +9,7 @@ namespace Backend.Controllers;
 /// <summary>
 /// Mise en ligne d'un livre ou d'une vidéo depuis l'administration.
 ///
-/// L'ancienne page d'upload postait tout — métadonnées ET fichier — sur
+/// L'ancienne page d'upload postait tout  métadonnées ET fichier  sur
 /// `/admin/upload`, une route qui n'existait pas côté API : rien n'était jamais
 /// enregistré. Le fichier passe maintenant par AdminUploadsController (envoi
 /// direct vers S3, en plusieurs parties), et cette route ne reçoit que les

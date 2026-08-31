@@ -726,7 +726,7 @@ async def moderate_message(
         if not isinstance(result, dict) or "verdict" not in result:
             result = {"verdict": "needs_review", "confidence": 0.5, "reason": "Analyse indisponible."}
     except Exception:
-        result = {"verdict": "safe", "confidence": 1.0, "reason": "Service indisponible — message autorisé."}
+        result = {"verdict": "safe", "confidence": 1.0, "reason": "Service indisponible  message autorisé."}
 
     verdict = result.get("verdict", "safe")
     confidence = float(result.get("confidence", 0.5))

@@ -225,7 +225,7 @@ public class AdminExamsController : ControllerBase
             _db.Exams.Add(exam);
             await _db.SaveChangesAsync();
 
-            _logger.LogInformation("Épreuve créée #{Id} — {Title}", exam.Id, exam.Title);
+            _logger.LogInformation("Épreuve créée #{Id}  {Title}", exam.Id, exam.Title);
             return CreatedAtAction(nameof(GetOne), new { id = exam.Id }, new { success = true, data = Shape(exam) });
         }
         catch (Exception ex)

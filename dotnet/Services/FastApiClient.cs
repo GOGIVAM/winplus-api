@@ -73,7 +73,7 @@ public class FastApiClient : IFastApiClient
 
         //  Retry Policy: 3 tentatives avec backoff exponentiel
         // ⚠ On ne réessaie que sur les échecs transitoires. Auparavant, toute
-        // HttpRequestException relançait 3 tentatives à 2, 4 puis 8 secondes —
+        // HttpRequestException relançait 3 tentatives à 2, 4 puis 8 secondes 
         // y compris sur 401 et 404, qui sont définitifs. Un endpoint absent
         // coûtait ainsi 14 secondes par appel, répétées à chaque chargement.
         static bool IsTransient(HttpRequestException ex) =>
@@ -421,7 +421,7 @@ public class FastApiClient : IFastApiClient
             // ⚠ Route corrigée : le POST /api/generate-learning-path n'existe
             // pas côté FastAPI, qui expose GET /api/learning-path/{user_id}
             // (app.py). Chaque appel enchaînait 3 tentatives à 2, 4 puis 8
-            // secondes avant de retomber sur le fallback — 14 secondes perdues,
+            // secondes avant de retomber sur le fallback  14 secondes perdues,
             // répétées à chaque chargement du tableau de bord.
             //
             // Le service Python calcule le parcours depuis les performances

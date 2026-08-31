@@ -24,7 +24,7 @@ var builder = WebApplication.CreateBuilder(args);
 // ── Taille des requêtes ─────────────────────────────────────────────────────
 // Les gros fichiers (vidéos de cours) ne passent plus par l'API : le navigateur
 // les envoie par parties directement à S3 (AdminUploadsController). Kestrel n'a
-// donc à accepter que les envois directs — images de vignette, PDF courts —
+// donc à accepter que les envois directs  images de vignette, PDF courts 
 // plafonnés à 32 Mio.
 builder.WebHost.ConfigureKestrel(options =>
 {

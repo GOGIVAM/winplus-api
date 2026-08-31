@@ -269,7 +269,7 @@ public class TeacherContentController : ControllerBase
                 {
                     type  = "best_seller",
                     icon  = "flame",
-                    text  = $"{title} — meilleure vente ce mois ({best.sales} vente(s), {best.revenue:N0} XAF)"
+                    text  = $"{title}  meilleure vente ce mois ({best.sales} vente(s), {best.revenue:N0} XAF)"
                 });
             }
 

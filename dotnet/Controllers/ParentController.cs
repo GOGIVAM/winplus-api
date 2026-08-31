@@ -436,7 +436,7 @@ public class ParentController : ControllerBase
         }
     }
 
-    /// <summary>POST /api/parent/children — lier un enfant au parent par email.</summary>
+    /// <summary>POST /api/parent/children  lier un enfant au parent par email.</summary>
     [HttpPost("children")]
     public async Task<IActionResult> AddChild([FromBody] AddChildRequest req)
     {
@@ -460,7 +460,7 @@ public class ParentController : ControllerBase
         }
     }
 
-    /// <summary>DELETE /api/parent/children/{childId} — délier un enfant.</summary>
+    /// <summary>DELETE /api/parent/children/{childId}  délier un enfant.</summary>
     [HttpDelete("children/{childId:int}")]
     public async Task<IActionResult> RemoveChild([FromRoute] int childId)
     {
@@ -480,7 +480,7 @@ public class ParentController : ControllerBase
         }
     }
 
-    /// <summary>GET /api/parent/children/{childId}/activity — activités récentes de l'enfant.</summary>
+    /// <summary>GET /api/parent/children/{childId}/activity  activités récentes de l'enfant.</summary>
     [HttpGet("children/{childId:int}/activity")]
     public async Task<IActionResult> GetChildActivity([FromRoute] int childId,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
@@ -538,7 +538,7 @@ public class ParentController : ControllerBase
         }
     }
 
-    /// <summary>GET /api/parent/alerts — alertes WinAI pour tous les enfants du parent.</summary>
+    /// <summary>GET /api/parent/alerts  alertes WinAI pour tous les enfants du parent.</summary>
     [HttpGet("alerts")]
     public async Task<IActionResult> GetAlerts()
     {
@@ -576,7 +576,7 @@ public class ParentController : ControllerBase
         }
     }
 
-    /// <summary>PUT /api/parent/alerts/{id}/read — marquer une alerte comme lue.</summary>
+    /// <summary>PUT /api/parent/alerts/{id}/read  marquer une alerte comme lue.</summary>
     [HttpPut("alerts/{id:int}/read")]
     public async Task<IActionResult> MarkAlertRead([FromRoute] int id)
     {
