@@ -64,6 +64,8 @@ public class ForumService : IForumService
                 AuthorName = t.User != null
                     ? (t.User.FirstName + " " + t.User.LastName).Trim()
                     : null,
+                AuthorRole = t.User != null ? t.User.Role : null,
+                IsVerifiedInstitution = t.User != null && t.User.Role == "institution" && t.User.IsEmailVerified,
                 Title = t.Title,
                 Content = t.Content,
                 Category = t.Category,
@@ -137,7 +139,7 @@ public class ForumService : IForumService
         }
 
         var posts = await _db.ForumPosts
-            .Where(p => p.ThreadId == threadId && !p.IsDeleted)
+            .Where(p => p.ThreadId == threadId && !p.IsDeleted && !p.IsHidden)
             .Include(p => p.User)
             .OrderBy(p => p.CreatedAt)
             .Select(p => new ForumPostResponse
@@ -148,6 +150,9 @@ public class ForumService : IForumService
                 AuthorName = p.User != null
                     ? (p.User.FirstName + " " + p.User.LastName).Trim()
                     : null,
+                AuthorRole = p.User != null ? p.User.Role : null,
+                IsVerifiedInstitution = p.User != null && p.User.Role == "institution" && p.User.IsEmailVerified,
+                IsHidden = p.IsHidden,
                 Content = p.Content,
                 Upvotes = p.Upvotes,
                 IsAccepted = p.IsAccepted,
@@ -197,6 +202,13 @@ public class ForumService : IForumService
         };
     }
 
+    private static int GetVoteWeight(string? role) => role switch
+    {
+        "teacher"     => 3,
+        "institution" => 3,
+        _             => 1,
+    };
+
     public async Task VoteOnPostAsync(int postId, int userId, string type)
     {
         var alreadyVoted = await _db.ForumVotes
@@ -209,18 +221,23 @@ public class ForumService : IForumService
         if (post == null || post.IsDeleted)
             throw new KeyNotFoundException($"Post {postId} not found");
 
+        // Récupérer le rôle du votant pour calculer le poids
+        var voter = await _db.Users.FindAsync(userId);
+        var weight = GetVoteWeight(voter?.Role);
+
         _db.ForumVotes.Add(new ForumVote
         {
             PostId = postId,
             UserId = userId,
             Type = type,
+            Weight = weight,
             CreatedAt = DateTime.UtcNow
         });
 
         if (type == "up")
-            post.Upvotes += 1;
-        else if (type == "down" && post.Upvotes > 0)
-            post.Upvotes -= 1;
+            post.Upvotes += weight;
+        else if (type == "down")
+            post.Upvotes = Math.Max(0, post.Upvotes - weight);
 
         await _db.SaveChangesAsync();
     }

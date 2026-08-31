@@ -30,6 +30,8 @@ public class ForumPost
 
     public bool IsDeleted { get; set; } = false;
 
+    public bool IsHidden { get; set; } = false;
+
     // Navigation properties
     public virtual ForumThread? Thread { get; set; }
 

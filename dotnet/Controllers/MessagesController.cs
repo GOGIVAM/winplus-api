@@ -35,6 +35,131 @@ public class MessagesController : ControllerBase
         _logger = logger;
     }
 
+    private async Task<bool> AreLinkedAsync(int userId1, int userId2)
+    {
+        // 1. Parent-élève (dans les deux sens)
+        if (await _db.ParentStudentLinks.AnyAsync(l =>
+            (l.ParentId == userId1 && l.StudentId == userId2) ||
+            (l.ParentId == userId2 && l.StudentId == userId1)))
+            return true;
+
+        // 2. Même classe via TeacherClassStudent (prof-élève)
+        var u1ClassIds = await _db.TeacherClassStudents
+            .Where(tcs => tcs.StudentId == userId1)
+            .Select(tcs => tcs.TeacherClassId)
+            .Union(_db.TeacherClasses.Where(tc => tc.TeacherId == userId1).Select(tc => tc.Id))
+            .ToListAsync();
+
+        var u2ClassIds = await _db.TeacherClassStudents
+            .Where(tcs => tcs.StudentId == userId2)
+            .Select(tcs => tcs.TeacherClassId)
+            .Union(_db.TeacherClasses.Where(tc => tc.TeacherId == userId2).Select(tc => tc.Id))
+            .ToListAsync();
+
+        if (u1ClassIds.Intersect(u2ClassIds).Any()) return true;
+
+        // 3. Liaison directe prof-élève acceptée
+        if (await _db.TeacherStudentLinks.AnyAsync(l =>
+            l.Status == "accepted" &&
+            ((l.TeacherId == userId1 && l.StudentId == userId2) ||
+             (l.TeacherId == userId2 && l.StudentId == userId1))))
+            return true;
+
+        // 4. Même groupe d'étude
+        var u1Groups = await _db.StudyGroupMembers
+            .Where(m => m.UserId == userId1).Select(m => m.StudyGroupId).ToListAsync();
+        var u2Groups = await _db.StudyGroupMembers
+            .Where(m => m.UserId == userId2).Select(m => m.StudyGroupId).ToListAsync();
+        if (u1Groups.Intersect(u2Groups).Any()) return true;
+
+        // 5. Institution → élève (via InstitutionId sur User, ou InstitutionStudent)
+        if (await _db.InstitutionStudents.AnyAsync(s =>
+            (s.InstitutionId == userId1 && s.StudentId == userId2) ||
+            (s.InstitutionId == userId2 && s.StudentId == userId1)))
+            return true;
+
+        return false;
+    }
+
+    /// <summary>Retourne la liste des contacts avec qui l'utilisateur peut échanger.</summary>
+    [HttpGet("contacts")]
+    public async Task<IActionResult> GetContacts()
+    {
+        try
+        {
+            var me = User.GetUserId();
+            var contactIds = new HashSet<int>();
+
+            // 1. Enfants (si parent) / parents (si élève)
+            var childIds = await _db.ParentStudentLinks
+                .Where(l => l.ParentId == me).Select(l => l.StudentId).ToListAsync();
+            var parentIds = await _db.ParentStudentLinks
+                .Where(l => l.StudentId == me).Select(l => l.ParentId).ToListAsync();
+            contactIds.UnionWith(childIds);
+            contactIds.UnionWith(parentIds);
+
+            // 2. Même classe (prof ou élève)
+            var myClassIds = await _db.TeacherClasses
+                .Where(tc => tc.TeacherId == me).Select(tc => tc.Id).ToListAsync();
+            var studentIdsInMyClasses = await _db.TeacherClassStudents
+                .Where(tcs => myClassIds.Contains(tcs.TeacherClassId))
+                .Select(tcs => tcs.StudentId).ToListAsync();
+            contactIds.UnionWith(studentIdsInMyClasses);
+
+            var classIdsAsStudent = await _db.TeacherClassStudents
+                .Where(tcs => tcs.StudentId == me).Select(tcs => tcs.TeacherClassId).ToListAsync();
+            var teacherIdsFromClasses = await _db.TeacherClasses
+                .Where(tc => classIdsAsStudent.Contains(tc.Id)).Select(tc => tc.TeacherId).ToListAsync();
+            contactIds.UnionWith(teacherIdsFromClasses);
+
+            // 3. Liaisons directes prof-élève acceptées
+            var directLinks = await _db.TeacherStudentLinks
+                .Where(l => l.Status == "accepted" && (l.TeacherId == me || l.StudentId == me))
+                .Select(l => l.TeacherId == me ? l.StudentId : l.TeacherId)
+                .ToListAsync();
+            contactIds.UnionWith(directLinks);
+
+            // 4. Mêmes groupes d'étude
+            var myGroupIds = await _db.StudyGroupMembers
+                .Where(m => m.UserId == me).Select(m => m.StudyGroupId).ToListAsync();
+            var groupMemberIds = await _db.StudyGroupMembers
+                .Where(m => myGroupIds.Contains(m.StudyGroupId) && m.UserId != me)
+                .Select(m => m.UserId).ToListAsync();
+            contactIds.UnionWith(groupMemberIds);
+
+            // 5. Institution (via InstitutionStudent.InstitutionId)
+            var instStudents = await _db.InstitutionStudents
+                .Where(s => s.InstitutionId == me).Select(s => s.StudentId).ToListAsync();
+            var instForStudent = await _db.InstitutionStudents
+                .Where(s => s.StudentId == me).Select(s => s.InstitutionId).ToListAsync();
+            contactIds.UnionWith(instStudents);
+            contactIds.UnionWith(instForStudent);
+
+            contactIds.Remove(me);
+
+            var contacts = await _db.Users
+                .AsNoTracking()
+                .Where(u => contactIds.Contains(u.Id))
+                .Select(u => new
+                {
+                    u.Id,
+                    u.FirstName,
+                    u.LastName,
+                    u.Role,
+                    u.AvatarUrl,
+                    IsVerified = u.Role == "institution" && u.IsEmailVerified,
+                })
+                .ToListAsync();
+
+            return Ok(contacts);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting contacts");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
     /// <summary>Liste toutes les conversations de l'utilisateur connecté.</summary>
     [HttpGet("conversations")]
     public async Task<IActionResult> GetConversations()
@@ -120,6 +245,9 @@ public class MessagesController : ControllerBase
             var other = await _db.Users.FindAsync(req.ParticipantId);
             if (other == null) return NotFound(new { error = "Utilisateur introuvable" });
 
+            if (!await AreLinkedAsync(me, req.ParticipantId))
+                return StatusCode(403, new { error = "Vous ne pouvez envoyer un message qu'à vos contacts liés." });
+
             var msg = new DirectMessage
             {
                 FromUserId = me,
@@ -184,6 +312,9 @@ public class MessagesController : ControllerBase
             var me = User.GetUserId();
             var other = await _db.Users.FindAsync(participantId);
             if (other == null) return NotFound(new { error = "Utilisateur introuvable" });
+
+            if (!await AreLinkedAsync(me, participantId))
+                return StatusCode(403, new { error = "Vous ne pouvez envoyer un message qu'à vos contacts liés." });
 
             var msg = new DirectMessage
             {

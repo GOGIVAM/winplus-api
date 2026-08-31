@@ -87,6 +87,7 @@ public partial class ApplicationDbContext : DbContext
 
     // Liaison parent-enfant, classes enseignant, messagerie directe
     public DbSet<ParentStudentLink> ParentStudentLinks => Set<ParentStudentLink>();
+    public DbSet<TeacherStudentLink> TeacherStudentLinks => Set<TeacherStudentLink>();
     public DbSet<TeacherClass> TeacherClasses => Set<TeacherClass>();
     public DbSet<DirectMessage> DirectMessages => Set<DirectMessage>();
 

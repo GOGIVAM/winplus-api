@@ -87,7 +87,7 @@ public class NtfyService : INtfyService
             {
                 Content = new StringContent(message)
             };
-            request.Headers.Add("Title", title);
+            request.Headers.Add("Title", Uri.EscapeDataString(title ?? string.Empty));
             request.Headers.Add("Priority", priority);
 
             if (!string.IsNullOrEmpty(_authToken))

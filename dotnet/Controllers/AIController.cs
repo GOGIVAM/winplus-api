@@ -675,30 +675,95 @@ namespace Backend.Controllers;
         }
 
         /// <summary>
+        /// Récupère les mémoires persistantes WinAI de l'utilisateur connecté.
         /// GET /api/ai/memory
-        /// Retourne les mémoires WinAI de l'utilisateur courant.
         /// </summary>
         [HttpGet("memory")]
-        public async Task<IActionResult> GetMemories()
+        [Authorize]
+        public async Task<IActionResult> GetMemory()
         {
             try
             {
-                int userId;
-                try { userId = GetCurrentUserId(); }
-                catch (UnauthorizedAccessException ex) { return Unauthorized(new { message = ex.Message }); }
-
+                var userId = GetCurrentUserId();
                 var memories = await _db.UserAIMemories
+                    .AsNoTracking()
                     .Where(m => m.UserId == userId)
-                    .OrderByDescending(m => m.UpdatedAt)
-                    .Select(m => new { m.MemoryType, m.Content, m.UpdatedAt })
+                    .OrderBy(m => m.MemoryType)
+                    .Select(m => new { m.Id, m.MemoryType, m.Content, m.UpdatedAt })
                     .ToListAsync();
-
                 return Ok(memories);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error fetching AI memories");
-                return StatusCode(500, new { message = "An error occurred" });
+                _logger.LogError(ex, "Error getting AI memory for user");
+                return StatusCode(500, new { error = "Internal server error" });
+            }
+        }
+
+        /// <summary>
+        /// Crée ou met à jour une mémoire WinAI.
+        /// POST /api/ai/memory
+        /// Body: { memoryType: string, content: string }
+        /// </summary>
+        [HttpPost("memory")]
+        [Authorize]
+        public async Task<IActionResult> UpsertMemoryDirect([FromBody] Backend.Models.DTOs.UpsertMemoryRequest req)
+        {
+            try
+            {
+                var userId = GetCurrentUserId();
+                var existing = await _db.UserAIMemories
+                    .FirstOrDefaultAsync(m => m.UserId == userId && m.MemoryType == req.MemoryType);
+
+                if (existing != null)
+                {
+                    existing.Content = req.Content;
+                    existing.UpdatedAt = DateTime.UtcNow;
+                }
+                else
+                {
+                    _db.UserAIMemories.Add(new Backend.Models.Entities.UserAIMemory
+                    {
+                        UserId = userId,
+                        MemoryType = req.MemoryType,
+                        Content = req.Content,
+                    });
+                }
+
+                await _db.SaveChangesAsync();
+                return Ok(new { success = true });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error upserting AI memory");
+                return StatusCode(500, new { error = "Internal server error" });
+            }
+        }
+
+        /// <summary>
+        /// Supprime une mémoire WinAI par type.
+        /// DELETE /api/ai/memory/{type}
+        /// </summary>
+        [HttpDelete("memory/{type}")]
+        [Authorize]
+        public async Task<IActionResult> DeleteMemory(string type)
+        {
+            try
+            {
+                var userId = GetCurrentUserId();
+                var memory = await _db.UserAIMemories
+                    .FirstOrDefaultAsync(m => m.UserId == userId && m.MemoryType == type);
+
+                if (memory == null) return NotFound(new { error = "Mémoire introuvable" });
+
+                _db.UserAIMemories.Remove(memory);
+                await _db.SaveChangesAsync();
+                return Ok(new { success = true });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error deleting AI memory");
+                return StatusCode(500, new { error = "Internal server error" });
             }
         }
 

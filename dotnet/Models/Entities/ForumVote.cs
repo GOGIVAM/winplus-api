@@ -21,6 +21,8 @@ public class ForumVote
     [MaxLength(10)]
     public string Type { get; set; } = "up"; // "up" ou "down"
 
+    public int Weight { get; set; } = 1;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     // Navigation properties

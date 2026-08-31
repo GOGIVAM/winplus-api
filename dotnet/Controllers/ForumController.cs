@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
+using System.Net.Http.Json;
 using Backend.Models.DTOs;
 using Backend.Services;
 using Backend.Extensions;
@@ -16,13 +17,15 @@ public class ForumController : ControllerBase
     private readonly INtfyService _ntfyService;
     private readonly ILogger<ForumController> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IServiceScopeFactory _scopeFactory;
 
-    public ForumController(IForumService forumService, INtfyService ntfyService, ILogger<ForumController> logger, IHttpClientFactory httpClientFactory)
+    public ForumController(IForumService forumService, INtfyService ntfyService, ILogger<ForumController> logger, IHttpClientFactory httpClientFactory, IServiceScopeFactory scopeFactory)
     {
         _forumService = forumService;
         _ntfyService = ntfyService;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
+        _scopeFactory = scopeFactory;
     }
 
     private async Task TriggerModerationAsync(int postId, int threadId, string content, int authorId)
@@ -30,7 +33,14 @@ public class ForumController : ControllerBase
         try
         {
             var c = _httpClientFactory.CreateClient("FastApiClient");
-            await c.PostAsJsonAsync("/api/admin/moderate-content", new
+
+            // Relayer le token de l'utilisateur courant vers FastAPI
+            var token = HttpContext.Request.Headers.Authorization.FirstOrDefault();
+            if (!string.IsNullOrEmpty(token) && token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                c.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token["Bearer ".Length..]);
+
+            var response = await c.PostAsJsonAsync("/api/admin/moderate-content", new
             {
                 post_id = postId,
                 thread_id = threadId,
@@ -38,12 +48,30 @@ public class ForumController : ControllerBase
                 author_id = authorId,
                 confidence_threshold = 0.8,
             });
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<ModerationResult>();
+                if (result?.Moderated == true)
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var db = scope.ServiceProvider.GetRequiredService<Backend.Data.ApplicationDbContext>();
+                    var post = await db.ForumPosts.FindAsync(postId);
+                    if (post != null)
+                    {
+                        post.IsHidden = true;
+                        await db.SaveChangesAsync();
+                    }
+                }
+            }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Background moderation trigger failed for post {PostId}", postId);
         }
     }
+
+    private sealed record ModerationResult(bool Moderated, string? Reason);
 
     /// <summary>
     /// Liste les threads du forum avec filtrage optionnel par catégorie

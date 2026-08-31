@@ -38,6 +38,51 @@ public class ChatbotController : ControllerBase
     }
 
     /// <summary>
+    /// Vérifie si l'utilisateur a encore des tokens disponibles et en déduit un.
+    /// Retourne (allowed: bool, tokensLeft: int).
+    /// </summary>
+    private async Task<(bool Allowed, int TokensLeft)> CheckAndDeductTokenAsync(int userId)
+    {
+        const int LibreMonthlyTokens = 0;
+        const int StandardMonthlyTokens = 500;
+        const int PremiumMonthlyTokens = 2000;
+        const int FamilleMonthlyTokens = 3000;
+
+        var sub = await _dbContext.Subscriptions
+            .FirstOrDefaultAsync(s => s.UserId == userId && s.IsActive);
+
+        if (sub == null)
+            return (false, 0); // Pas d'abonnement actif
+
+        // Réinitialisation mensuelle
+        var now = DateTime.UtcNow;
+        if (sub.TokensResetAt == null || sub.TokensResetAt < now.AddMonths(-1))
+        {
+            sub.TokensUsedThisMonth = 0;
+            sub.TokensResetAt = now;
+        }
+
+        int monthlyLimit = sub.PlanName?.ToLower() switch
+        {
+            var p when p != null && p.Contains("famille") => FamilleMonthlyTokens,
+            var p when p != null && p.Contains("premium") => PremiumMonthlyTokens,
+            var p when p != null && p.Contains("standard") => StandardMonthlyTokens,
+            _ => LibreMonthlyTokens,
+        };
+
+        if (monthlyLimit == 0)
+            return (false, 0); // Plan libre → pas d'accès IA
+
+        if (sub.TokensUsedThisMonth >= monthlyLimit)
+            return (false, 0); // Quota épuisé
+
+        sub.TokensUsedThisMonth += 1;
+        await _dbContext.SaveChangesAsync();
+
+        return (true, monthlyLimit - sub.TokensUsedThisMonth);
+    }
+
+    /// <summary>
     /// Récupère l'ID utilisateur depuis les claims JWT
     /// </summary>
     private int GetCurrentUserId()
@@ -69,8 +114,21 @@ public class ChatbotController : ControllerBase
             }
 
             var userId = GetCurrentUserId();
+
+            var (allowed, tokensLeft) = await CheckAndDeductTokenAsync(userId);
+            if (!allowed)
+            {
+                return StatusCode(402, new
+                {
+                    error = "quota_exceeded",
+                    message = "Votre quota de tokens IA est épuisé pour ce mois. Passez à un plan supérieur.",
+                    tokensLeft = 0,
+                });
+            }
+
             var response = await _chatbotService.SendMessageAsync(userId, request);
-            
+
+            Response.Headers.Append("X-Tokens-Left", tokensLeft.ToString());
             return Ok(response);
         }
         catch (InvalidOperationException ex)

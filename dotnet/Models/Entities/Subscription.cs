@@ -38,8 +38,20 @@ public class Subscription
     public DateTime? UpdatedAt { get; set; }
     public bool IsDeleted { get; set; } = false;
 
+    /// <summary>Indique si l'abonnement est actif.</summary>
+    public bool IsActive { get; set; } = true;
+
+    /// <summary>Nom du plan tarifaire (libre, standard, premium, famille…).</summary>
+    public string? PlanName { get; set; }
+
+    /// <summary>Tokens IA consommés ce mois-ci.</summary>
+    public int TokensUsedThisMonth { get; set; } = 0;
+
+    /// <summary>Date de la dernière réinitialisation du compteur de tokens.</summary>
+    public DateTime? TokensResetAt { get; set; }
+
     // Navigation properties
     public User? User { get; set; }
-    
+
     public PricingPlan? PricingPlan { get; set; }
 }

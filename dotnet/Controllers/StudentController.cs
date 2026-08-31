@@ -354,6 +354,93 @@ public class StudentController : ControllerBase
         }
     }
 
+    /// <summary>Retourne les liaisons de l'étudiant (parents, profs, institution).</summary>
+    [HttpGet("links")]
+    [Authorize(Roles = "student")]
+    public async Task<IActionResult> GetMyLinks()
+    {
+        try
+        {
+            var me = User.GetUserId();
+
+            var parents = await _db.ParentStudentLinks
+                .AsNoTracking()
+                .Where(l => l.StudentId == me)
+                .Include(l => l.Parent)
+                .Select(l => new
+                {
+                    l.Parent!.Id,
+                    l.Parent.FirstName,
+                    l.Parent.LastName,
+                    l.Parent.AvatarUrl,
+                    Role = "parent",
+                })
+                .ToListAsync();
+
+            var teachersViaClass = await _db.TeacherClassStudents
+                .AsNoTracking()
+                .Where(tcs => tcs.StudentId == me)
+                .Include(tcs => tcs.TeacherClass).ThenInclude(tc => tc.Teacher)
+                .Select(tcs => new
+                {
+                    tcs.TeacherClass.Teacher!.Id,
+                    tcs.TeacherClass.Teacher.FirstName,
+                    tcs.TeacherClass.Teacher.LastName,
+                    tcs.TeacherClass.Teacher.AvatarUrl,
+                    Role = "teacher",
+                    Source = "class",
+                    ClassName = tcs.TeacherClass.Name,
+                })
+                .Distinct()
+                .ToListAsync();
+
+            var teachersDirect = await _db.TeacherStudentLinks
+                .AsNoTracking()
+                .Where(l => l.StudentId == me && l.Status == "accepted")
+                .Include(l => l.Teacher)
+                .Select(l => new
+                {
+                    l.Teacher!.Id,
+                    l.Teacher.FirstName,
+                    l.Teacher.LastName,
+                    l.Teacher.AvatarUrl,
+                    Role = "teacher",
+                    Source = "direct",
+                    ClassName = (string?)null,
+                })
+                .ToListAsync();
+
+            object? institution = null;
+            var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == me);
+            if (user?.InstitutionId != null)
+            {
+                var inst = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == user.InstitutionId);
+                if (inst != null)
+                    institution = new { inst.Id, inst.FirstName, inst.LastName, inst.AvatarUrl };
+            }
+
+            var groups = await _db.StudyGroupMembers
+                .AsNoTracking()
+                .Where(m => m.UserId == me)
+                .Include(m => m.StudyGroup)
+                .Select(m => new { m.StudyGroup!.Id, m.StudyGroup.Name })
+                .ToListAsync();
+
+            return Ok(new
+            {
+                parents,
+                teachers = teachersViaClass.Cast<object>().Concat(teachersDirect.Cast<object>()),
+                institution,
+                groups,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting student links");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
     /// <summary>
     /// GET /api/student/peer-comparison
     /// Compare la moyenne de l'étudiant courant avec ses pairs anonymisés au même niveau.

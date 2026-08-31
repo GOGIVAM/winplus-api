@@ -25,6 +25,8 @@ public class ForumThreadResponse
     public int Id { get; set; }
     public int UserId { get; set; }
     public string? AuthorName { get; set; }
+    public string? AuthorRole { get; set; }
+    public bool IsVerifiedInstitution { get; set; }
     public string Title { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
@@ -53,6 +55,9 @@ public class ForumPostResponse
     public int ThreadId { get; set; }
     public int UserId { get; set; }
     public string? AuthorName { get; set; }
+    public string? AuthorRole { get; set; }
+    public bool IsVerifiedInstitution { get; set; }
+    public bool IsHidden { get; set; }
     public string Content { get; set; } = string.Empty;
     public int Upvotes { get; set; }
     public bool IsAccepted { get; set; }
