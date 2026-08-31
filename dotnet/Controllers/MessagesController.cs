@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Net.Http.Json;
 using Backend.Data;
 using Backend.Extensions;
 using Backend.Models.Entities;
@@ -28,11 +29,43 @@ public class MessagesController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
     private readonly ILogger<MessagesController> _logger;
+    private readonly IHttpClientFactory _http;
 
-    public MessagesController(ApplicationDbContext db, ILogger<MessagesController> logger)
+    public MessagesController(ApplicationDbContext db, ILogger<MessagesController> logger, IHttpClientFactory http)
     {
         _db = db;
         _logger = logger;
+        _http = http;
+    }
+
+    private sealed record MessageModerationResult(string? Verdict, double Confidence, string? Reason, string? Action);
+
+    private async Task<bool> IsMessageBlockedAsync(string content, int authorId)
+    {
+        try
+        {
+            var token = HttpContext.Request.Headers.Authorization.FirstOrDefault();
+            var client = _http.CreateClient("FastApiClient");
+            if (!string.IsNullOrEmpty(token) && token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                client.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token["Bearer ".Length..]);
+
+            var resp = await client.PostAsJsonAsync("/api/admin/moderate-message", new
+            {
+                content = content[..Math.Min(content.Length, 800)],
+                author_id = authorId,
+                confidence_threshold = 0.8,
+            });
+
+            if (!resp.IsSuccessStatusCode) return false;
+            var result = await resp.Content.ReadFromJsonAsync<MessageModerationResult>();
+            return result?.Action == "hold_for_review";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Message moderation check failed — message autorisé par défaut");
+            return false;
+        }
     }
 
     private async Task<bool> AreLinkedAsync(int userId1, int userId2)
@@ -315,6 +348,9 @@ public class MessagesController : ControllerBase
 
             if (!await AreLinkedAsync(me, participantId))
                 return StatusCode(403, new { error = "Vous ne pouvez envoyer un message qu'à vos contacts liés." });
+
+            if (await IsMessageBlockedAsync(req.Content, me))
+                return UnprocessableEntity(new { error = "Votre message contient un contenu inapproprié et n'a pas pu être envoyé." });
 
             var msg = new DirectMessage
             {

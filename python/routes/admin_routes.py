@@ -694,6 +694,48 @@ def _verdict_to_action(verdict: str, confidence: float, threshold: float) -> str
     return "publish"
 
 
+class ModerateMessageRequest(BaseModel):
+    content: str
+    author_id: int
+    confidence_threshold: float = 0.8
+
+
+@admin_router.post("/admin/moderate-message")
+async def moderate_message(
+    body: ModerateMessageRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    """Modération WinAI d'un message privé (sans stockage en base)."""
+    prompt = (
+        f"Classifie ce message privé d'une plateforme éducative en français :\n"
+        f"---\n{body.content[:800]}\n---\n\n"
+        "Retourne UN objet JSON strict :\n"
+        '{"verdict": "safe", "confidence": 0.95, "reason": "Message respectueux."}\n'
+        "verdict doit être exactement : safe | spam | inappropriate | harassment | needs_review\n"
+        "confidence entre 0.0 et 1.0. "
+        "Sois strict sur harassment et inappropriate ; indulgent sur off_topic."
+    )
+    system = (
+        "Tu es WinAI, le modérateur de la messagerie éducative WinPlus. "
+        "Tu protèges les élèves et enseignants camerounais contre le harcèlement et les contenus offensants. "
+        "Réponds UNIQUEMENT en JSON valide, objet unique."
+    )
+
+    try:
+        result = _deepseek_json(prompt, system, max_tokens=150)
+        if not isinstance(result, dict) or "verdict" not in result:
+            result = {"verdict": "needs_review", "confidence": 0.5, "reason": "Analyse indisponible."}
+    except Exception:
+        result = {"verdict": "safe", "confidence": 1.0, "reason": "Service indisponible — message autorisé."}
+
+    verdict = result.get("verdict", "safe")
+    confidence = float(result.get("confidence", 0.5))
+    reason = result.get("reason", "")
+    action = _verdict_to_action(verdict, confidence, body.confidence_threshold)
+
+    return {"verdict": verdict, "confidence": confidence, "reason": reason, "action": action}
+
+
 @admin_router.get("/admin/moderation/pending")
 async def get_pending_moderation(
     current_user: UserTokenData = Depends(require_role("admin")),
