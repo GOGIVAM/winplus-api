@@ -28,6 +28,18 @@ public class Order
     public DateTime OrderDate { get; set; } = DateTime.UtcNow;
     
     public DateTime? CompletedDate { get; set; }
+
+    /// <summary>
+    /// Derniere modification. La colonne "updated_at" existe bien dans la table
+    /// orders (schema : TIMESTAMP DEFAULT CURRENT_TIMESTAMP) mais n'etait pas
+    /// mappee ici, d'ou l'erreur de compilation CS1061 sur
+    /// OrdersController.RequestRefund.
+    ///
+    /// Nullable a dessein : les fichiers de schema du depot divergent sur cette
+    /// colonne, et une ligne heritee a NULL ferait echouer la lecture d'un
+    /// DateTime non nullable a l'execution.
+    /// </summary>
+    public DateTime? UpdatedAt { get; set; }
     
     public string? Notes { get; set; }
 
