@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using System.Net.Http.Headers;
 using Backend.Data;
 using Backend.Extensions;
 
@@ -14,11 +15,60 @@ public class NotificationsController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
     private readonly ILogger<NotificationsController> _logger;
+    private readonly IHttpClientFactory _http;
+    private readonly IConfiguration _configuration;
 
-    public NotificationsController(ApplicationDbContext db, ILogger<NotificationsController> logger)
+    public NotificationsController(
+        ApplicationDbContext db,
+        ILogger<NotificationsController> logger,
+        IHttpClientFactory http,
+        IConfiguration configuration)
     {
         _db = db;
         _logger = logger;
+        _http = http;
+        _configuration = configuration;
+    }
+
+    /// <summary>
+    /// Proxy SSE ntfy → client. Le frontend s'authentifie avec son JWT WinPlus ;
+    /// le backend utilise ses propres credentials ntfy. Ainsi aucun token ntfy
+    /// ne transite côté client.
+    /// </summary>
+    [HttpGet("sse")]
+    [Produces("text/event-stream")]
+    public async Task StreamSSE(CancellationToken ct)
+    {
+        var userId = User.GetUserId();
+        var ntfyBase = _configuration["Ntfy:BaseUrl"] ?? "https://ntfy.winplus.cm";
+        var ntfyToken = _configuration["Ntfy:AuthToken"];
+        var sseUrl = $"{ntfyBase}/winplus-user-{userId}/sse";
+
+        Response.ContentType = "text/event-stream";
+        Response.Headers["Cache-Control"] = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, sseUrl);
+        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+        if (!string.IsNullOrEmpty(ntfyToken))
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ntfyToken);
+
+        try
+        {
+            using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                Response.StatusCode = (int)resp.StatusCode;
+                return;
+            }
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            await stream.CopyToAsync(Response.Body, ct);
+        }
+        catch (OperationCanceledException) { /* déconnexion normale du client */ }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "SSE proxy error for user {UserId}", userId);
+        }
     }
 
     /// <summary>
