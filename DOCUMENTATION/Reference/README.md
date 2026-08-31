@@ -146,7 +146,7 @@ Suivre le guide complet : **`docs/DEEPSEEK_EC2_INSTALLATION.md`**
 ```bash
 DEEPSEEK_BASE_URL=http://your-ec2-ip:8000
 DEEPSEEK_API_KEY=your-api-key
-DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_MODEL=WinAI-chat
 ```
 
 ### Frontend (`.env`)

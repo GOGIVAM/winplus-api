@@ -48,7 +48,7 @@ backend/python/
 | JWT | `JWT_ALGORITHM` | HS256 |
 | DeepSeek | `DEEPSEEK_BASE_URL` |  |
 | DeepSeek | `DEEPSEEK_API_KEY` |  |
-| DeepSeek | `DEEPSEEK_MODEL` | deepseek-chat |
+| DeepSeek | `DEEPSEEK_MODEL` | WinAI-chat |
 | NLP | `NLP_MODEL` | camembert-base |
 | NLP | `MODEL_CACHE_DIR` | ./models_cache |
 | Features | `ENABLE_RECOMMENDATIONS` | true |

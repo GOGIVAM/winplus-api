@@ -20,7 +20,7 @@ class DeepSeekClient:
     def __init__(self):
         self.base_url = os.getenv('DEEPSEEK_BASE_URL', 'http://localhost:8000')
         self.api_key = os.getenv('DEEPSEEK_API_KEY', '')
-        self.model = os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
+        self.model = os.getenv('DEEPSEEK_MODEL', 'WinAI-chat')
         self.timeout = int(os.getenv('DEEPSEEK_TIMEOUT', '60'))
         self.max_tokens = int(os.getenv('DEEPSEEK_MAX_TOKENS', '2000'))
         self.temperature = float(os.getenv('DEEPSEEK_TEMPERATURE', '0.7'))

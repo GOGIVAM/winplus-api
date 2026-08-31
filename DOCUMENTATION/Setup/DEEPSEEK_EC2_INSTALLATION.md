@@ -81,7 +81,7 @@ Créer un fichier de configuration `config.env`:
 cat > ~/deepseek/config.env << 'EOF'
 # DeepSeek Configuration
 DEEPSEEK_API_KEY=your-deepseek-api-key-here
-DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_MODEL=WinAI-chat
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MAX_TOKENS=2000
 DEEPSEEK_TEMPERATURE=0.7
@@ -130,7 +130,7 @@ class Message(BaseModel):
     content: str
 
 class ChatRequest(BaseModel):
-    model: str = os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
+    model: str = os.getenv('DEEPSEEK_MODEL', 'WinAI-chat')
     messages: List[Message]
     max_tokens: int = int(os.getenv('DEEPSEEK_MAX_TOKENS', 2000))
     temperature: float = float(os.getenv('DEEPSEEK_TEMPERATURE', 0.7))
@@ -256,7 +256,7 @@ curl http://localhost:8000/health
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-chat",
+    "model": "WinAI-chat",
     "messages": [
       {"role": "user", "content": "Hello, how are you?"}
     ],

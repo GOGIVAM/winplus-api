@@ -292,7 +292,7 @@ En cas d'erreur SSE, le frontend bascule automatiquement sur `POST /api/chatbot/
 
 ### Sélection automatique du modèle DeepSeek
 - Mots-clés scientifiques détectés → `deepseek-coder`
-- Sinon → `deepseek-chat`
+- Sinon → `WinAI-chat`
 
 ---
 
@@ -578,7 +578,7 @@ JWT_ALGORITHM=HS256
 
 DEEPSEEK_API_KEY=...
 DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_MODEL=WinAI-chat
 DEEPSEEK_STREAM=true
 
 NLP_MODEL=camembert-base

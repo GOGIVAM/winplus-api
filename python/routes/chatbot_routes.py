@@ -195,7 +195,7 @@ async def chat(
         "content": "...",
         "tokensUsed": 123,
         "generationTimeMs": 456,
-        "model": "deepseek-chat",
+        "model": "WinAI-chat",
         "success": true
     }
     """
