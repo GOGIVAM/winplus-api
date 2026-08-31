@@ -52,7 +52,8 @@ public class ForumController : ControllerBase
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadFromJsonAsync<ModerationResult>();
-                if (result?.Moderated == true)
+                // FastAPI retourne action = "hold_for_review" pour spam/inappropriate à haute confiance
+                if (result?.Action == "hold_for_review")
                 {
                     using var scope = _scopeFactory.CreateScope();
                     var db = scope.ServiceProvider.GetRequiredService<Backend.Data.ApplicationDbContext>();
@@ -71,7 +72,13 @@ public class ForumController : ControllerBase
         }
     }
 
-    private sealed record ModerationResult(bool Moderated, string? Reason);
+    // Correspond à la réponse FastAPI /api/admin/moderate-content
+    private sealed record ModerationResult(
+        string? Verdict,
+        double Confidence,
+        string? Reason,
+        string? Action   // "publish" | "hold_for_review" | "publish_with_flag"
+    );
 
     /// <summary>
     /// Liste les threads du forum avec filtrage optionnel par catégorie
