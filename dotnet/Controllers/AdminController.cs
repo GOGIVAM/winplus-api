@@ -24,8 +24,9 @@ public class AdminController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IStorageService _storage;
+    private readonly IEmailService _email;
 
-    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ApplicationDbContext db, IConfiguration configuration, IHttpClientFactory httpClientFactory, IStorageService storage)
+    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ApplicationDbContext db, IConfiguration configuration, IHttpClientFactory httpClientFactory, IStorageService storage, IEmailService email)
     {
         _adminService = adminService;
         _logger = logger;
@@ -33,6 +34,7 @@ public class AdminController : ControllerBase
         _configuration = configuration;
         _httpClientFactory = httpClientFactory;
         _storage = storage;
+        _email = email;
     }
 
     private HttpClient PyClient() => _httpClientFactory.CreateClient("FastApiClient");
@@ -692,22 +694,33 @@ public class AdminController : ControllerBase
                 return Ok(new { total = count, count });
             }
 
-            var subjects = await query
+            var subjectList = await query
                 .OrderByDescending(s => s.CreatedAt)
                 .Take(limit)
-                .Select(s => new
-                {
-                    id          = s.Id,
-                    title       = s.Title,
-                    type        = "epreuve",
-                    subject     = s.Category,
-                    teacherName = "Inconnu",
-                    submittedAt = s.CreatedAt,
-                    thumbnailUrl = s.ThumbnailUrl,
-                    price       = s.Price,
-                    description = s.Description,
-                })
                 .ToListAsync();
+
+            var subjectIds = subjectList.Select(s => s.Id).ToList();
+
+            // Récupère le premier DocumentUrl disponible par sujet
+            var docUrls = await _db.CourseContents
+                .Where(cc => subjectIds.Contains(cc.SubjectId) && cc.DocumentUrl != null)
+                .GroupBy(cc => cc.SubjectId)
+                .Select(g => new { SubjectId = g.Key, Url = g.First().DocumentUrl })
+                .ToDictionaryAsync(x => x.SubjectId, x => x.Url);
+
+            var subjects = subjectList.Select(s => new
+            {
+                id           = s.Id,
+                title        = s.Title,
+                type         = "epreuve",
+                subject      = s.Category,
+                teacherName  = "Admin",
+                submittedAt  = s.CreatedAt,
+                thumbnailUrl = s.ThumbnailUrl,
+                documentUrl  = docUrls.TryGetValue(s.Id, out var url) ? url : null,
+                price        = s.Price,
+                description  = s.Description,
+            }).ToList();
 
             return Ok(new { data = subjects, total = subjects.Count });
         }
@@ -766,26 +779,56 @@ public class AdminController : ControllerBase
     {
         try
         {
-            // Résoudre les destinataires
             IQueryable<string> emailQuery = request.Target switch
             {
-                "students" => _db.Users.Where(u => u.IsActive && u.Role == "student").Select(u => u.Email),
-                "teachers" => _db.Users.Where(u => u.IsActive && u.Role == "teacher").Select(u => u.Email),
-                "parents"  => _db.Users.Where(u => u.IsActive && u.Role == "parent").Select(u => u.Email),
-                "custom"   => _db.Users.Where(u => u.Email == request.CustomEmail).Select(u => u.Email),
-                _          => _db.Users.Where(u => u.IsActive).Select(u => u.Email),
+                "students" => _db.Users.Where(u => u.IsActive && !u.IsDeleted && u.Role == "student").Select(u => u.Email),
+                "teachers" => _db.Users.Where(u => u.IsActive && !u.IsDeleted && u.Role == "teacher").Select(u => u.Email),
+                "parents"  => _db.Users.Where(u => u.IsActive && !u.IsDeleted && u.Role == "parent").Select(u => u.Email),
+                "custom"   => _db.Users.Where(u => !u.IsDeleted && u.Email == request.CustomEmail).Select(u => u.Email),
+                _          => _db.Users.Where(u => u.IsActive && !u.IsDeleted).Select(u => u.Email),
             };
 
-            var emails = await emailQuery.ToListAsync();
-            var count = emails.Count;
+            var emails = await emailQuery.Distinct().ToListAsync();
+            var count  = emails.Count;
 
             _logger.LogInformation(
                 "Admin email broadcast: target={Target}, recipients={Count}, subject={Subject}",
                 request.Target, count, request.Subject);
 
-            // IEmailService est injecté séparément dans les controllers qui l'utilisent.
-            // Ici on enregistre l'intention et retourne success (email worker async possible).
-            return Ok(new { success = true, recipientCount = count, message = $"Email programmé pour {count} destinataire(s)." });
+            // Convertir le texte brut en HTML minimal (préserve les sauts de ligne)
+            var htmlBody = $"""
+                <div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;max-width:600px;margin:auto;padding:32px 24px">
+                  {System.Net.WebUtility.HtmlEncode(request.Body).Replace("\n", "<br>")}
+                  <hr style="margin:32px 0;border:none;border-top:1px solid #e5e5e5">
+                  <p style="font-size:12px;color:#888">© {DateTime.UtcNow.Year} WinPlus · Yaoundé, Cameroun<br>
+                  <a href="https://winplus.cm/unsubscribe" style="color:#888">Se désabonner</a></p>
+                </div>
+                """;
+
+            // Envoi par lots de 10 en parallèle pour ne pas saturer Resend
+            var sent    = 0;
+            var failed  = 0;
+            const int batchSize = 10;
+            for (var i = 0; i < emails.Count; i += batchSize)
+            {
+                var batch = emails.Skip(i).Take(batchSize);
+                var tasks = batch.Select(addr => _email.SendGenericEmailAsync(addr, request.Subject, htmlBody));
+                var results = await Task.WhenAll(tasks);
+                sent   += results.Count(r => r);
+                failed += results.Count(r => !r);
+            }
+
+            _logger.LogInformation(
+                "Admin email broadcast terminé: sent={Sent}, failed={Failed}", sent, failed);
+
+            return Ok(new
+            {
+                success        = true,
+                recipientCount = count,
+                sent,
+                failed,
+                message        = $"Email envoyé à {sent} destinataire(s)." + (failed > 0 ? $" ({failed} échec(s))" : ""),
+            });
         }
         catch (Exception ex)
         {
