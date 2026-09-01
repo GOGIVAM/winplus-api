@@ -120,7 +120,14 @@ builder.Services.AddCors(options =>
 // Configure Entity Framework Core with PostgreSQL
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
-        pgOptions => pgOptions.MigrationsAssembly("backend")));
+        pgOptions =>
+        {
+            pgOptions.MigrationsAssembly("backend");
+            // Plusieurs Include de collections dans une même requête : en
+            // SingleQuery, PostgreSQL renvoie un produit cartésien (lenteur du
+            // dashboard admin). SplitQuery = une requête par collection.
+            pgOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+        }));
 
 // Configure Authentication - Custom Auth
 var jwtSecretKey = builder.Configuration["JWT:SecretKey"] 
@@ -294,6 +301,9 @@ builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<IHistoryService, HistoryService>();
 builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
 builder.Services.AddScoped<IAdminService, AdminService>();
+// Stockage fichiers : bucket lu dans la configuration, vérification d'existence,
+// repli disque local. Singleton pour ne sonder le bucket qu'une seule fois.
+builder.Services.AddSingleton<IStorageService, StorageService>();
 builder.Services.AddScoped<IFileUploadService, FileUploadService>();
 builder.Services.AddScoped<IReviewRepository, ReviewRepository>();
 builder.Services.AddScoped<IReviewService, ReviewService>();

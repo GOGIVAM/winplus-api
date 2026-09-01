@@ -1,5 +1,3 @@
-using Amazon.S3;
-using Amazon.S3.Model;
 using Backend.Data;
 using Backend.Models.DTOs;
 using Backend.Models.Entities;
@@ -24,17 +22,20 @@ public class CertificateService : ICertificateService
     private readonly ILogger<CertificateService> _logger;
     private readonly IPdfService _pdfService;
     private readonly IConfiguration _configuration;
+    private readonly IStorageService _storage;
 
     public CertificateService(
         ApplicationDbContext context,
         ILogger<CertificateService> logger,
         IPdfService pdfService,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IStorageService storage)
     {
         _context = context;
         _logger = logger;
         _pdfService = pdfService;
         _configuration = configuration;
+        _storage = storage;
     }
 
     public async Task<CertificateDto> GenerateCertificateAsync(int userId, int enrollmentId)
@@ -292,23 +293,10 @@ public class CertificateService : ICertificateService
         try
         {
             var pdfBytes = _pdfService.GenerateCertificate(cert, user, subject);
-            const string BucketName = "winplus-bucket";
-            var region = _configuration["AWS:Region"] ?? "us-east-1";
             var key = $"certificates/{certNumber}.pdf";
 
-            var regionEndpoint = Amazon.RegionEndpoint.GetBySystemName(region);
-            using var s3 = new AmazonS3Client(regionEndpoint);
             using var stream = new MemoryStream(pdfBytes);
-            await s3.PutObjectAsync(new PutObjectRequest
-            {
-                BucketName  = BucketName,
-                Key         = key,
-                InputStream = stream,
-                ContentType = "application/pdf",
-                CannedACL   = S3CannedACL.PublicRead,
-            });
-
-            var url = $"https://{BucketName}.s3.{region}.amazonaws.com/{key}";
+            var url = await _storage.PutAsync(stream, key, "application/pdf");
             _logger.LogInformation("Certificate PDF uploaded: {Url}", url);
             return url;
         }

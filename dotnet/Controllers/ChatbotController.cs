@@ -326,13 +326,18 @@ public class ChatbotController : ControllerBase
     /// Récupère le contexte utilisateur pour le chatbot
     /// </summary>
     [HttpGet("context")]
+    // Le front interroge cette route au chargement de l'application, avant toute
+    // connexion. Un contexte vide est une réponse valide : on répond 200 au lieu
+    // de polluer les logs avec un 401 « Bearer MISSING » à chaque visite.
+    [AllowAnonymous]
     [ProducesResponseType(typeof(ChatbotContextResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<ChatbotContextResponse>> GetContext()
     {
         try
         {
+            if (User?.Identity?.IsAuthenticated != true)
+                return Ok(new ChatbotContextResponse());
+
             var userId = GetCurrentUserId();
             var context = await _chatbotService.GetContextAsync(userId);
 

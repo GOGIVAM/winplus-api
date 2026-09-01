@@ -21,19 +21,22 @@ public class SubjectsController : ControllerBase
     private readonly ILogger<SubjectsController> _logger;
     private readonly IFastApiClient _fastApiClient;
     private readonly IConfiguration _configuration;
+    private readonly IStorageService _storage;
 
     public SubjectsController(
         ISubjectService subjectService,
         ApplicationDbContext context,
         ILogger<SubjectsController> logger,
         IFastApiClient fastApiClient,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IStorageService storage)
     {
         _subjectService = subjectService;
         _context = context;
         _logger = logger;
         _fastApiClient = fastApiClient;
         _configuration = configuration;
+        _storage = storage;
     }
 
     private class PythonRecsResponse { public List<object>? Recommendations { get; set; } }
@@ -432,11 +435,10 @@ public class SubjectsController : ControllerBase
         string downloadUrl;
         try
         {
-            var region = _configuration["AWS:Region"] ?? "us-east-1";
-            var bucket = _configuration["AWS:BucketName"] ?? "winplus-bucket";
+            var bucket = _storage.Bucket;
             var s3Key = ExtractS3Key(exam.DocumentUrl, bucket);
 
-            using var s3 = new AmazonS3Client(Amazon.RegionEndpoint.GetBySystemName(region));
+            using var s3 = _storage.CreateS3Client();
             var request = new GetPreSignedUrlRequest
             {
                 BucketName = bucket,

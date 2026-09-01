@@ -1,5 +1,3 @@
-using Amazon.S3;
-using Amazon.S3.Model;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -25,14 +23,16 @@ public class AdminController : ControllerBase
     private readonly ApplicationDbContext _db;
     private readonly IConfiguration _configuration;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IStorageService _storage;
 
-    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ApplicationDbContext db, IConfiguration configuration, IHttpClientFactory httpClientFactory)
+    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ApplicationDbContext db, IConfiguration configuration, IHttpClientFactory httpClientFactory, IStorageService storage)
     {
         _adminService = adminService;
         _logger = logger;
         _db = db;
         _configuration = configuration;
         _httpClientFactory = httpClientFactory;
+        _storage = storage;
     }
 
     private HttpClient PyClient() => _httpClientFactory.CreateClient("FastApiClient");
@@ -1287,24 +1287,10 @@ public class AdminController : ControllerBase
 
         try
         {
-            const string BucketName = "winplus-bucket";
-            var region = _configuration["AWS:Region"] ?? "us-east-1";
-            var key = $"exams/subject_{id}_{Guid.NewGuid()}.pdf";
+            var key = $"exams/subject_{id}_{Guid.NewGuid():N}.pdf";
+            await using var stream = file.OpenReadStream();
+            var url = await _storage.PutAsync(stream, key, "application/pdf");
 
-            var regionEndpoint = Amazon.RegionEndpoint.GetBySystemName(region);
-            using var s3 = new AmazonS3Client(regionEndpoint);
-
-            using var stream = file.OpenReadStream();
-            await s3.PutObjectAsync(new PutObjectRequest
-            {
-                BucketName  = BucketName,
-                Key         = key,
-                InputStream = stream,
-                ContentType = "application/pdf",
-                CannedACL   = S3CannedACL.PublicRead,
-            });
-
-            var url = $"https://{BucketName}.s3.{region}.amazonaws.com/{key}";
             exam.DocumentUrl = url;
             await _db.SaveChangesAsync();
 
