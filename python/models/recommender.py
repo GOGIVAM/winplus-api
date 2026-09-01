@@ -232,7 +232,7 @@ class Recommender:
             
             trending = self.subjects_df.nlargest(limit, 'enrollmentCount')
             result = trending['id'].tolist()
-            logger.info(f"[Recommender] 🔥 {len(result)} sujets en tendance")
+            logger.info(f"[Recommender]  {len(result)} sujets en tendance")
             return result
         except Exception as e:
             logger.error(f"[Recommender] ❌ Erreur get_trending_subjects: {e}")
