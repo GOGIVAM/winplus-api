@@ -30,6 +30,19 @@ public class Course
     public List<string> Requirements { get; set; } = new();
     public List<string> Objectives { get; set; } = new();
     public bool CertificateEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Date de publication, renseignee par AdminCourseController.Approve.
+    ///
+    /// La propriete etait utilisee dans le controleur (lignes 71 et 152) mais
+    /// absente de l'entite : erreur de compilation CS1061. Nullable, car une
+    /// formation en brouillon ou rejetee n'a pas de date de publication.
+    ///
+    /// La colonne SQL correspondante est ajoutee par
+    /// sql/003_add_courses_publishedat.sql.
+    /// </summary>
+    public DateTime? PublishedAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

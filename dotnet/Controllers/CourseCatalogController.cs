@@ -40,9 +40,15 @@ public class CourseCatalogController : ControllerBase
             if (page < 1) page = 1;
             if (pageSize < 1 || pageSize > 100) pageSize = 20;
 
+            // Sans .AsQueryable(), `var` type la variable en
+            // IIncludableQueryable<Course, User> : les reaffectations
+            // `query = query.Where(...)` qui suivent renvoient un IQueryable et
+            // ne compilent pas (CS0266). Meme correctif que
+            // AdminCourseController ligne 54, qui compile deja.
             var query = _db.Courses.AsNoTracking()
                 .Where(c => c.Status == "published")
-                .Include(c => c.Instructor);
+                .Include(c => c.Instructor)
+                .AsQueryable();
 
             if (!string.IsNullOrWhiteSpace(category))
                 query = query.Where(c => c.Category == category);
