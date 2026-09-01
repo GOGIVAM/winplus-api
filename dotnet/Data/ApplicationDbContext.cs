@@ -115,6 +115,9 @@ public partial class ApplicationDbContext : DbContext
     // ── Forum : fils suivis ──
     public DbSet<ForumThreadFollow> ForumThreadFollows => Set<ForumThreadFollow>();
 
+    // ── Focus Mode (sessions de concentration) ──
+    public DbSet<FocusSession> FocusSessions => Set<FocusSession>();
+
     // ── Module Formations ──
     public DbSet<Course> Courses => Set<Course>();
     public DbSet<CourseSection> CourseSections => Set<CourseSection>();
