@@ -513,6 +513,77 @@ public class AdminUsersController : ControllerBase
         }
     }
 
+    // ── Helpers rôles ─────────────────────────────────────────────────────
+    private IQueryable<User> RoleQuery(string role, string? status, string? q)
+    {
+        var query = _db.Users.AsNoTracking().Where(u => u.Role == role);
+        query = status switch
+        {
+            "active"    => query.Where(u => !u.IsDeleted && u.IsActive),
+            "suspended" => query.Where(u => !u.IsDeleted && !u.IsActive),
+            "deleted"   => query.Where(u => u.IsDeleted),
+            _           => query.Where(u => !u.IsDeleted),
+        };
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var s = q.Trim().ToLower();
+            query = query.Where(u =>
+                u.Email.ToLower().Contains(s) ||
+                (u.FirstName != null && u.FirstName.ToLower().Contains(s)) ||
+                (u.LastName  != null && u.LastName.ToLower().Contains(s)) ||
+                (u.Phone     != null && u.Phone.Contains(s)));
+        }
+        return query;
+    }
+
+    private async Task<Dictionary<int, bool>> OnlineMapAsync(List<int> ids, DateTime onlineSince)
+        => (await _db.UserSessions
+                .Where(s => ids.Contains(s.UserId) && s.IsActive && s.LastActivityAt >= onlineSince)
+                .Select(s => s.UserId).Distinct().ToListAsync())
+            .ToDictionary(id => id, _ => true);
+
+    private async Task<Dictionary<int, DateTime?>> LastSeenMapAsync(List<int> ids)
+        => (await _db.UserSessions
+                .Where(s => ids.Contains(s.UserId))
+                .GroupBy(s => s.UserId)
+                .Select(g => new { UserId = g.Key, Last = g.Max(s => s.LastActivityAt) })
+                .ToListAsync())
+            .ToDictionary(x => x.UserId, x => (DateTime?)x.Last);
+
+    private async Task<Dictionary<int, decimal>> PaidMapAsync(List<int> ids)
+        => (await _db.Payments
+                .Where(p => p.UserId != null && ids.Contains(p.UserId!.Value) && p.Status == "completed")
+                .GroupBy(p => p.UserId!.Value)
+                .Select(g => new { UserId = g.Key, Sum = g.Sum(x => x.Amount) })
+                .ToListAsync())
+            .ToDictionary(x => x.UserId, x => x.Sum);
+
+    private async Task<Dictionary<int, int>> OrdersMapAsync(List<int> ids)
+        => (await _db.Orders
+                .Where(o => o.UserId != null && ids.Contains(o.UserId!.Value) && !o.IsDeleted)
+                .GroupBy(o => o.UserId!.Value)
+                .Select(g => new { UserId = g.Key, Count = g.Count() })
+                .ToListAsync())
+            .ToDictionary(x => x.UserId, x => x.Count);
+
+    private async Task<(string? plan, string status, DateTime? end)> SubForUser(int userId, DateTime now)
+    {
+        var sub = await _db.Subscriptions
+            .Where(s => s.UserId == userId && !s.IsDeleted)
+            .OrderByDescending(s => s.EndDate ?? DateTime.MaxValue)
+            .FirstOrDefaultAsync();
+        if (sub == null) return (null, "none", null);
+        var planName = await _db.PricingPlans.Where(p => p.Id == sub.PricingPlanId).Select(p => p.Name).FirstOrDefaultAsync();
+        var st = (sub.Status ?? "").ToLower() switch
+        {
+            "trial"   => "trial",
+            "refunded"=> "refunded",
+            _ when sub.EndDate == null || sub.EndDate > now => "active",
+            _ => "expired",
+        };
+        return (planName, st, sub.EndDate);
+    }
+
     // ── GET /api/admin/users/teachers ──────────────────────────────────────
 
     [HttpGet("teachers")]
@@ -525,72 +596,81 @@ public class AdminUsersController : ControllerBase
         try
         {
             pageSize = Math.Clamp(pageSize, 1, 500);
-            var query = _db.Users.AsNoTracking()
-                .Where(u => u.Role == "teacher");
-            if (status == "active")    query = query.Where(u => !u.IsDeleted && u.IsActive);
-            else if (status == "suspended") query = query.Where(u => !u.IsDeleted && !u.IsActive);
-            else if (status == "deleted")   query = query.Where(u => u.IsDeleted);
-            else query = query.Where(u => !u.IsDeleted);
-
-            if (!string.IsNullOrWhiteSpace(q))
-            {
-                var s = q.Trim().ToLower();
-                query = query.Where(u =>
-                    u.Email.ToLower().Contains(s) ||
-                    (u.FirstName != null && u.FirstName.ToLower().Contains(s)) ||
-                    (u.LastName  != null && u.LastName.ToLower().Contains(s)));
-            }
-
-            var total = await query.CountAsync();
-            var users = await query.OrderByDescending(u => u.CreatedAt)
+            var query   = RoleQuery("teacher", status, q);
+            var total   = await query.CountAsync();
+            var users   = await query.OrderByDescending(u => u.CreatedAt)
                 .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
-            var ids = users.Select(u => u.Id).ToList();
+            var ids     = users.Select(u => u.Id).ToList();
+            var now     = DateTime.UtcNow;
+            var onlineSince = now - OnlineWindow;
 
-            var linkedStudentCounts = await _db.TeacherStudentLinks
+            var onlineMap  = await OnlineMapAsync(ids, onlineSince);
+            var lastSeenMap = await LastSeenMapAsync(ids);
+            var paidMap    = await PaidMapAsync(ids);
+            var ordersMap  = await OrdersMapAsync(ids);
+
+            var linkedMap = await _db.TeacherStudentLinks
                 .Where(l => ids.Contains(l.TeacherId) && l.Status == "accepted")
                 .GroupBy(l => l.TeacherId)
-                .Select(g => new { TeacherId = g.Key, Count = g.Count() })
-                .ToDictionaryAsync(x => x.TeacherId, x => x.Count);
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.Key, x => x.Count);
 
-            var pendingStudentCounts = await _db.TeacherStudentLinks
+            var pendingMap = await _db.TeacherStudentLinks
                 .Where(l => ids.Contains(l.TeacherId) && l.Status == "pending")
                 .GroupBy(l => l.TeacherId)
-                .Select(g => new { TeacherId = g.Key, Count = g.Count() })
-                .ToDictionaryAsync(x => x.TeacherId, x => x.Count);
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.Key, x => x.Count);
 
-            var now = DateTime.UtcNow;
-            var onlineSince = now - OnlineWindow;
-            var sessions = await _db.UserSessions
-                .Where(s => ids.Contains(s.UserId))
+            // Étudiants qui ont demandé à ce prof (tous statuts) — total demandes reçues
+            var totalRequestsMap = await _db.TeacherStudentLinks
+                .Where(l => ids.Contains(l.TeacherId))
+                .GroupBy(l => l.TeacherId)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.Key, x => x.Count);
+
+            var subsUserIds = ids;
+            var subs = await _db.Subscriptions
+                .Where(s => subsUserIds.Contains(s.UserId) && !s.IsDeleted)
+                .OrderByDescending(s => s.EndDate ?? DateTime.MaxValue)
                 .ToListAsync();
-
-            var paid = await _db.Payments
-                .Where(p => p.UserId != null && ids.Contains(p.UserId!.Value) && p.Status == "completed")
-                .GroupBy(p => p.UserId!.Value)
-                .Select(g => new { UserId = g.Key, Sum = g.Sum(x => x.Amount) })
-                .ToDictionaryAsync(x => x.UserId, x => x.Sum);
+            var planIds  = subs.Select(s => s.PricingPlanId).Distinct().ToList();
+            var planNames = await _db.PricingPlans
+                .Where(p => planIds.Contains(p.Id))
+                .ToDictionaryAsync(p => p.Id, p => p.Name);
 
             var rows = users.Select(u =>
             {
-                var lastSeen = sessions.Where(s => s.UserId == u.Id)
-                    .OrderByDescending(s => s.LastActivityAt).FirstOrDefault();
-                var isOnline = sessions.Any(s => s.UserId == u.Id && s.IsActive && s.LastActivityAt >= onlineSince);
+                var sub  = subs.Where(s => s.UserId == u.Id).OrderByDescending(s => s.EndDate ?? DateTime.MaxValue).FirstOrDefault();
+                var subStatus = sub == null ? "none" : ((sub.Status ?? "").ToLower() switch
+                {
+                    "trial"    => "trial",
+                    "refunded" => "refunded",
+                    _ when sub.EndDate == null || sub.EndDate > now => "active",
+                    _ => "expired",
+                });
                 return new
                 {
-                    id           = u.Id,
-                    firstName    = u.FirstName,
-                    lastName     = u.LastName,
-                    name         = $"{u.FirstName} {u.LastName}".Trim(),
-                    email        = u.Email,
-                    avatarUrl    = u.AvatarUrl ?? u.ProfileImageUrl,
-                    isEmailVerified = u.IsEmailVerified,
-                    isOnline,
-                    lastSeenAt   = lastSeen?.LastActivityAt ?? u.LastLoginAt,
-                    status       = u.IsDeleted ? "deleted" : u.IsActive ? "active" : "suspended",
-                    createdAt    = u.CreatedAt,
-                    totalRevenue = paid.GetValueOrDefault(u.Id, 0m),
-                    linkedStudents  = linkedStudentCounts.GetValueOrDefault(u.Id, 0),
-                    pendingStudents = pendingStudentCounts.GetValueOrDefault(u.Id, 0),
+                    id               = u.Id,
+                    firstName        = u.FirstName,
+                    lastName         = u.LastName,
+                    name             = $"{u.FirstName} {u.LastName}".Trim(),
+                    email            = u.Email,
+                    phone            = u.Phone,
+                    avatarUrl        = u.AvatarUrl ?? u.ProfileImageUrl,
+                    isEmailVerified  = u.IsEmailVerified,
+                    isOnline         = onlineMap.ContainsKey(u.Id),
+                    lastSeenAt       = lastSeenMap.GetValueOrDefault(u.Id) ?? u.LastLoginAt,
+                    lastLoginAt      = u.LastLoginAt,
+                    status           = u.IsDeleted ? "deleted" : u.IsActive ? "active" : "suspended",
+                    createdAt        = u.CreatedAt,
+                    totalRevenue     = paidMap.GetValueOrDefault(u.Id, 0m),
+                    ordersCount      = ordersMap.GetValueOrDefault(u.Id, 0),
+                    linkedStudents   = linkedMap.GetValueOrDefault(u.Id, 0),
+                    pendingStudents  = pendingMap.GetValueOrDefault(u.Id, 0),
+                    totalRequests    = totalRequestsMap.GetValueOrDefault(u.Id, 0),
+                    subscriptionPlan = sub != null && planNames.TryGetValue(sub.PricingPlanId, out var pn) ? pn : null,
+                    subscriptionStatus = subStatus,
+                    subscriptionEnd  = sub?.EndDate,
                 };
             }).ToList();
 
@@ -615,32 +695,24 @@ public class AdminUsersController : ControllerBase
         try
         {
             pageSize = Math.Clamp(pageSize, 1, 500);
-            var query = _db.Users.AsNoTracking()
-                .Where(u => u.Role == "student");
-            if (status == "active")    query = query.Where(u => !u.IsDeleted && u.IsActive);
-            else if (status == "suspended") query = query.Where(u => !u.IsDeleted && !u.IsActive);
-            else if (status == "deleted")   query = query.Where(u => u.IsDeleted);
-            else query = query.Where(u => !u.IsDeleted);
-
-            if (!string.IsNullOrWhiteSpace(q))
-            {
-                var s = q.Trim().ToLower();
-                query = query.Where(u =>
-                    u.Email.ToLower().Contains(s) ||
-                    (u.FirstName != null && u.FirstName.ToLower().Contains(s)) ||
-                    (u.LastName  != null && u.LastName.ToLower().Contains(s)));
-            }
-
+            var query = RoleQuery("student", status, q);
             var total = await query.CountAsync();
             var users = await query.OrderByDescending(u => u.CreatedAt)
                 .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
-            var ids = users.Select(u => u.Id).ToList();
+            var ids   = users.Select(u => u.Id).ToList();
+            var now   = DateTime.UtcNow;
+            var onlineSince = now - OnlineWindow;
 
-            var enrollCounts = await _db.Enrollments
+            var onlineMap   = await OnlineMapAsync(ids, onlineSince);
+            var lastSeenMap = await LastSeenMapAsync(ids);
+            var paidMap     = await PaidMapAsync(ids);
+            var ordersMap   = await OrdersMapAsync(ids);
+
+            var enrollData = await _db.Enrollments
                 .Where(e => ids.Contains(e.UserId))
                 .GroupBy(e => e.UserId)
-                .Select(g => new { UserId = g.Key, Count = g.Count() })
-                .ToDictionaryAsync(x => x.UserId, x => x.Count);
+                .Select(g => new { UserId = g.Key, Total = g.Count(), Completed = g.Count(e => e.IsCompleted) })
+                .ToDictionaryAsync(x => x.UserId);
 
             var teacherLinks = await _db.TeacherStudentLinks
                 .Where(l => ids.Contains(l.StudentId) && l.Status == "accepted")
@@ -652,49 +724,68 @@ public class AdminUsersController : ControllerBase
                 .Include(l => l.Parent)
                 .ToListAsync();
 
-            var institutionIds = users.Where(u => u.InstitutionId.HasValue)
+            var instIds = users.Where(u => u.InstitutionId.HasValue)
                 .Select(u => u.InstitutionId!.Value).Distinct().ToList();
-            var institutions = institutionIds.Count > 0
-                ? await _db.Institutions.Where(i => institutionIds.Contains(i.Id))
-                    .ToDictionaryAsync(i => i.Id, i => i.Name)
-                : new Dictionary<int, string>();
+            var instMap = instIds.Count > 0
+                ? await _db.Institutions.Where(i => instIds.Contains(i.Id))
+                    .ToDictionaryAsync(i => i.Id, i => new { i.Name, i.Type, i.City })
+                : [];
 
-            var now = DateTime.UtcNow;
-            var onlineSince = now - OnlineWindow;
-            var sessions = await _db.UserSessions
-                .Where(s => ids.Contains(s.UserId))
+            var subs = await _db.Subscriptions
+                .Where(s => ids.Contains(s.UserId) && !s.IsDeleted)
+                .OrderByDescending(s => s.EndDate ?? DateTime.MaxValue)
                 .ToListAsync();
+            var planIds   = subs.Select(s => s.PricingPlanId).Distinct().ToList();
+            var planNames = await _db.PricingPlans
+                .Where(p => planIds.Contains(p.Id))
+                .ToDictionaryAsync(p => p.Id, p => p.Name);
 
             var rows = users.Select(u =>
             {
-                var isOnline = sessions.Any(s => s.UserId == u.Id && s.IsActive && s.LastActivityAt >= onlineSince);
-                var lastSeen = sessions.Where(s => s.UserId == u.Id)
-                    .OrderByDescending(s => s.LastActivityAt).FirstOrDefault();
-                var myParent = parentLinks.FirstOrDefault(l => l.StudentId == u.Id)?.Parent;
+                var myParent   = parentLinks.FirstOrDefault(l => l.StudentId == u.Id)?.Parent;
                 var myTeachers = teacherLinks.Where(l => l.StudentId == u.Id)
                     .Select(l => $"{l.Teacher?.FirstName} {l.Teacher?.LastName}".Trim())
                     .Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
-                var instName = u.InstitutionId.HasValue && institutions.TryGetValue(u.InstitutionId.Value, out var iName)
-                    ? iName : null;
+                instMap.TryGetValue(u.InstitutionId ?? 0, out var inst);
+                var enroll = enrollData.GetValueOrDefault(u.Id);
+                var sub    = subs.Where(s => s.UserId == u.Id).OrderByDescending(s => s.EndDate ?? DateTime.MaxValue).FirstOrDefault();
+                var subStatus = sub == null ? "none" : ((sub.Status ?? "").ToLower() switch
+                {
+                    "trial"    => "trial",
+                    "refunded" => "refunded",
+                    _ when sub.EndDate == null || sub.EndDate > now => "active",
+                    _ => "expired",
+                });
                 return new
                 {
-                    id             = u.Id,
-                    firstName      = u.FirstName,
-                    lastName       = u.LastName,
-                    name           = $"{u.FirstName} {u.LastName}".Trim(),
-                    email          = u.Email,
-                    avatarUrl      = u.AvatarUrl ?? u.ProfileImageUrl,
-                    isEmailVerified = u.IsEmailVerified,
-                    isOnline,
-                    lastSeenAt     = lastSeen?.LastActivityAt ?? u.LastLoginAt,
-                    status         = u.IsDeleted ? "deleted" : u.IsActive ? "active" : "suspended",
-                    createdAt      = u.CreatedAt,
-                    enrollmentsCount = enrollCounts.GetValueOrDefault(u.Id, 0),
-                    linkedTeachers = myTeachers,
-                    linkedTeachersCount = myTeachers.Count,
-                    linkedParent   = myParent == null ? null : $"{myParent.FirstName} {myParent.LastName}".Trim(),
-                    linkedParentEmail = myParent?.Email,
-                    institutionName = instName,
+                    id                   = u.Id,
+                    firstName            = u.FirstName,
+                    lastName             = u.LastName,
+                    name                 = $"{u.FirstName} {u.LastName}".Trim(),
+                    email                = u.Email,
+                    phone                = u.Phone,
+                    avatarUrl            = u.AvatarUrl ?? u.ProfileImageUrl,
+                    isEmailVerified      = u.IsEmailVerified,
+                    isOnline             = onlineMap.ContainsKey(u.Id),
+                    lastSeenAt           = lastSeenMap.GetValueOrDefault(u.Id) ?? u.LastLoginAt,
+                    lastLoginAt          = u.LastLoginAt,
+                    status               = u.IsDeleted ? "deleted" : u.IsActive ? "active" : "suspended",
+                    createdAt            = u.CreatedAt,
+                    enrollmentsCount     = enroll?.Total ?? 0,
+                    completedEnrollments = enroll?.Completed ?? 0,
+                    totalPaid            = paidMap.GetValueOrDefault(u.Id, 0m),
+                    ordersCount          = ordersMap.GetValueOrDefault(u.Id, 0),
+                    linkedTeachers       = myTeachers,
+                    linkedTeachersCount  = myTeachers.Count,
+                    linkedParent         = myParent == null ? null : $"{myParent.FirstName} {myParent.LastName}".Trim(),
+                    linkedParentEmail    = myParent?.Email,
+                    linkedParentPhone    = myParent?.Phone,
+                    institutionName      = inst?.Name,
+                    institutionType      = inst?.Type,
+                    institutionCity      = inst?.City,
+                    subscriptionPlan     = sub != null && planNames.TryGetValue(sub.PricingPlanId, out var pn) ? pn : null,
+                    subscriptionStatus   = subStatus,
+                    subscriptionEnd      = sub?.EndDate,
                 };
             }).ToList();
 
@@ -719,77 +810,82 @@ public class AdminUsersController : ControllerBase
         try
         {
             pageSize = Math.Clamp(pageSize, 1, 500);
-            var query = _db.Users.AsNoTracking()
-                .Where(u => u.Role == "parent");
-            if (status == "active")    query = query.Where(u => !u.IsDeleted && u.IsActive);
-            else if (status == "suspended") query = query.Where(u => !u.IsDeleted && !u.IsActive);
-            else if (status == "deleted")   query = query.Where(u => u.IsDeleted);
-            else query = query.Where(u => !u.IsDeleted);
-
-            if (!string.IsNullOrWhiteSpace(q))
-            {
-                var s = q.Trim().ToLower();
-                query = query.Where(u =>
-                    u.Email.ToLower().Contains(s) ||
-                    (u.FirstName != null && u.FirstName.ToLower().Contains(s)) ||
-                    (u.LastName  != null && u.LastName.ToLower().Contains(s)));
-            }
-
+            var query = RoleQuery("parent", status, q);
             var total = await query.CountAsync();
             var users = await query.OrderByDescending(u => u.CreatedAt)
                 .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
-            var ids = users.Select(u => u.Id).ToList();
+            var ids   = users.Select(u => u.Id).ToList();
+            var now   = DateTime.UtcNow;
+            var onlineSince = now - OnlineWindow;
+
+            var onlineMap   = await OnlineMapAsync(ids, onlineSince);
+            var lastSeenMap = await LastSeenMapAsync(ids);
+            var paidMap     = await PaidMapAsync(ids);
+            var ordersMap   = await OrdersMapAsync(ids);
 
             var childLinks = await _db.ParentStudentLinks
                 .Where(l => ids.Contains(l.ParentId))
                 .Include(l => l.Student)
                 .ToListAsync();
 
-            var paid = await _db.Payments
-                .Where(p => p.UserId != null && ids.Contains(p.UserId!.Value) && p.Status == "completed")
-                .GroupBy(p => p.UserId!.Value)
-                .Select(g => new { UserId = g.Key, Sum = g.Sum(x => x.Amount) })
-                .ToDictionaryAsync(x => x.UserId, x => x.Sum);
+            // Inscriptions des enfants (somme par parent)
+            var childIds = childLinks.Select(l => l.StudentId).Distinct().ToList();
+            var childEnrolls = childIds.Count > 0
+                ? (await _db.Enrollments
+                    .Where(e => childIds.Contains(e.UserId))
+                    .GroupBy(e => e.UserId)
+                    .Select(g => new { UserId = g.Key, Count = g.Count() })
+                    .ToListAsync()).ToDictionary(x => x.UserId, x => x.Count)
+                : new Dictionary<int, int>();
 
-            var orders = await _db.Orders
-                .Where(o => o.UserId != null && ids.Contains(o.UserId!.Value) && !o.IsDeleted)
-                .GroupBy(o => o.UserId!.Value)
-                .Select(g => new { UserId = g.Key, Count = g.Count() })
-                .ToDictionaryAsync(x => x.UserId, x => x.Count);
-
-            var now = DateTime.UtcNow;
-            var onlineSince = now - OnlineWindow;
-            var sessions = await _db.UserSessions
-                .Where(s => ids.Contains(s.UserId))
+            var subs = await _db.Subscriptions
+                .Where(s => ids.Contains(s.UserId) && !s.IsDeleted)
+                .OrderByDescending(s => s.EndDate ?? DateTime.MaxValue)
                 .ToListAsync();
+            var planIds   = subs.Select(s => s.PricingPlanId).Distinct().ToList();
+            var planNames = await _db.PricingPlans
+                .Where(p => planIds.Contains(p.Id))
+                .ToDictionaryAsync(p => p.Id, p => p.Name);
 
             var rows = users.Select(u =>
             {
-                var isOnline = sessions.Any(s => s.UserId == u.Id && s.IsActive && s.LastActivityAt >= onlineSince);
-                var lastSeen = sessions.Where(s => s.UserId == u.Id)
-                    .OrderByDescending(s => s.LastActivityAt).FirstOrDefault();
                 var myChildren = childLinks.Where(l => l.ParentId == u.Id)
                     .Select(l => new {
-                        name  = $"{l.Student?.FirstName} {l.Student?.LastName}".Trim(),
-                        email = l.Student?.Email,
+                        name             = $"{l.Student?.FirstName} {l.Student?.LastName}".Trim(),
+                        email            = l.Student?.Email,
+                        enrollmentsCount = childEnrolls.GetValueOrDefault(l.StudentId, 0),
                     }).ToList();
+                var sub = subs.Where(s => s.UserId == u.Id).OrderByDescending(s => s.EndDate ?? DateTime.MaxValue).FirstOrDefault();
+                var subStatus = sub == null ? "none" : ((sub.Status ?? "").ToLower() switch
+                {
+                    "trial"    => "trial",
+                    "refunded" => "refunded",
+                    _ when sub.EndDate == null || sub.EndDate > now => "active",
+                    _ => "expired",
+                });
                 return new
                 {
-                    id             = u.Id,
-                    firstName      = u.FirstName,
-                    lastName       = u.LastName,
-                    name           = $"{u.FirstName} {u.LastName}".Trim(),
-                    email          = u.Email,
-                    avatarUrl      = u.AvatarUrl ?? u.ProfileImageUrl,
-                    isEmailVerified = u.IsEmailVerified,
-                    isOnline,
-                    lastSeenAt     = lastSeen?.LastActivityAt ?? u.LastLoginAt,
-                    status         = u.IsDeleted ? "deleted" : u.IsActive ? "active" : "suspended",
-                    createdAt      = u.CreatedAt,
-                    childrenCount  = myChildren.Count,
-                    children       = myChildren,
-                    totalSpent     = paid.GetValueOrDefault(u.Id, 0m),
-                    ordersCount    = orders.GetValueOrDefault(u.Id, 0),
+                    id                 = u.Id,
+                    firstName          = u.FirstName,
+                    lastName           = u.LastName,
+                    name               = $"{u.FirstName} {u.LastName}".Trim(),
+                    email              = u.Email,
+                    phone              = u.Phone,
+                    avatarUrl          = u.AvatarUrl ?? u.ProfileImageUrl,
+                    isEmailVerified    = u.IsEmailVerified,
+                    isOnline           = onlineMap.ContainsKey(u.Id),
+                    lastSeenAt         = lastSeenMap.GetValueOrDefault(u.Id) ?? u.LastLoginAt,
+                    lastLoginAt        = u.LastLoginAt,
+                    status             = u.IsDeleted ? "deleted" : u.IsActive ? "active" : "suspended",
+                    createdAt          = u.CreatedAt,
+                    childrenCount      = myChildren.Count,
+                    children           = myChildren,
+                    childrenEnrollmentsTotal = myChildren.Sum(c => c.enrollmentsCount),
+                    totalSpent         = paidMap.GetValueOrDefault(u.Id, 0m),
+                    ordersCount        = ordersMap.GetValueOrDefault(u.Id, 0),
+                    subscriptionPlan   = sub != null && planNames.TryGetValue(sub.PricingPlanId, out var pn) ? pn : null,
+                    subscriptionStatus = subStatus,
+                    subscriptionEnd    = sub?.EndDate,
                 };
             }).ToList();
 
@@ -814,85 +910,104 @@ public class AdminUsersController : ControllerBase
         try
         {
             pageSize = Math.Clamp(pageSize, 1, 500);
-            var query = _db.Users.AsNoTracking()
-                .Where(u => u.Role == "institution");
-            if (status == "active")    query = query.Where(u => !u.IsDeleted && u.IsActive);
-            else if (status == "suspended") query = query.Where(u => !u.IsDeleted && !u.IsActive);
-            else if (status == "deleted")   query = query.Where(u => u.IsDeleted);
-            else query = query.Where(u => !u.IsDeleted);
-
-            if (!string.IsNullOrWhiteSpace(q))
-            {
-                var s = q.Trim().ToLower();
-                query = query.Where(u =>
-                    u.Email.ToLower().Contains(s) ||
-                    (u.FirstName != null && u.FirstName.ToLower().Contains(s)) ||
-                    (u.LastName  != null && u.LastName.ToLower().Contains(s)));
-            }
-
+            var query = RoleQuery("institution", status, q);
             var total = await query.CountAsync();
             var users = await query.OrderByDescending(u => u.CreatedAt)
                 .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
 
-            var institutionIds = users.Where(u => u.InstitutionId.HasValue)
+            var instIds = users.Where(u => u.InstitutionId.HasValue)
                 .Select(u => u.InstitutionId!.Value).Distinct().ToList();
 
-            var institutions = institutionIds.Count > 0
+            var instMap = instIds.Count > 0
                 ? await _db.Institutions.AsNoTracking()
-                    .Where(i => institutionIds.Contains(i.Id))
+                    .Where(i => instIds.Contains(i.Id))
                     .ToDictionaryAsync(i => i.Id)
                 : new Dictionary<int, Institution>();
 
-            var studentsCount = institutionIds.Count > 0
+            var activeStudentsMap = instIds.Count > 0
                 ? await _db.InstitutionStudents
-                    .Where(s => institutionIds.Contains(s.InstitutionId) && s.IsActive)
+                    .Where(s => instIds.Contains(s.InstitutionId) && s.IsActive)
                     .GroupBy(s => s.InstitutionId)
                     .Select(g => new { InstitutionId = g.Key, Count = g.Count() })
                     .ToDictionaryAsync(x => x.InstitutionId, x => x.Count)
                 : new Dictionary<int, int>();
 
-            var subs = await _db.Subscriptions
-                .Where(s => users.Select(u => u.Id).Contains(s.UserId) && !s.IsDeleted)
-                .OrderByDescending(s => s.EndDate)
-                .ToListAsync();
+            var totalStudentsMap = instIds.Count > 0
+                ? await _db.InstitutionStudents
+                    .Where(s => instIds.Contains(s.InstitutionId))
+                    .GroupBy(s => s.InstitutionId)
+                    .Select(g => new { InstitutionId = g.Key, Count = g.Count() })
+                    .ToDictionaryAsync(x => x.InstitutionId, x => x.Count)
+                : new Dictionary<int, int>();
 
-            var now = DateTime.UtcNow;
+            var groupsMap = instIds.Count > 0
+                ? await _db.InstitutionStudents
+                    .Where(s => instIds.Contains(s.InstitutionId) && s.GroupName != null)
+                    .GroupBy(s => s.InstitutionId)
+                    .Select(g => new { InstitutionId = g.Key, Count = g.Select(s => s.GroupName).Distinct().Count() })
+                    .ToDictionaryAsync(x => x.InstitutionId, x => x.Count)
+                : new Dictionary<int, int>();
+
+            var ids   = users.Select(u => u.Id).ToList();
+            var now   = DateTime.UtcNow;
             var onlineSince = now - OnlineWindow;
-            var ids = users.Select(u => u.Id).ToList();
-            var sessions = await _db.UserSessions
-                .Where(s => ids.Contains(s.UserId))
+
+            var onlineMap   = await OnlineMapAsync(ids, onlineSince);
+            var lastSeenMap = await LastSeenMapAsync(ids);
+            var paidMap     = await PaidMapAsync(ids);
+
+            var subs = await _db.Subscriptions
+                .Where(s => ids.Contains(s.UserId) && !s.IsDeleted)
+                .OrderByDescending(s => s.EndDate ?? DateTime.MaxValue)
                 .ToListAsync();
+            var planIds   = subs.Select(s => s.PricingPlanId).Distinct().ToList();
+            var planNames = await _db.PricingPlans
+                .Where(p => planIds.Contains(p.Id))
+                .ToDictionaryAsync(p => p.Id, p => p.Name);
 
             var rows = users.Select(u =>
             {
-                var isOnline = sessions.Any(s => s.UserId == u.Id && s.IsActive && s.LastActivityAt >= onlineSince);
-                var lastSeen = sessions.Where(s => s.UserId == u.Id)
-                    .OrderByDescending(s => s.LastActivityAt).FirstOrDefault();
                 Institution? inst = null;
-                if (u.InstitutionId.HasValue) institutions.TryGetValue(u.InstitutionId.Value, out inst);
-                var sub = subs.FirstOrDefault(s => s.UserId == u.Id);
-                var sc = u.InstitutionId.HasValue ? studentsCount.GetValueOrDefault(u.InstitutionId.Value, 0) : 0;
+                if (u.InstitutionId.HasValue) instMap.TryGetValue(u.InstitutionId.Value, out inst);
+                var sub = subs.Where(s => s.UserId == u.Id).OrderByDescending(s => s.EndDate ?? DateTime.MaxValue).FirstOrDefault();
+                var subStatus = sub == null ? "standard" : ((sub.Status ?? "").ToLower() switch
+                {
+                    "trial"    => "trial",
+                    "refunded" => "refunded",
+                    _ when sub.EndDate == null || sub.EndDate > now => "active",
+                    _ => "expired",
+                });
+                var iid = u.InstitutionId ?? 0;
                 return new
                 {
-                    id              = u.Id,
-                    firstName       = u.FirstName,
-                    lastName        = u.LastName,
-                    name            = inst?.Name ?? $"{u.FirstName} {u.LastName}".Trim(),
-                    email           = u.Email,
-                    avatarUrl       = u.AvatarUrl ?? u.ProfileImageUrl,
-                    isEmailVerified = u.IsEmailVerified,
-                    isOnline,
-                    lastSeenAt      = lastSeen?.LastActivityAt ?? u.LastLoginAt,
-                    status          = u.IsDeleted ? "deleted" : u.IsActive ? "active" : "suspended",
-                    createdAt       = u.CreatedAt,
-                    institutionName = inst?.Name,
-                    institutionType = inst?.Type,
-                    city            = inst?.City ?? u.City,
-                    country         = inst?.Country,
-                    studentsCount   = sc,
-                    licenseType     = sub?.Status ?? "standard",
-                    licenseExpiry   = sub?.EndDate,
-                    institutionId   = u.InstitutionId,
+                    id                 = u.Id,
+                    firstName          = u.FirstName,
+                    lastName           = u.LastName,
+                    name               = inst?.Name ?? $"{u.FirstName} {u.LastName}".Trim(),
+                    email              = u.Email,
+                    phone              = inst?.Phone ?? u.Phone,
+                    avatarUrl          = u.AvatarUrl ?? u.ProfileImageUrl,
+                    isEmailVerified    = u.IsEmailVerified,
+                    isOnline           = onlineMap.ContainsKey(u.Id),
+                    lastSeenAt         = lastSeenMap.GetValueOrDefault(u.Id) ?? u.LastLoginAt,
+                    lastLoginAt        = u.LastLoginAt,
+                    status             = u.IsDeleted ? "deleted" : u.IsActive ? "active" : "suspended",
+                    createdAt          = u.CreatedAt,
+                    institutionName    = inst?.Name,
+                    institutionType    = inst?.Type,
+                    institutionCode    = inst?.Code,
+                    city               = inst?.City ?? u.City,
+                    region             = inst?.Region,
+                    country            = inst?.Country,
+                    address            = inst?.Address,
+                    studentsCount      = activeStudentsMap.GetValueOrDefault(iid, 0),
+                    totalStudentsCount = totalStudentsMap.GetValueOrDefault(iid, 0),
+                    groupsCount        = groupsMap.GetValueOrDefault(iid, 0),
+                    totalSpent         = paidMap.GetValueOrDefault(u.Id, 0m),
+                    licenseType        = sub != null && planNames.TryGetValue(sub.PricingPlanId, out var pn) ? pn : subStatus,
+                    licenseStatus      = subStatus,
+                    licenseExpiry      = sub?.EndDate,
+                    institutionId      = u.InstitutionId,
                 };
             }).ToList();
 

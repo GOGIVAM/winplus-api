@@ -34,7 +34,7 @@ public class Certificate
     [MaxLength(500)]
     public string? FileUrl { get; set; }
 
-    [MaxLength(100)]
+    [NotMapped]
     public string? VerificationCode { get; set; }
     
     // Navigation properties

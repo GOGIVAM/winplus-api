@@ -1166,7 +1166,6 @@ public class AdminController : ControllerBase
                 {
                     id                = c.Id,
                     certificateNumber = c.CertificateNumber,
-                    verificationCode  = c.VerificationCode,
                     userName          = (c.User.FirstName + " " + c.User.LastName).Trim() != "" ? (c.User.FirstName + " " + c.User.LastName).Trim() : c.User.Email,
                     userEmail         = c.User.Email,
                     subjectTitle      = c.Subject.Title,
@@ -1452,6 +1451,23 @@ public class AdminController : ControllerBase
             return Content(json, "application/json");
         }
         catch (Exception ex) { _logger.LogError(ex, "ResolveModeration proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
+    }
+
+    // ── Teachers ────────────────────────────────────────────────────────────
+
+    [HttpPatch("teachers/{id:int}/verify")]
+    public async Task<IActionResult> VerifyTeacher(int id)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id && u.Role == "teacher" && !u.IsDeleted);
+        if (user == null) return NotFound(new { error = "Professeur introuvable" });
+
+        user.IsEmailVerified = true;
+        user.VerifiedAt = DateTime.UtcNow;
+        user.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("Admin verified teacher {TeacherId}", id);
+        return Ok(new { message = "Professeur vérifié", verified = true });
     }
 }
 
