@@ -779,17 +779,28 @@ public class AdminController : ControllerBase
     {
         try
         {
-            IQueryable<string> emailQuery = request.Target switch
+            List<string> emails;
+            if (request.Target == "custom")
             {
-                "students" => _db.Users.Where(u => u.IsActive && !u.IsDeleted && u.Role == "student").Select(u => u.Email),
-                "teachers" => _db.Users.Where(u => u.IsActive && !u.IsDeleted && u.Role == "teacher").Select(u => u.Email),
-                "parents"  => _db.Users.Where(u => u.IsActive && !u.IsDeleted && u.Role == "parent").Select(u => u.Email),
-                "custom"   => _db.Users.Where(u => !u.IsDeleted && u.Email == request.CustomEmail).Select(u => u.Email),
-                _          => _db.Users.Where(u => u.IsActive && !u.IsDeleted).Select(u => u.Email),
-            };
+                if (string.IsNullOrWhiteSpace(request.CustomEmail))
+                    return BadRequest(new { error = "Adresse email requise pour la cible 'custom'" });
+                emails = [request.CustomEmail.Trim()];
+            }
+            else
+            {
+                IQueryable<string> emailQuery = request.Target switch
+                {
+                    "students" => _db.Users.Where(u => u.IsActive && !u.IsDeleted && u.Role == "student").Select(u => u.Email),
+                    "teachers" => _db.Users.Where(u => u.IsActive && !u.IsDeleted && u.Role == "teacher").Select(u => u.Email),
+                    "parents"  => _db.Users.Where(u => u.IsActive && !u.IsDeleted && u.Role == "parent").Select(u => u.Email),
+                    _          => _db.Users.Where(u => u.IsActive && !u.IsDeleted).Select(u => u.Email),
+                };
+                emails = await emailQuery.Distinct().ToListAsync();
+            }
 
-            var emails = await emailQuery.Distinct().ToListAsync();
-            var count  = emails.Count;
+            var count = emails.Count;
+            if (count == 0)
+                return Ok(new { success = true, recipientCount = 0, sent = 0, failed = 0, message = "Aucun destinataire trouvé." });
 
             _logger.LogInformation(
                 "Admin email broadcast: target={Target}, recipients={Count}, subject={Subject}",
