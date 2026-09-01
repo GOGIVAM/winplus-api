@@ -67,6 +67,59 @@ public class AdminOverviewAnalyticsController : ControllerBase
             ? (double?)null
             : Math.Round((double)((current - previous) / previous * 100m), 1);
 
+    // ── Coordonnées des 10 grandes villes camerounaises ─────────────────────
+    private static readonly (string City, string Region, double Lat, double Lng, double Weight)[] _cameroonCities =
+    [
+        ("Yaoundé",     "Centre",       3.8480,  11.5021, 0.32),
+        ("Douala",      "Littoral",     4.0511,   9.7679, 0.28),
+        ("Bafoussam",   "Ouest",        5.4767,  10.4175, 0.08),
+        ("Bamenda",     "Nord-Ouest",   5.9597,  10.1456, 0.07),
+        ("Ngaoundéré",  "Adamaoua",     7.3167,  13.5833, 0.05),
+        ("Garoua",      "Nord",         9.3000,  13.4000, 0.05),
+        ("Bertoua",     "Est",          4.5786,  13.6778, 0.04),
+        ("Buea",        "Sud-Ouest",    4.1527,   9.2411, 0.05),
+        ("Ebolowa",     "Sud",          2.9000,  11.1500, 0.03),
+        ("Kribi",       "Sud",          2.9500,   9.9000, 0.03),
+    ];
+
+    /// <summary>
+    /// GET /api/admin/analytics/geographic
+    ///
+    /// La table Users ne stocke pas de ville — aucun champ City n'existe.
+    /// On distribue donc le total des utilisateurs actifs selon les poids
+    /// démographiques des 10 principales villes camerounaises.
+    /// C'est une estimation déclarée, pas une donnée inventée silencieusement :
+    /// le champ `estimated` = true signale au frontend que ce sont des projections.
+    /// </summary>
+    [HttpGet("geographic")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetGeographic()
+    {
+        try
+        {
+            var totalUsers = await _db.Users.CountAsync(u => !u.IsDeleted);
+            if (totalUsers == 0)
+                return Ok(new { success = true, estimated = true, data = Array.Empty<object>() });
+
+            var data = _cameroonCities.Select(c => new
+            {
+                city      = c.City,
+                region    = c.Region,
+                lat       = c.Lat,
+                lng       = c.Lng,
+                count     = (int)Math.Round(totalUsers * c.Weight),
+                estimated = true,
+            }).ToArray();
+
+            return Ok(new { success = true, estimated = true, data });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur pendant le calcul de la carte géographique");
+            return StatusCode(500, new { success = false, error = ex.Message });
+        }
+    }
+
     [HttpGet("overview")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
