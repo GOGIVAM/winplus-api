@@ -84,7 +84,7 @@ public class AnnouncementController : ControllerBase
                 Title = request.Title,
                 Content = request.Content,
                 Priority = request.Priority,
-                ExpiresAt = request.ExpiresAt,
+                ExpiresAt = request.ExpiresAt.HasValue ? DateTime.SpecifyKind(request.ExpiresAt.Value, DateTimeKind.Utc) : null,
                 IsPublished = false,
                 CreatedBy = adminId,
             };
@@ -112,7 +112,7 @@ public class AnnouncementController : ControllerBase
             existing.Title = request.Title;
             existing.Content = request.Content;
             existing.Priority = request.Priority;
-            existing.ExpiresAt = request.ExpiresAt;
+            existing.ExpiresAt = request.ExpiresAt.HasValue ? DateTime.SpecifyKind(request.ExpiresAt.Value, DateTimeKind.Utc) : null;
 
             var updated = await _announcementService.UpdateAnnouncementAsync(existing);
             return Ok(new { data = updated, success = true });

@@ -27,15 +27,15 @@ public class Certificate
     
     public DateTime CompletionDate { get; set; }
     
-    [Column(TypeName = "decimal(5,2)")]
+    [Column("FinalScore", TypeName = "decimal(5,2)")]
     public decimal? Grade { get; set; } // 0-100
     
+    [Column("CertificateUrl")]
     [MaxLength(500)]
-    public string FileUrl { get; set; }
-    
-    [Required]
-    [MaxLength(50)]
-    public string VerificationCode { get; set; }
+    public string? FileUrl { get; set; }
+
+    [MaxLength(100)]
+    public string? VerificationCode { get; set; }
     
     // Navigation properties
     [ForeignKey(nameof(UserId))]
