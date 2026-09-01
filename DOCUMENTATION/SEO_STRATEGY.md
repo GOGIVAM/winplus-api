@@ -1,4 +1,4 @@
-# WinPlus — Stratégie SEO & ASO
+# WinPlus  Stratégie SEO & ASO
 
 > Dernière mise à jour : 2026-08-31
 
@@ -28,7 +28,7 @@ Google utilise **LCP, INP et CLS** comme facteur de départage entre pages de m�
 | Métrique | Seuil "Bon" | Seuil critique | Priorité |
 |---|---|---|---|
 | **LCP** (Largest Contentful Paint) | < 2,5 s | > 4 s | Critique |
-| **INP** (Interaction to Next Paint) | < 200 ms | > 500 ms | Haute — 43 % des sites échouent |
+| **INP** (Interaction to Next Paint) | < 200 ms | > 500 ms | Haute  43 % des sites échouent |
 | **CLS** (Cumulative Layout Shift) | < 0,1 | > 0,25 | Haute |
 
 **Actions à appliquer sur WinPlus :**
@@ -40,7 +40,7 @@ Google utilise **LCP, INP et CLS** comme facteur de départage entre pages de m�
 - Utiliser `<link rel="prefetch">` pour les pages de concours les plus visitées
 
 **Outils de mesure :**
-- [PageSpeed Insights](https://pagespeed.web.dev/) — benchmark mensuel obligatoire
+- [PageSpeed Insights](https://pagespeed.web.dev/)  benchmark mensuel obligatoire
 - Google Search Console → Rapport "Expérience de la page"
 - [web.dev/measure](https://web.dev/measure/)
 
@@ -50,7 +50,7 @@ Google utilise **LCP, INP et CLS** comme facteur de départage entre pages de m�
 
 Le structured data n'est **pas** un facteur de classement direct, mais il conditionne :
 - Les **rich results** (extraits enrichis) qui augmentent le CTR de 20 à 40 %
-- Les **AI Overviews** (Google SGE) — expérience Searchengine Land 2025 : seules les pages avec schema valide ont été citées
+- Les **AI Overviews** (Google SGE)  expérience Searchengine Land 2025 : seules les pages avec schema valide ont été citées
 - Le **Knowledge Graph** (entité reconnue par Google)
 
 #### Types de schema implémentés sur WinPlus
@@ -75,7 +75,7 @@ Le structured data n'est **pas** un facteur de classement direct, mais il condit
 
 ---
 
-### 2.3 Balises meta — Standards 2026
+### 2.3 Balises meta  Standards 2026
 
 | Balise | Limite | Bonne pratique |
 |---|---|---|
@@ -86,10 +86,10 @@ Le structured data n'est **pas** un facteur de classement direct, mais il condit
 | `canonical` | 1 par page | Toujours présent, même sur la page canonique |
 
 **Balises critiques manquantes à ajouter :**
-- `theme-color` — pour Chrome Android (cohérence marque)
-- `apple-touch-icon` — indexation iOS
-- `site.webmanifest` — PWA + SEO mobile
-- `hreflang` — version française / anglaise / camerounaise
+- `theme-color`  pour Chrome Android (cohérence marque)
+- `apple-touch-icon`  indexation iOS
+- `site.webmanifest`  PWA + SEO mobile
+- `hreflang`  version française / anglaise / camerounaise
 - `og:locale` + `og:locale:alternate`
 
 ---
@@ -100,8 +100,8 @@ Le structured data n'est **pas** un facteur de classement direct, mais il condit
 ```
 sitemap-index.xml
 ├── sitemap-static.xml       (pages statiques)
-├── sitemap-subjects.xml     (épreuves — générées dynamiquement)
-└── sitemap-blog.xml         (articles/guides — à créer)
+├── sitemap-subjects.xml     (épreuves  générées dynamiquement)
+└── sitemap-blog.xml         (articles/guides  à créer)
 ```
 
 **Règles :**
@@ -121,11 +121,11 @@ La compétition SEO au Cameroun reste faible mais croît. Stratégie recommandé
 | Backlink depuis journaux camerounais (Cameroon Tribune, La Nouvelle Expression) | Très fort | Moyen |
 | Partenariat avec lycées et universités (lien depuis leur site) | Fort | Moyen |
 | Articles invités sur 237actu, Camerpost, Investir au Cameroun | Fort | Faible |
-| Google Business Profile — catégorie "Établissement d'enseignement" | Moyen | Très faible |
+| Google Business Profile  catégorie "Établissement d'enseignement" | Moyen | Très faible |
 | Citations dans annuaires africains (Jumia, 237pages.com) | Faible | Très faible |
 | Forum SEO communautaire (Facebook groupes parents/élèves) | Indirect | Faible |
 
-**Priorité absolue** : Google Business Profile — gratuit, impact immédiat sur la recherche locale "winplus cameroun".
+**Priorité absolue** : Google Business Profile  gratuit, impact immédiat sur la recherche locale "winplus cameroun".
 
 ---
 
@@ -156,17 +156,17 @@ La compétition SEO au Cameroun reste faible mais croît. Stratégie recommandé
 
 ---
 
-## 3. ASO — Google Play Store
+## 3. ASO  Google Play Store
 
 ### 3.1 Facteurs de classement Play Store 2026
 
 Google Play utilise **5 signaux principaux** :
 
-1. **Pertinence des métadonnées** — titre, courte description (80 chars), longue description (4 000 chars)
-2. **Vélocité de téléchargements** — nombre de téléchargements dans les 7 premiers jours post-mise à jour
-3. **Taux de conversion** — % de visiteurs qui installent (impacté par les screenshots + icône)
-4. **Rétention in-app** — crash rate, DAU/MAU, sessions par utilisateur
-5. **Android Vitals** — ANRs (Application Not Responding), crash rate < 1,09 %
+1. **Pertinence des métadonnées**  titre, courte description (80 chars), longue description (4 000 chars)
+2. **Vélocité de téléchargements**  nombre de téléchargements dans les 7 premiers jours post-mise à jour
+3. **Taux de conversion**  % de visiteurs qui installent (impacté par les screenshots + icône)
+4. **Rétention in-app**  crash rate, DAU/MAU, sessions par utilisateur
+5. **Android Vitals**  ANRs (Application Not Responding), crash rate < 1,09 %
 
 ### 3.2 Métadonnées optimisées (à appliquer)
 
@@ -180,13 +180,13 @@ WinPlus - Concours Cameroun
 Annales corrigées, quiz IA & cours pour BAC, ENS, Polytechnique au Cameroun.
 ```
 
-**Longue description** (4 000 chars) — stratégie :
+**Longue description** (4 000 chars)  stratégie :
 - Paragraphe 1 : accroche avec mots-clés principaux (`concours cameroun`, `bac cameroun`, `annales corrigées`)
 - Paragraphe 2 : fonctionnalités clés (WinAI, quiz adaptatifs, annales PDF)
 - Paragraphe 3 : concours couverts (ENS, Polytechnique, ENAM, FMSB, ESSEC, ENSET, BAC, BEPC)
 - Paragraphe 4 : social proof (témoignages, nombre d'étudiants)
 - Paragraphe 5 : appel à l'action
-- Répétition naturelle des mots-clés 3 à 5 fois (pas de keyword stuffing — pénalisé en 2026)
+- Répétition naturelle des mots-clés 3 à 5 fois (pas de keyword stuffing  pénalisé en 2026)
 
 **Mots-clés à placer en titre + description :**
 - `concours cameroun` (principal)
@@ -232,7 +232,7 @@ Mettre à jour les métadonnées toutes les **3 à 6 semaines** ou à chaque rel
 
 - **Google Business Profile** est le levier #1 pour la recherche locale au Cameroun. Créer une fiche catégorisée "Établissement d'enseignement en ligne" à Douala + Yaoundé.
 - Les backlinks provenant de médias camerounais reconnus valent plus que des centaines de liens génériques.
-- **Pidgin** et bilinguisme : Google indexe les requêtes en français ET en anglais pour le Cameroun — créer des pages dédiées aux concours anglophones (GCE A-Level, O-Level) augmentera massivement la portée.
+- **Pidgin** et bilinguisme : Google indexe les requêtes en français ET en anglais pour le Cameroun  créer des pages dédiées aux concours anglophones (GCE A-Level, O-Level) augmentera massivement la portée.
 - La vitesse mobile est critique : plus de 80 % du trafic web camerounais est mobile sur des connexions 3G/4G. Viser LCP < 2,5 s sur réseau mobile.
 
 ### 4.2 Pages à créer (opportunités non couvertes)
@@ -252,27 +252,27 @@ Mettre à jour les métadonnées toutes les **3 à 6 semaines** ou à chaque rel
 
 ### Immédiat (déjà fait / à vérifier)
 
-- [x] `seoService.ts` — meta title + description par route
-- [x] `sitemap.xml` — pages statiques
-- [x] `robots.txt` — protection pages privées
+- [x] `seoService.ts`  meta title + description par route
+- [x] `sitemap.xml`  pages statiques
+- [x] `robots.txt`  protection pages privées
 - [x] Schema `EducationalOrganization`
 - [x] Schema `BreadcrumbList` sur les pages concours
 - [x] Schema `Course` sur les pages épreuves
 
-### Sprint SEO 1 — Améliorations techniques
+### Sprint SEO 1  Améliorations techniques
 
-- [x] `index.html` — ajout `theme-color`, `og:*` par défaut, `WebSite` + `SearchAction` schema
-- [x] `seoService.ts` — schema `FAQPage`, `Article`, `ItemList` (CourseList), `MobileApplication`
-- [x] `sitemap.xml` — ajout pages légales + image tags
-- [x] `robots.txt` — blocage robots IA (GPTBot, CCBot, Bytespider)
-- [ ] Google Business Profile — créer/revendiquer la fiche
-- [ ] Google Search Console — soumettre sitemap + demander indexation
-- [ ] PageSpeed Insights — benchmark initial + corriger LCP > 2,5 s
+- [x] `index.html`  ajout `theme-color`, `og:*` par défaut, `WebSite` + `SearchAction` schema
+- [x] `seoService.ts`  schema `FAQPage`, `Article`, `ItemList` (CourseList), `MobileApplication`
+- [x] `sitemap.xml`  ajout pages légales + image tags
+- [x] `robots.txt`  blocage robots IA (GPTBot, CCBot, Bytespider)
+- [ ] Google Business Profile  créer/revendiquer la fiche
+- [ ] Google Search Console  soumettre sitemap + demander indexation
+- [ ] PageSpeed Insights  benchmark initial + corriger LCP > 2,5 s
 - [ ] Ajouter `width`/`height` sur toutes les balises `<img>`
 - [ ] Activer Brotli sur EC2 (nginx/Apache)
-- [ ] `site.webmanifest` — ficher PWA complet
+- [ ] `site.webmanifest`  ficher PWA complet
 
-### Sprint SEO 2 — Contenu
+### Sprint SEO 2  Contenu
 
 - [ ] Pages GCE A-Level / O-Level (marché anglophone)
 - [ ] 4 articles de blog longue traîne (révisions, méthodes, résultats)
@@ -280,7 +280,7 @@ Mettre à jour les métadonnées toutes les **3 à 6 semaines** ou à chaque rel
 - [ ] FAQ enrichie avec 15+ questions/réponses (FAQPage schema)
 - [ ] Méta données images : alt text descriptifs sur toutes les images
 
-### Sprint SEO 3 — Autorité
+### Sprint SEO 3  Autorité
 
 - [ ] Backlinks : 3 articles invités sur médias camerounais
 - [ ] Partenariats lycées (lien entrant depuis site lycée)
@@ -305,11 +305,11 @@ Mettre à jour les métadonnées toutes les **3 à 6 semaines** ou à chaque rel
 
 ## 7. Ressources
 
-- [Google Search Central — Course Schema](https://developers.google.com/search/docs/appearance/structured-data/course)
+- [Google Search Central  Course Schema](https://developers.google.com/search/docs/appearance/structured-data/course)
 - [Rich Results Test](https://search.google.com/test/rich-results)
 - [PageSpeed Insights](https://pagespeed.web.dev/)
 - [Google Business Profile](https://business.google.com/)
-- [AppTweak — Google Play ranking factors 2026](https://www.apptweak.com/en/aso-blog/google-play-ranking-factors)
+- [AppTweak  Google Play ranking factors 2026](https://www.apptweak.com/en/aso-blog/google-play-ranking-factors)
 - [Core Web Vitals thresholds 2026](https://www.corewebvitals.io/core-web-vitals)
-- [SEO local Cameroun — BEONWEB](https://www.beonweb.cm/en/blog/seo-cameroun-guide-debutant-apparaitre-google-2026)
-- [Backlinks Afrique — 237online](https://www.237online.com/backlinks-afrique-signal-seo/)
+- [SEO local Cameroun  BEONWEB](https://www.beonweb.cm/en/blog/seo-cameroun-guide-debutant-apparaitre-google-2026)
+- [Backlinks Afrique  237online](https://www.237online.com/backlinks-afrique-signal-seo/)

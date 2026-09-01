@@ -1,6 +1,6 @@
-# WinAI — Stratégie d'enrichissement
+# WinAI  Stratégie d'enrichissement
 
-> Dernière mise à jour : 2026-08-31 — Phase 1 complète
+> Dernière mise à jour : 2026-08-31  Phase 1 complète
 
 ---
 
@@ -26,7 +26,7 @@ DeepSeek LLM
 
 ---
 
-## 2. État du système — post Phase 1
+## 2. État du système  post Phase 1
 
 ### 2.1 Couche Python/FastAPI (`prompt_builder.py`) ✅
 
@@ -66,14 +66,14 @@ DeepSeek LLM
 
 ---
 
-## 3. Anti-pattern résolu — "WinAI demande ce qu'il sait déjà"
+## 3. Anti-pattern résolu  "WinAI demande ce qu'il sait déjà"
 
 ### Symptôme (avant Phase 1)
 
 > Utilisateur : "Quiz surprise sur mes lacunes"
 > WinAI : "Quelle matière ? Quel niveau ? Quel thème ?"
 
-L'utilisateur a un profil complet en base. WinAI lui reposait quand même des questions auxquelles il connaissait déjà la réponse — équivalent d'un médecin qui redemande les antécédents à chaque visite.
+L'utilisateur a un profil complet en base. WinAI lui reposait quand même des questions auxquelles il connaissait déjà la réponse  équivalent d'un médecin qui redemande les antécédents à chaque visite.
 
 ### Causes racines
 
@@ -85,7 +85,7 @@ L'utilisateur a un profil complet en base. WinAI lui reposait quand même des qu
 
 > Utilisateur : "Quiz surprise sur mes lacunes"
 > WinAI : "Parfait ! D'après tes résultats récents, tu as des difficultés en **intégration** (Maths) et **circuits RLC** (Physique). Voici ta première question :
-> **Q1** — Calcule $\int_0^2 (2x+3)\,dx$. Donne-moi ta démarche !"
+> **Q1**  Calcule $\int_0^2 (2x+3)\,dx$. Donne-moi ta démarche !"
 
 ---
 
@@ -156,7 +156,7 @@ Objectifs : {objectives}
 - Mathématiques : 11.5/20
 - Physique : 14.0/20
 
-[Lacunes identifiées — questions récemment ratées]
+[Lacunes identifiées  questions récemment ratées]
 - [Maths] Calcule ∫x²dx… | Répondu : x² | Correct : x³/3 + C
 → Utilise ces lacunes directement pour les exercices ciblés.
 
@@ -169,7 +169,7 @@ Adapte systématiquement le niveau au profil ci-dessus.
 
 ---
 
-## 7. Phase 2 — Plan d'implémentation
+## 7. Phase 2  Plan d'implémentation
 
 ### A. Few-shots dans les prompts
 
@@ -210,7 +210,7 @@ def _session_context_block(ctx: UserContext) -> str:
         type_ = last.get("type", "")
         parts.append(
             f"Dernière activité : {type_} {subject}"
-            + (f" — score {score}/100" if score is not None else "")
+            + (f"  score {score}/100" if score is not None else "")
         )
     if not parts:
         return ""
@@ -221,7 +221,7 @@ Rendu dans le prompt :
 ```
 [Session en cours]
 Page consultée : Exercices de Trigonométrie (Terminale C)
-Dernière activité : quiz Mathématiques — score 58/100
+Dernière activité : quiz Mathématiques  score 58/100
 ```
 
 ### C. Écriture automatique des mémoires WinAI
@@ -255,7 +255,7 @@ Composant frontend : liste des mémoires avec badge par type, bouton de suppress
 
 ---
 
-## 8. Phase 3 — RAG sur les documents pédagogiques
+## 8. Phase 3  RAG sur les documents pédagogiques
 
 ### Architecture cible
 
@@ -335,7 +335,7 @@ tests:
 ## 9. Migration SQL à appliquer sur EC2
 
 ```bash
-# Phase 1 — à appliquer maintenant
+# Phase 1  à appliquer maintenant
 psql -U <user> -d winplus_db -f dotnet/Migrations/SQL_AddFavoriteCollections.sql
 psql -U <user> -d winplus_db -f dotnet/Migrations/SQL_AddChatbotContextFields.sql
 ```
@@ -349,7 +349,7 @@ psql -U <user> -d winplus_db -f dotnet/Migrations/SQL_AddChatbotContextFields.sq
 
 ## 10. Feuille de route
 
-### Phase 1 ✅ — Terminée le 2026-08-31
+### Phase 1 ✅  Terminée le 2026-08-31
 
 | Action | Fichiers |
 |---|---|
@@ -361,7 +361,7 @@ psql -U <user> -d winplus_db -f dotnet/Migrations/SQL_AddChatbotContextFields.sq
 | Politique devoirs : aide active | `prompt_builder.py` |
 | Migration SQL | `SQL_AddChatbotContextFields.sql` |
 
-### Phase 2 ✅ — Terminée le 2026-08-31
+### Phase 2 ✅  Terminée le 2026-08-31
 
 | Action | Fichiers | Statut |
 |---|---|---|
@@ -370,7 +370,7 @@ psql -U <user> -d winplus_db -f dotnet/Migrations/SQL_AddChatbotContextFields.sq
 | C. Écriture automatique des mémoires WinAI après chaque stream | `chatbot_routes.py` | ✅ Fait |
 | D. UI mémoires WinAI (liste groupée + suppression) | `WinAIMemories.tsx`, `chatbotService.ts`, `chatbot.ts` | ✅ Fait |
 
-### Phase 3 🟢 — Long terme
+### Phase 3 🟢  Long terme
 
 | Action | Effort |
 |---|---|

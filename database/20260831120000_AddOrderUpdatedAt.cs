@@ -24,7 +24,7 @@ namespace Backend.Migrations;
 ///   dotnet ef database update --project dotnet
 ///
 /// Si la base est mise à jour à la main (pas de dotnet ef en production),
-/// utiliser sql/001_fix_orders_updatedat.sql — même résultat, plus la
+/// utiliser sql/001_fix_orders_updatedat.sql  même résultat, plus la
 /// rétro-alimentation des lignes existantes.
 /// </summary>
 public partial class AddOrderUpdatedAt : Migration
@@ -38,7 +38,7 @@ public partial class AddOrderUpdatedAt : Migration
             nullable: true);
 
         // Valeur de départ cohérente pour l'historique : dernière date connue
-        // de la commande. Nullable à dessein — voir le commentaire du modèle.
+        // de la commande. Nullable à dessein  voir le commentaire du modèle.
         migrationBuilder.Sql(@"
             UPDATE ""Orders""
                SET ""UpdatedAt"" = COALESCE(""CompletedDate"", ""OrderDate"", ""CreatedAt"")

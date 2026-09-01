@@ -1,5 +1,5 @@
 -- ============================================================================
---  001 — Orders."UpdatedAt" manquante
+--  001  Orders."UpdatedAt" manquante
 -- ============================================================================
 --  Erreur observée dans les logs backend :
 --
@@ -8,7 +8,7 @@
 --
 --  Conséquence en cascade : GET /api/users/me renvoie 404, car le repository
 --  lève avant de retourner l'utilisateur. Le modèle EF `Order` déclare
---  UpdatedAt, la table PostgreSQL ne l'a pas — une migration n'a pas été
+--  UpdatedAt, la table PostgreSQL ne l'a pas  une migration n'a pas été
 --  appliquée en production.
 --
 --  À exécuter sur la base de production, dans une transaction.

@@ -1,5 +1,5 @@
-# WinPlus — Audit de couverture API
-> Mis à jour le 2026-08-31 · Sprint 2 — intégration de toutes les routes backend manquantes
+# WinPlus  Audit de couverture API
+> Mis à jour le 2026-08-31 · Sprint 2  intégration de toutes les routes backend manquantes
 
 ---
 
@@ -7,20 +7,20 @@
 
 > Base URL : `https://api.winplus.cm` (proxy .NET → FastAPI via `FastApiClient`)
 
-### Chatbot WinAI — `/api/chatbot`
+### Chatbot WinAI  `/api/chatbot`
 | Méthode | Chemin | Description | Frontend |
 |---------|--------|-------------|----------|
 | GET | `/health` | Health check DeepSeek | `chatbotService` |
 | POST | `/chat` | Chat complet avec contexte rôle + historique | `chatbotService` |
-| POST | `/stream` | Stream SSE — persistance messages en DB | `chatbotService` |
+| POST | `/stream` | Stream SSE  persistance messages en DB | `chatbotService` |
 | POST | `/complete` | Complétion simple sans historique | `chatbotService` |
 
-### Quiz IA — `/api/quiz`
+### Quiz IA  `/api/quiz`
 | Méthode | Chemin | Description | Frontend |
 |---------|--------|-------------|----------|
 | POST | `/explain-error` | Explication pédagogique d'une erreur (SSE) | `AIService.explainError()` |
 
-### Coach d'examen — `/api/exam-coach`
+### Coach d'examen  `/api/exam-coach`
 | Méthode | Chemin | Description | Frontend |
 |---------|--------|-------------|----------|
 | POST | `/generate` | Plan de révision espacé Ebbinghaus | `AIService.examCoachGenerate()` |
@@ -29,13 +29,13 @@
 | POST | `/predict-grade` | Prédiction de note /20 sur 90 derniers jours | `AIService.predictGrade()` |
 | GET | `/micro-intervention/{user_id}` | Intervention si inactivité + examen proche | `AIService.getMicroIntervention()` |
 
-### Sessions d'étude — `/api/study-session`
+### Sessions d'étude  `/api/study-session`
 | Méthode | Chemin | Description | Frontend |
 |---------|--------|-------------|----------|
 | POST | `/generate` | Session guidée 3 phases : briefing → quiz 5 questions → synthèse | `AIService.generateStudySession()` |
 | POST | `/complete` | Sauvegarde session + mise à jour DailyScore | `AIService.completeStudySession()` |
 
-### Enseignant IA — `/api`
+### Enseignant IA  `/api`
 | Méthode | Chemin | Description | Frontend |
 |---------|--------|-------------|----------|
 | POST | `/ai/optimize-title` | Optimisation SEO du titre de contenu | `AIService.optimizeTitle()` |
@@ -46,19 +46,19 @@
 | POST | `/teacher/predict-popularity` | Prédiction popularité + prix recommandé | `teacherExtraService.predictPopularity()` |
 | POST | `/teacher/analyze-submission` | Analyse copie élève : erreur, note, commentaire | `teacherExtraService.analyzeSubmission()` |
 
-### Parent extra — `/api`
+### Parent extra  `/api`
 | Méthode | Chemin | Description | Frontend |
 |---------|--------|-------------|----------|
 | GET | `/parent-engagement/{parent_id}` | Score d'engagement parental 0-100 | `parentExtraService.getEngagementScore()` |
 | POST | `/parent/educational-roi` | ROI éducatif sur 90 jours | `parentExtraService.getEducationalRoi()` |
 | GET | `/parent/children-insights` | Analyse comparative multi-enfants | `parentExtraService.getChildrenInsights()` |
 
-### Institution — `/api`
+### Institution  `/api`
 | Méthode | Chemin | Description | Frontend |
 |---------|--------|-------------|----------|
 | POST | `/institution/action-plan` | 3 actions prioritaires de la semaine | `institutionExtraService.getActionPlan()` |
 
-### Administration — `/api/admin`
+### Administration  `/api/admin`
 | Méthode | Chemin | Description | Frontend |
 |---------|--------|-------------|----------|
 | POST | `/ai/summarize-notifications` | Résumé bullet-points via DeepSeek | `AIService.summarizeNotifications()` |
@@ -66,7 +66,7 @@
 
 ---
 
-## 2. Fonctionnalités .NET (C#) — `api/`
+## 2. Fonctionnalités .NET (C#)  `api/`
 
 ### Auth
 `POST /auth/login` · `POST /auth/register` · `POST /auth/refresh` · `POST /auth/logout`
@@ -115,7 +115,7 @@
 `GET /forums/threads/feed` · `GET /forums/follows` · `POST/DELETE /forums/threads/{id}/follow`
 > Service : `forumService.ts`
 
-### Historique — `HistoryController`
+### Historique  `HistoryController`
 `POST /history` · `GET /history` · `GET /history/type/{type}` · `GET /history/subject/{subjectId}`
 `GET /history/range` · `GET /history/statistics` · `GET /history/recent` · `DELETE /history/{id}` · `DELETE /history`
 > Service : `historyService.ts`
@@ -125,7 +125,7 @@
 `PUT /messages/conversations/{id}/read`
 > Service : `messagingService.ts`
 
-### Notifications — `NotificationsController`
+### Notifications  `NotificationsController`
 `GET /notifications` · `PUT /notifications/{id}/read` · `PUT /notifications/read-all` · `GET /notifications/sse`
 > Service : `notificationService.ts` (`fetchNotifications`, `markAsRead`, `markAllAsRead`, `openSSE`)
 
@@ -135,7 +135,7 @@
 `POST /chatbot/messages/{id}/feedback`
 > Service : `chatbotService.ts`
 
-### IA — `AIController`
+### IA  `AIController`
 `POST /ai/recommend` · `POST /ai/analyze-progress` · `POST /ai/generate-quiz` · `GET /ai/performance`
 `POST /ai/personalized-path` · `GET /ai/recommendations/{id}` · `GET /ai/success-prediction/{userId}`
 `POST /ai/predict-success` · `POST /ai/study-plan` · `POST /ai/explain-error`
@@ -148,11 +148,11 @@
 `POST /ai/summarize-notifications` · `POST /ai/content-fit-analysis`
 > Service : `aiService.ts`
 
-### Coach d'examen — `ExamCoachController`
+### Coach d'examen  `ExamCoachController`
 `POST /exam-coach` · `GET /exam-coach/active` · `PUT /exam-coach/{id}/complete-day` · `DELETE /exam-coach/{id}`
 > Service : `examCoachService.ts` *(nouveau)*
 
-### Dashboard Élève — `StudentController` + `StudentReportsController`
+### Dashboard Élève  `StudentController` + `StudentReportsController`
 `GET /student/stats` · `GET /student/statistics` · `GET /student/progress`
 `GET /student/learning/continue` · `GET /student/exams/recommended`
 `GET /student/priorities/today` · `GET /student/events/upcoming` · `GET /student/goals`
@@ -160,7 +160,7 @@
 `GET /student/links` · `GET /student/peer-comparison`
 > Service : `dashboardService.ts`, `studentExtraService.ts`
 
-### Dashboard Enseignant — `TeacherController` + `TeacherContentController`
+### Dashboard Enseignant  `TeacherController` + `TeacherContentController`
 `GET /teacher/contents` · `GET /teacher/contents/mine` · `GET /teacher/contents/{id}/stats`
 `PATCH /teacher/contents/{id}` · `DELETE /teacher/contents/{id}` · `DELETE /teacher/contents/{id}?permanent=true`
 `GET /teacher/students/recent` · `GET /teacher/corrections/pending` · `GET /teacher/sessions/upcoming`
@@ -171,18 +171,18 @@
 `POST /teacher/predict-popularity` · `POST /teacher/analyze-submission`
 > Service : `dashboardService.ts`, `teacherExtraService.ts`
 
-### Classes enseignant — `TeacherClassesController`
+### Classes enseignant  `TeacherClassesController`
 `GET /teacher/classes` · `POST /teacher/classes` · `PATCH /teacher/classes/{id}` · `DELETE /teacher/classes/{id}`
 `GET /teacher/classes/{id}/students` · `POST /teacher/classes/{id}/students`
 `DELETE /teacher/classes/{id}/students/{studentId}`
 > Service : `teacherExtraService.ts`
 
-### Liaisons prof-élève — `TeacherStudentLinksController`
+### Liaisons prof-élève  `TeacherStudentLinksController`
 `GET /teacher-links/search` · `POST /teacher-links/invite` · `GET /teacher-links/pending`
 `PUT /teacher-links/{id}/accept` · `PUT /teacher-links/{id}/reject` · `GET /teacher-links/mine` · `DELETE /teacher-links/{id}`
 > Service : `linkingService.ts`
 
-### Dashboard Parent — `ParentController` + `ParentCreditsController`
+### Dashboard Parent  `ParentController` + `ParentCreditsController`
 `GET /parent/children` · `POST /parent/children` · `DELETE /parent/children/{id}`
 `GET /parent/children/{id}/stats` · `GET /parent/children/{id}/goals` · `GET /parent/children/{id}/activity`
 `GET /parent/analytics/{childId}` · `GET /parent/activities/recent` · `GET /parent/payments/upcoming`
@@ -193,7 +193,7 @@
 `GET /parent/credits` · `GET /parent/credits/history` · `POST /parent/purchase-for-child`
 > Service : `dashboardService.ts`, `parentExtraService.ts`, `linkingService.ts`
 
-### Révisions — `RevisionsController`
+### Révisions  `RevisionsController`
 `GET /revisions` · `GET /revisions/{id}` · `POST /revisions/filter` · `GET /revisions/by-subject/{subject}`
 `GET /revisions/me/assigned` · `GET /revisions/search` · `GET /revisions/published`
 `POST /revisions/{id}/start` · `POST /revisions/{id}/complete` · `GET /revisions/{id}/progress`
@@ -201,31 +201,31 @@
 `POST /revisions` · `PUT /revisions/{id}` · `POST /revisions/{id}/publish` · `DELETE /revisions/{id}` *(Admin)*
 > Service : `revisionService.ts`
 
-### Notes de révision — `RevisionNotesController`
+### Notes de révision  `RevisionNotesController`
 `GET /revision-notes` · `POST /revision-notes` · `DELETE /revision-notes/{id}` · `POST /revision-notes/tags/toggle`
 > Service : `studentExtraService.ts`
 
-### Groupes d'étude — `StudyGroupsController`
+### Groupes d'étude  `StudyGroupsController`
 `GET /study-groups/me` · `GET /study-groups/{id}` · `POST /study-groups`
 `POST /study-groups/join` · `DELETE /study-groups/{id}/leave`
 > Service : `studentExtraService.ts`
 
-### Erreurs quiz — `QuizMistakesController`
+### Erreurs quiz  `QuizMistakesController`
 `GET /quiz/mistakes` · `GET /quiz/mistakes/subjects` · `POST /quiz/mistakes` · `POST /quiz/mistakes/{id}/resolve`
 > Service : `studentExtraService.ts`
 
-### Certificats — `CertificatesController`
+### Certificats  `CertificatesController`
 `POST /certificates` · `GET /certificates/{id}` · `GET /certificates/user/my-certificates`
 `GET /certificates/verify/{code}` · `GET /certificates/subject/{id}`
 `GET /certificates/admin/all` · `POST /certificates/admin/issue` *(Admin)*
 > Service : `certificateService.ts`
 
-### Inscriptions — `EnrollmentsController`
+### Inscriptions  `EnrollmentsController`
 `POST /enrollments` · `GET /enrollments/user/{userId}` · `GET /enrollments/{userId}/{subjectId}`
 `GET /enrollments/{id}/progress` · `DELETE /enrollments/{id}`
 > Service : `enrollmentService.ts`
 
-### Institution — `InstitutionController` + `InstitutionStudentsController` + `InstitutionMobileController`
+### Institution  `InstitutionController` + `InstitutionStudentsController` + `InstitutionMobileController`
 `GET /institutions` · `GET /institutions/by-country` · `GET /institutions/{id}`
 `GET /institution/me` · `GET /institution/{id}/students` · `POST /institution/{id}/students/import`
 `GET /institution/{id}/kpis` · `GET /institution/{id}/subject-stats` · `POST /institution/{id}/reports`
@@ -235,11 +235,11 @@
 `GET /institution/analytics` · `GET /institution/at-risk` · `GET /institution/action-plan`
 > Service : `institutionsService.ts`, `institutionExtraService.ts`
 
-### Analytics — `AnalyticsController`
+### Analytics  `AnalyticsController`
 `POST /analytics/track` · `GET /analytics/session` · `GET /analytics/user/{userId}` · `GET /analytics/recent`
 > Service : `analyticsService.ts`
 
-### Administration .NET — `AdminController` + `AdminUsersController` + `AdminSupervisionController`
+### Administration .NET  `AdminController` + `AdminUsersController` + `AdminSupervisionController`
 `GET/POST/PATCH/DELETE /admin/users` · `GET /admin/users/stats` · `GET /admin/users/online`
 `GET /admin/users/{id}` · `POST /admin/users/{id}/suspend` · `POST /admin/users/{id}/reactivate`
 `POST /admin/users/{id}/verify-email` · `POST /admin/users/{id}/reset-password`
@@ -252,7 +252,7 @@
 `POST /admin/supervision/study-groups/{id}/archive`
 > Service : `adminService.ts`, `adminUserService.ts`, `adminExtraService.ts`
 
-### Administration — Examens & Bibliothèque — `AdminExamsController` + `AdminLibraryController` + `AdminTaxonomyController`
+### Administration  Examens & Bibliothèque  `AdminExamsController` + `AdminLibraryController` + `AdminTaxonomyController`
 `GET /admin/exams` · `GET /admin/exams/filters` · `GET /admin/exams/{id}`
 `POST /admin/exams` · `PUT /admin/exams/{id}` · `DELETE /admin/exams/{id}`
 `DELETE /admin/exams/{id}/hard` · `POST /admin/exams/{id}/restore` · `POST /admin/exams/{id}/publish`
@@ -261,17 +261,17 @@
 `GET /admin/taxonomy`
 > Service : `adminExamService.ts`, `adminExtraService.ts`
 
-### Administration — Uploads S3 — `AdminUploadsController`
+### Administration  Uploads S3  `AdminUploadsController`
 `POST /admin/uploads/direct` · `POST /admin/uploads/init` · `POST /admin/uploads/part-url`
 `GET /admin/uploads/parts` · `POST /admin/uploads/complete` · `POST /admin/uploads/abort`
 > Service : `adminExamService.ts` (`uploadSmall`, `uploadLarge`)
 
-### Annonces — `AnnouncementController`
+### Annonces  `AnnouncementController`
 `GET /announcements` · `GET /announcements/{id}` · `GET /announcements/admin/all`
 `POST /announcements` · `PUT /announcements/{id}` · `DELETE /announcements/{id}` · `POST /announcements/{id}/publish`
 > Service : `homeService.ts` (public), `adminService.ts` (admin)
 
-### Objectif hebdomadaire — `WeeklyGoalController`
+### Objectif hebdomadaire  `WeeklyGoalController`
 `GET /users/me/weekly-goal` · `PUT /users/me/weekly-goal` · `DELETE /users/me/weekly-goal`
 > Service : `weeklyGoalService.ts`
 
@@ -281,9 +281,9 @@
 
 | Priorité | Endpoint | Service frontend | Statut |
 |----------|----------|-----------------|--------|
-| 🟡 MOYENNE | `GET /analytics/segments` | `analyticsService.ts` | Pas de route backend — à créer |
+| 🟡 MOYENNE | `GET /analytics/segments` | `analyticsService.ts` | Pas de route backend  à créer |
 | 🟡 FAIBLE | `GET /ai/study-tips` | `aiService.ts` | Pas de route backend |
-| 🟡 FAIBLE | `POST /notifications` (création) | `notificationService.ts` | À retirer du service — les notifs sont créées par le backend uniquement |
+| 🟡 FAIBLE | `POST /notifications` (création) | `notificationService.ts` | À retirer du service  les notifs sont créées par le backend uniquement |
 
 ---
 
@@ -291,7 +291,7 @@
 
 | Fichier | Problème | Action |
 |---------|----------|--------|
-| `CartContext.tsx` | Code promo `PROMO10` hardcodé dans la branche `else` (unreachable quand `SYNC_WITH_BACKEND=true`) | Aucune urgence — branche jamais exécutée |
+| `CartContext.tsx` | Code promo `PROMO10` hardcodé dans la branche `else` (unreachable quand `SYNC_WITH_BACKEND=true`) | Aucune urgence  branche jamais exécutée |
 | `PerformanceChart.tsx` | Données fixes `[{week:'Sem 1', score:13.5}…]` | Brancher sur `GET /student/score-history` |
 | `AdminSubscriptions.tsx` | Commentaire `// Données mockées` | Brancher sur `GET /subscriptions` admin |
 | `DashboardPage.jsx` | Factures récentes hardcodées | Brancher sur `GET /orders` |
@@ -351,7 +351,7 @@
 
 ---
 
-## 7. Corrections appliquées — Sprint 1 (2026-08-31)
+## 7. Corrections appliquées  Sprint 1 (2026-08-31)
 
 ### Backend
 | Fichier | Correction |
@@ -369,7 +369,7 @@
 
 ---
 
-## 8. Connexions ajoutées — Sprint 2 (2026-08-31)
+## 8. Connexions ajoutées  Sprint 2 (2026-08-31)
 
 ### Nouveaux fichiers de service
 | Fichier | Routes couvertes |
@@ -391,22 +391,22 @@
 
 ## 9. Reste à faire
 
-### Priorité haute — Données mockées
-- [ ] `PerformanceChart.tsx` — brancher sur `GET /student/score-history`
-- [ ] `AdminSubscriptions.tsx` — brancher sur API réelle
-- [ ] Factures dans DashboardPage — brancher sur `GET /orders`
+### Priorité haute  Données mockées
+- [ ] `PerformanceChart.tsx`  brancher sur `GET /student/score-history`
+- [ ] `AdminSubscriptions.tsx`  brancher sur API réelle
+- [ ] Factures dans DashboardPage  brancher sur `GET /orders`
 
-### Priorité moyenne — Interfaces manquantes
+### Priorité moyenne  Interfaces manquantes
 - [ ] Créer interface ExamCoach (page planification d'examen)
 - [ ] Widget comparaison avec les pairs (`GET /student/peer-comparison`)
 - [ ] Widget alertes IA parent (`GET /parent/ai-alerts/{childId}`)
 - [ ] Interface gestion groupes institution (`institutionExtraService.ts` prêt)
 - [ ] Fil personnalisé forum avec suivi threads (`forumService.getFeed/followThread`)
 
-### Priorité faible — Backend
+### Priorité faible  Backend
 - [ ] Créer `GET /analytics/segments` dans `AnalyticsController`
 - [ ] Retirer `POST /notifications` (création) de `notificationService.ts`
 
 ---
 
-*Mis à jour le 2026-08-31 — Sprint 2 : intégration complète de toutes les routes backend (~47 nouvelles connexions, couverture 99,7%)*
+*Mis à jour le 2026-08-31  Sprint 2 : intégration complète de toutes les routes backend (~47 nouvelles connexions, couverture 99,7%)*

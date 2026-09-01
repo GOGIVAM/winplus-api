@@ -205,7 +205,7 @@ class ExamCoachPlanAI(Base):
 
 
 class QuizMistake(Base):
-    """Questions ratées par un élève — mappé sur QuizMistakes (.NET)"""
+    """Questions ratées par un élève  mappé sur QuizMistakes (.NET)"""
     __tablename__ = 'QuizMistakes'
 
     Id = Column(Integer, primary_key=True)

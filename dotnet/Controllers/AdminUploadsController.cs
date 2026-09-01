@@ -106,7 +106,7 @@ public class AdminUploadsController : ControllerBase
                 ContentType = string.IsNullOrWhiteSpace(body.ContentType) ? "application/octet-stream" : body.ContentType,
                 // CannedACL retiré : rejeté par les buckets « Bucket owner
                 // enforced » (AccessControlListNotSupported). La lecture publique
-                // se fait par bucket policy — voir PATCH.md.
+                // se fait par bucket policy  voir PATCH.md.
             });
 
             return Ok(new
@@ -161,7 +161,7 @@ public class AdminUploadsController : ControllerBase
         }
     }
 
-    /// <summary>Parties déjà reçues par S3 — sert à reprendre un envoi interrompu.</summary>
+    /// <summary>Parties déjà reçues par S3  sert à reprendre un envoi interrompu.</summary>
     [HttpGet("parts")]
     public async Task<IActionResult> Parts([FromQuery] string key, [FromQuery] string uploadId)
     {

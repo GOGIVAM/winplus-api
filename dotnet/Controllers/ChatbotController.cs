@@ -416,7 +416,7 @@ public class ChatbotController : ControllerBase
             || mime is "application/json" or "application/csv" or "text/csv";
 
         if (!textual)
-            return $"[Pièce jointe : {name} ({mime}). Le contenu binaire n'est pas encore extrait côté serveur — demande à l'élève de recopier le passage utile, ou de joindre une photo de la page.]";
+            return $"[Pièce jointe : {name} ({mime}). Le contenu binaire n'est pas encore extrait côté serveur  demande à l'élève de recopier le passage utile, ou de joindre une photo de la page.]";
 
         try
         {
@@ -434,7 +434,7 @@ public class ChatbotController : ControllerBase
         }
         catch (Exception)
         {
-            return $"[Pièce jointe : {name} ({mime}) — contenu illisible.]";
+            return $"[Pièce jointe : {name} ({mime})  contenu illisible.]";
         }
     }
 
@@ -524,7 +524,7 @@ public class ChatbotController : ControllerBase
         // composer du front crée des pièces de type "document" pour tout ce qui
         // n'est pas une image (PDF, docx, csv…) : elles étaient donc jetées
         // silencieusement et le modèle répondait comme si aucun fichier n'avait
-        // été envoyé — c'est le « le chatbot n'upload pas les fichiers ».
+        // été envoyé  c'est le « le chatbot n'upload pas les fichiers ».
         var images    = request.Attachments?.Where(a => a.Type == "image").ToList()    ?? new();
         var documents = request.Attachments?.Where(a => a.Type != "image").ToList()    ?? new();
         var hasAny    = images.Count > 0 || documents.Count > 0;

@@ -19,7 +19,7 @@ namespace Backend.Controllers;
 ///
 /// Règle tenue : aucune valeur inventée. Une série jour par jour comporte des
 /// zéros réels (un jour sans commande vaut zéro), mais une métrique dont la
-/// table est indisponible est renvoyée à null, et le frontend l'affiche « — »
+/// table est indisponible est renvoyée à null, et le frontend l'affiche «  »
 /// plutôt que 0.
 /// </summary>
 [ApiController]

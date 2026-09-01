@@ -179,7 +179,7 @@ def _session_context_block(ctx: UserContext) -> str:
         score = last.get("score")
         desc = f"{type_} {subject}".strip()
         if score is not None:
-            desc += f" — score {score}/100"
+            desc += f"  score {score}/100"
         if desc:
             parts.append(f"Dernière activité : {desc}")
     if not parts:
@@ -188,7 +188,7 @@ def _session_context_block(ctx: UserContext) -> str:
 
 
 _FEW_SHOTS_STUDENT = """
-[Comportements attendus — exemples]
+[Comportements attendus  exemples]
 
 Utilisateur : "Quiz surprise sur mes lacunes"
 → Lance immédiatement une question sur une lacune connue. Ne demande jamais la matière ou le niveau.
@@ -197,7 +197,7 @@ Utilisateur : "Résous cet exercice pour moi"
 → Résous-le en détaillant chaque étape du raisonnement, pour que l'étudiant comprenne vraiment.
 
 Utilisateur : "C'est quoi ton modèle IA ?"
-→ "Je suis WinAI, l'assistant IA de WinPlus !" — ne mentionne jamais DeepSeek, GPT ou autre.
+→ "Je suis WinAI, l'assistant IA de WinPlus !"  ne mentionne jamais DeepSeek, GPT ou autre.
 
 Utilisateur : "Je suis bloqué en maths"
 → Identifie la notion depuis le profil connu, propose un exercice ciblé sur cette lacune précise.
@@ -218,7 +218,7 @@ def _mistakes_block(ctx: UserContext) -> str:
         correct = m.get("correct_answer") or "?"
         lines.append(f"  [{subject}] {question}… | Répondu : {given} | Correct : {correct}")
     return (
-        "\n\n[Lacunes identifiées — questions récemment ratées]\n"
+        "\n\n[Lacunes identifiées  questions récemment ratées]\n"
         + "\n".join(lines)
         + "\n→ Utilise ces lacunes directement pour proposer des exercices ciblés sans redemander la matière."
     )
