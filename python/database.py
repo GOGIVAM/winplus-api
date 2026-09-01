@@ -7,7 +7,7 @@ Utilise SQLAlchemy ORM pour PostgreSQL avec les schémas ASP.NET.
 """
 
 import os
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, Numeric, DateTime, Date, Text, ForeignKey, func, and_, or_, desc
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, Numeric, DateTime, Date, Text, ForeignKey, func, and_, or_, desc, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -557,6 +557,38 @@ class Database:
         finally:
             session.close()
     
+    def get_user_learning_style(self, user_id: int) -> str | None:
+        """Retourne le style d'apprentissage depuis ChatbotContexts (visual/auditory/reading_writing/kinesthetic)"""
+        session = self.SessionLocal()
+        try:
+            row = session.execute(
+                text('SELECT "LearningStyle" FROM "ChatbotContexts" WHERE "UserId" = :uid LIMIT 1'),
+                {'uid': user_id}
+            ).fetchone()
+            return row[0] if row else None
+        except Exception as e:
+            logger.warning(f"[DB] get_user_learning_style: {e}")
+            return None
+        finally:
+            session.close()
+
+    def get_subjects_format_map(self) -> dict:
+        """Retourne {subject_id: {'video_count': int, 'doc_count': int}} pour le boost learning style"""
+        session = self.SessionLocal()
+        try:
+            rows = session.execute(text(
+                'SELECT "SubjectId", '
+                'COUNT(CASE WHEN "VideoUrl" IS NOT NULL AND "VideoUrl" != \'\' THEN 1 END) AS video_count, '
+                'COUNT(CASE WHEN "DocumentUrl" IS NOT NULL AND "DocumentUrl" != \'\' THEN 1 END) AS doc_count '
+                'FROM "CourseContents" GROUP BY "SubjectId"'
+            )).fetchall()
+            return {r[0]: {'video_count': r[1] or 0, 'doc_count': r[2] or 0} for r in rows}
+        except Exception as e:
+            logger.warning(f"[DB] get_subjects_format_map: {e}")
+            return {}
+        finally:
+            session.close()
+
     def get_subject_completion_data(self, subject_id: int) -> dict:
         """Récupère les données de complétion d'un sujet"""
         session = self.SessionLocal()

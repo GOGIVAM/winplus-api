@@ -22,15 +22,21 @@ public class EnrollmentService : IEnrollmentService
 {
     private readonly IUserRepository _userRepository;
     private readonly ISubjectRepository _subjectRepository;
+    private readonly IEnrollmentRepository _enrollmentRepository;
+    private readonly ICertificateService _certificateService;
     private readonly ILogger<EnrollmentService> _logger;
 
     public EnrollmentService(
         IUserRepository userRepository,
         ISubjectRepository subjectRepository,
+        IEnrollmentRepository enrollmentRepository,
+        ICertificateService certificateService,
         ILogger<EnrollmentService> logger)
     {
         _userRepository = userRepository;
         _subjectRepository = subjectRepository;
+        _enrollmentRepository = enrollmentRepository;
+        _certificateService = certificateService;
         _logger = logger;
     }
 
@@ -129,9 +135,24 @@ public class EnrollmentService : IEnrollmentService
             if (progressPercentage < 0 || progressPercentage > 100)
                 throw new ArgumentException("Progress percentage must be between 0 and 100");
 
-            // This would require an IEnrollmentRepository to be fully implemented
-            // For now, we'll throw a not implemented exception
-            throw new NotImplementedException("EnrollmentRepository not yet implemented");
+            var enrollment = await _enrollmentRepository.GetByIdAsync(enrollmentId);
+            if (enrollment == null)
+                throw new KeyNotFoundException($"Enrollment {enrollmentId} not found");
+
+            enrollment.ProgressPercentage = progressPercentage;
+
+            // Auto-complete if progress reaches 100%
+            if (progressPercentage >= 100 && !enrollment.IsCompleted)
+            {
+                enrollment.IsCompleted = true;
+                enrollment.CompletedAt = DateTime.UtcNow;
+                _logger.LogInformation("Enrollment {EnrollmentId} auto-completed at 100% progress", enrollmentId);
+            }
+
+            await _enrollmentRepository.UpdateAsync(enrollment);
+
+            _logger.LogInformation("Progress updated to {Progress}% for enrollment {EnrollmentId}", progressPercentage, enrollmentId);
+            return enrollment;
         }
         catch (Exception ex)
         {
@@ -144,8 +165,37 @@ public class EnrollmentService : IEnrollmentService
     {
         try
         {
-            // This would require an IEnrollmentRepository to be fully implemented
-            throw new NotImplementedException("EnrollmentRepository not yet implemented");
+            var enrollment = await _enrollmentRepository.GetByIdAsync(enrollmentId);
+            if (enrollment == null)
+                throw new KeyNotFoundException($"Enrollment {enrollmentId} not found");
+
+            enrollment.IsCompleted = true;
+            enrollment.CompletedAt = DateTime.UtcNow;
+            enrollment.ProgressPercentage = 100;
+
+            if (certificateUrl != null)
+                enrollment.CertificateUrl = certificateUrl;
+
+            await _enrollmentRepository.UpdateAsync(enrollment);
+
+            _logger.LogInformation("Enrollment {EnrollmentId} marked as completed for user {UserId}", enrollmentId, enrollment.UserId);
+
+            // Trigger certificate generation if no certificate yet
+            if (enrollment.Certificate == null)
+            {
+                try
+                {
+                    await _certificateService.GenerateCertificateAsync(enrollment.UserId, enrollmentId);
+                    _logger.LogInformation("Certificate generated for enrollment {EnrollmentId}", enrollmentId);
+                }
+                catch (Exception certEx)
+                {
+                    // Certificate generation failure must not roll back the completion
+                    _logger.LogWarning(certEx, "Certificate generation failed for enrollment {EnrollmentId} — enrollment is still marked complete", enrollmentId);
+                }
+            }
+
+            return enrollment;
         }
         catch (Exception ex)
         {
@@ -211,10 +261,29 @@ public class EnrollmentService : IEnrollmentService
     {
         try
         {
-            // Note: Unenroll logic would need IEnrollmentRepository
-            // For now, returning false since repository is not available
-            _logger.LogWarning("Unenroll not fully implemented - missing enrollment repository");
-            return false;
+            var enrollment = await _enrollmentRepository.GetByIdAsync(enrollmentId);
+            if (enrollment == null)
+            {
+                _logger.LogWarning("Enrollment {EnrollmentId} not found for unenrollment", enrollmentId);
+                return false;
+            }
+
+            var deleted = await _enrollmentRepository.DeleteAsync(enrollmentId);
+
+            if (deleted)
+            {
+                // Decrement subject enrollment count
+                var subject = await _subjectRepository.GetByIdAsync(enrollment.SubjectId);
+                if (subject != null && subject.EnrollmentCount > 0)
+                {
+                    subject.EnrollmentCount--;
+                    await _subjectRepository.UpdateAsync(subject);
+                }
+
+                _logger.LogInformation("User {UserId} unenrolled from subject {SubjectId}", enrollment.UserId, enrollment.SubjectId);
+            }
+
+            return deleted;
         }
         catch (Exception ex)
         {

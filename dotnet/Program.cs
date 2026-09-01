@@ -13,13 +13,37 @@ using Backend.Data;
 using Backend.Repositories;
 using Backend.Services;
 using Backend.Utilities;
-
 using Backend.Middlewares;
 using Backend.Models.Entities;
+using Serilog;
+using Serilog.Events;
 
 QuestPDF.Settings.License = LicenseType.Community;
 
+// ── Serilog : configuration avant builder.Build() ──────────────────────────
+var isDevelopment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development";
+
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Is(isDevelopment ? LogEventLevel.Debug : LogEventLevel.Information)
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command",
+        isDevelopment ? LogEventLevel.Information : LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .WriteTo.Console(outputTemplate:
+        "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+    .WriteTo.File(
+        path: "logs/winplus-.txt",
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 30,
+        outputTemplate:
+            "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
+    .CreateLogger();
+
 var builder = WebApplication.CreateBuilder(args);
+
+// Remplace le logging ASP.NET Core par Serilog
+builder.Host.UseSerilog();
 
 // ── Taille des requêtes ─────────────────────────────────────────────────────
 // Les gros fichiers (vidéos de cours) ne passent plus par l'API : le navigateur
@@ -283,6 +307,7 @@ builder.Services.AddMemoryCache();
 // Register Repositories
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<ISubjectRepository, SubjectRepository>();
+builder.Services.AddScoped<IEnrollmentRepository, EnrollmentRepository>();
 builder.Services.AddScoped<ICartRepository, CartRepository>();
 builder.Services.AddScoped<IOrderRepository, OrderRepository>();
 builder.Services.AddScoped<IFavoriteRepository, FavoriteRepository>();

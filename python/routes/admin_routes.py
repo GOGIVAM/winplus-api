@@ -531,9 +531,8 @@ def session_scalar(session, agg, *filters):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class RevenueForecastRequest(BaseModel):
-    monthly_revenues: Optional[List[Dict]] = None   # [{"month": "2024-01", "revenue": 850000}]
-    current_month_revenue: Optional[float] = None
     currency: str = "XAF"
+    avg_revenue_per_enrollment: Optional[float] = None  # Prix moyen par inscription en XAF
 
 
 @admin_router.post("/admin/revenue-forecast")
@@ -541,65 +540,102 @@ async def revenue_forecast(
     body: RevenueForecastRequest,
     current_user: UserTokenData = Depends(require_role("admin")),
 ):
-    # If no revenue data provided, use enrollment counts as proxy
+    """
+    Prévision de revenus basée sur les enrollments des 90 derniers jours.
+    Calcule le MRR actuel et applique un taux de croissance linéaire sur 3 mois glissants.
+    Retourne current_mrr, forecast_3m, forecast_6m, forecast_12m, growth_rate_pct, trend.
+    """
     db_session = _db.SessionLocal()
     try:
-        history = body.monthly_revenues or []
+        now = datetime.now(timezone.utc)
+        # Prix moyen par inscription (peut être fourni ou estimé)
+        avg_price = body.avg_revenue_per_enrollment or 2500.0  # 2 500 XAF par défaut
 
-        if not history:
-            # Build from Enrollment counts per month (proxy)
-            rows = (
-                db_session.query(
-                    func.date_trunc("month", Enrollment.EnrolledAt).label("month"),
-                    func.count(Enrollment.Id).label("count"),
-                )
-                .filter(Enrollment.IsDeleted == False)
-                .group_by(func.date_trunc("month", Enrollment.EnrolledAt))
-                .order_by(func.date_trunc("month", Enrollment.EnrolledAt))
-                .limit(12)
-                .all()
+        # Récupère les enrollments des 90 derniers jours groupés par mois
+        cutoff_90d = now - timedelta(days=90)
+        rows = (
+            db_session.query(
+                func.date_trunc("month", Enrollment.EnrolledAt).label("month"),
+                func.count(Enrollment.Id).label("count"),
             )
-            history = [{"month": str(r.month)[:7], "enrollments": int(r.count)} for r in rows]
-
-        prompt = (
-            "Tu es l'analyste financier IA de WinPlus, une plateforme éducative camerounaise.\n"
-            f"Données historiques (12 mois) : {json.dumps(history, ensure_ascii=False)}\n"
-            f"Revenu du mois en cours : {body.current_month_revenue or 'non fourni'} {body.currency}\n\n"
-            "Génère une prévision de revenus pour les 30, 60 et 90 prochains jours en JSON strict :\n"
-            '{"forecast_30d": {"low": 850000, "mid": 1100000, "high": 1350000, "confidence": 0.72}, '
-            '"forecast_60d": {"low": ..., "mid": ..., "high": ..., "confidence": ...}, '
-            '"forecast_90d": {"low": ..., "mid": ..., "high": ..., "confidence": ...}, '
-            '"key_drivers": ["...", "..."], '
-            '"risks": ["...", "..."], '
-            '"seasonality_note": "..."}\n'
-            "Les valeurs en XAF. confidence entre 0 et 1. "
-            "Tenir compte de la saisonnalité africaine : examens BAC en mai-juin, rentrée en septembre."
-        )
-        system = (
-            "Tu es WinAI, le prévisionniste financier de WinPlus. "
-            "Tu utilises les patterns historiques et la saisonnalité des examens africains "
-            "pour générer des prévisions de revenus réalistes. "
-            "Réponds UNIQUEMENT en JSON valide."
+            .filter(
+                Enrollment.IsDeleted == False,
+                Enrollment.EnrolledAt >= cutoff_90d,
+            )
+            .group_by(func.date_trunc("month", Enrollment.EnrolledAt))
+            .order_by(func.date_trunc("month", Enrollment.EnrolledAt))
+            .all()
         )
 
-        result = _deepseek_json(prompt, system, max_tokens=800)
-        if not isinstance(result, dict) or "forecast_30d" not in result:
-            # Fallback: simple trend extrapolation
-            if history and any("revenue" in h for h in history):
-                recent_revs = [h.get("revenue", 0) for h in history[-3:] if h.get("revenue")]
-            else:
-                recent_revs = [100] * 3
-            avg = sum(recent_revs) / max(len(recent_revs), 1)
-            result = {
-                "forecast_30d": {"low": round(avg * 0.85), "mid": round(avg * 1.0), "high": round(avg * 1.2), "confidence": 0.5},
-                "forecast_60d": {"low": round(avg * 0.9), "mid": round(avg * 1.1), "high": round(avg * 1.35), "confidence": 0.45},
-                "forecast_90d": {"low": round(avg * 0.8), "mid": round(avg * 1.15), "high": round(avg * 1.5), "confidence": 0.4},
-                "key_drivers": ["Examens nationaux (BAC, ENSP)", "Rentrée scolaire"],
-                "risks": ["Variation de la concurrence", "Baisse d'activité en vacances"],
-                "seasonality_note": "Pic prévu en période d'examens (mai-juin).",
+        monthly_data = [{"month": str(r.month)[:7], "enrollments": int(r.count), "revenue": round(int(r.count) * avg_price)} for r in rows]
+
+        # Données insuffisantes si moins de 2 mois
+        if len(monthly_data) < 2:
+            return {
+                "current_mrr": 0,
+                "forecast_3m": 0,
+                "forecast_6m": 0,
+                "forecast_12m": 0,
+                "growth_rate_pct": 0.0,
+                "trend": "stable",
+                "insufficient_data": True,
+                "currency": body.currency,
+                "generated_at": datetime.utcnow().isoformat(),
+                "monthly_history": monthly_data,
             }
 
-        return {**result, "generated_at": datetime.utcnow().isoformat(), "currency": body.currency}
+        # MRR actuel = revenus du dernier mois complet
+        current_mrr = monthly_data[-1]["revenue"]
+
+        # Calcul de la tendance linéaire sur les 3 derniers mois disponibles
+        recent_months = monthly_data[-3:]
+        revenues = [m["revenue"] for m in recent_months]
+
+        if len(revenues) >= 2:
+            # Taux de croissance moyen mensuel (CMGR)
+            first_rev = revenues[0] if revenues[0] > 0 else 1
+            last_rev = revenues[-1]
+            periods = len(revenues) - 1
+            cmgr = (last_rev / first_rev) ** (1 / periods) - 1  # taux mensuel
+        else:
+            cmgr = 0.0
+
+        growth_rate_pct = round(cmgr * 100, 2)
+
+        # Tendance
+        if growth_rate_pct > 2:
+            trend = "up"
+        elif growth_rate_pct < -2:
+            trend = "down"
+        else:
+            trend = "stable"
+
+        # Prévisions par projection linéaire (MRR × (1 + cmgr)^n)
+        def forecast_month(base: float, months: int, rate: float) -> float:
+            return round(base * ((1 + rate) ** months))
+
+        forecast_3m = forecast_month(current_mrr, 3, cmgr)
+        forecast_6m = forecast_month(current_mrr, 6, cmgr)
+        forecast_12m = forecast_month(current_mrr, 12, cmgr)
+
+        return {
+            "current_mrr": current_mrr,
+            "forecast_3m": forecast_3m,
+            "forecast_6m": forecast_6m,
+            "forecast_12m": forecast_12m,
+            "growth_rate_pct": growth_rate_pct,
+            "trend": trend,
+            "insufficient_data": False,
+            "currency": body.currency,
+            "avg_revenue_per_enrollment": avg_price,
+            "generated_at": datetime.utcnow().isoformat(),
+            "monthly_history": monthly_data,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"[revenue-forecast] Error: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
     finally:
         db_session.close()
 
