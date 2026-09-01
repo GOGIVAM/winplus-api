@@ -10,9 +10,12 @@ public class OrderItem
 
     public int SubjectId { get; set; }
 
+    public int? CourseId { get; set; }
+
     public decimal PriceAtPurchase { get; set; }
 
     [JsonIgnore]
     public Order Order { get; set; } = null!;
     public Subject? Subject { get; set; }
+    public Course? Course { get; set; }
 }

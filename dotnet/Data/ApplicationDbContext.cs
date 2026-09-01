@@ -115,6 +115,14 @@ public partial class ApplicationDbContext : DbContext
     // ── Forum : fils suivis ──
     public DbSet<ForumThreadFollow> ForumThreadFollows => Set<ForumThreadFollow>();
 
+    // ── Module Formations ──
+    public DbSet<Course> Courses => Set<Course>();
+    public DbSet<CourseSection> CourseSections => Set<CourseSection>();
+    public DbSet<CourseLesson> CourseLessons => Set<CourseLesson>();
+    public DbSet<CourseEnrollment> CourseEnrollments => Set<CourseEnrollment>();
+    public DbSet<LessonProgress> LessonProgress => Set<LessonProgress>();
+    public DbSet<CourseReview> CourseReviews => Set<CourseReview>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -1023,6 +1031,93 @@ modelBuilder.Entity<Exam>(entity =>
             entity.HasOne(e => e.Subject)
                 .WithMany()
                 .HasForeignKey(e => e.SubjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── Module Formations ──────────────────────────────────────────────────
+        modelBuilder.Entity<Course>(entity =>
+        {
+            entity.ToTable("Courses");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Title).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Slug).IsRequired().HasMaxLength(220);
+            entity.Property(e => e.Price).HasColumnType("numeric(12,2)");
+            entity.Property(e => e.AvgRating).HasColumnType("numeric(3,2)");
+            entity.Property(e => e.Tags).HasColumnType("text[]");
+            entity.Property(e => e.Requirements).HasColumnType("text[]");
+            entity.Property(e => e.Objectives).HasColumnType("text[]");
+            entity.HasIndex(e => e.Slug).IsUnique();
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.InstructorId);
+            entity.HasOne(e => e.Instructor)
+                .WithMany()
+                .HasForeignKey(e => e.InstructorId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<CourseSection>(entity =>
+        {
+            entity.ToTable("CourseSections");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Title).IsRequired().HasMaxLength(200);
+            entity.HasIndex(e => new { e.CourseId, e.Position }).IsUnique();
+            entity.HasOne(e => e.Course)
+                .WithMany(c => c.Sections)
+                .HasForeignKey(e => e.CourseId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CourseLesson>(entity =>
+        {
+            entity.ToTable("CourseLessons");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Title).IsRequired().HasMaxLength(200);
+            entity.HasIndex(e => new { e.SectionId, e.Position }).IsUnique();
+            entity.HasIndex(e => e.CourseId);
+            entity.HasOne(e => e.Section)
+                .WithMany(s => s.Lessons)
+                .HasForeignKey(e => e.SectionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CourseEnrollment>(entity =>
+        {
+            entity.ToTable("CourseEnrollments");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.ProgressPercent).HasColumnType("numeric(5,2)");
+            entity.HasIndex(e => new { e.UserId, e.CourseId }).IsUnique();
+            entity.HasIndex(e => e.CourseId);
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Course)
+                .WithMany(c => c.CourseEnrollments)
+                .HasForeignKey(e => e.CourseId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<LessonProgress>(entity =>
+        {
+            entity.ToTable("LessonProgress");
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.UserId, e.LessonId }).IsUnique();
+            entity.HasIndex(e => e.CourseId);
+        });
+
+        modelBuilder.Entity<CourseReview>(entity =>
+        {
+            entity.ToTable("CourseReviews");
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.UserId, e.CourseId }).IsUnique();
+            entity.HasIndex(e => e.CourseId);
+            entity.HasOne(e => e.Course)
+                .WithMany(c => c.CourseReviews)
+                .HasForeignKey(e => e.CourseId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
