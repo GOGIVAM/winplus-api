@@ -513,6 +513,398 @@ public class AdminUsersController : ControllerBase
         }
     }
 
+    // ── GET /api/admin/users/teachers ──────────────────────────────────────
+
+    [HttpGet("teachers")]
+    public async Task<IActionResult> ListTeachers(
+        [FromQuery] string? q = null,
+        [FromQuery] string? status = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 100)
+    {
+        try
+        {
+            pageSize = Math.Clamp(pageSize, 1, 500);
+            var query = _db.Users.AsNoTracking()
+                .Where(u => u.Role == "teacher");
+            if (status == "active")    query = query.Where(u => !u.IsDeleted && u.IsActive);
+            else if (status == "suspended") query = query.Where(u => !u.IsDeleted && !u.IsActive);
+            else if (status == "deleted")   query = query.Where(u => u.IsDeleted);
+            else query = query.Where(u => !u.IsDeleted);
+
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                var s = q.Trim().ToLower();
+                query = query.Where(u =>
+                    u.Email.ToLower().Contains(s) ||
+                    (u.FirstName != null && u.FirstName.ToLower().Contains(s)) ||
+                    (u.LastName  != null && u.LastName.ToLower().Contains(s)));
+            }
+
+            var total = await query.CountAsync();
+            var users = await query.OrderByDescending(u => u.CreatedAt)
+                .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+            var ids = users.Select(u => u.Id).ToList();
+
+            var linkedStudentCounts = await _db.TeacherStudentLinks
+                .Where(l => ids.Contains(l.TeacherId) && l.Status == "accepted")
+                .GroupBy(l => l.TeacherId)
+                .Select(g => new { TeacherId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.TeacherId, x => x.Count);
+
+            var pendingStudentCounts = await _db.TeacherStudentLinks
+                .Where(l => ids.Contains(l.TeacherId) && l.Status == "pending")
+                .GroupBy(l => l.TeacherId)
+                .Select(g => new { TeacherId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.TeacherId, x => x.Count);
+
+            var now = DateTime.UtcNow;
+            var onlineSince = now - OnlineWindow;
+            var sessions = await _db.UserSessions
+                .Where(s => ids.Contains(s.UserId))
+                .ToListAsync();
+
+            var paid = await _db.Payments
+                .Where(p => p.UserId != null && ids.Contains(p.UserId!.Value) && p.Status == "completed")
+                .GroupBy(p => p.UserId!.Value)
+                .Select(g => new { UserId = g.Key, Sum = g.Sum(x => x.Amount) })
+                .ToDictionaryAsync(x => x.UserId, x => x.Sum);
+
+            var rows = users.Select(u =>
+            {
+                var lastSeen = sessions.Where(s => s.UserId == u.Id)
+                    .OrderByDescending(s => s.LastActivityAt).FirstOrDefault();
+                var isOnline = sessions.Any(s => s.UserId == u.Id && s.IsActive && s.LastActivityAt >= onlineSince);
+                return new
+                {
+                    id           = u.Id,
+                    firstName    = u.FirstName,
+                    lastName     = u.LastName,
+                    name         = $"{u.FirstName} {u.LastName}".Trim(),
+                    email        = u.Email,
+                    avatarUrl    = u.AvatarUrl ?? u.ProfileImageUrl,
+                    isEmailVerified = u.IsEmailVerified,
+                    isOnline,
+                    lastSeenAt   = lastSeen?.LastActivityAt ?? u.LastLoginAt,
+                    status       = u.IsDeleted ? "deleted" : u.IsActive ? "active" : "suspended",
+                    createdAt    = u.CreatedAt,
+                    totalRevenue = paid.GetValueOrDefault(u.Id, 0m),
+                    linkedStudents  = linkedStudentCounts.GetValueOrDefault(u.Id, 0),
+                    pendingStudents = pendingStudentCounts.GetValueOrDefault(u.Id, 0),
+                };
+            }).ToList();
+
+            return Ok(new { Items = rows, Total = total, Page = page, PageSize = pageSize });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "AdminUsers.ListTeachers failed");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    // ── GET /api/admin/users/students ──────────────────────────────────────
+
+    [HttpGet("students")]
+    public async Task<IActionResult> ListStudents(
+        [FromQuery] string? q = null,
+        [FromQuery] string? status = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 100)
+    {
+        try
+        {
+            pageSize = Math.Clamp(pageSize, 1, 500);
+            var query = _db.Users.AsNoTracking()
+                .Where(u => u.Role == "student");
+            if (status == "active")    query = query.Where(u => !u.IsDeleted && u.IsActive);
+            else if (status == "suspended") query = query.Where(u => !u.IsDeleted && !u.IsActive);
+            else if (status == "deleted")   query = query.Where(u => u.IsDeleted);
+            else query = query.Where(u => !u.IsDeleted);
+
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                var s = q.Trim().ToLower();
+                query = query.Where(u =>
+                    u.Email.ToLower().Contains(s) ||
+                    (u.FirstName != null && u.FirstName.ToLower().Contains(s)) ||
+                    (u.LastName  != null && u.LastName.ToLower().Contains(s)));
+            }
+
+            var total = await query.CountAsync();
+            var users = await query.OrderByDescending(u => u.CreatedAt)
+                .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+            var ids = users.Select(u => u.Id).ToList();
+
+            var enrollCounts = await _db.Enrollments
+                .Where(e => ids.Contains(e.UserId))
+                .GroupBy(e => e.UserId)
+                .Select(g => new { UserId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.UserId, x => x.Count);
+
+            var teacherLinks = await _db.TeacherStudentLinks
+                .Where(l => ids.Contains(l.StudentId) && l.Status == "accepted")
+                .Include(l => l.Teacher)
+                .ToListAsync();
+
+            var parentLinks = await _db.ParentStudentLinks
+                .Where(l => ids.Contains(l.StudentId))
+                .Include(l => l.Parent)
+                .ToListAsync();
+
+            var institutionIds = users.Where(u => u.InstitutionId.HasValue)
+                .Select(u => u.InstitutionId!.Value).Distinct().ToList();
+            var institutions = institutionIds.Count > 0
+                ? await _db.Institutions.Where(i => institutionIds.Contains(i.Id))
+                    .ToDictionaryAsync(i => i.Id, i => i.Name)
+                : new Dictionary<int, string>();
+
+            var now = DateTime.UtcNow;
+            var onlineSince = now - OnlineWindow;
+            var sessions = await _db.UserSessions
+                .Where(s => ids.Contains(s.UserId))
+                .ToListAsync();
+
+            var rows = users.Select(u =>
+            {
+                var isOnline = sessions.Any(s => s.UserId == u.Id && s.IsActive && s.LastActivityAt >= onlineSince);
+                var lastSeen = sessions.Where(s => s.UserId == u.Id)
+                    .OrderByDescending(s => s.LastActivityAt).FirstOrDefault();
+                var myParent = parentLinks.FirstOrDefault(l => l.StudentId == u.Id)?.Parent;
+                var myTeachers = teacherLinks.Where(l => l.StudentId == u.Id)
+                    .Select(l => $"{l.Teacher?.FirstName} {l.Teacher?.LastName}".Trim())
+                    .Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
+                var instName = u.InstitutionId.HasValue && institutions.TryGetValue(u.InstitutionId.Value, out var iName)
+                    ? iName : null;
+                return new
+                {
+                    id             = u.Id,
+                    firstName      = u.FirstName,
+                    lastName       = u.LastName,
+                    name           = $"{u.FirstName} {u.LastName}".Trim(),
+                    email          = u.Email,
+                    avatarUrl      = u.AvatarUrl ?? u.ProfileImageUrl,
+                    isEmailVerified = u.IsEmailVerified,
+                    isOnline,
+                    lastSeenAt     = lastSeen?.LastActivityAt ?? u.LastLoginAt,
+                    status         = u.IsDeleted ? "deleted" : u.IsActive ? "active" : "suspended",
+                    createdAt      = u.CreatedAt,
+                    enrollmentsCount = enrollCounts.GetValueOrDefault(u.Id, 0),
+                    linkedTeachers = myTeachers,
+                    linkedTeachersCount = myTeachers.Count,
+                    linkedParent   = myParent == null ? null : $"{myParent.FirstName} {myParent.LastName}".Trim(),
+                    linkedParentEmail = myParent?.Email,
+                    institutionName = instName,
+                };
+            }).ToList();
+
+            return Ok(new { Items = rows, Total = total, Page = page, PageSize = pageSize });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "AdminUsers.ListStudents failed");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    // ── GET /api/admin/users/parents ──────────────────────────────────────
+
+    [HttpGet("parents")]
+    public async Task<IActionResult> ListParents(
+        [FromQuery] string? q = null,
+        [FromQuery] string? status = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 100)
+    {
+        try
+        {
+            pageSize = Math.Clamp(pageSize, 1, 500);
+            var query = _db.Users.AsNoTracking()
+                .Where(u => u.Role == "parent");
+            if (status == "active")    query = query.Where(u => !u.IsDeleted && u.IsActive);
+            else if (status == "suspended") query = query.Where(u => !u.IsDeleted && !u.IsActive);
+            else if (status == "deleted")   query = query.Where(u => u.IsDeleted);
+            else query = query.Where(u => !u.IsDeleted);
+
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                var s = q.Trim().ToLower();
+                query = query.Where(u =>
+                    u.Email.ToLower().Contains(s) ||
+                    (u.FirstName != null && u.FirstName.ToLower().Contains(s)) ||
+                    (u.LastName  != null && u.LastName.ToLower().Contains(s)));
+            }
+
+            var total = await query.CountAsync();
+            var users = await query.OrderByDescending(u => u.CreatedAt)
+                .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+            var ids = users.Select(u => u.Id).ToList();
+
+            var childLinks = await _db.ParentStudentLinks
+                .Where(l => ids.Contains(l.ParentId))
+                .Include(l => l.Student)
+                .ToListAsync();
+
+            var paid = await _db.Payments
+                .Where(p => p.UserId != null && ids.Contains(p.UserId!.Value) && p.Status == "completed")
+                .GroupBy(p => p.UserId!.Value)
+                .Select(g => new { UserId = g.Key, Sum = g.Sum(x => x.Amount) })
+                .ToDictionaryAsync(x => x.UserId, x => x.Sum);
+
+            var orders = await _db.Orders
+                .Where(o => o.UserId != null && ids.Contains(o.UserId!.Value) && !o.IsDeleted)
+                .GroupBy(o => o.UserId!.Value)
+                .Select(g => new { UserId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.UserId, x => x.Count);
+
+            var now = DateTime.UtcNow;
+            var onlineSince = now - OnlineWindow;
+            var sessions = await _db.UserSessions
+                .Where(s => ids.Contains(s.UserId))
+                .ToListAsync();
+
+            var rows = users.Select(u =>
+            {
+                var isOnline = sessions.Any(s => s.UserId == u.Id && s.IsActive && s.LastActivityAt >= onlineSince);
+                var lastSeen = sessions.Where(s => s.UserId == u.Id)
+                    .OrderByDescending(s => s.LastActivityAt).FirstOrDefault();
+                var myChildren = childLinks.Where(l => l.ParentId == u.Id)
+                    .Select(l => new {
+                        name  = $"{l.Student?.FirstName} {l.Student?.LastName}".Trim(),
+                        email = l.Student?.Email,
+                    }).ToList();
+                return new
+                {
+                    id             = u.Id,
+                    firstName      = u.FirstName,
+                    lastName       = u.LastName,
+                    name           = $"{u.FirstName} {u.LastName}".Trim(),
+                    email          = u.Email,
+                    avatarUrl      = u.AvatarUrl ?? u.ProfileImageUrl,
+                    isEmailVerified = u.IsEmailVerified,
+                    isOnline,
+                    lastSeenAt     = lastSeen?.LastActivityAt ?? u.LastLoginAt,
+                    status         = u.IsDeleted ? "deleted" : u.IsActive ? "active" : "suspended",
+                    createdAt      = u.CreatedAt,
+                    childrenCount  = myChildren.Count,
+                    children       = myChildren,
+                    totalSpent     = paid.GetValueOrDefault(u.Id, 0m),
+                    ordersCount    = orders.GetValueOrDefault(u.Id, 0),
+                };
+            }).ToList();
+
+            return Ok(new { Items = rows, Total = total, Page = page, PageSize = pageSize });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "AdminUsers.ListParents failed");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    // ── GET /api/admin/users/institutions ──────────────────────────────────
+
+    [HttpGet("institutions")]
+    public async Task<IActionResult> ListInstitutions(
+        [FromQuery] string? q = null,
+        [FromQuery] string? status = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 100)
+    {
+        try
+        {
+            pageSize = Math.Clamp(pageSize, 1, 500);
+            var query = _db.Users.AsNoTracking()
+                .Where(u => u.Role == "institution");
+            if (status == "active")    query = query.Where(u => !u.IsDeleted && u.IsActive);
+            else if (status == "suspended") query = query.Where(u => !u.IsDeleted && !u.IsActive);
+            else if (status == "deleted")   query = query.Where(u => u.IsDeleted);
+            else query = query.Where(u => !u.IsDeleted);
+
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                var s = q.Trim().ToLower();
+                query = query.Where(u =>
+                    u.Email.ToLower().Contains(s) ||
+                    (u.FirstName != null && u.FirstName.ToLower().Contains(s)) ||
+                    (u.LastName  != null && u.LastName.ToLower().Contains(s)));
+            }
+
+            var total = await query.CountAsync();
+            var users = await query.OrderByDescending(u => u.CreatedAt)
+                .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+
+            var institutionIds = users.Where(u => u.InstitutionId.HasValue)
+                .Select(u => u.InstitutionId!.Value).Distinct().ToList();
+
+            var institutions = institutionIds.Count > 0
+                ? await _db.Institutions.AsNoTracking()
+                    .Where(i => institutionIds.Contains(i.Id))
+                    .ToDictionaryAsync(i => i.Id)
+                : new Dictionary<int, Institution>();
+
+            var studentsCount = institutionIds.Count > 0
+                ? await _db.InstitutionStudents
+                    .Where(s => institutionIds.Contains(s.InstitutionId) && s.IsActive)
+                    .GroupBy(s => s.InstitutionId)
+                    .Select(g => new { InstitutionId = g.Key, Count = g.Count() })
+                    .ToDictionaryAsync(x => x.InstitutionId, x => x.Count)
+                : new Dictionary<int, int>();
+
+            var subs = await _db.Subscriptions
+                .Where(s => users.Select(u => u.Id).Contains(s.UserId) && !s.IsDeleted)
+                .OrderByDescending(s => s.EndDate)
+                .ToListAsync();
+
+            var now = DateTime.UtcNow;
+            var onlineSince = now - OnlineWindow;
+            var ids = users.Select(u => u.Id).ToList();
+            var sessions = await _db.UserSessions
+                .Where(s => ids.Contains(s.UserId))
+                .ToListAsync();
+
+            var rows = users.Select(u =>
+            {
+                var isOnline = sessions.Any(s => s.UserId == u.Id && s.IsActive && s.LastActivityAt >= onlineSince);
+                var lastSeen = sessions.Where(s => s.UserId == u.Id)
+                    .OrderByDescending(s => s.LastActivityAt).FirstOrDefault();
+                Institution? inst = null;
+                if (u.InstitutionId.HasValue) institutions.TryGetValue(u.InstitutionId.Value, out inst);
+                var sub = subs.FirstOrDefault(s => s.UserId == u.Id);
+                var sc = u.InstitutionId.HasValue ? studentsCount.GetValueOrDefault(u.InstitutionId.Value, 0) : 0;
+                return new
+                {
+                    id              = u.Id,
+                    firstName       = u.FirstName,
+                    lastName        = u.LastName,
+                    name            = inst?.Name ?? $"{u.FirstName} {u.LastName}".Trim(),
+                    email           = u.Email,
+                    avatarUrl       = u.AvatarUrl ?? u.ProfileImageUrl,
+                    isEmailVerified = u.IsEmailVerified,
+                    isOnline,
+                    lastSeenAt      = lastSeen?.LastActivityAt ?? u.LastLoginAt,
+                    status          = u.IsDeleted ? "deleted" : u.IsActive ? "active" : "suspended",
+                    createdAt       = u.CreatedAt,
+                    institutionName = inst?.Name,
+                    institutionType = inst?.Type,
+                    city            = inst?.City ?? u.City,
+                    country         = inst?.Country,
+                    studentsCount   = sc,
+                    licenseType     = sub?.Status ?? "standard",
+                    licenseExpiry   = sub?.EndDate,
+                    institutionId   = u.InstitutionId,
+                };
+            }).ToList();
+
+            return Ok(new { Items = rows, Total = total, Page = page, PageSize = pageSize });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "AdminUsers.ListInstitutions failed");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
     // ── GET /api/admin/users/{id} ───────────────────────────────────────────
 
     [HttpGet("{id:int}")]
