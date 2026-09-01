@@ -192,12 +192,18 @@ def _detect_anomalies_raw(session) -> List[Dict]:
             })
 
         # Signal 4: Score moyen plateforme en chute (possible problème qualité contenu)
-        today_avg = session.query(func.avg(DailyScore.AverageScore)).filter(
-            DailyScore.Date == today
-        ).scalar()
-        yesterday_avg = session.query(func.avg(DailyScore.AverageScore)).filter(
-            DailyScore.Date == (today - timedelta(days=1))
-        ).scalar()
+        # DailyScores est géré par le backend .NET — peut ne pas exister en production.
+        try:
+            today_avg = session.query(func.avg(DailyScore.AverageScore)).filter(
+                DailyScore.Date == today
+            ).scalar()
+            yesterday_avg = session.query(func.avg(DailyScore.AverageScore)).filter(
+                DailyScore.Date == (today - timedelta(days=1))
+            ).scalar()
+        except Exception:
+            session.rollback()
+            today_avg = None
+            yesterday_avg = None
         if today_avg and yesterday_avg and float(today_avg) < float(yesterday_avg) * 0.7:
             signals.append({
                 "type": "score_drop",
@@ -439,9 +445,14 @@ async def growth_insights(
                 db_session, func.count(Enrollment.Id),
                 Enrollment.EnrolledAt >= cutoff, Enrollment.IsDeleted == False
             ) or 0
-            avg_score = session_scalar(db_session, func.avg(DailyScore.AverageScore), DailyScore.Date >= cutoff.date()) or 0
-            prev_avg  = session_scalar(db_session, func.avg(DailyScore.AverageScore),
-                                       DailyScore.Date >= prev_cutoff.date(), DailyScore.Date < cutoff.date()) or 0
+            try:
+                avg_score = session_scalar(db_session, func.avg(DailyScore.AverageScore), DailyScore.Date >= cutoff.date()) or 0
+                prev_avg  = session_scalar(db_session, func.avg(DailyScore.AverageScore),
+                                           DailyScore.Date >= prev_cutoff.date(), DailyScore.Date < cutoff.date()) or 0
+            except Exception:
+                db_session.rollback()
+                avg_score = 0
+                prev_avg  = 0
 
             top_subjects = (
                 db_session.query(Subject.Title, Subject.Category, func.count(Enrollment.Id).label("cnt"))

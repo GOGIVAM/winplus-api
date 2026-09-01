@@ -524,9 +524,13 @@ async def predict_grade(
         confidence = min(0.95, 0.40 + len(scores) * 0.025)
 
         # Daily score trend for improvement points
-        daily_scores = session.query(DailyScore).filter(
-            DailyScore.UserId == body.user_id
-        ).order_by(DailyScore.Date.desc()).limit(30).all()
+        try:
+            daily_scores = session.query(DailyScore).filter(
+                DailyScore.UserId == body.user_id
+            ).order_by(DailyScore.Date.desc()).limit(30).all()
+        except Exception:
+            session.rollback()
+            daily_scores = []
         improvement_delta = 0.0
         if len(daily_scores) >= 2:
             improvement_delta = float(daily_scores[0].AverageScore) - float(daily_scores[-1].AverageScore)
@@ -621,9 +625,13 @@ async def get_micro_intervention(
             exam_type = active_plan.ExamType
 
         # Score trend (last 14 days DailyScores)
-        scores = session.query(DailyScore).filter(
-            DailyScore.UserId == user_id,
-        ).order_by(DailyScore.Date.desc()).limit(14).all()
+        try:
+            scores = session.query(DailyScore).filter(
+                DailyScore.UserId == user_id,
+            ).order_by(DailyScore.Date.desc()).limit(14).all()
+        except Exception:
+            session.rollback()
+            scores = []
         last_score_trend = 'stable'
         if len(scores) >= 4:
             recent_avg = sum(float(s.AverageScore) for s in scores[:3]) / 3

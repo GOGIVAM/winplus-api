@@ -109,11 +109,15 @@ def _load_parent_children_data(child_ids: list) -> list:
                 child = session.query(User).filter(User.Id == child_id).first()
                 if not child:
                     continue
-                scores = (
-                    session.query(DailyScore)
-                    .filter(DailyScore.UserId == child_id, DailyScore.CreatedAt >= cutoff_30)
-                    .all()
-                )
+                try:
+                    scores = (
+                        session.query(DailyScore)
+                        .filter(DailyScore.UserId == child_id, DailyScore.CreatedAt >= cutoff_30)
+                        .all()
+                    )
+                except Exception:
+                    session.rollback()
+                    scores = []
                 avg_score = (
                     sum(float(s.AverageScore) for s in scores) / len(scores) * 20 / 100
                     if scores else None
