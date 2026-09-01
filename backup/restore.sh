@@ -8,7 +8,7 @@ DB_HOST="172.31.8.182"      # IP privée winplus-db
 DB_USER="cademi"
 DB_NAME="winplus_db"
 DB_PASS="Admin001"
-BACKUP_DIR="/home/ubuntu/backups"
+BACKUP_DIR="/home/ubuntu/winplus/backup"
 
 echo "================================================"
 echo "  RESTAURATION BD WinPlus"
