@@ -1121,6 +1121,27 @@ modelBuilder.Entity<Exam>(entity =>
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        // ── Global query filters : exclure les enregistrements soft-deleted ──
+        // Appliqué automatiquement à toutes les requêtes EF Core sur ces entités.
+        // Utiliser .IgnoreQueryFilters() dans les requêtes admin si nécessaire.
+        modelBuilder.Entity<User>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Subject>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Order>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Institution>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<PricingPlan>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Announcement>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Event>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Session>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Subscription>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Exam>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Quiz>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Revision>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Review>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Conversation>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Message>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<ForumThread>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<ForumPost>().HasQueryFilter(e => !e.IsDeleted);
+
         // ── Entités des sprints S1→S7 (voir ApplicationDbContext.Sprints.cs) ──
         OnModelCreatingSprints(modelBuilder);
     }

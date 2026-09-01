@@ -1,7 +1,9 @@
 """
 WinAI  Guided Study Sessions
-POST /api/study-session/generate    Generate briefing + quiz + synthesis
-POST /api/study-session/complete    Save completed session to DB
+POST /api/study-session/generate        Generate briefing (phase 1)
+POST /api/study-session/phase2/quiz     Generate quiz questions (phase 2)
+POST /api/study-session/phase3/summary  Generate synthesis summary (phase 3)
+POST /api/study-session/complete        Save completed session to DB
 """
 
 import json
@@ -25,6 +27,17 @@ class GenerateSessionRequest(BaseModel):
     user_id: int
     subject_id: int
     duration_minutes: int  # 15 | 25 | 45 | 60
+
+
+class Phase2QuizRequest(BaseModel):
+    user_id: int
+    subject_id: int
+
+
+class Phase3SummaryRequest(BaseModel):
+    user_id: int
+    subject_id: int
+    score: Optional[float] = None  # 0-100, score du quiz phase 2
 
 
 class CompleteSessionRequest(BaseModel):
@@ -133,6 +146,180 @@ async def generate_session(
         raise
     except Exception as exc:
         logger.error(f"[study-session] generate error: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        session.close()
+
+
+@study_session_router.post('/phase2/quiz')
+async def generate_phase2_quiz(
+    body: Phase2QuizRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    """
+    Phase 2 — Quiz interactif : génère 3 questions QCM via DeepSeek
+    basées sur le sujet de la session.
+    """
+    db_obj = Database()
+    session = db_obj.SessionLocal()
+    try:
+        subject = session.query(Subject).filter(Subject.Id == body.subject_id).first()
+        if not subject:
+            raise HTTPException(status_code=404, detail="Sujet introuvable.")
+
+        subject_name = subject.Title
+        subject_category = subject.Category or 'général'
+
+        # Determine level from past attempts
+        attempts = session.query(QuizAttempt).filter(
+            QuizAttempt.UserId == body.user_id
+        ).order_by(QuizAttempt.CreatedAt.desc()).limit(10).all()
+        past_scores = [float(a.Score) for a in attempts if a.Score is not None]
+        avg_score = sum(past_scores) / len(past_scores) if past_scores else 50.0
+        level = 'débutant' if avg_score < 50 else ('intermédiaire' if avg_score < 75 else 'avancé')
+
+        client = get_deepseek_client()
+        quiz_prompt = (
+            f"Génère exactement 3 questions QCM sur {subject_name} ({subject_category}) "
+            f"pour un étudiant camerounais de niveau {level}. "
+            f"Réponds UNIQUEMENT avec un tableau JSON valide, sans texte autour :\n"
+            f'[{{"question": "Énoncé de la question ?", '
+            f'"options": ["A) Option A", "B) Option B", "C) Option C", "D) Option D"], '
+            f'"correct": "A) Option A", '
+            f'"explanation": "Explication de la bonne réponse."}}]'
+        )
+        result = client.chat(
+            messages=[{'role': 'user', 'content': quiz_prompt}],
+            max_tokens=600,
+            temperature=0.4,
+        )
+        questions_raw = result.get('content', '').strip()
+        questions = []
+        try:
+            import re
+            match = re.search(r'\[.*\]', questions_raw, re.DOTALL)
+            if match:
+                questions = json.loads(match.group())
+        except Exception:
+            questions = []
+
+        # Fallback si DeepSeek ne retourne pas un JSON valide
+        if not questions:
+            questions = [
+                {
+                    "question": f"Quelle est une notion fondamentale en {subject_name} ?",
+                    "options": ["A) Notion A", "B) Notion B", "C) Notion C", "D) Notion D"],
+                    "correct": "A) Notion A",
+                    "explanation": "Réponse générée automatiquement — relancez pour un quiz personnalisé.",
+                }
+            ]
+
+        return {
+            'success': True,
+            'phase2': {
+                'questions': questions[:3],
+                'subject': subject_name,
+                'level': level,
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"[study-session] phase2 quiz error: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        session.close()
+
+
+@study_session_router.post('/phase3/summary')
+async def generate_phase3_summary(
+    body: Phase3SummaryRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    """
+    Phase 3 — Synthèse : génère un résumé des points clés (3-5 bullet points)
+    et, si un score est fourni, commente la performance de l'étudiant.
+    """
+    db_obj = Database()
+    session = db_obj.SessionLocal()
+    try:
+        subject = session.query(Subject).filter(Subject.Id == body.subject_id).first()
+        if not subject:
+            raise HTTPException(status_code=404, detail="Sujet introuvable.")
+
+        subject_name = subject.Title
+        subject_category = subject.Category or 'général'
+
+        # Determine level from past attempts
+        attempts = session.query(QuizAttempt).filter(
+            QuizAttempt.UserId == body.user_id
+        ).order_by(QuizAttempt.CreatedAt.desc()).limit(10).all()
+        past_scores = [float(a.Score) for a in attempts if a.Score is not None]
+        avg_score = sum(past_scores) / len(past_scores) if past_scores else 50.0
+        level = 'débutant' if avg_score < 50 else ('intermédiaire' if avg_score < 75 else 'avancé')
+
+        score_context = ""
+        if body.score is not None:
+            if body.score >= 80:
+                perf_comment = f"Excellent résultat ({body.score:.0f}/100) ! Continue sur cette lancée."
+            elif body.score >= 60:
+                perf_comment = f"Bon travail ({body.score:.0f}/100). Quelques points à renforcer."
+            else:
+                perf_comment = f"Score de {body.score:.0f}/100 — pas d'inquiétude, chaque erreur est une occasion d'apprendre."
+            score_context = (
+                f"Le score du quiz de l'étudiant est {body.score:.0f}/100. "
+                f"Inclus une phrase de commentaire sur sa performance : \"{perf_comment}\""
+            )
+
+        client = get_deepseek_client()
+        synthesis_prompt = (
+            f"Tu es WinAI, tuteur pour un étudiant camerounais de niveau {level} en {subject_name} ({subject_category}). "
+            f"Génère une synthèse de fin de session. {score_context} "
+            f"Réponds UNIQUEMENT avec un objet JSON valide :\n"
+            f'{{"summary": "Paragraphe de synthèse de 2-3 phrases résumant la session.", '
+            f'"keypoints": ["Point clé 1", "Point clé 2", "Point clé 3", "Point clé 4", "Point clé 5"]}}\n'
+            f"Les keypoints doivent être 3 à 5 bullet points essentiels sur {subject_name}."
+        )
+        result = client.chat(
+            messages=[{'role': 'user', 'content': synthesis_prompt}],
+            max_tokens=400,
+            temperature=0.5,
+        )
+        synthesis_raw = result.get('content', '').strip()
+        synthesis_data = {}
+        try:
+            import re
+            match = re.search(r'\{.*\}', synthesis_raw, re.DOTALL)
+            if match:
+                synthesis_data = json.loads(match.group())
+        except Exception:
+            synthesis_data = {}
+
+        summary = synthesis_data.get('summary', f"Session sur {subject_name} terminée. Revois les points clés régulièrement pour consolider tes acquis.")
+        keypoints = synthesis_data.get('keypoints', [f"Révise les fondamentaux de {subject_name} régulièrement."])
+
+        performance_comment = ""
+        if body.score is not None:
+            if body.score >= 80:
+                performance_comment = f"Excellent résultat : {body.score:.0f}/100. Tu maîtrises bien ce sujet !"
+            elif body.score >= 60:
+                performance_comment = f"Bon résultat : {body.score:.0f}/100. Continue à pratiquer pour progresser."
+            else:
+                performance_comment = f"Score de {body.score:.0f}/100. Concentre-toi sur les points clés ci-dessus."
+
+        return {
+            'success': True,
+            'phase3': {
+                'summary': summary,
+                'keypoints': keypoints[:5],
+                'performance_comment': performance_comment,
+                'subject': subject_name,
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"[study-session] phase3 summary error: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
     finally:
         session.close()

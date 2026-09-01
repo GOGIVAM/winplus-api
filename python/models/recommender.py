@@ -101,6 +101,14 @@ class Recommender:
             logger.error(f"[Recommender] ❌ Erreur get_popular_subjects: {e}")
             return []
     
+    # Boost par style d'apprentissage : visual → vidéo, kinesthetic/reading → document
+    _STYLE_BOOST = {
+        'visual':          {'video': 1.5, 'doc': 0.0},
+        'auditory':        {'video': 0.5, 'doc': 0.0},
+        'kinesthetic':     {'video': 0.0, 'doc': 1.0},
+        'reading_writing': {'video': 0.0, 'doc': 1.5},
+    }
+
     def get_personalized_recommendations(self, user_id: int, limit: int = 5) -> list:
         """Recommandations personnalisées basées sur l'historique réel PostgreSQL"""
         try:
@@ -109,18 +117,23 @@ class Recommender:
 
             if not enrollments:
                 popular = self.db.get_popular_subjects(limit)
-                logger.info(f"[Recommender] 👤 Fallback populaires pour user {user_id} (aucun enrollment)")
+                logger.info(f"[Recommender] Fallback populaires pour user {user_id} (aucun enrollment)")
                 return [{
                     'id': s['id'], 'title': s['title'], 'category': s['category'],
                     'price': s['price'], 'averageRating': s['averageRating'],
                     'enrollmentCount': s['enrollmentCount'], 'score': 0.0, 'reason': 'populaire'
                 } for s in popular]
 
-            # 2. Préférences de catégories
+            # 2. Style d'apprentissage + carte format des sujets
+            learning_style = self.db.get_user_learning_style(user_id)
+            style_weights = self._STYLE_BOOST.get(learning_style, {'video': 0.0, 'doc': 0.0})
+            format_map = self.db.get_subjects_format_map() if learning_style else {}
+
+            # 3. Préférences de catégories
             enrolled_ids = {e['subject_id'] for e in enrollments}
             enrolled_categories = {e['subject_category'] for e in enrollments if e['subject_category']}
 
-            # 3. Candidats : sujets non encore inscrits
+            # 4. Candidats : sujets non encore inscrits
             all_subjects = self.db.get_all_subjects()
             candidates = [s for s in all_subjects if s['id'] not in enrolled_ids]
 
@@ -139,7 +152,7 @@ class Recommender:
                     self.subjects_df['id'].isin(enrolled_ids)
                 ].index.tolist()
 
-            # 4. Scorer chaque candidat
+            # 5. Scorer chaque candidat
             scored = []
             for s in candidates:
                 score = 0.0
@@ -167,6 +180,16 @@ class Recommender:
                     except Exception:
                         pass
 
+                # Boost style d'apprentissage
+                if learning_style and s['id'] in format_map:
+                    fmt = format_map[s['id']]
+                    if fmt['video_count'] > 0:
+                        score += style_weights['video']
+                    if fmt['doc_count'] > 0:
+                        score += style_weights['doc']
+                    if learning_style and (fmt['video_count'] > 0 or fmt['doc_count'] > 0):
+                        reasons.append(f'adapté au style {learning_style}')
+
                 scored.append({
                     'id': s['id'], 'title': s['title'], 'category': s['category'],
                     'price': s['price'], 'averageRating': s['averageRating'],
@@ -175,13 +198,13 @@ class Recommender:
                     'reason': ', '.join(reasons) if reasons else 'populaire'
                 })
 
-            # 5. Top limit par score décroissant
+            # 6. Top limit par score décroissant
             scored.sort(key=lambda x: x['score'], reverse=True)
             result = scored[:limit]
-            logger.info(f"[Recommender] 👤 {len(result)} recommandations personnalisées pour user {user_id}")
+            logger.info(f"[Recommender] {len(result)} recommandations pour user {user_id} (style: {learning_style})")
             return result
         except Exception as e:
-            logger.error(f"[Recommender] ❌ Erreur get_personalized_recommendations: {e}")
+            logger.error(f"[Recommender] Erreur get_personalized_recommendations: {e}")
             return []
     
     def recommend_by_category(self, category: str, limit: int = 10) -> list:
