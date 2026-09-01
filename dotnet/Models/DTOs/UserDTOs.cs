@@ -10,6 +10,7 @@ public class UpdateProfileRequest
     [MaxLength(1000)] public string? Bio { get; set; }
     [MaxLength(100)] public string? Level { get; set; }
     [MaxLength(100)] public string? City { get; set; }
+    [MaxLength(50)]  public string? LearningStyle { get; set; }
 }
 
 public class ProfileResponse

@@ -30,6 +30,6 @@ INSERT INTO "ConcoursEvents" ("Slug", "Name", "Year", "RegistrationStartDate", "
   ('essec',         'ESSEC Douala',                        2026, '2026-02-15 00:00:00+00', '2026-04-30 23:59:59+00', '2026-07-15 07:00:00+00', '2026-10-15 00:00:00+00', 'Douala', 15000, 'https://essec.cm', NULL),
   ('enset',         'ENSET',                               2026, '2026-01-25 00:00:00+00', '2026-03-31 23:59:59+00', '2026-06-25 07:00:00+00', '2026-09-20 00:00:00+00', 'Yaoundé / Douala', 12000, 'https://enset.cm', NULL),
   ('bac',           'Baccalauréat Camerounais',            2026, NULL, NULL, '2026-06-01 07:00:00+00', '2026-08-20 00:00:00+00', 'National', NULL, 'https://obc.cm', 'Toutes séries'),
-  ('bepc',          "Brevet d'Études du Premier Cycle",    2026, NULL, NULL, '2026-05-20 07:00:00+00', '2026-07-20 00:00:00+00', 'National', NULL, 'https://obc.cm', NULL),
+  ('bepc',          'Brevet d''Études du Premier Cycle',   2026, NULL, NULL, '2026-05-20 07:00:00+00', '2026-07-20 00:00:00+00', 'National', NULL, 'https://obc.cm', NULL),
   ('probatoire',    'Probatoire',                          2026, NULL, NULL, '2026-05-27 07:00:00+00', '2026-07-25 00:00:00+00', 'National', NULL, 'https://obc.cm', NULL)
 ON CONFLICT DO NOTHING;

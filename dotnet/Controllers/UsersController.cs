@@ -140,6 +140,22 @@ public class UsersController : ControllerBase
 
             var updated = await _userService.UpdateUserAsync(user);
 
+            if (request.LearningStyle != null)
+            {
+                var ctx = await _db.ChatbotContexts.FirstOrDefaultAsync(c => c.UserId == userId);
+                if (ctx == null)
+                {
+                    ctx = new ChatbotContext { UserId = userId, LearningStyle = request.LearningStyle, UpdatedAt = DateTime.UtcNow };
+                    _db.ChatbotContexts.Add(ctx);
+                }
+                else
+                {
+                    ctx.LearningStyle = request.LearningStyle;
+                    ctx.UpdatedAt = DateTime.UtcNow;
+                }
+                await _db.SaveChangesAsync();
+            }
+
             return Ok(new ProfileResponse
             {
                 Id = updated.Id,
