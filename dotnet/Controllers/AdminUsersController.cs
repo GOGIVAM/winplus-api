@@ -81,6 +81,7 @@ public class AdminUserSessionDto
     public DateTime CreatedAt { get; set; }
     public DateTime? LastSeenAt { get; set; }
     public bool IsCurrent { get; set; }
+    public bool IsActive { get; set; }
 }
 
 public class AdminUserPaymentDto
@@ -1338,6 +1339,7 @@ public class AdminUsersController : ControllerBase
                 Country = country,
                 CreatedAt = s.CreatedAt,
                 LastSeenAt = s.LastActivityAt,
+                IsActive  = s.IsActive && s.LastActivityAt >= onlineSince,
                 IsCurrent = s.IsActive && s.LastActivityAt >= onlineSince,
             };
         }).ToList();

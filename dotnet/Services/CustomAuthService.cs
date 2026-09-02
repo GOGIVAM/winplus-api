@@ -283,8 +283,13 @@ public class CustomAuthService : ICustomAuthService
             var device = await _deviceTrackingService.TrackDeviceAsync(user.Id, request, rememberMe);
 
             // Create session
-            var ipAddress = request.Headers["X-Forwarded-For"].FirstOrDefault()
-                ?? request.HttpContext.Connection.RemoteIpAddress?.ToString()
+            // Derrière nginx : X-Forwarded-For = "client, proxy1, proxy2" — on veut le premier.
+            var ipAddress =
+                (request.Headers["X-Forwarded-For"].FirstOrDefault() ?? "")
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .FirstOrDefault(ip => ip != "127.0.0.1" && ip != "::1")
+                ?? request.Headers["X-Real-IP"].FirstOrDefault()
+                ?? request.HttpContext.Connection.RemoteIpAddress?.MapToIPv4().ToString()
                 ?? "Unknown";
             var userAgent = request.Headers["User-Agent"].ToString();
             var deviceType = userAgent.Contains("Mobile", StringComparison.OrdinalIgnoreCase) ? "mobile"

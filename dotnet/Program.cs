@@ -15,6 +15,7 @@ using Backend.Services;
 using Backend.Utilities;
 using Backend.Middlewares;
 using Backend.Models.Entities;
+using Microsoft.AspNetCore.HttpOverrides;
 using Serilog;
 using Serilog.Events;
 
@@ -473,6 +474,16 @@ if (app.Environment.IsDevelopment())
         c.RoutePrefix = string.Empty; // Swagger à la racine
     });
 }
+
+// Derrière nginx : on fait confiance aux en-têtes X-Forwarded-For / X-Real-IP
+// pour récupérer la vraie IP du client au lieu de l'adresse de loopback nginx.
+var fwdOpts = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+};
+fwdOpts.KnownProxies.Clear();
+fwdOpts.KnownNetworks.Clear();
+app.UseForwardedHeaders(fwdOpts);
 
 // app.UseHttpsRedirection();
 app.UseStaticFiles(); // Serve static files from wwwroot/uploads
