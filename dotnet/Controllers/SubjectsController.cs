@@ -357,6 +357,48 @@ public class SubjectsController : ControllerBase
     }
 
     /// <summary>
+    /// Cours ayant au moins une épreuve du type d'examen donné (BEPC, Probatoire,
+    /// Baccalauréat...). Le Subject n'a pas lui-même de champ "type d'examen" :
+    /// cette information vit sur les Exam liés (Exam.SubjectId). Avant cet
+    /// endpoint, le catalogue combinait un filtre matière (sur Subject.Category)
+    /// avec un filtre examen tiré de /api/exams/by-type/{type}  deux jeux de
+    /// données disjoints, sans lien entre les Subject affichés et les Exam
+    /// renvoyés, d'où des combinaisons de filtres qui ne retrouvaient jamais
+    /// les épreuves pourtant bien liées en base (ex: Mathématiques + BEPC).
+    /// GET /api/subjects/by-exam-type/{examType}
+    /// </summary>
+    [HttpGet("by-exam-type/{examType}")]
+    [ProducesResponseType(typeof(PaginationResponse<Subject>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetByExamType(
+        string examType,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20)
+    {
+        try
+        {
+            if (page < 1) page = 1;
+            pageSize = Math.Clamp(pageSize, 1, 500);
+
+            var query = _context.Subjects
+                .Where(s => !s.IsDeleted && _context.Exams.Any(e =>
+                    e.SubjectId == s.Id && !e.IsDeleted &&
+                    e.ExamType.ToLower() == examType.ToLower()))
+                .OrderByDescending(s => s.CreatedAt);
+
+            var totalCount = await query.CountAsync();
+            var subjects = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+
+            var response = new PaginationResponse<Subject>(subjects, totalCount, page, pageSize);
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur lors de la récupération des cours par type d'examen {ExamType}", examType);
+            return StatusCode(500, "Erreur serveur");
+        }
+    }
+
+    /// <summary>
     /// Récupère toutes les catégories disponibles
     /// </summary>
     [HttpGet("categories")]
