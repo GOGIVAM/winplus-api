@@ -170,6 +170,11 @@ public class AdminOverviewAnalyticsController : ControllerBase
             var totalOrders     = await _db.Orders.CountAsync(o => !o.IsDeleted);
             var completedOrders = await _db.Orders
                 .CountAsync(o => !o.IsDeleted && o.Status == "Completed");
+            var uniqueBuyers    = await _db.Orders
+                .Where(o => !o.IsDeleted && o.Status == "Completed")
+                .Select(o => o.UserId)
+                .Distinct()
+                .CountAsync();
 
             // ── Épreuves ────────────────────────────────────────────────────
             var examsPublished = await _db.Subjects.CountAsync(s => s.IsPublished && !s.IsDeleted);
@@ -286,6 +291,9 @@ public class AdminOverviewAnalyticsController : ControllerBase
                     activeUsers,
                     newUsers,
                     orders      = totalOrders,
+                    ordersInPeriod = ordersCount,
+                    completedOrders,
+                    uniqueBuyers,
                     revenue     = revenueAllTime,
                     downloads,
                     avgOrderValue,
