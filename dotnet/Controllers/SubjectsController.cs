@@ -439,6 +439,101 @@ public class SubjectsController : ControllerBase
     /// GET /api/subjects/{id}/download
     /// Retourne { downloadUrl, filename } ou 403 / 404
     /// </summary>
+    /// <summary>
+    /// Vérifie qu'un utilisateur a le droit d'accéder au PDF d'un sujet
+    /// (gratuit, abonné, ou acheté), et retrouve l'Exam le plus récent qui
+    /// porte le fichier. Partagé par Download et ViewStream : les deux
+    /// routes doivent appliquer exactement la même règle d'accès.
+    /// </summary>
+    private async Task<(Subject? subject, Exam? exam, IActionResult? error)> ResolveAccessibleExamAsync(int id)
+    {
+        var role = User.FindFirst(ClaimTypes.Role)?.Value
+                   ?? User.FindFirst("role")?.Value
+                   ?? "free";
+
+        var subject = await _subjectService.GetSubjectByIdAsync(id);
+        if (subject == null)
+            return (null, null, NotFound(new { error = "Épreuve introuvable." }));
+
+        if (subject.Price > 0)
+        {
+            bool hasSubscription = !string.Equals(role, "free", StringComparison.OrdinalIgnoreCase);
+            if (!hasSubscription)
+            {
+                var userId = User.GetUserId();
+                bool hasPurchased = await _context.OrderItems
+                    .AnyAsync(oi => oi.SubjectId == id
+                                 && oi.Order.UserId == userId
+                                 && oi.Order.Status == "completed");
+                if (!hasPurchased)
+                    return (subject, null, StatusCode(403, new { error = "Veuillez acheter cette épreuve pour pouvoir y accéder." }));
+            }
+        }
+
+        var exam = await _context.Exams
+            .Where(e => e.SubjectId == id && !e.IsDeleted && e.DocumentUrl != null)
+            .OrderByDescending(e => e.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        if (exam == null || string.IsNullOrEmpty(exam.DocumentUrl))
+            return (subject, null, NotFound(new { error = "Le fichier PDF n'est pas encore disponible pour cette épreuve." }));
+
+        return (subject, exam, null);
+    }
+
+    /// <summary>
+    /// Sert le PDF d'une épreuve en flux, sans jamais exposer d'URL de
+    /// téléchargement direct côté client : le front le récupère via une
+    /// requête authentifiée (fetch + Bearer token) et le rend dans une
+    /// visionneuse pdf.js intégrée, au lieu d'un lien "Enregistrer sous".
+    /// Ce n'est pas une protection absolue (un utilisateur déterminé peut
+    /// toujours capturer l'écran ou intercepter la requête), mais ça retire
+    /// le geste "clic droit → enregistrer" et le lien copiable/partageable
+    /// qu'offrait l'URL S3 présignée de /download.
+    /// GET /api/subjects/{id}/view
+    /// </summary>
+    [HttpGet("{id}/view")]
+    [Authorize]
+    public async Task<IActionResult> ViewStream(int id)
+    {
+        var (subject, exam, error) = await ResolveAccessibleExamAsync(id);
+        if (error != null) return error;
+
+        try
+        {
+            var bucket = _storage.Bucket;
+            var s3Key = ExtractS3Key(exam!.DocumentUrl!, bucket);
+
+            using var s3 = _storage.CreateS3Client();
+            using var obj = await s3.GetObjectAsync(bucket, s3Key);
+
+            var buffer = new MemoryStream();
+            await obj.ResponseStream.CopyToAsync(buffer);
+            buffer.Position = 0;
+
+            exam.DownloadCount += 1;
+            _context.DownloadHistories.Add(new DownloadHistory
+            {
+                UserId = User.GetUserId(),
+                SubjectId = id,
+                ExamId = exam.Id,
+                FileName = $"{subject!.Title}.pdf",
+                CreatedAt = DateTime.UtcNow,
+            });
+            await _context.SaveChangesAsync();
+
+            // Pas de Content-Disposition: attachment  le fichier reste "en
+            // ligne", cohérent avec un rendu dans la visionneuse plutôt
+            // qu'un téléchargement de fichier.
+            return File(buffer, "application/pdf");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur lors du streaming de l'épreuve {SubjectId}", id);
+            return StatusCode(500, new { error = "Impossible de charger le fichier pour le moment." });
+        }
+    }
+
     [HttpGet("{id}/download")]
     [Authorize]
     public async Task<IActionResult> Download(int id)
