@@ -52,8 +52,8 @@ public class PromoCodeService : IPromoCodeService
                 MaximumDiscount = request.MaximumDiscount,
                 UsageLimit = request.UsageLimit,
                 PerUserLimit = request.PerUserLimit ?? 1,
-                ValidFrom = request.ValidFrom,
-                ValidUntil = request.ValidUntil,
+                ValidFrom = Utc(request.ValidFrom),
+                ValidUntil = Utc(request.ValidUntil),
                 ApplicableSubjectIds = request.ApplicableSubjectIds != null 
                     ? JsonSerializer.Serialize(request.ApplicableSubjectIds) 
                     : null,
@@ -345,7 +345,7 @@ public class PromoCodeService : IPromoCodeService
             promoCode.MinimumPurchase = request.MinimumPurchase;
             promoCode.MaximumDiscount = request.MaximumDiscount;
             promoCode.UsageLimit = request.UsageLimit;
-            promoCode.ValidUntil = request.ValidUntil;
+            promoCode.ValidUntil = Utc(request.ValidUntil);
             promoCode.ApplicableSubjectIds = request.ApplicableSubjectIds != null
                 ? JsonSerializer.Serialize(request.ApplicableSubjectIds)
                 : null;
@@ -364,6 +364,11 @@ public class PromoCodeService : IPromoCodeService
             throw;
         }
     }
+
+    private static DateTime Utc(DateTime dt) =>
+        dt.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(dt, DateTimeKind.Utc) : dt.ToUniversalTime();
+
+    private static DateTime? Utc(DateTime? dt) => dt.HasValue ? Utc(dt.Value) : null;
 
     private PromoCodeDto MapToDto(PromoCode promoCode)
     {

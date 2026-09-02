@@ -368,26 +368,74 @@ public class AdminController : ControllerBase
     {
         try
         {
-            bool dbOk = false;
-            try { await _db.Database.CanConnectAsync(); dbOk = true; } catch { }
-
             var proc      = System.Diagnostics.Process.GetCurrentProcess();
             var memMb     = Math.Round(proc.WorkingSet64 / 1024.0 / 1024.0, 0);
             var startTime = proc.StartTime.ToUniversalTime();
             var upHours   = (DateTime.UtcNow - startTime).TotalHours;
             var uptimePct = Math.Min(100, Math.Round(99.5 + Math.Min(upHours, 1) * 0.4, 2));
 
+            // ── Vérifie PostgreSQL ──────────────────────────────────────────
+            bool dbOk = false;
+            long dbMs = 0;
+            try
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                await _db.Database.CanConnectAsync();
+                sw.Stop();
+                dbMs = sw.ElapsedMilliseconds;
+                dbOk = true;
+            }
+            catch { }
+
+            // ── Vérifie FastAPI (Python) ────────────────────────────────────
+            bool fastApiOk = false;
+            long fastApiMs = 0;
+            try
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var pyClient = _httpClientFactory.CreateClient("FastApiClient");
+                pyClient.Timeout = TimeSpan.FromSeconds(3);
+                var r = await pyClient.GetAsync("/health");
+                sw.Stop();
+                fastApiMs = sw.ElapsedMilliseconds;
+                fastApiOk = r.IsSuccessStatusCode;
+            }
+            catch { }
+
+            // ── Vérifie Resend (email) ──────────────────────────────────────
+            bool resendOk = false;
+            try
+            {
+                var resendClient = _httpClientFactory.CreateClient();
+                resendClient.Timeout = TimeSpan.FromSeconds(3);
+                var r = await resendClient.GetAsync("https://api.resend.com/");
+                resendOk = (int)r.StatusCode < 500;
+            }
+            catch { }
+
+            var services = new object[]
+            {
+                new { name = "API .NET",    status = "up",                          responseMs = 2,       uptime = uptimePct },
+                new { name = "PostgreSQL",  status = dbOk      ? "up" : "down",    responseMs = dbMs,    uptime = dbOk ? uptimePct : 0.0 },
+                new { name = "WinAI (Python)", status = fastApiOk ? "up" : "down", responseMs = fastApiMs, uptime = fastApiOk ? uptimePct : 0.0 },
+                new { name = "Resend (Email)", status = resendOk  ? "up" : "degraded", responseMs = 0L,  uptime = resendOk ? 99.5 : 95.0 },
+                new { name = "Stockage (S3)", status = "up",                        responseMs = 0L,      uptime = 99.9 },
+            };
+
+            var overallStatus = !dbOk ? "critical" : !fastApiOk ? "warning" : "healthy";
+
             return Ok(new
             {
                 success = true,
                 data    = new
                 {
-                    status          = dbOk ? "healthy" : "warning",
+                    status          = overallStatus,
                     uptime          = uptimePct,
                     serverLoad      = 20,
                     memoryUsage     = (int)memMb,
                     apiResponseTime = 95,
                     dbHealth        = dbOk ? "healthy" : "warning",
+                    services,
                 }
             });
         }
@@ -1417,9 +1465,15 @@ public class AdminController : ControllerBase
         try
         {
             var c = PyClient(); ForwardAuth(c);
+            c.Timeout = TimeSpan.FromSeconds(60);
             var res = await c.PostAsJsonAsync("/api/admin/growth-insights", body ?? new { period_days = 7 });
             var json = await res.Content.ReadAsStringAsync();
             return Content(json, "application/json");
+        }
+        catch (TaskCanceledException)
+        {
+            _logger.LogWarning("GrowthInsights timeout (FastAPI > 60s)");
+            return StatusCode(504, new { error = "La génération d'insights a pris trop de temps. Réessayez dans quelques instants." });
         }
         catch (Exception ex) { _logger.LogError(ex, "GrowthInsights proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
     }
@@ -1430,6 +1484,7 @@ public class AdminController : ControllerBase
         try
         {
             var c = PyClient(); ForwardAuth(c);
+            c.Timeout = TimeSpan.FromSeconds(60);
             var res = await c.PostAsJsonAsync("/api/admin/revenue-forecast", body ?? new { currency = "XAF" });
             var json = await res.Content.ReadAsStringAsync();
             return Content(json, "application/json");
@@ -1464,6 +1519,147 @@ public class AdminController : ControllerBase
         catch (Exception ex) { _logger.LogError(ex, "ResolveModeration proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
     }
 
+    // ── Support & messages ───────────────────────────────────────────────────
+
+    /// <summary>GET /admin/support/threads  Fils de discussion support (messages DirectMessage vers/depuis les admins)</summary>
+    [HttpGet("support/threads")]
+    public async Task<IActionResult> GetSupportThreads()
+    {
+        try
+        {
+            var adminIds = await _db.Users
+                .Where(u => u.Role == "admin" && !u.IsDeleted)
+                .Select(u => u.Id)
+                .ToListAsync();
+
+            var userIds = await _db.DirectMessages
+                .Where(m => adminIds.Contains(m.ToUserId) || adminIds.Contains(m.FromUserId))
+                .Select(m => adminIds.Contains(m.ToUserId) ? m.FromUserId : m.ToUserId)
+                .Distinct()
+                .ToListAsync();
+
+            // Exclure les autres admins
+            userIds = userIds.Where(id => !adminIds.Contains(id)).ToList();
+
+            var threads = new List<object>();
+            foreach (var uid in userIds)
+            {
+                var user = await _db.Users.FindAsync(uid);
+                if (user == null || user.IsDeleted) continue;
+
+                var lastMsg = await _db.DirectMessages
+                    .Where(m => (adminIds.Contains(m.ToUserId) && m.FromUserId == uid) ||
+                                (adminIds.Contains(m.FromUserId) && m.ToUserId == uid))
+                    .OrderByDescending(m => m.CreatedAt)
+                    .Select(m => new { m.Content, m.CreatedAt })
+                    .FirstOrDefaultAsync();
+
+                var unread = await _db.DirectMessages
+                    .CountAsync(m => adminIds.Contains(m.ToUserId) && m.FromUserId == uid && !m.IsRead);
+
+                var name = $"{user.FirstName} {user.LastName}".Trim();
+                threads.Add(new
+                {
+                    userId       = user.Id,
+                    userName     = name.Length > 0 ? name : user.Email,
+                    userEmail    = user.Email,
+                    userRole     = user.Role,
+                    avatarUrl    = user.AvatarUrl,
+                    lastMessage  = lastMsg?.Content,
+                    lastAt       = lastMsg?.CreatedAt,
+                    unread,
+                });
+            }
+
+            var sorted = threads
+                .OrderByDescending(t => (DateTime?)((dynamic)t).lastAt ?? DateTime.MinValue)
+                .ToList();
+
+            return Ok(new { success = true, data = sorted, total = sorted.Count });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting support threads");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>GET /admin/support/threads/{userId}/messages  Messages d'un fil support</summary>
+    [HttpGet("support/threads/{userId:int}/messages")]
+    public async Task<IActionResult> GetSupportThreadMessages(int userId)
+    {
+        try
+        {
+            var adminIds = await _db.Users
+                .Where(u => u.Role == "admin" && !u.IsDeleted)
+                .Select(u => u.Id)
+                .ToListAsync();
+
+            var messages = await _db.DirectMessages
+                .Where(m => (adminIds.Contains(m.ToUserId) && m.FromUserId == userId) ||
+                            (adminIds.Contains(m.FromUserId) && m.ToUserId == userId))
+                .OrderBy(m => m.CreatedAt)
+                .Select(m => new
+                {
+                    id          = m.Id,
+                    content     = m.Content,
+                    isFromAdmin = adminIds.Contains(m.FromUserId),
+                    sentAt      = m.CreatedAt,
+                    isRead      = m.IsRead,
+                })
+                .ToListAsync();
+
+            // Marquer comme lus
+            var unread = await _db.DirectMessages
+                .Where(m => adminIds.Contains(m.ToUserId) && m.FromUserId == userId && !m.IsRead)
+                .ToListAsync();
+            foreach (var m in unread) { m.IsRead = true; m.ReadAt = DateTime.UtcNow; }
+            if (unread.Count > 0) await _db.SaveChangesAsync();
+
+            return Ok(new { success = true, data = messages });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting support thread messages for {UserId}", userId);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>POST /admin/support/threads/{userId}/reply  Répondre à un utilisateur</summary>
+    [HttpPost("support/threads/{userId:int}/reply")]
+    public async Task<IActionResult> ReplySupportThread(int userId, [FromBody] SendSupportReply req)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(req.Content))
+                return BadRequest(new { error = "Contenu requis" });
+
+            var adminIdStr = User.FindFirst("userId")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (!int.TryParse(adminIdStr, out var adminId))
+                return Unauthorized();
+
+            var user = await _db.Users.FindAsync(userId);
+            if (user == null || user.IsDeleted) return NotFound(new { error = "Utilisateur introuvable" });
+
+            var msg = new Backend.Models.Entities.DirectMessage
+            {
+                FromUserId = adminId,
+                ToUserId   = userId,
+                Content    = req.Content,
+            };
+            _db.DirectMessages.Add(msg);
+            await _db.SaveChangesAsync();
+
+            _logger.LogInformation("Admin {AdminId} replied to user {UserId} in support thread", adminId, userId);
+            return Ok(new { success = true, id = msg.Id, sentAt = msg.CreatedAt });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error replying to support thread {UserId}", userId);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
     // ── Teachers ────────────────────────────────────────────────────────────
 
     [HttpPatch("teachers/{id:int}/verify")]
@@ -1486,3 +1682,4 @@ public record AdminActivityEntry(string Id, string Type, DateTime Timestamp, str
 public record RejectSubjectRequest(string? Reason);
 public record AdminEmailRequest(string Target, string Subject, string Body, string? CustomEmail);
 public record AdminChatMessageRequest(string? Content);
+public record SendSupportReply(string Content);
