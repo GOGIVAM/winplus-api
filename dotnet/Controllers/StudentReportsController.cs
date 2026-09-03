@@ -139,6 +139,7 @@ public class StudentReportsController : ControllerBase
                     d.SubjectId,
                     title     = d.Subject != null ? d.Subject.Title : null,
                     category  = d.Subject != null ? d.Subject.Category : null,
+                    price     = d.Subject != null ? (decimal?)d.Subject.Price : null,
                     d.CreatedAt
                 })
                 .ToListAsync();

@@ -657,42 +657,9 @@ public class StudentController : ControllerBase
         }
     }
 
-    [HttpGet("download-history")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetDownloadHistory([FromQuery] int page = 1, [FromQuery] int limit = 20)
-    {
-        try
-        {
-            if (page < 1) page = 1;
-            if (limit < 1 || limit > 100) limit = 20;
-            var userId = User.GetUserId();
-
-            var total = await _db.DownloadHistories.CountAsync(d => d.UserId == userId);
-            var items = await _db.DownloadHistories
-                .Where(d => d.UserId == userId)
-                .OrderByDescending(d => d.CreatedAt)
-                .Skip((page - 1) * limit)
-                .Take(limit)
-                .Select(d => new
-                {
-                    d.Id,
-                    d.FileName,
-                    d.ExamId,
-                    d.SubjectId,
-                    d.CreatedAt,
-                    title = _db.Subjects.Where(s => s.Id == d.SubjectId).Select(s => s.Title).FirstOrDefault(),
-                    price = _db.Subjects.Where(s => s.Id == d.SubjectId).Select(s => (decimal?)s.Price).FirstOrDefault(),
-                })
-                .ToListAsync();
-
-            return Ok(new { data = items, total, page, limit, success = true });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting download history");
-            return StatusCode(500, new { success = false, error = "Internal server error" });
-        }
-    }
+    // GET /api/student/download-history vit dans StudentReportsController (même
+    // route, historique filtrable par période) : la doublonner ici provoquait un
+    // AmbiguousMatchException à chaque appel (500 systématique côté client).
 
     [HttpGet("reports")]
     [ProducesResponseType(StatusCodes.Status200OK)]
