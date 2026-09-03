@@ -60,6 +60,48 @@ public class StudentController : ControllerBase
             var quizCompleted = histories.Count(h =>
                 h.ActivityType != null && h.ActivityType.ToLower().Contains("quiz"));
 
+            // ── Téléchargements et objectif de la semaine ──────────────────────
+            // Avant : jamais calculés ici, donc la carte « Épreuves téléchargées »
+            // et l'anneau d'objectif du dashboard restaient figés même après
+            // consultation d'une épreuve (SubjectsController.ViewStream écrit
+            // pourtant bien dans DownloadHistories à chaque fois).
+            var totalDownloads = await _db.DownloadHistories.CountAsync(d => d.UserId == userId);
+
+            var sevenDaysAgo = DateTime.UtcNow.Date.AddDays(-6);
+            var recentDownloadDates = await _db.DownloadHistories
+                .Where(d => d.UserId == userId && d.CreatedAt >= sevenDaysAgo)
+                .Select(d => d.CreatedAt.Date)
+                .ToListAsync();
+            var weeklyDownloadTrend = Enumerable.Range(0, 7)
+                .Select(i => recentDownloadDates.Count(d => d == sevenDaysAgo.AddDays(i)))
+                .ToList();
+            var weeklyDownloads = weeklyDownloadTrend.Sum();
+
+            var weeklyQuizCompleted = await _db.QuizAttempts
+                .CountAsync(q => q.UserId == userId && q.IsCompleted && q.CompletedAt >= sevenDaysAgo);
+
+            var recentSessionMinutes = await _db.StudySessions
+                .Where(s => s.UserId == userId && s.CreatedAt >= sevenDaysAgo)
+                .Select(s => new { s.CreatedAt, s.Duration })
+                .ToListAsync();
+            var weeklyStudyHours = Enumerable.Range(0, 7)
+                .Select(i => Math.Round(recentSessionMinutes
+                    .Where(s => s.CreatedAt.Date == sevenDaysAgo.AddDays(i))
+                    .Sum(s => s.Duration) / 60d, 1))
+                .ToList();
+
+            // Lundi 00:00 UTC de la semaine en cours (même calcul que WeeklyGoalController).
+            var todayUtc = DateTime.UtcNow.Date;
+            var weekStart = DateTime.SpecifyKind(todayUtc.AddDays(-(((int)todayUtc.DayOfWeek + 6) % 7)), DateTimeKind.Utc);
+            var goal = await _db.WeeklyGoals.AsNoTracking()
+                .FirstOrDefaultAsync(g => g.UserId == userId && g.WeekStart == weekStart);
+            var weeklyGoal = goal == null ? null : new
+            {
+                studyHoursTarget = goal.StudyHoursTarget,
+                quizTarget = goal.QuizTarget,
+                downloadsTarget = goal.DownloadsTarget,
+            };
+
             var priorities = await _db.Goals
                 .Where(g => g.UserId == userId && g.Status == "in_progress")
                 .OrderBy(g => g.TargetDate)
@@ -110,16 +152,23 @@ public class StudentController : ControllerBase
                 })
                 .ToListAsync();
 
+            // Champs à plat : le dashboard (Dashboard.jsx) lit stats.totalDownloads,
+            // stats.weeklyGoal, etc. directement sur l'objet renvoyé par
+            // /student/stats, pas sous un sous-objet « stats » imbriqué.
             var data = new
             {
-                stats = new
-                {
-                    totalCoursesEnrolled,
-                    coursesCompleted,
-                    averageScore = Math.Round(averageScore, 2),
-                    totalTimeSeconds,
-                    quizCompleted
-                },
+                totalCoursesEnrolled,
+                coursesCompleted,
+                averageScore = Math.Round(averageScore, 2),
+                totalTimeSeconds,
+                hoursSpent = Math.Round(totalTimeSeconds / 3600d, 1),
+                quizCompleted,
+                totalDownloads,
+                weeklyDownloads,
+                weeklyDownloadTrend,
+                weeklyQuizCompleted,
+                weeklyStudyHours,
+                weeklyGoal,
                 priorities,
                 goals,
                 upcomingEvents
@@ -630,7 +679,9 @@ public class StudentController : ControllerBase
                     d.FileName,
                     d.ExamId,
                     d.SubjectId,
-                    d.CreatedAt
+                    d.CreatedAt,
+                    title = _db.Subjects.Where(s => s.Id == d.SubjectId).Select(s => s.Title).FirstOrDefault(),
+                    price = _db.Subjects.Where(s => s.Id == d.SubjectId).Select(s => (decimal?)s.Price).FirstOrDefault(),
                 })
                 .ToListAsync();
 
