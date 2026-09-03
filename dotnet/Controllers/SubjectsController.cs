@@ -41,6 +41,56 @@ public class SubjectsController : ControllerBase
 
     private class PythonRecsResponse { public List<object>? Recommendations { get; set; } }
 
+    /// <summary>
+    /// Subject ne porte pas ExamType/Level/Year/Session/Durée/Difficulté :
+    /// ces champs vivent sur l'Exam créé à l'upload et rattaché via
+    /// Exam.SubjectId. Sans cet enrichissement, le catalogue retombait sur
+    /// les valeurs par défaut du frontend ("BEPC", année courante...) au
+    /// lieu des vraies informations saisies par l'admin. Quand plusieurs
+    /// Exam partagent un même Subject (catégories historiques), on prend
+    /// le plus récent.
+    /// </summary>
+    private async Task<Dictionary<int, Exam>> GetPrimaryExamsAsync(IEnumerable<int> subjectIds)
+    {
+        var ids = subjectIds.Distinct().ToList();
+        if (ids.Count == 0) return new Dictionary<int, Exam>();
+
+        var exams = await _context.Exams.AsNoTracking()
+            .Where(e => e.SubjectId != null && ids.Contains(e.SubjectId.Value) && !e.IsDeleted)
+            .ToListAsync();
+
+        return exams
+            .GroupBy(e => e.SubjectId!.Value)
+            .Select(g => g.OrderByDescending(e => e.CreatedAt).First())
+            .ToDictionary(e => e.SubjectId!.Value);
+    }
+
+    private static object ProjectSubject(Subject s, Exam? exam) => new
+    {
+        id = s.Id,
+        title = s.Title,
+        description = s.Description,
+        category = s.Category,
+        thumbnailUrl = s.ThumbnailUrl,
+        price = s.Price,
+        isPublished = s.IsPublished,
+        enrollmentCount = s.EnrollmentCount,
+        isFeatured = s.IsFeatured,
+        averageRating = s.AverageRating,
+        totalRatings = s.TotalRatings,
+        downloadCount = exam?.DownloadCount ?? s.DownloadCount ?? 0,
+        createdAt = s.CreatedAt,
+        updatedAt = s.UpdatedAt,
+        isDeleted = s.IsDeleted,
+        examType = exam?.ExamType,
+        level = exam?.Level,
+        year = exam?.Year,
+        session = exam?.Session,
+        durationMinutes = exam?.DurationMinutes,
+        difficulty = exam?.Difficulty,
+        hasCorrection = !string.IsNullOrEmpty(exam?.CorrectionUrl),
+    };
+
     [HttpGet]
     [ProducesResponseType(typeof(PaginationResponse<Subject>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll(
@@ -88,7 +138,9 @@ public class SubjectsController : ControllerBase
             };
 
             var subjects = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
-            var response = new PaginationResponse<Subject>(subjects, totalCount, page, pageSize);
+            var examMap = await GetPrimaryExamsAsync(subjects.Select(s => s.Id));
+            var projected = subjects.Select(s => ProjectSubject(s, examMap.GetValueOrDefault(s.Id))).ToList();
+            var response = new PaginationResponse<object>(projected, totalCount, page, pageSize);
             return Ok(response);
         }
         catch (Exception ex)
@@ -130,7 +182,8 @@ public class SubjectsController : ControllerBase
             var subject = await _subjectService.GetSubjectByIdAsync(id);
             if (subject == null)
                 return NotFound();
-            return Ok(subject);
+            var examMap = await GetPrimaryExamsAsync(new[] { id });
+            return Ok(ProjectSubject(subject, examMap.GetValueOrDefault(id)));
         }
         catch (Exception ex)
         {
@@ -388,7 +441,18 @@ public class SubjectsController : ControllerBase
             var totalCount = await query.CountAsync();
             var subjects = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
 
-            var response = new PaginationResponse<Subject>(subjects, totalCount, page, pageSize);
+            var subjectIds = subjects.Select(s => s.Id).ToList();
+            var matchingExams = await _context.Exams.AsNoTracking()
+                .Where(e => e.SubjectId != null && subjectIds.Contains(e.SubjectId.Value) && !e.IsDeleted
+                            && e.ExamType.ToLower() == examType.ToLower())
+                .ToListAsync();
+            var examMap = matchingExams
+                .GroupBy(e => e.SubjectId!.Value)
+                .Select(g => g.OrderByDescending(e => e.CreatedAt).First())
+                .ToDictionary(e => e.SubjectId!.Value);
+            var projected = subjects.Select(s => ProjectSubject(s, examMap.GetValueOrDefault(s.Id))).ToList();
+
+            var response = new PaginationResponse<object>(projected, totalCount, page, pageSize);
             return Ok(response);
         }
         catch (Exception ex)
