@@ -68,6 +68,12 @@ public interface IQuizService
     Task<QuizDto> CreateQuizAsync(CreateQuizRequestDto request);
 
     /// <summary>
+    /// Récupère (ou génère la première fois, à partir du PDF réel) le quiz
+    /// d'évaluation chronométré rattaché à une épreuve précise.
+    /// </summary>
+    Task<QuizDto> GetOrCreateExamQuizAsync(int examId);
+
+    /// <summary>
     /// Met à jour un quiz
     /// </summary>
     Task<QuizDto> UpdateQuizAsync(int id, UpdateQuizRequestDto request);

@@ -411,6 +411,7 @@ public class QuizService : IQuizService
 
     private QuizDto MapToDto(Quiz quiz)
     {
+        var questions = ParsePlayQuestions(quiz.QuestionsJson);
         return new QuizDto
         {
             Id = quiz.Id,
@@ -419,7 +420,8 @@ public class QuizService : IQuizService
             SubjectId = quiz.SubjectId,
             ExamId = quiz.ExamId,
             Subject = quiz.Subject,
-            QuestionsCount = 0, // Will be parsed from JSON if needed
+            QuestionsCount = questions.Count,
+            Questions = questions,
             Difficulty = quiz.Difficulty,
             DurationMinutes = quiz.TimeLimit,
             IsPublished = quiz.IsPublished,
@@ -429,6 +431,77 @@ public class QuizService : IQuizService
             UpdatedAt = quiz.UpdatedAt,
             PublishedAt = quiz.PublishedAt,
         };
+    }
+
+    private static List<QuizPlayQuestionDto> ParsePlayQuestions(string questionsJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(questionsJson) ? "[]" : questionsJson);
+            return doc.RootElement.EnumerateArray().Select(q => new QuizPlayQuestionDto
+            {
+                Id = q.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? "" : "",
+                Question = q.TryGetProperty("question", out var qEl) ? qEl.GetString() ?? "" : "",
+                Options = q.TryGetProperty("options", out var optsEl) && optsEl.ValueKind == JsonValueKind.Array
+                    ? optsEl.EnumerateArray().Select(o => o.GetString() ?? "").ToList()
+                    : new List<string>(),
+            }).ToList();
+        }
+        catch
+        {
+            return new List<QuizPlayQuestionDto>();
+        }
+    }
+
+    /// <summary>
+    /// Renvoie le quiz d'évaluation déjà généré pour cette épreuve, ou en
+    /// génère un nouveau à partir du contenu réel du PDF (via le service
+    /// Python /api/exam-quiz/generate) la première fois. Le quiz est ensuite
+    /// réutilisé pour toutes les tentatives suivantes  régénérer à chaque
+    /// fois donnerait des questions différentes d'une tentative à l'autre,
+    /// rendant les scores incomparables.
+    /// </summary>
+    public async Task<QuizDto> GetOrCreateExamQuizAsync(int examId)
+    {
+        var existing = await _context.Quizzes
+            .Where(q => q.ExamId == examId && !q.IsDeleted)
+            .OrderByDescending(q => q.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (existing != null)
+            return MapToDto(existing);
+
+        var exam = await _context.Exams.FirstOrDefaultAsync(e => e.Id == examId && !e.IsDeleted);
+        if (exam == null)
+            throw new KeyNotFoundException("Épreuve introuvable.");
+        if (string.IsNullOrWhiteSpace(exam.DocumentUrl))
+            throw new InvalidOperationException("Cette épreuve n'a pas de fichier PDF associé.");
+
+        var generated = await _fastApiClient.GenerateExamQuizAsync(examId, exam.DocumentUrl, exam.Title, exam.Category);
+        if (generated == null || generated.Count == 0)
+            throw new InvalidOperationException("Impossible de générer une évaluation : le contenu du PDF n'a pas pu être analysé.");
+
+        var quiz = new Quiz
+        {
+            Title = $"Évaluation  {exam.Title}",
+            Description = $"Épreuve chronométrée générée à partir du contenu de « {exam.Title} ».",
+            Subject = exam.Category ?? "Général",
+            Difficulty = exam.Difficulty ?? "moyen",
+            QuestionsJson = JsonSerializer.Serialize(generated),
+            TimeLimit = exam.DurationMinutes ?? 30,
+            PassingScore = 50,
+            SubjectId = exam.SubjectId,
+            ExamId = examId,
+            IsAIGenerated = true,
+            IsPublished = true,
+            PublishedAt = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow,
+        };
+
+        _context.Quizzes.Add(quiz);
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Quiz d'évaluation généré pour l'épreuve {ExamId} ({Count} questions)", examId, generated.Count);
+        return MapToDto(quiz);
     }
 
     private QuizAttemptDto MapAttemptToDto(QuizAttempt attempt)
