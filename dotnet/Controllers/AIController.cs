@@ -198,32 +198,27 @@ namespace Backend.Controllers;
 
         /// <summary>
         /// GET /api/ai/learning-path/{userId}
-        /// Le frontend (onglet « Mon parcours ») lit le parcours sans passer
-        /// d'objectif particulier : mêmes valeurs par défaut que
-        /// LearningPathRequest (8 semaines, 10h/semaine). Cette route
-        /// n'existait pas  seule la version POST avec objectif était exposée,
-        /// d'où le 404 systématique au clic sur « Mon parcours ».
+        /// Cette route n'existait pas (le frontend appelait déjà cette URL,
+        /// d'où un 404 systématique au clic sur « Mon parcours »). Passthrough
+        /// brut vers FastAPI plutôt qu'un appel à GeneratePersonalizedPathAsync :
+        /// ce dernier désérialise dans LearningPathResponse (weeks/goalSubject),
+        /// alors que le composant LearningPath.tsx attend le JSON natif de
+        /// GET /api/learning-path/{user_id} côté Python (phases,
+        /// learning_velocity, estimated_end_date, recommendations.*) — deux
+        /// formes incompatibles. Passer par le DTO C# renvoyait un objet vide
+        /// de son point de vue, d'où le crash "Cannot read properties of
+        /// undefined (reading 'length')" une fois le 404 corrigé.
         /// </summary>
         [HttpGet("learning-path/{userId:int}")]
-        [ProducesResponseType(typeof(LearningPathResponse), 200)]
-        [ProducesResponseType(400)]
+        [ProducesResponseType(200)]
         [ProducesResponseType(500)]
         public async Task<IActionResult> GetLearningPath(int userId)
         {
-            try
-            {
-                var response = await _aiService.GeneratePersonalizedPathAsync(userId, goalSubject: null, weeks: 8, hoursPerWeek: 10);
-                return Ok(response);
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error: {ex.Message}");
-                return StatusCode(500, new { message = "An error occurred" });
-            }
+            var json = await _fastApiClient.GetRawJsonAsync($"/api/learning-path/{userId}");
+            if (json == null)
+                return StatusCode(500, new { message = "Service IA indisponible" });
+
+            return Content(json, "application/json");
         }
 
         /// <summary>
@@ -848,7 +843,7 @@ namespace Backend.Controllers;
                 {
                     _db.StudySessions.Add(new Models.Entities.StudySession
                     {
-                        UserId = User.GetUserId(),
+                        UserId = GetCurrentUserId(),
                         SubjectId = subjectId,
                         Duration = Math.Min(durationMinutes, 240),
                         Score = score,
