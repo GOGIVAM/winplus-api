@@ -82,6 +82,10 @@ public class SubjectsController : ControllerBase
         createdAt = s.CreatedAt,
         updatedAt = s.UpdatedAt,
         isDeleted = s.IsDeleted,
+        // Nécessaire pour le "mode évaluation" (POST /quizzes/exam/{examId}) :
+        // sans cet id, le frontend n'a aucun moyen de savoir quelle épreuve
+        // précise évaluer derrière ce Subject.
+        examId = exam?.Id,
         examType = exam?.ExamType,
         level = exam?.Level,
         year = exam?.Year,

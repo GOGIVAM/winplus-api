@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 
 from services.deepseek_client import get_deepseek_client
 from auth import verify_token, UserTokenData
-from database import Database, User, QuizAttempt, DailyScore, Subject
+from database import Database, User, QuizAttempt, DailyScore, Subject, DownloadHistory, Goal, QuizMistake
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,12 @@ class SummarizeNotificationsRequest(BaseModel):
 class ContentFitRequest(BaseModel):
     user_id: int
     content_id: int
+
+
+class RevisionContentRequest(BaseModel):
+    user_id: int
+    subject: str
+    topic: Optional[str] = None
 
 
 # ─── 1. Generate smart notification ──────────────────────────────────────────
@@ -292,3 +298,109 @@ async def content_fit_analysis(
     except Exception as e:
         logger.error(f"[content-fit] error: {e}")
         raise HTTPException(status_code=500, detail="Analyse impossible pour le moment.")
+
+
+@smart_ai_router.post("/revisions/generate-content", tags=["ai"])
+async def generate_revision_content(
+    body: RevisionContentRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    """
+    Génère une fiche de révision personnalisée pour un élève, à partir de :
+      - ses erreurs récentes de quiz dans la matière (QuizMistakes)  ce qu'il
+        faut vraiment revoir, pas un résumé générique du chapitre ;
+      - les épreuves qu'il a téléchargées récemment  le niveau/contexte réel
+        de ce qu'il étudie ;
+      - ses objectifs actifs  pour orienter le ton (échéance proche = plus
+        direct et pratique).
+    Le .NET (RevisionsController) enregistre le résultat comme une nouvelle
+    Revision (IsAIGenerated=true) et l'attribue à l'élève.
+    """
+    db = Database()
+    session = db.SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - timedelta(days=60)
+
+        mistakes = (
+            session.query(QuizMistake)
+            .filter(
+                QuizMistake.UserId == body.user_id,
+                QuizMistake.Subject == body.subject,
+                QuizMistake.CreatedAt >= cutoff,
+            )
+            .order_by(QuizMistake.CreatedAt.desc())
+            .limit(10)
+            .all()
+        )
+        mistakes_text = "\n".join(
+            f"- {m.Question[:200]}"
+            + (f" (réponse donnée : {m.GivenAnswer})" if m.GivenAnswer else "")
+            + (f" (bonne réponse : {m.CorrectAnswer})" if m.CorrectAnswer else "")
+            for m in mistakes
+        ) or "Aucune erreur récente enregistrée  base-toi sur les fondamentaux du sujet."
+
+        downloads = (
+            session.query(Subject.Title)
+            .join(DownloadHistory, DownloadHistory.SubjectId == Subject.Id)
+            .filter(DownloadHistory.UserId == body.user_id)
+            .order_by(DownloadHistory.CreatedAt.desc())
+            .limit(5)
+            .all()
+        )
+        downloads_text = ", ".join(d[0] for d in downloads) or "aucune épreuve téléchargée récemment"
+
+        goals = (
+            session.query(Goal)
+            .filter(Goal.UserId == body.user_id, Goal.Status == "active")
+            .order_by(Goal.TargetDate.asc())
+            .limit(3)
+            .all()
+        )
+        goals_text = "; ".join(g.Title for g in goals if g.Title) or "aucun objectif défini"
+    finally:
+        session.close()
+
+    topic_line = f"Sous-thème demandé : {body.topic}\n" if body.topic else ""
+    prompt = (
+        f"Tu es WinAI, professeur particulier pour un lycéen camerounais préparant ses examens.\n"
+        f"Rédige une fiche de révision personnalisée en {body.subject}.\n"
+        f"{topic_line}\n"
+        f"Erreurs récentes de l'élève dans cette matière :\n{mistakes_text}\n\n"
+        f"Épreuves récemment téléchargées (contexte de niveau) : {downloads_text}\n"
+        f"Objectifs actifs de l'élève : {goals_text}\n\n"
+        f"Concentre la fiche sur ce que l'élève a réellement raté, pas un résumé générique du "
+        f"programme. Réponds UNIQUEMENT en JSON (sans balises markdown autour) :\n"
+        "{\n"
+        '  "title": "...",  // court, spécifique au sous-thème réellement travaillé\n'
+        '  "content_markdown": "...",  // fiche complète en Markdown : ## sections, explications, '
+        'exemples chiffrés, astuces méthode  400 à 700 mots\n'
+        '  "difficulty": "easy" | "medium" | "hard",\n'
+        '  "estimated_duration_minutes": 15\n'
+        "}"
+    )
+
+    try:
+        client = get_deepseek_client()
+        result = client.chat(
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=1800,
+            temperature=0.5,
+        )
+        content = result.get("content", "").strip()
+        if content.startswith("```"):
+            lines = content.split("\n")
+            content = "\n".join(lines[1:]).rstrip("`").strip()
+
+        import json as _json
+        data = _json.loads(content)
+
+        return {
+            "success": True,
+            "title": str(data.get("title") or f"Révision  {body.subject}")[:255],
+            "content_markdown": str(data.get("content_markdown") or ""),
+            "difficulty": data.get("difficulty") if data.get("difficulty") in ("easy", "medium", "hard") else "medium",
+            "estimated_duration_minutes": int(data.get("estimated_duration_minutes") or 15),
+        }
+    except Exception as e:
+        logger.error(f"[revision-content] error: {e}")
+        raise HTTPException(status_code=500, detail="Génération de la fiche impossible pour le moment.")

@@ -425,6 +425,52 @@ public class FastApiClient : IFastApiClient
         }
     }
 
+    private class ExamQuizGenerationResult
+    {
+        public bool Success { get; set; }
+        public ExamQuizData? Data { get; set; }
+        public string? Error { get; set; }
+    }
+
+    private class ExamQuizData
+    {
+        public List<QuizQuestionDto>? Questions { get; set; }
+    }
+
+    /// <summary>
+    /// Génère les questions du "mode évaluation" à partir du texte réel
+    /// extrait du PDF de l'épreuve (voir python/routes/exam_quiz_routes.py).
+    /// </summary>
+    public async Task<List<QuizQuestionDto>?> GenerateExamQuizAsync(int examId, string documentUrl, string title, string? category)
+    {
+        try
+        {
+            _logger.LogInformation("Génération du quiz d'évaluation pour l'épreuve {ExamId}", examId);
+
+            var request = new
+            {
+                exam_id = examId,
+                document_url = documentUrl,
+                title,
+                category,
+            };
+
+            var result = await PostAsync<ExamQuizGenerationResult>("/api/exam-quiz/generate", request);
+            if (result == null || !result.Success || result.Data?.Questions == null || result.Data.Questions.Count == 0)
+            {
+                _logger.LogWarning("Génération du quiz d'évaluation échouée pour l'épreuve {ExamId} : {Error}", examId, result?.Error);
+                return null;
+            }
+
+            return result.Data.Questions;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur lors de la génération du quiz d'évaluation pour l'épreuve {ExamId}", examId);
+            return null;
+        }
+    }
+
     /// <summary>
     /// Obtenir les métriques de performance
     /// </summary>

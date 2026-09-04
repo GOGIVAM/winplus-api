@@ -185,6 +185,32 @@ public class QuizzesController : ControllerBase
     }
 
     /// <summary>
+    /// « Mode évaluation » : récupère le quiz chronométré rattaché à cette
+    /// épreuve précise, généré à partir du contenu réel du PDF s'il n'existe
+    /// pas encore. Les tentatives suivantes réutilisent le même quiz.
+    /// </summary>
+    [HttpPost("exam/{examId}")]
+    [ProducesResponseType(typeof(QuizDto), 200)]
+    [ProducesResponseType(404)]
+    [ProducesResponseType(422)]
+    public async Task<ActionResult<QuizDto>> GetOrCreateExamQuiz(int examId)
+    {
+        try
+        {
+            var quiz = await _quizService.GetOrCreateExamQuizAsync(examId);
+            return Ok(quiz);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return UnprocessableEntity(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
     /// Crée un nouveau quiz (Admin only)
     /// </summary>
     [Authorize(Roles = "Admin")]
