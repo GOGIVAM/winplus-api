@@ -1,8 +1,10 @@
+using Backend.Data;
 using Backend.Models.DTOs;
 using Backend.Services;
 using Microsoft.AspNetCore.Mvc;
 using Backend.Extensions;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Controllers;
 
@@ -15,10 +17,16 @@ namespace Backend.Controllers;
 public class RevisionsController : ControllerBase
 {
     private readonly IRevisionService _revisionService;
+    private readonly ApplicationDbContext _context;
+    private readonly IStorageService _storage;
+    private readonly ILogger<RevisionsController> _logger;
 
-    public RevisionsController(IRevisionService revisionService)
+    public RevisionsController(IRevisionService revisionService, ApplicationDbContext context, IStorageService storage, ILogger<RevisionsController> logger)
     {
         _revisionService = revisionService;
+        _context = context;
+        _storage = storage;
+        _logger = logger;
     }
 
     /// <summary>
@@ -311,6 +319,78 @@ public class RevisionsController : ControllerBase
 
         var enrollments = await _revisionService.AssignRevisionsBasedOnScoresAsync(userId);
         return Ok(enrollments);
+    }
+
+    /// <summary>
+    /// Génère une fiche de révision personnalisée par IA pour l'utilisateur
+    /// courant (erreurs de quiz récentes, épreuves téléchargées, objectifs
+    /// actifs) et l'y inscrit aussitôt.
+    /// </summary>
+    [HttpPost("me/generate")]
+    [ProducesResponseType(typeof(RevisionDto), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(503)]
+    public async Task<ActionResult<RevisionDto>> GenerateRevision([FromBody] GenerateRevisionRequestDto? request)
+    {
+        var userId = GetUserId();
+        if (userId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        try
+        {
+            var revision = await _revisionService.GenerateAIRevisionAsync(userId, request?.Subject, request?.Topic);
+            return Ok(revision);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(503, new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Diffuse le document (PDF) d'une fiche de révision en ligne, comme
+    /// SubjectsController.ViewStream pour une épreuve  jamais de lien S3 direct
+    /// (privé depuis le retrait des ACL publiques), toujours via ce proxy
+    /// authentifié.
+    /// </summary>
+    [HttpGet("{id}/document")]
+    public async Task<IActionResult> ViewDocument(int id)
+    {
+        var revision = await _context.Revisions.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == id && !r.IsDeleted);
+
+        if (revision == null || string.IsNullOrWhiteSpace(revision.DocumentUrl))
+            return NotFound(new { error = "Aucun document pour cette fiche." });
+
+        if (!revision.IsPublished)
+            return Forbid();
+
+        try
+        {
+            var bucket = _storage.Bucket;
+            var s3Key = ExtractS3Key(revision.DocumentUrl, bucket);
+
+            using var s3 = _storage.CreateS3Client();
+            using var obj = await s3.GetObjectAsync(bucket, s3Key);
+
+            var buffer = new MemoryStream();
+            await obj.ResponseStream.CopyToAsync(buffer);
+            buffer.Position = 0;
+
+            return File(buffer, "application/pdf");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur lors du streaming du document de la fiche {RevisionId}", id);
+            return StatusCode(500, new { error = "Impossible de charger le document pour le moment." });
+        }
+    }
+
+    private static string ExtractS3Key(string documentUrl, string bucket)
+    {
+        if (documentUrl.StartsWith("s3://") || documentUrl.StartsWith("http"))
+            return new Uri(documentUrl).AbsolutePath.TrimStart('/');
+        return documentUrl;
     }
 
     private int GetUserId()
