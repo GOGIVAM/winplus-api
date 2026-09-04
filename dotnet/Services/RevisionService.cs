@@ -494,6 +494,8 @@ public class RevisionService : IRevisionService
             CreatedAt = revision.CreatedAt,
             UpdatedAt = revision.UpdatedAt,
             PublishedAt = revision.PublishedAt,
+            Difficulty = revision.Difficulty,
+            IsAIGenerated = revision.IsAIGenerated,
         };
     }
 }

@@ -37,6 +37,13 @@ public interface IFastApiClient
     Task<QuizGenerationResponse> GenerateQuizAsync(int userId, int subjectId, int questionCount, string difficulty);
     Task<PerformanceMetricsResponse> GetPerformanceAsync(int userId, string timePeriod);
     Task<LearningPathResponse> GenerateLearningPathAsync(int userId, string goalSubject, int weeks, int hoursPerWeek);
+
+    /// <summary>
+    /// Génère les questions du "mode évaluation" à partir du contenu réel du
+    /// PDF de l'épreuve (extraction de texte + LLM côté Python). Renvoie
+    /// null si le service est indisponible ou si le PDF n'a pas pu être lu.
+    /// </summary>
+    Task<List<QuizQuestionDto>?> GenerateExamQuizAsync(int examId, string documentUrl, string title, string? category);
 }
 
 public class FastApiClient : IFastApiClient
