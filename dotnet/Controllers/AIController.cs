@@ -816,16 +816,14 @@ namespace Backend.Controllers;
 
         /// <summary>
         /// POST /api/ai/study-session/complete
-        /// Proxy → Python /api/study-session/complete
-        ///
-        /// La session (temps, score) n'existait que côté Python : la table
-        /// StudySessions du .NET, seule lue par les statistiques du tableau
-        /// de bord (GetProfileStatistics, StudentReportsController...),
-        /// restait vide même après une session guidée entièrement terminée.
-        /// On l'enregistre donc aussi ici, en plus du proxy Python.
+        /// Proxy → Python /api/study-session/complete, qui insère déjà la
+        /// ligne StudySessions (table partagée par les deux services  voir
+        /// python/database.py, StudySession.__tablename__ = 'StudySessions').
+        /// Pas de double écriture ici : elle créerait une ligne en double à
+        /// chaque session terminée.
         /// </summary>
         [HttpPost("study-session/complete")]
-        public async Task<IActionResult> StudySessionComplete([FromBody] System.Text.Json.JsonElement body, CancellationToken ct)
+        public async Task<IActionResult> StudySessionComplete([FromBody] object body, CancellationToken ct)
         {
             var httpClient = _httpClientFactory.CreateClient("FastApiClient");
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/study-session/complete");
@@ -834,33 +832,6 @@ namespace Backend.Controllers;
             if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
             var res = await httpClient.SendAsync(req, ct);
             var content = await res.Content.ReadAsStringAsync(ct);
-
-            try
-            {
-                var subjectId = body.TryGetProperty("subject_id", out var sidEl) ? sidEl.GetInt32() : 0;
-                var durationMinutes = body.TryGetProperty("duration_minutes", out var durEl) ? durEl.GetInt32() : 0;
-                decimal? score = body.TryGetProperty("score", out var scoreEl) && scoreEl.ValueKind == System.Text.Json.JsonValueKind.Number
-                    ? scoreEl.GetDecimal() : null;
-
-                if (durationMinutes > 0)
-                {
-                    _db.StudySessions.Add(new Models.Entities.StudySession
-                    {
-                        UserId = GetCurrentUserId(),
-                        SubjectId = subjectId,
-                        Duration = Math.Min(durationMinutes, 240),
-                        Score = score,
-                        CompletedAt = DateTime.UtcNow,
-                        CreatedAt = DateTime.UtcNow,
-                    });
-                    await _db.SaveChangesAsync();
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Impossible d'enregistrer la StudySession locale après une session guidée");
-            }
-
             return Content(content, "application/json");
         }
 
