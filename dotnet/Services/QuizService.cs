@@ -12,11 +12,15 @@ namespace Backend.Services;
 public class QuizService : IQuizService
 {
     private readonly ApplicationDbContext _context;
+    private readonly IFastApiClient _fastApiClient;
+    private readonly ILogger<QuizService> _logger;
     private const double PASSING_SCORE = 50.0;
 
-    public QuizService(ApplicationDbContext context)
+    public QuizService(ApplicationDbContext context, IFastApiClient fastApiClient, ILogger<QuizService> logger)
     {
         _context = context;
+        _fastApiClient = fastApiClient;
+        _logger = logger;
     }
 
     public async Task<QuizDto?> GetQuizByIdAsync(int id)

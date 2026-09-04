@@ -147,6 +147,13 @@ public class Revision
 
     public DateTime? PublishedAt { get; set; }
 
+    /// <summary>
+    /// Contenu généré par WinAI (à partir des épreuves téléchargées, des
+    /// objectifs et des lacunes réelles de l'élève), par opposition à une
+    /// fiche écrite par un professeur/parent (CreatedByUserId renseigné).
+    /// </summary>
+    public bool IsAIGenerated { get; set; } = false;
+
     // Relations
     [ForeignKey(nameof(SubjectId))]
     public virtual Subject? Subject_Reference { get; set; }

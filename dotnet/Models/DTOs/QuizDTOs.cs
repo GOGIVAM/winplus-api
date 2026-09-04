@@ -22,6 +22,23 @@ public class QuizDto
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
     public DateTime? PublishedAt { get; set; }
+
+    /// <summary>
+    /// Questions à afficher pour PASSER le quiz (sans correctAnswer/explanation,
+    /// révélés seulement après soumission via QuizQuestionResultDto). Absent
+    /// jusqu'ici : QuestionsJson n'était jamais reparsé dans MapToDto, donc
+    /// tout composant qui lisait `quiz.questions` recevait toujours un
+    /// tableau vide malgré des questions réellement enregistrées.
+    /// </summary>
+    public List<QuizPlayQuestionDto> Questions { get; set; } = new();
+}
+
+/// <summary>Question telle qu'exposée pendant le passage du quiz (pas de réponse correcte).</summary>
+public class QuizPlayQuestionDto
+{
+    public string Id { get; set; } = null!;
+    public string Question { get; set; } = null!;
+    public List<string> Options { get; set; } = new();
 }
 
 public class QuizQuestionDto
