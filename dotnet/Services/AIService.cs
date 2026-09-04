@@ -14,7 +14,7 @@ namespace Backend.Services;
     {
         Task<RecommendationResponse> GetRecommendationsAsync(int userId, int count, string preferenceLevel, string category);
         Task<ProgressAnalysisResponse> AnalyzeProgressAsync(int userId, int subjectId, string depth);
-        Task<QuizGenerationResponse> GenerateQuizAsync(int userId, int subjectId, int questionCount, string difficulty);
+        Task<QuizGenerationResponse> GenerateQuizAsync(int userId, int subjectId, string subjectName, int questionCount, string difficulty);
         Task<PerformanceMetricsResponse> GetPerformanceMetricsAsync(int userId, string timePeriod = "7days");
         Task<LearningPathResponse> GeneratePersonalizedPathAsync(int userId, string goalSubject, int weeks, int hoursPerWeek);
     }
@@ -50,12 +50,12 @@ namespace Backend.Services;
             return await _fastapiClient.AnalyzeProgressAsync(userId, subjectId, depth);
         }
 
-        public async Task<QuizGenerationResponse> GenerateQuizAsync(int userId, int subjectId, int questionCount, string difficulty)
+        public async Task<QuizGenerationResponse> GenerateQuizAsync(int userId, int subjectId, string subjectName, int questionCount, string difficulty)
         {
             if (userId <= 0) throw new ArgumentException("Invalid user ID");
             if (questionCount <= 0 || questionCount > 100) throw new ArgumentException("Question count must be between 1 and 100");
             _logger.LogInformation($"Generating {questionCount} quiz questions for user {userId}, subject {subjectId}");
-            return await _fastapiClient.GenerateQuizAsync(userId, subjectId, questionCount, difficulty);
+            return await _fastapiClient.GenerateQuizAsync(userId, subjectId, subjectName, questionCount, difficulty);
         }
 
         public async Task<PerformanceMetricsResponse> GetPerformanceMetricsAsync(int userId, string timePeriod = "7days")

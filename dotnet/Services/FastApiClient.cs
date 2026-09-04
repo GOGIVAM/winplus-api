@@ -1,6 +1,8 @@
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Backend.Models.DTOs;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
@@ -34,7 +36,7 @@ public interface IFastApiClient
     // Méthodes métier
     Task<RecommendationResponse> GetRecommendationsAsync(int userId, string preferenceLevel, string category);
     Task<ProgressAnalysisResponse> AnalyzeProgressAsync(int userId, int subjectId, string depth);
-    Task<QuizGenerationResponse> GenerateQuizAsync(int userId, int subjectId, int questionCount, string difficulty);
+    Task<QuizGenerationResponse> GenerateQuizAsync(int userId, int subjectId, string subjectName, int questionCount, string difficulty);
     Task<PerformanceMetricsResponse> GetPerformanceAsync(int userId, string timePeriod);
     Task<LearningPathResponse> GenerateLearningPathAsync(int userId, string goalSubject, int weeks, int hoursPerWeek);
 
@@ -442,6 +444,7 @@ public class FastApiClient : IFastApiClient
     public async Task<QuizGenerationResponse> GenerateQuizAsync(
         int userId,
         int subjectId,
+        string subjectName,
         int questionCount,
         string difficulty)
     {
@@ -449,23 +452,61 @@ public class FastApiClient : IFastApiClient
         {
             _logger.LogInformation("Génération de quiz pour l'utilisateur {UserId}, sujet {SubjectId}", userId, subjectId);
 
+            // ⚠ Route corrigée : POST /api/generate-quiz n'existe pas côté
+            // FastAPI, qui expose /api/adaptive-quiz (app.py). Cette route
+            // attend le nom de la matière (pas son id) et un palier
+            // "remediation | consolidation | stretch" plutôt qu'une difficulté
+            // libre ; on approxime ce palier à partir de la difficulté demandée.
+            // Sa réponse est en snake_case et ne colle pas au DTO
+            // QuizGenerationResponse : on la parse donc à la main ci-dessous.
+            var mode = (difficulty ?? "").Trim().ToLowerInvariant() switch
+            {
+                "easy" or "facile" => "remediation",
+                "hard" or "difficile" => "stretch",
+                _ => "consolidation",
+            };
+
             var request = new
             {
                 user_id = userId,
-                subject_id = subjectId,
-                number_of_questions = questionCount,
-                difficulty = difficulty
+                subject = subjectName,
+                count = Math.Clamp(questionCount, 3, 20),
+                mode
             };
 
-            var response = await PostAsync<QuizGenerationResponse>("/api/generate-quiz", request);
-            
-            if (response == null)
+            var raw = await PostAsync<JsonObject>("/api/adaptive-quiz", request);
+
+            if (raw == null || raw["questions"] is not JsonArray questionsJson)
             {
                 _logger.LogWarning("Quiz non généré, utilisation fallback");
                 return GetDefaultQuizResponse(userId, subjectId);
             }
 
-            _logger.LogInformation("✓ Quiz généré avec {Count} questions", response.Questions?.Count ?? 0);
+            var questions = questionsJson
+                .OfType<JsonObject>()
+                .Select(q => new QuizQuestion
+                {
+                    QuestionId = q["id"]?.GetValue<int>() ?? 0,
+                    QuestionText = q["question"]?.GetValue<string>() ?? "",
+                    QuestionType = "multiple-choice",
+                    Options = q["options"]?.AsArray().Select(o => o?.GetValue<string>() ?? "").ToList() ?? new List<string>(),
+                    Difficulty = q["difficulty"]?.GetValue<string>() ?? difficulty,
+                    CorrectAnswer = q["correct_answer"]?.GetValue<string>() ?? "",
+                    Explanation = q["explanation"]?.GetValue<string>() ?? "",
+                })
+                .ToList();
+
+            var response = new QuizGenerationResponse
+            {
+                QuizId = 0, // quiz généré à la volée, non persisté côté Python
+                UserId = userId,
+                SubjectId = subjectId,
+                Questions = questions,
+                EstimatedDurationMinutes = Math.Max(1, questions.Count * 2),
+                CreatedAt = DateTime.UtcNow,
+            };
+
+            _logger.LogInformation("✓ Quiz généré avec {Count} questions", questions.Count);
             return response;
         }
         catch (Exception ex)

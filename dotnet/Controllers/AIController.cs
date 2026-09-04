@@ -117,9 +117,19 @@ namespace Backend.Controllers;
                 if (!ModelState.IsValid)
                     return BadRequest(ModelState);
 
+                // La route Python n'attend pas un SubjectId mais le nom de la
+                // matière (utilisé tel quel dans le prompt LLM) : on le résout
+                // ici plutôt que de le faire porter par FastApiClient, qui n'a
+                // pas accès à la base.
+                var subjectName = await _db.Subjects
+                    .Where(s => s.Id == request.SubjectId)
+                    .Select(s => s.Category)
+                    .FirstOrDefaultAsync() ?? "";
+
                 var response = await _aiService.GenerateQuizAsync(
                     request.UserId,
                     request.SubjectId,
+                    subjectName,
                     request.NumberOfQuestions,
                     request.Difficulty);
 
