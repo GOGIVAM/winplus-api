@@ -37,6 +37,21 @@ public class ProfileStatisticsResponse
     public double AverageScore { get; set; }
     public int TotalTimeSeconds { get; set; }
     public int QuizCompleted { get; set; }
+
+    // Cartes KPI du tableau de bord élève (Dashboard.jsx / Student.tsx).
+    // Absentes jusqu'ici : le frontend les lisait déjà, mais l'API ne les
+    // renvoyait pas, d'où des cartes vides malgré une activité réelle.
+    public int? ScoreDelta { get; set; }
+    public int TotalDownloads { get; set; }
+    public int WeeklyDownloads { get; set; }
+    public List<int> WeeklyDownloadTrend { get; set; } = new();
+    public string StudyTimeFormatted { get; set; } = "0 min";
+    public string? StudyGoal { get; set; }
+    public int CurrentStreak { get; set; }
+    public int LongestStreak { get; set; }
+    public List<int> StreakTrend { get; set; } = new();
+    public List<double> WeeklyStudyHours { get; set; } = new();
+    public List<double> MonthlyScores { get; set; } = new();
 }
 
 public class ProfileSubscriptionDto

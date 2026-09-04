@@ -155,4 +155,27 @@ public class StudentReportsController : ControllerBase
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }
+
+    /// <summary>Retire une épreuve de l'historique de téléchargements de l'élève.</summary>
+    [HttpDelete("download-history/{id:int}")]
+    public async Task<IActionResult> DeleteDownloadHistory(int id)
+    {
+        try
+        {
+            var userId = User.GetUserId();
+            var entry = await _db.DownloadHistories.FirstOrDefaultAsync(d => d.Id == id && d.UserId == userId);
+            if (entry == null)
+                return NotFound(new { success = false, error = "Téléchargement introuvable." });
+
+            _db.DownloadHistories.Remove(entry);
+            await _db.SaveChangesAsync();
+
+            return Ok(new { success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting download history {Id}", id);
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
 }
