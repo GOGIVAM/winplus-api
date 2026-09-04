@@ -22,9 +22,8 @@ public class RevisionDto
     public DateTime? UpdatedAt { get; set; }
     public DateTime? PublishedAt { get; set; }
     public string? Difficulty { get; set; }
-    /// <summary>Source du contenu : générée par WinAI, ou écrite par un prof/parent (CreatedByName).</summary>
+    /// <summary>Générée par WinAI (true) ou attribuée par un prof/parent (false).</summary>
     public bool IsAIGenerated { get; set; }
-    public string? CreatedByName { get; set; }
 }
 
 public class CreateRevisionRequestDto
