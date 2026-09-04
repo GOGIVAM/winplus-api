@@ -295,21 +295,47 @@ public class UsersController : ControllerBase
                 return slice.Count == 0 ? 0.0 : Math.Round((double)slice.Average(a => a.Score) / 5.0, 1);
             }).ToList();
 
-            // Temps d'étude : StudySessions.Duration est en minutes (même
-            // source que StudentReportsController.GetReport, pour cohérence).
-            var totalStudyMinutes = await _db.StudySessions
-                .Where(s => s.UserId == userId)
-                .SumAsync(s => (int?)s.Duration) ?? 0;
-            var totalTimeSeconds = totalStudyMinutes * 60;
+            // Temps d'étude : combine toutes les activités qui représentent du
+            // temps réel passé à étudier, chacune datée par le jour où elle a
+            // eu lieu (pour le total ET la répartition par jour) :
+            //   - StudySessions      : sessions guidées + consultations de PDF
+            //                          (voir StudySessionComplete/LogStudyTime)
+            //   - QuizAttempts       : TimeSpentSeconds, déjà enregistré par quiz
+            //   - RevisionEnrollments: durée réelle (CompletedAt - StartedAt),
+            //                          ou à défaut la durée estimée de la fiche
+            var studyEvents = new List<(DateTime Day, int Minutes)>();
 
-            var weekSessions = await _db.StudySessions
-                .Where(s => s.UserId == userId && s.CreatedAt >= today.AddDays(-6))
+            var sessions = await _db.StudySessions
+                .Where(s => s.UserId == userId)
                 .Select(s => new { s.CreatedAt, s.Duration })
                 .ToListAsync();
+            studyEvents.AddRange(sessions.Select(s => (s.CreatedAt.Date, s.Duration)));
+
+            var quizTimes = await _db.QuizAttempts
+                .Where(a => a.UserId == userId && a.TimeSpentSeconds != null && a.TimeSpentSeconds > 0)
+                .Select(a => new { a.CompletedAt, a.TimeSpentSeconds })
+                .ToListAsync();
+            studyEvents.AddRange(quizTimes.Select(a => (a.CompletedAt.Date, (a.TimeSpentSeconds!.Value + 59) / 60)));
+
+            var revisionTimes = await _db.RevisionEnrollments
+                .Where(r => r.UserId == userId && r.CompletedAt != null)
+                .Select(r => new { r.StartedAt, r.CompletedAt, RevisionMinutes = r.Revision != null ? r.Revision.DurationMinutes : null })
+                .ToListAsync();
+            studyEvents.AddRange(revisionTimes.Select(r =>
+            {
+                var minutes = r.StartedAt != null
+                    ? Math.Max(1, (int)Math.Round((r.CompletedAt!.Value - r.StartedAt.Value).TotalMinutes))
+                    : (r.RevisionMinutes ?? 0);
+                return (r.CompletedAt!.Value.Date, minutes);
+            }).Where(e => e.Item2 > 0));
+
+            var totalStudyMinutes = studyEvents.Sum(e => e.Minutes);
+            var totalTimeSeconds = totalStudyMinutes * 60;
+
             var weeklyStudyHours = Enumerable.Range(0, 7).Select(offset =>
             {
                 var day = today.AddDays(-6 + offset);
-                var mins = weekSessions.Where(s => s.CreatedAt.Date == day).Sum(s => s.Duration);
+                var mins = studyEvents.Where(e => e.Day == day).Sum(e => e.Minutes);
                 return Math.Round(mins / 60.0, 1);
             }).ToList();
 

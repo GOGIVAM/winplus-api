@@ -178,4 +178,41 @@ public class StudentReportsController : ControllerBase
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }
+
+    public record LogStudyTimeRequest(int? SubjectId, int DurationMinutes);
+
+    /// <summary>
+    /// Enregistre du temps d'étude passif (consultation d'une épreuve dans la
+    /// visionneuse, par ex.) dans StudySessions  la seule table lue pour
+    /// "Temps d'étude" et la série de jours actifs. Bornée à 4h par appel
+    /// pour éviter qu'un onglet resté ouvert ne gonfle artificiellement le
+    /// total ; les appels de durée nulle ou négative sont ignorés en silence.
+    /// </summary>
+    [HttpPost("study-time")]
+    public async Task<IActionResult> LogStudyTime([FromBody] LogStudyTimeRequest request)
+    {
+        try
+        {
+            if (request.DurationMinutes <= 0)
+                return Ok(new { success = true });
+
+            var userId = User.GetUserId();
+            _db.StudySessions.Add(new Backend.Models.Entities.StudySession
+            {
+                UserId = userId,
+                SubjectId = request.SubjectId ?? 0,
+                Duration = Math.Min(request.DurationMinutes, 240),
+                CompletedAt = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync();
+
+            return Ok(new { success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error logging study time");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
 }
