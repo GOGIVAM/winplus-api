@@ -357,6 +357,7 @@ public class UsersController : ControllerBase
             foreach (var d in attempts.Where(a => a.CompletedAt >= sinceStreak).Select(a => a.CompletedAt.Date)) activeDates.Add(d);
             foreach (var d in await _db.StudySessions.Where(s => s.UserId == userId && s.CreatedAt >= sinceStreak).Select(s => s.CreatedAt.Date).ToListAsync()) activeDates.Add(d);
             foreach (var d in await _db.DownloadHistories.Where(x => x.UserId == userId && x.CreatedAt >= sinceStreak).Select(x => x.CreatedAt.Date).ToListAsync()) activeDates.Add(d);
+            foreach (var d in revisionTimes.Where(r => r.CompletedAt >= sinceStreak).Select(r => r.CompletedAt!.Value.Date)) activeDates.Add(d);
 
             var currentStreak = 0;
             var cursor = activeDates.Contains(today) ? today : today.AddDays(-1);

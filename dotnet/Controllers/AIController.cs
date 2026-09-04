@@ -25,13 +25,15 @@ namespace Backend.Controllers;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<AIController> _logger;
         private readonly ApplicationDbContext _db;
+        private readonly IFastApiClient _fastApiClient;
 
-        public AIController(IAIService aiService, IHttpClientFactory httpClientFactory, ILogger<AIController> logger, ApplicationDbContext db)
+        public AIController(IAIService aiService, IHttpClientFactory httpClientFactory, ILogger<AIController> logger, ApplicationDbContext db, IFastApiClient fastApiClient)
         {
             _aiService = aiService ?? throw new ArgumentNullException(nameof(aiService));
             _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _db = db ?? throw new ArgumentNullException(nameof(db));
+            _fastApiClient = fastApiClient ?? throw new ArgumentNullException(nameof(fastApiClient));
         }
 
         private int GetCurrentUserId()

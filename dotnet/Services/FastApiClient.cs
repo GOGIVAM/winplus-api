@@ -20,6 +20,14 @@ public interface IFastApiClient
     // Méthodes génériques
     Task<T?> GetAsync<T>(string endpoint) where T : class;
     Task<T?> PostAsync<T>(string endpoint, object data) where T : class;
+
+    /// <summary>
+    /// GET brut : renvoie le corps JSON tel quel, sans le désérialiser dans un
+    /// DTO C#. Nécessaire quand la forme exacte de la réponse Python (clés
+    /// snake_case, structure imbriquée) doit atteindre le frontend intacte —
+    /// voir GetLearningPath dans AIController.
+    /// </summary>
+    Task<string?> GetRawJsonAsync(string endpoint);
     Task<bool> HealthCheckAsync();
     
     // Méthodes métier
@@ -185,6 +193,37 @@ public class FastApiClient : IFastApiClient
         catch (Exception ex)
         {
             _logger.LogError(ex, " Erreur GET FastApi API {Endpoint}", endpoint);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// GET brut, sans désérialisation typée  voir IFastApiClient.GetRawJsonAsync.
+    /// </summary>
+    public async Task<string?> GetRawJsonAsync(string endpoint)
+    {
+        try
+        {
+            return await _circuitBreakerPolicy.ExecuteAsync(async () =>
+                await _retryPolicy.ExecuteAsync(async () =>
+                {
+                    using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+                    AttachAuthorization(request);
+
+                    var response = await _httpClient.SendAsync(request);
+                    response.EnsureSuccessStatusCode();
+
+                    return await response.Content.ReadAsStringAsync();
+                }));
+        }
+        catch (BrokenCircuitException ex)
+        {
+            _logger.LogError(ex, " Circuit ouvert: FastApi API indisponible pour {Endpoint}", endpoint);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, " Erreur GET brut FastApi API {Endpoint}", endpoint);
             return null;
         }
     }
