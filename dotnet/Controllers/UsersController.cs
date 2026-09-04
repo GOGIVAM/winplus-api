@@ -255,6 +255,8 @@ public class UsersController : ControllerBase
         try
         {
             var userId = User.GetUserId();
+            var today = DateTime.UtcNow.Date;
+            var weekAgo = today.AddDays(-7);
 
             var totalCoursesEnrolled = await _db.Enrollments
                 .CountAsync(e => e.UserId == userId);
@@ -262,25 +264,117 @@ public class UsersController : ControllerBase
             var completedCourses = await _db.Enrollments
                 .CountAsync(e => e.UserId == userId && e.IsCompleted);
 
-            var avgScore = await _db.LearningHistories
-                .Where(h => h.UserId == userId && h.QuizScore != null)
-                .Select(h => (double?)h.QuizScore)
-                .AverageAsync() ?? 0.0;
+            // Score moyen : QuizAttempts est la vraie source d'activité de quiz
+            // (0-100, ramené sur 20 pour l'affichage "X / 20"). L'ancien calcul
+            // lisait LearningHistories.QuizScore, un champ presque toujours vide
+            // (alimenté uniquement par le flux ExamCoach) : la carte "Score
+            // moyen" affichait 0 même pour un élève actif en quiz.
+            var attempts = await _db.QuizAttempts
+                .AsNoTracking()
+                .Where(a => a.UserId == userId && a.IsCompleted)
+                .Select(a => new { a.Score, a.CompletedAt })
+                .ToListAsync();
 
-            var totalTimeSeconds = await _db.LearningHistories
-                .Where(h => h.UserId == userId && h.TimeSpentSeconds != null)
-                .SumAsync(h => (int?)h.TimeSpentSeconds) ?? 0;
+            var avgScore100 = attempts.Count == 0 ? 0.0 : (double)attempts.Average(a => a.Score);
+            var averageScore = Math.Round(avgScore100 / 5.0, 1);
+            var quizCompleted = attempts.Count;
 
-            var quizCompleted = await _db.LearningHistories
-                .CountAsync(h => h.UserId == userId && h.ActivityType == "quiz_attempt");
+            var recentAttempts = attempts.Where(a => a.CompletedAt >= weekAgo).ToList();
+            var priorAttempts  = attempts.Where(a => a.CompletedAt < weekAgo && a.CompletedAt >= weekAgo.AddDays(-7)).ToList();
+            int? scoreDelta = recentAttempts.Count > 0 && priorAttempts.Count > 0
+                ? (int)Math.Round((double)(recentAttempts.Average(a => a.Score) - priorAttempts.Average(a => a.Score)) / 5.0)
+                : null;
+
+            var sixMonthsAgo = new DateTime(today.Year, today.Month, 1).AddMonths(-5);
+            var scoredForMonths = attempts.Where(a => a.CompletedAt >= sixMonthsAgo).ToList();
+            var monthlyScores = Enumerable.Range(0, 6).Select(offset =>
+            {
+                var monthStart = new DateTime(today.Year, today.Month, 1).AddMonths(-5 + offset);
+                var monthEnd = monthStart.AddMonths(1);
+                var slice = scoredForMonths.Where(a => a.CompletedAt >= monthStart && a.CompletedAt < monthEnd).ToList();
+                return slice.Count == 0 ? 0.0 : Math.Round((double)slice.Average(a => a.Score) / 5.0, 1);
+            }).ToList();
+
+            // Temps d'étude : StudySessions.Duration est en minutes (même
+            // source que StudentReportsController.GetReport, pour cohérence).
+            var totalStudyMinutes = await _db.StudySessions
+                .Where(s => s.UserId == userId)
+                .SumAsync(s => (int?)s.Duration) ?? 0;
+            var totalTimeSeconds = totalStudyMinutes * 60;
+
+            var weekSessions = await _db.StudySessions
+                .Where(s => s.UserId == userId && s.CreatedAt >= today.AddDays(-6))
+                .Select(s => new { s.CreatedAt, s.Duration })
+                .ToListAsync();
+            var weeklyStudyHours = Enumerable.Range(0, 7).Select(offset =>
+            {
+                var day = today.AddDays(-6 + offset);
+                var mins = weekSessions.Where(s => s.CreatedAt.Date == day).Sum(s => s.Duration);
+                return Math.Round(mins / 60.0, 1);
+            }).ToList();
+
+            // Téléchargements
+            var totalDownloads = await _db.DownloadHistories.CountAsync(d => d.UserId == userId);
+            var weeklyDownloads = await _db.DownloadHistories.CountAsync(d => d.UserId == userId && d.CreatedAt >= weekAgo);
+            var weekDownloadDates = await _db.DownloadHistories
+                .Where(d => d.UserId == userId && d.CreatedAt >= today.AddDays(-6))
+                .Select(d => d.CreatedAt.Date)
+                .ToListAsync();
+            var weeklyDownloadTrend = Enumerable.Range(0, 7)
+                .Select(offset => weekDownloadDates.Count(d => d == today.AddDays(-6 + offset)))
+                .ToList();
+
+            // Série de jours actifs : quiz, session d'étude ou téléchargement
+            // comptent tous comme un jour "étudié", sur une fenêtre de 180 jours.
+            var sinceStreak = today.AddDays(-180);
+            var activeDates = new HashSet<DateTime>();
+            foreach (var d in attempts.Where(a => a.CompletedAt >= sinceStreak).Select(a => a.CompletedAt.Date)) activeDates.Add(d);
+            foreach (var d in await _db.StudySessions.Where(s => s.UserId == userId && s.CreatedAt >= sinceStreak).Select(s => s.CreatedAt.Date).ToListAsync()) activeDates.Add(d);
+            foreach (var d in await _db.DownloadHistories.Where(x => x.UserId == userId && x.CreatedAt >= sinceStreak).Select(x => x.CreatedAt.Date).ToListAsync()) activeDates.Add(d);
+
+            var currentStreak = 0;
+            var cursor = activeDates.Contains(today) ? today : today.AddDays(-1);
+            while (activeDates.Contains(cursor)) { currentStreak++; cursor = cursor.AddDays(-1); }
+
+            var longestStreak = 0;
+            var run = 0;
+            for (var d = sinceStreak; d <= today; d = d.AddDays(1))
+            {
+                if (activeDates.Contains(d)) { run++; longestStreak = Math.Max(longestStreak, run); }
+                else run = 0;
+            }
+
+            var streakTrend = Enumerable.Range(0, 7)
+                .Select(offset => activeDates.Contains(today.AddDays(-6 + offset)) ? 1 : 0)
+                .ToList();
+
+            static string FormatStudyTime(int minutes)
+            {
+                if (minutes <= 0) return "0 min";
+                var h = minutes / 60;
+                var m = minutes % 60;
+                if (h <= 0) return $"{m} min";
+                return m > 0 ? $"{h} h {m:D2}" : $"{h} h";
+            }
 
             return Ok(new ProfileStatisticsResponse
             {
                 TotalCoursesEnrolled = totalCoursesEnrolled,
                 CompletedCourses = completedCourses,
-                AverageScore = Math.Round(avgScore, 2),
+                AverageScore = averageScore,
                 TotalTimeSeconds = totalTimeSeconds,
-                QuizCompleted = quizCompleted
+                QuizCompleted = quizCompleted,
+                ScoreDelta = scoreDelta,
+                TotalDownloads = totalDownloads,
+                WeeklyDownloads = weeklyDownloads,
+                WeeklyDownloadTrend = weeklyDownloadTrend,
+                StudyTimeFormatted = FormatStudyTime(totalStudyMinutes),
+                StudyGoal = null,
+                CurrentStreak = currentStreak,
+                LongestStreak = longestStreak,
+                StreakTrend = streakTrend,
+                WeeklyStudyHours = weeklyStudyHours,
+                MonthlyScores = monthlyScores,
             });
         }
         catch (Exception ex)

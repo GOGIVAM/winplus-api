@@ -195,6 +195,36 @@ namespace Backend.Controllers;
         }
 
         /// <summary>
+        /// GET /api/ai/learning-path/{userId}
+        /// Le frontend (onglet « Mon parcours ») lit le parcours sans passer
+        /// d'objectif particulier : mêmes valeurs par défaut que
+        /// LearningPathRequest (8 semaines, 10h/semaine). Cette route
+        /// n'existait pas  seule la version POST avec objectif était exposée,
+        /// d'où le 404 systématique au clic sur « Mon parcours ».
+        /// </summary>
+        [HttpGet("learning-path/{userId:int}")]
+        [ProducesResponseType(typeof(LearningPathResponse), 200)]
+        [ProducesResponseType(400)]
+        [ProducesResponseType(500)]
+        public async Task<IActionResult> GetLearningPath(int userId)
+        {
+            try
+            {
+                var response = await _aiService.GeneratePersonalizedPathAsync(userId, goalSubject: null, weeks: 8, hoursPerWeek: 10);
+                return Ok(response);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Error: {ex.Message}");
+                return StatusCode(500, new { message = "An error occurred" });
+            }
+        }
+
+        /// <summary>
         /// GET /api/ai/recommendations/{id}
         /// Récupérer les recommandations IA pour un sujet spécifique
         /// </summary>
