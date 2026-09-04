@@ -56,9 +56,13 @@ public class Revision
     public string Type { get; set; } = "Theory"; // Theory, Exercises, MixedContent
 
     /// <summary>
-    /// Niveau de difficulté
+    /// Niveau de difficulté (easy, medium, hard  même convention que
+    /// Quiz.Difficulty). Colonne réellement stockée en varchar(50) en base ;
+    /// le modèle la déclarait en int, ce qui faisait échouer toute lecture
+    /// de la table avec InvalidCastException.
     /// </summary>
-    public int? Difficulty { get; set; } = 2; // 1-5
+    [StringLength(50)]
+    public string? Difficulty { get; set; } = "medium";
 
     /// <summary>
     /// Contenu principal (Markdown ou HTML)
