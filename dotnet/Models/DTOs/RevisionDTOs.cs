@@ -1,4 +1,32 @@
+using System.Text.Json.Serialization;
+
 namespace Backend.Models.DTOs;
+
+/// <summary>Corps de la requête au frontend pour générer une fiche personnalisée.</summary>
+public class GenerateRevisionRequestDto
+{
+    /// <summary>Si omis, le sujet le plus faible de l'élève est utilisé (voir RevisionService).</summary>
+    public string? Subject { get; set; }
+    public string? Topic { get; set; }
+}
+
+/// <summary>
+/// Réponse du service Python (POST /api/revisions/generate-content). Les
+/// noms de champs snake_case viennent tels quels du JSON de FastAPI.
+/// </summary>
+public class GeneratedRevisionContentDto
+{
+    public bool Success { get; set; }
+    public string? Title { get; set; }
+
+    [JsonPropertyName("content_markdown")]
+    public string? ContentMarkdown { get; set; }
+
+    public string? Difficulty { get; set; }
+
+    [JsonPropertyName("estimated_duration_minutes")]
+    public int EstimatedDurationMinutes { get; set; } = 15;
+}
 
 /// <summary>
 /// DTO pour Revision - Utilisé pour les requêtes/réponses API

@@ -7,6 +7,7 @@ python-multipart==0.0.6  # Pour les form-data
 python-dotenv==1.0.0
 slowapi==0.1.9  # Rate limiting pour FastAPI
 aiofiles==23.2.1  # Async file handling
+pypdf==3.17.4  # Extraction de texte des PDF d'épreuves (mode évaluation)
 
 # ==================== AUTHENTICATION ====================
 PyJWT==2.8.0  # ✅ JWT token validation

@@ -44,6 +44,12 @@ public interface IFastApiClient
     /// null si le service est indisponible ou si le PDF n'a pas pu être lu.
     /// </summary>
     Task<List<QuizQuestionDto>?> GenerateExamQuizAsync(int examId, string documentUrl, string title, string? category);
+
+    /// <summary>
+    /// Génère le contenu d'une fiche de révision personnalisée (erreurs de
+    /// quiz récentes, épreuves téléchargées, objectifs actifs de l'élève).
+    /// </summary>
+    Task<GeneratedRevisionContentDto?> GenerateRevisionContentAsync(int userId, string subject, string? topic);
 }
 
 public class FastApiClient : IFastApiClient
@@ -467,6 +473,30 @@ public class FastApiClient : IFastApiClient
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erreur lors de la génération du quiz d'évaluation pour l'épreuve {ExamId}", examId);
+            return null;
+        }
+    }
+
+    public async Task<GeneratedRevisionContentDto?> GenerateRevisionContentAsync(int userId, string subject, string? topic)
+    {
+        try
+        {
+            _logger.LogInformation("Génération d'une fiche de révision IA pour l'utilisateur {UserId} en {Subject}", userId, subject);
+
+            var request = new { user_id = userId, subject, topic };
+            var result = await PostAsync<GeneratedRevisionContentDto>("/api/revisions/generate-content", request);
+
+            if (result == null || !result.Success || string.IsNullOrWhiteSpace(result.ContentMarkdown))
+            {
+                _logger.LogWarning("Génération de fiche de révision échouée pour l'utilisateur {UserId}", userId);
+                return null;
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur lors de la génération de la fiche de révision pour l'utilisateur {UserId}", userId);
             return null;
         }
     }

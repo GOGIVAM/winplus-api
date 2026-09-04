@@ -44,6 +44,33 @@ class Subject(Base):
     contents = relationship("CourseContent", back_populates="subject", foreign_keys="CourseContent.SubjectId")
 
 
+class Exam(Base):
+    """Modèle FastApi mappé sur la table Exams (ASP.NET)  l'épreuve PDF
+    précise, avec son type de concours, sa durée et son document, distincte
+    du Subject générique qui la porte au catalogue."""
+    __tablename__ = 'Exams'
+
+    Id = Column(Integer, primary_key=True)
+    Title = Column(String(255), nullable=False)
+    Description = Column(Text)
+    ExamType = Column(String(100), nullable=False)
+    Category = Column(String(100), nullable=False)
+    Year = Column(Integer, nullable=False)
+    Session = Column(String(100))
+    Level = Column(String(100))
+    DurationMinutes = Column(Integer)
+    DocumentUrl = Column(Text)
+    CorrectionUrl = Column(Text)
+    ThumbnailUrl = Column(Text)
+    Difficulty = Column(String(50))
+    DownloadCount = Column(Integer, nullable=False, default=0)
+    IsPublished = Column(Boolean, nullable=False, default=True)
+    IsDeleted = Column(Boolean, nullable=False, default=False)
+    SubjectId = Column(Integer, ForeignKey('Subjects.Id'))
+    CreatedAt = Column(DateTime(timezone=True))
+    UpdatedAt = Column(DateTime(timezone=True))
+
+
 class CourseContent(Base):
     """Modèle FastApi mappé sur la table CourseContents (ASP.NET)"""
     __tablename__ = 'CourseContents'
