@@ -96,4 +96,12 @@ public interface IRevisionService
     /// Analyse les scores par sujet et assigne les révisions appropriées
     /// </summary>
     Task<IEnumerable<RevisionEnrollmentDto>> AssignRevisionsBasedOnScoresAsync(int userId);
+
+    /// <summary>
+    /// Génère une fiche de révision personnalisée par IA (erreurs de quiz
+    /// récentes, épreuves téléchargées, objectifs actifs) et l'attribue à
+    /// l'utilisateur. Si <paramref name="subject"/> est omis, la matière la
+    /// plus faible de l'utilisateur est utilisée.
+    /// </summary>
+    Task<RevisionDto> GenerateAIRevisionAsync(int userId, string? subject, string? topic);
 }

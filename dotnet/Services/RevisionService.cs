@@ -11,12 +11,14 @@ namespace Backend.Services;
 public class RevisionService : IRevisionService
 {
     private readonly ApplicationDbContext _context;
+    private readonly IFastApiClient _fastApiClient;
     private const double WEAK_PERFORMANCE_THRESHOLD = 50.0; // Automatiquement assigner si score < 50%
     private const double IMPROVEMENT_TARGET_PENALTY = -10.0; // Réduire la cible si mauvaise performance
 
-    public RevisionService(ApplicationDbContext context)
+    public RevisionService(ApplicationDbContext context, IFastApiClient fastApiClient)
     {
         _context = context;
+        _fastApiClient = fastApiClient;
     }
 
     public async Task<RevisionDto?> GetRevisionByIdAsync(int id)
@@ -473,6 +475,52 @@ public class RevisionService : IRevisionService
         }
 
         return assignedEnrollments;
+    }
+
+    public async Task<RevisionDto> GenerateAIRevisionAsync(int userId, string? subject, string? topic)
+    {
+        var resolvedSubject = subject;
+        if (string.IsNullOrWhiteSpace(resolvedSubject))
+        {
+            // Même logique que AssignRevisionsBasedOnScoresAsync : la matière
+            // où le dernier score est le plus faible.
+            var recentScores = await _context.QuizAttempts
+                .Where(a => a.UserId == userId)
+                .GroupBy(a => a.Quiz.Subject)
+                .Select(g => new { Subject = g.Key, LatestScore = g.OrderByDescending(a => a.CompletedAt).First().Score })
+                .ToListAsync();
+
+            resolvedSubject = recentScores.OrderBy(s => s.LatestScore).FirstOrDefault()?.Subject;
+
+            if (string.IsNullOrWhiteSpace(resolvedSubject))
+                throw new InvalidOperationException("Passe encore un quiz pour qu'on sache sur quelle matière te faire une fiche personnalisée.");
+        }
+
+        var generated = await _fastApiClient.GenerateRevisionContentAsync(userId, resolvedSubject, topic);
+        if (generated == null)
+            throw new InvalidOperationException("La génération de la fiche a échoué, réessaie dans un instant.");
+
+        var revision = new Revision
+        {
+            Title = generated.Title ?? $"Révision  {resolvedSubject}",
+            Subject = resolvedSubject,
+            Topic = topic ?? resolvedSubject,
+            Type = "Theory",
+            Content = generated.ContentMarkdown,
+            Difficulty = generated.Difficulty,
+            DurationMinutes = generated.EstimatedDurationMinutes,
+            IsPublished = true,
+            IsAIGenerated = true,
+            Status = "Available",
+            CreatedAt = DateTime.UtcNow,
+        };
+
+        _context.Revisions.Add(revision);
+        await _context.SaveChangesAsync();
+
+        await AutoAssignRevisionAsync(userId, revision.Id);
+
+        return MapToDto(revision);
     }
 
     private RevisionDto MapToDto(Revision revision)

@@ -32,6 +32,7 @@ from routes.teacher_extra_routes import teacher_ai_router
 from routes.institution_routes import institution_router
 from routes.admin_routes import admin_router, _init_admin_tables
 from routes.smart_ai_routes import smart_ai_router
+from routes.exam_quiz_routes import exam_quiz_router
 import json
 from schemas import (
     HealthResponse, SubjectResponse, RecommendationResponse,
@@ -117,6 +118,7 @@ app.include_router(quiz_explain_router, prefix="/api/quiz", tags=["quiz"])
 app.include_router(exam_coach_router, prefix="/api/exam-coach", tags=["exam-coach"])
 app.include_router(parent_alert_router, prefix="/api/parent-alerts", tags=["parent"])
 app.include_router(study_session_router, prefix="/api/study-session", tags=["study-session"])
+app.include_router(exam_quiz_router, prefix="/api/exam-quiz", tags=["exam-quiz"])
 app.include_router(parent_extra_router, prefix="/api", tags=["parent-extra"])
 app.include_router(teacher_ai_router, prefix="/api", tags=["teacher-ai"])
 app.include_router(institution_router, prefix="/api", tags=["institution-ai"])
