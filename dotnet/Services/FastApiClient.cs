@@ -22,12 +22,13 @@ public interface IFastApiClient
     Task<T?> PostAsync<T>(string endpoint, object data) where T : class;
 
     /// <summary>
-    /// GET brut : renvoie le corps JSON tel quel, sans le désérialiser dans un
-    /// DTO C#. Nécessaire quand la forme exacte de la réponse Python (clés
-    /// snake_case, structure imbriquée) doit atteindre le frontend intacte —
-    /// voir GetLearningPath dans AIController.
+    /// GET brut : renvoie le code HTTP et le corps JSON tels quels, sans
+    /// désérialiser dans un DTO C# ni transformer les échecs en 500. FastAPI
+    /// répond parfois un 404 légitime avec un message utile (ex: "pas assez
+    /// de données pour ce parcours") — l'écraser perdrait ce message.
+    /// Voir GetLearningPath dans AIController.
     /// </summary>
-    Task<string?> GetRawJsonAsync(string endpoint);
+    Task<(int StatusCode, string? Body)> GetRawJsonAsync(string endpoint);
     Task<bool> HealthCheckAsync();
     
     // Méthodes métier
@@ -199,8 +200,12 @@ public class FastApiClient : IFastApiClient
 
     /// <summary>
     /// GET brut, sans désérialisation typée  voir IFastApiClient.GetRawJsonAsync.
+    /// Pas de EnsureSuccessStatusCode() ici : un 4xx de FastAPI (ex: 404 « pas
+    /// encore de données ») est une réponse valide à relayer, pas une panne à
+    /// masquer derrière un 500. Seule une vraie erreur réseau/circuit ouvert
+    /// tombe dans les catch ci-dessous.
     /// </summary>
-    public async Task<string?> GetRawJsonAsync(string endpoint)
+    public async Task<(int StatusCode, string? Body)> GetRawJsonAsync(string endpoint)
     {
         try
         {
@@ -211,20 +216,19 @@ public class FastApiClient : IFastApiClient
                     AttachAuthorization(request);
 
                     var response = await _httpClient.SendAsync(request);
-                    response.EnsureSuccessStatusCode();
-
-                    return await response.Content.ReadAsStringAsync();
+                    var body = await response.Content.ReadAsStringAsync();
+                    return ((int)response.StatusCode, (string?)body);
                 }));
         }
         catch (BrokenCircuitException ex)
         {
             _logger.LogError(ex, " Circuit ouvert: FastApi API indisponible pour {Endpoint}", endpoint);
-            return null;
+            return (503, null);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, " Erreur GET brut FastApi API {Endpoint}", endpoint);
-            return null;
+            return (502, null);
         }
     }
 

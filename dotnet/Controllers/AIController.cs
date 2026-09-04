@@ -211,14 +211,17 @@ namespace Backend.Controllers;
         /// </summary>
         [HttpGet("learning-path/{userId:int}")]
         [ProducesResponseType(200)]
+        [ProducesResponseType(404)]
         [ProducesResponseType(500)]
         public async Task<IActionResult> GetLearningPath(int userId)
         {
-            var json = await _fastApiClient.GetRawJsonAsync($"/api/learning-path/{userId}");
-            if (json == null)
-                return StatusCode(500, new { message = "Service IA indisponible" });
+            var (statusCode, body) = await _fastApiClient.GetRawJsonAsync($"/api/learning-path/{userId}");
+            if (body == null)
+                return StatusCode(statusCode, new { message = "Service IA indisponible" });
 
-            return Content(json, "application/json");
+            // Relaie le code (200, ou 404 « pas encore assez de données » avec
+            // son detail exploitable côté frontend) et le corps tels quels.
+            return new ContentResult { Content = body, ContentType = "application/json", StatusCode = statusCode };
         }
 
         /// <summary>
