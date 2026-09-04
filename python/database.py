@@ -233,6 +233,33 @@ class UserAIMemory(Base):
     UpdatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
 
+class DownloadHistory(Base):
+    """Épreuves consultées/téléchargées  mappé sur DownloadHistories (.NET)"""
+    __tablename__ = 'DownloadHistories'
+
+    Id = Column(Integer, primary_key=True)
+    UserId = Column(Integer, ForeignKey('Users.Id'), nullable=False, index=True)
+    SubjectId = Column(Integer, ForeignKey('Subjects.Id'), nullable=True)
+    ExamId = Column(Integer, nullable=True)
+    FileName = Column(String(500), nullable=True)
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
+class Goal(Base):
+    """Objectif défini par l'élève  mappé sur Goals (.NET)"""
+    __tablename__ = 'Goals'
+
+    Id = Column(Integer, primary_key=True)
+    UserId = Column(Integer, ForeignKey('Users.Id'), nullable=False, index=True)
+    Title = Column(String(255), nullable=True)
+    Description = Column(String(1000), nullable=True)
+    Type = Column(String(50), nullable=True)
+    Progress = Column(Integer, nullable=True)
+    Status = Column(String(20), nullable=False, default='active')
+    TargetDate = Column(DateTime(timezone=True), nullable=True)
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
 class StudySession(Base):
     """Session d'étude guidée  mappé sur StudySessions (.NET)"""
     __tablename__ = 'StudySessions'
