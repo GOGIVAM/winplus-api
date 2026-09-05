@@ -1,4 +1,4 @@
--- WinPlus — Migration fixes 2026-09-01
+-- WinPlus  Migration fixes 2026-09-01
 -- Run once on production DB
 -- psql -U winplus -d winplus -f 2026-09-01_fixes.sql
 

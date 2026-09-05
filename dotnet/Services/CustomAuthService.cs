@@ -283,7 +283,7 @@ public class CustomAuthService : ICustomAuthService
             var device = await _deviceTrackingService.TrackDeviceAsync(user.Id, request, rememberMe);
 
             // Create session
-            // Derrière nginx : X-Forwarded-For = "client, proxy1, proxy2" — on veut le premier.
+            // Derrière nginx : X-Forwarded-For = "client, proxy1, proxy2"  on veut le premier.
             var ipAddress =
                 (request.Headers["X-Forwarded-For"].FirstOrDefault() ?? "")
                     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

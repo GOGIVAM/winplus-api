@@ -192,7 +192,7 @@ def _detect_anomalies_raw(session) -> List[Dict]:
             })
 
         # Signal 4: Score moyen plateforme en chute (possible problème qualité contenu)
-        # DailyScores est géré par le backend .NET — peut ne pas exister en production.
+        # DailyScores est géré par le backend .NET  peut ne pas exister en production.
         try:
             today_avg = session.query(func.avg(DailyScore.AverageScore)).filter(
                 DailyScore.Date == today

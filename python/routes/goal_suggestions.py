@@ -141,7 +141,7 @@ async def goal_suggestions(req: GoalSuggestionRequest) -> GoalSuggestionResponse
             f"Niveau : {req.level or 'non précisé'}\n"
             f"Matières fragiles : {', '.join(req.weak_subjects) or 'aucune'}\n"
             + "\n".join(
-                f"{i + 1}. {s.title} — {s.reason} "
+                f"{i + 1}. {s.title}  {s.reason} "
                 f"({s.studyHoursTarget} h, {s.quizTarget} quiz, {s.downloadsTarget} épreuves)"
                 for i, s in enumerate(base.suggestions)
             )

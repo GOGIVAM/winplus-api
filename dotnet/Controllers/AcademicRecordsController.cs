@@ -10,7 +10,7 @@ namespace Backend.Controllers;
 
 /// <summary>
 /// Moyenne scolaire réelle de l'élève (bulletin), par année. Saisie par
-/// l'élève lui-même ou par un parent lié (ParentStudentLink) — le premier des
+/// l'élève lui-même ou par un parent lié (ParentStudentLink)  le premier des
 /// deux qui la renseigne, l'autre peut la corriger ensuite. Sert de signal
 /// supplémentaire pour les recommandations WinAI (quiz, révisions, épreuves),
 /// aux côtés du niveau scolaire, des téléchargements et des objectifs.

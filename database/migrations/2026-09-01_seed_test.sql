@@ -1,4 +1,4 @@
--- WinPlus — Seed données de test 2026-09-01
+-- WinPlus  Seed données de test 2026-09-01
 -- Crée des comptes de test avec le même mot de passe que votre compte admin.
 -- À appliquer UNE seule fois sur l'environnement de test.
 -- psql -U winplus -d winplus -f 2026-09-01_seed_test.sql
@@ -21,7 +21,7 @@ BEGIN
   LIMIT 1;
 
   IF admin_hash IS NULL THEN
-    RAISE EXCEPTION 'Aucun admin trouvé — impossible de récupérer le hash du mot de passe.';
+    RAISE EXCEPTION 'Aucun admin trouvé  impossible de récupérer le hash du mot de passe.';
   END IF;
 
   -- ── Étudiant de test ──
@@ -82,9 +82,9 @@ INSERT INTO public."Subjects" (
   "CreatedAt","UpdatedAt"
 )
 SELECT
-  'Mathématiques — Épreuve BAC C 2025',
+  'Mathématiques  Épreuve BAC C 2025',
   'Mathématiques',
-  'Épreuve officielle de mathématiques du BAC C session 2025 — Terminale C.',
+  'Épreuve officielle de mathématiques du BAC C session 2025  Terminale C.',
   500,
   TRUE,
   FALSE,
@@ -92,7 +92,7 @@ SELECT
   NOW(),
   NOW()
 WHERE NOT EXISTS (
-  SELECT 1 FROM public."Subjects" WHERE "Title" = 'Mathématiques — Épreuve BAC C 2025'
+  SELECT 1 FROM public."Subjects" WHERE "Title" = 'Mathématiques  Épreuve BAC C 2025'
 );
 
 -- ─── Promo code de test (si la table existe) ──────────────────────────────────
@@ -107,13 +107,13 @@ BEGIN
     "UsageLimit","ValidFrom","ValidUntil","IsActive","CreatedBy","CreatedAt"
   )
   SELECT
-    'TEST2026', 'Code promo de test — 20% de réduction', 'Percentage', 20,
+    'TEST2026', 'Code promo de test  20% de réduction', 'Percentage', 20,
     100, NOW(), NOW() + INTERVAL '1 year', TRUE, admin_id, NOW()
   WHERE NOT EXISTS (
     SELECT 1 FROM public."PromoCodes" WHERE "Code" = 'TEST2026'
   );
 EXCEPTION WHEN undefined_table THEN
-  RAISE NOTICE 'Table PromoCodes non encore créée — relancer après la migration fixes.';
+  RAISE NOTICE 'Table PromoCodes non encore créée  relancer après la migration fixes.';
 END$$;
 
 COMMIT;

@@ -1,5 +1,5 @@
 -- ============================================================================
---  WinPlus — Focus Mode : table FocusSessions
+--  WinPlus  Focus Mode : table FocusSessions
 --  Migration idempotente (IF NOT EXISTS).
 -- ============================================================================
 

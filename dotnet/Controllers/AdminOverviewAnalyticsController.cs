@@ -85,7 +85,7 @@ public class AdminOverviewAnalyticsController : ControllerBase
     /// <summary>
     /// GET /api/admin/analytics/geographic
     ///
-    /// La table Users ne stocke pas de ville — aucun champ City n'existe.
+    /// La table Users ne stocke pas de ville  aucun champ City n'existe.
     /// On distribue donc le total des utilisateurs actifs selon les poids
     /// démographiques des 10 principales villes camerounaises.
     /// C'est une estimation déclarée, pas une donnée inventée silencieusement :

@@ -622,7 +622,7 @@ public class AdminUsersController : ControllerBase
                 .Select(g => new { g.Key, Count = g.Count() })
                 .ToDictionaryAsync(x => x.Key, x => x.Count);
 
-            // Étudiants qui ont demandé à ce prof (tous statuts) — total demandes reçues
+            // Étudiants qui ont demandé à ce prof (tous statuts)  total demandes reçues
             var totalRequestsMap = await _db.TeacherStudentLinks
                 .Where(l => ids.Contains(l.TeacherId))
                 .GroupBy(l => l.TeacherId)

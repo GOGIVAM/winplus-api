@@ -179,7 +179,7 @@ namespace Backend.Controllers;
         /// ce dernier désérialise dans LearningPathResponse (weeks/goalSubject),
         /// alors que le composant LearningPath.tsx attend le JSON natif de
         /// GET /api/learning-path/{user_id} côté Python (phases,
-        /// learning_velocity, estimated_end_date, recommendations.*) — deux
+        /// learning_velocity, estimated_end_date, recommendations.*)  deux
         /// formes incompatibles. Passer par le DTO C# renvoyait un objet vide
         /// de son point de vue, d'où le crash "Cannot read properties of
         /// undefined (reading 'length')" une fois le 404 corrigé.

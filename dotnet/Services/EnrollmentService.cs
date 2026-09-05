@@ -191,7 +191,7 @@ public class EnrollmentService : IEnrollmentService
                 catch (Exception certEx)
                 {
                     // Certificate generation failure must not roll back the completion
-                    _logger.LogWarning(certEx, "Certificate generation failed for enrollment {EnrollmentId} — enrollment is still marked complete", enrollmentId);
+                    _logger.LogWarning(certEx, "Certificate generation failed for enrollment {EnrollmentId}  enrollment is still marked complete", enrollmentId);
                 }
             }
 

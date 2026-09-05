@@ -27,7 +27,7 @@ public interface IFastApiClient
     /// GET brut : renvoie le code HTTP et le corps JSON tels quels, sans
     /// désérialiser dans un DTO C# ni transformer les échecs en 500. FastAPI
     /// répond parfois un 404 légitime avec un message utile (ex: "pas assez
-    /// de données pour ce parcours") — l'écraser perdrait ce message.
+    /// de données pour ce parcours")  l'écraser perdrait ce message.
     /// Voir GetLearningPath dans AIController.
     /// </summary>
     Task<(int StatusCode, string? Body)> GetRawJsonAsync(string endpoint);
@@ -49,7 +49,7 @@ public interface IFastApiClient
     /// <summary>
     /// Génère un quiz d'entraînement (QCM). Si <paramref name="subject"/> est
     /// nul, DeepSeek choisit lui-même la matière à partir du niveau scolaire
-    /// et du contexte fourni (objectifs actifs) — voir QuizService.GenerateAIQuizAsync.
+    /// et du contexte fourni (objectifs actifs)  voir QuizService.GenerateAIQuizAsync.
     /// </summary>
     Task<SubjectQuizGenerationResult?> GenerateSubjectQuizAsync(int userId, string? subject, string? topic, string? level, string? contextHint, string? difficulty = null);
 
