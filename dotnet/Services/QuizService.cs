@@ -430,6 +430,7 @@ public class QuizService : IQuizService
             CreatedAt = quiz.CreatedAt,
             UpdatedAt = quiz.UpdatedAt,
             PublishedAt = quiz.PublishedAt,
+            IsAIGenerated = quiz.IsAIGenerated,
         };
     }
 
