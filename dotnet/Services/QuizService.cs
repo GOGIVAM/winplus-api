@@ -508,6 +508,8 @@ public class QuizService : IQuizService
     public async Task<QuizDto> GenerateAIQuizAsync(int userId, string? subject, string? topic)
     {
         var resolvedSubject = subject;
+
+        // Repli 1 : matière où le dernier score de quiz est le plus faible.
         if (string.IsNullOrWhiteSpace(resolvedSubject))
         {
             var recentScores = await _context.QuizAttempts
@@ -517,21 +519,52 @@ public class QuizService : IQuizService
                 .ToListAsync();
 
             resolvedSubject = recentScores.OrderBy(s => s.LatestScore).FirstOrDefault()?.Subject;
-
-            if (string.IsNullOrWhiteSpace(resolvedSubject))
-                throw new InvalidOperationException("Passe encore un quiz pour qu'on sache sur quelle matière t'entraîner.");
         }
 
-        var questions = await _fastApiClient.GenerateSubjectQuizAsync(userId, resolvedSubject, topic);
-        if (questions == null || questions.Count == 0)
+        // Repli 2 : catégorie de la dernière épreuve téléchargée. Un élève qui
+        // vient d'arriver n'a pas encore de tentative de quiz, mais peut déjà
+        // avoir consulté des épreuves  ça reste un signal réel, pas un choix
+        // arbitraire.
+        if (string.IsNullOrWhiteSpace(resolvedSubject))
+        {
+            resolvedSubject = await _context.DownloadHistories
+                .Where(d => d.UserId == userId && d.SubjectId != null)
+                .OrderByDescending(d => d.CreatedAt)
+                .Join(_context.Subjects, d => d.SubjectId, s => s.Id, (d, s) => s.Category)
+                .FirstOrDefaultAsync(c => !string.IsNullOrWhiteSpace(c));
+        }
+
+        // Repli 3 : ni quiz ni téléchargement  on laisse DeepSeek choisir une
+        // matière pertinente à partir du niveau scolaire et des objectifs
+        // actifs de l'élève (ex: « progresser en maths » dans un objectif).
+        string? contextHint = null;
+        var level = await _context.Users.Where(u => u.Id == userId).Select(u => u.Level).FirstOrDefaultAsync();
+        if (string.IsNullOrWhiteSpace(resolvedSubject))
+        {
+            var goals = await _context.Goals
+                .Where(g => g.UserId == userId && g.Status == "active")
+                .Select(g => (g.Title ?? "") + (g.Description != null ? " : " + g.Description : ""))
+                .Take(3)
+                .ToListAsync();
+
+            if (goals.Count == 0)
+                throw new InvalidOperationException("Passe un quiz, télécharge une épreuve ou définis un objectif pour qu'on sache sur quelle matière t'entraîner.");
+
+            contextHint = string.Join("; ", goals);
+        }
+
+        var questions = await _fastApiClient.GenerateSubjectQuizAsync(userId, resolvedSubject, topic, level, contextHint);
+        if (questions == null || questions.Questions.Count == 0)
             throw new InvalidOperationException("La génération du quiz a échoué, réessaie dans un instant.");
+
+        resolvedSubject ??= questions.Subject ?? "Général";
 
         var quiz = new Quiz
         {
             Title = topic != null ? $"Quiz  {topic}" : $"Quiz  {resolvedSubject}",
             Description = $"Généré par WinAI pour cibler tes lacunes en {resolvedSubject}.",
             Subject = resolvedSubject,
-            QuestionsJson = JsonSerializer.Serialize(questions),
+            QuestionsJson = JsonSerializer.Serialize(questions.Questions),
             Difficulty = "medium",
             TimeLimit = 15,
             PassingScore = 50,
@@ -544,7 +577,7 @@ public class QuizService : IQuizService
         _context.Quizzes.Add(quiz);
         await _context.SaveChangesAsync();
 
-        _logger.LogInformation("Quiz d'entraînement IA généré pour l'utilisateur {UserId} en {Subject} ({Count} questions)", userId, resolvedSubject, questions.Count);
+        _logger.LogInformation("Quiz d'entraînement IA généré pour l'utilisateur {UserId} en {Subject} ({Count} questions)", userId, resolvedSubject, questions.Questions.Count);
         return MapToDto(quiz);
     }
 

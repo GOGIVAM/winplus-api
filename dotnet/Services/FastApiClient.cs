@@ -46,11 +46,11 @@ public interface IFastApiClient
     Task<List<QuizQuestionDto>?> GenerateExamQuizAsync(int examId, string documentUrl, string title, string? category);
 
     /// <summary>
-    /// Génère un quiz d'entraînement (QCM) sur une matière, informé par les
-    /// erreurs récentes de l'utilisateur dans cette matière — pas lié à une
-    /// épreuve précise, contrairement à GenerateExamQuizAsync.
+    /// Génère un quiz d'entraînement (QCM). Si <paramref name="subject"/> est
+    /// nul, DeepSeek choisit lui-même la matière à partir du niveau scolaire
+    /// et du contexte fourni (objectifs actifs) — voir QuizService.GenerateAIQuizAsync.
     /// </summary>
-    Task<List<QuizQuestionDto>?> GenerateSubjectQuizAsync(int userId, string subject, string? topic);
+    Task<SubjectQuizGenerationResult?> GenerateSubjectQuizAsync(int userId, string? subject, string? topic, string? level, string? contextHint);
 
     /// <summary>
     /// Génère le contenu d'une fiche de révision personnalisée (erreurs de
@@ -484,13 +484,13 @@ public class FastApiClient : IFastApiClient
         }
     }
 
-    public async Task<List<QuizQuestionDto>?> GenerateSubjectQuizAsync(int userId, string subject, string? topic)
+    public async Task<SubjectQuizGenerationResult?> GenerateSubjectQuizAsync(int userId, string? subject, string? topic, string? level, string? contextHint)
     {
         try
         {
-            _logger.LogInformation("Génération d'un quiz d'entraînement IA pour l'utilisateur {UserId} en {Subject}", userId, subject);
+            _logger.LogInformation("Génération d'un quiz d'entraînement IA pour l'utilisateur {UserId} en {Subject}", userId, subject ?? "(matière à choisir par l'IA)");
 
-            var request = new { user_id = userId, subject, topic };
+            var request = new { user_id = userId, subject, topic, level, context_hint = contextHint };
             var result = await PostAsync<ExamQuizGenerationResult>("/api/quizzes/generate-content", request);
 
             if (result == null || !result.Success || result.Data?.Questions == null || result.Data.Questions.Count == 0)
@@ -499,7 +499,7 @@ public class FastApiClient : IFastApiClient
                 return null;
             }
 
-            return result.Data.Questions;
+            return new SubjectQuizGenerationResult { Subject = result.Data.Subject, Questions = result.Data.Questions };
         }
         catch (Exception ex)
         {

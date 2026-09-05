@@ -53,6 +53,13 @@ public class QuizQuestionDto
     public string? Topic { get; set; }
 }
 
+/// <summary>Résultat de génération IA d'un quiz d'entraînement (matière parfois choisie par DeepSeek lui-même).</summary>
+public class SubjectQuizGenerationResult
+{
+    public string? Subject { get; set; }
+    public List<QuizQuestionDto> Questions { get; set; } = new();
+}
+
 public class CreateQuizRequestDto
 {
     public string Title { get; set; } = null!;
