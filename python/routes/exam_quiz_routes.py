@@ -173,11 +173,24 @@ async def generate_exam_quiz(
     db_obj = Database()
     session = db_obj.SessionLocal()
     try:
-        exam = session.query(Exam).filter(Exam.Id == body.exam_id, Exam.IsDeleted == False).first()  # noqa: E712
-        if not exam:
+        # Sélection explicite des seules colonnes utilisées ici, plutôt que
+        # session.query(Exam) (l'entité complète) : la table Exams n'est pas
+        # gérée par les migrations EF Core standard côté .NET et son schéma
+        # réel a dérivé du modèle attendu (ex: DurationMinutes absent en
+        # production alors que le modèle SQLAlchemy le déclare)  charger
+        # l'entité entière échouait donc avant même d'atteindre les 3 champs
+        # réellement nécessaires ici.
+        exam_row = (
+            session.query(Exam.Title, Exam.Category, Exam.DocumentUrl, Exam.IsDeleted)
+            .filter(Exam.Id == body.exam_id)
+            .first()
+        )
+        if not exam_row or exam_row.IsDeleted:
             raise HTTPException(status_code=404, detail="Épreuve introuvable.")
 
-        document_url = exam.DocumentUrl or body.document_url
+        exam_title = exam_row.Title
+        exam_category = exam_row.Category
+        document_url = exam_row.DocumentUrl or body.document_url
         if not document_url:
             raise HTTPException(status_code=422, detail="Cette épreuve n'a pas de fichier PDF associé.")
 
@@ -196,7 +209,7 @@ async def generate_exam_quiz(
                 detail="Le contenu de cette épreuve n'a pas pu être lu (PDF scanné ou vide)."
             )
 
-        questions = _generate_questions_from_text(text, exam.Title or body.title, exam.Category or body.category)
+        questions = _generate_questions_from_text(text, exam_title or body.title, exam_category or body.category)
         if not questions:
             raise HTTPException(status_code=422, detail="La génération des questions a échoué. Réessayez.")
 
