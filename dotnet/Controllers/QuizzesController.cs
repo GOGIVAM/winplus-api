@@ -112,6 +112,30 @@ public class QuizzesController : ControllerBase
     }
 
     /// <summary>
+    /// Génère un quiz d'entraînement personnalisé par IA pour l'utilisateur
+    /// courant (matière la plus faible si non précisée).
+    /// </summary>
+    [HttpPost("me/generate")]
+    [ProducesResponseType(typeof(QuizDto), 200)]
+    [ProducesResponseType(503)]
+    public async Task<ActionResult<QuizDto>> GenerateQuizForMe([FromBody] GenerateRevisionRequestDto? request)
+    {
+        var userId = GetUserId();
+        if (userId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        try
+        {
+            var quiz = await _quizService.GenerateAIQuizAsync(userId, request?.Subject, request?.Topic);
+            return Ok(quiz);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(503, new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
     /// Soumet les réponses d'un quiz et obtient les résultats évalués
     /// </summary>
     [HttpPost("{quizId}/submit")]

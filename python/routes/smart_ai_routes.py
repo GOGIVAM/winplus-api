@@ -77,6 +77,12 @@ class RevisionContentRequest(BaseModel):
     topic: Optional[str] = None
 
 
+class QuizContentRequest(BaseModel):
+    user_id: int
+    subject: str
+    topic: Optional[str] = None
+
+
 # ─── 1. Generate smart notification ──────────────────────────────────────────
 
 @smart_ai_router.post("/ai/generate-notification")
@@ -404,3 +410,100 @@ async def generate_revision_content(
     except Exception as e:
         logger.error(f"[revision-content] error: {e}")
         raise HTTPException(status_code=500, detail="Génération de la fiche impossible pour le moment.")
+
+
+QUIZ_QUESTION_COUNT = 8
+
+
+@smart_ai_router.post("/quizzes/generate-content", tags=["ai"])
+async def generate_quiz_content(
+    body: QuizContentRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    """
+    Génère un quiz d'entraînement (QCM) sur une matière, ciblé sur les
+    erreurs récentes de l'élève dans cette matière quand elles existent —
+    sinon des questions standards de niveau lycée/examens camerounais. Même
+    forme de réponse que /api/exam-quiz/generate ({success, data:
+    {questions}}) pour que le .NET (QuizService) réutilise le même parseur.
+    """
+    db = Database()
+    session = db.SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - timedelta(days=60)
+        mistakes = (
+            session.query(QuizMistake)
+            .filter(
+                QuizMistake.UserId == body.user_id,
+                QuizMistake.Subject == body.subject,
+                QuizMistake.CreatedAt >= cutoff,
+            )
+            .order_by(QuizMistake.CreatedAt.desc())
+            .limit(8)
+            .all()
+        )
+        mistakes_text = "\n".join(f"- {m.Question[:200]}" for m in mistakes)
+    finally:
+        session.close()
+
+    topic_line = f"Sous-thème : {body.topic}\n" if body.topic else ""
+    context_line = (
+        f"L'élève a récemment eu du mal avec des questions proches de celles-ci "
+        f"(reste sur les mêmes notions, formulations différentes) :\n{mistakes_text}\n\n"
+        if mistakes_text else
+        "Aucune erreur récente enregistrée  couvre les notions fondamentales du programme.\n\n"
+    )
+
+    prompt = (
+        f"Génère exactement {QUIZ_QUESTION_COUNT} questions à choix multiples de niveau lycée/examens "
+        f"camerounais en {body.subject}.\n{topic_line}\n{context_line}"
+        f"Mélange les niveaux de difficulté. "
+        f'Format JSON strict, un tableau : '
+        f'[{{"id":"q1","question":"...","options":["A) ...","B) ...","C) ...","D) ..."],'
+        f'"correctAnswer":"B) ...","explanation":"..."}}] '
+        f"correctAnswer doit correspondre EXACTEMENT à une des chaînes de options. "
+        f"Réponds UNIQUEMENT avec le tableau JSON, sans texte autour ni balises de code."
+    )
+    system = (
+        "Tu es WinAI, expert en évaluation pédagogique pour les examens camerounais. "
+        "Tu génères des QCM rigoureux et pertinents, jamais de questions hors sujet."
+    )
+
+    try:
+        client = get_deepseek_client()
+        result = client.chat(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt=system,
+            max_tokens=2200,
+            temperature=0.5,
+        )
+        raw = result.get("content", "").strip()
+
+        import re as _re
+        import json as _json
+        match = _re.search(r"\[.*\]", raw, _re.DOTALL)
+        parsed = _json.loads(match.group()) if match else []
+
+        questions = []
+        for i, q in enumerate(parsed[:QUIZ_QUESTION_COUNT]):
+            options = [str(o) for o in q.get("options", [])]
+            correct = str(q.get("correctAnswer", ""))
+            if not options or correct not in options:
+                continue
+            questions.append({
+                "id": str(q.get("id") or f"q{i + 1}"),
+                "question": str(q.get("question", "")).strip(),
+                "options": options,
+                "correctAnswer": correct,
+                "explanation": str(q.get("explanation", "")).strip(),
+            })
+
+        if not questions:
+            raise HTTPException(status_code=422, detail="La génération des questions a échoué. Réessaie.")
+
+        return {"success": True, "data": {"questions": questions}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[quiz-content] error: {e}")
+        raise HTTPException(status_code=500, detail="Génération du quiz impossible pour le moment.")

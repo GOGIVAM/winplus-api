@@ -22,6 +22,7 @@ public class QuizDto
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
     public DateTime? PublishedAt { get; set; }
+    public bool IsAIGenerated { get; set; }
 
     /// <summary>
     /// Questions à afficher pour PASSER le quiz (sans correctAnswer/explanation,

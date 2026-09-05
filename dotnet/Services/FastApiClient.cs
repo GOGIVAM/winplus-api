@@ -484,6 +484,30 @@ public class FastApiClient : IFastApiClient
         }
     }
 
+    public async Task<List<QuizQuestionDto>?> GenerateSubjectQuizAsync(int userId, string subject, string? topic)
+    {
+        try
+        {
+            _logger.LogInformation("Génération d'un quiz d'entraînement IA pour l'utilisateur {UserId} en {Subject}", userId, subject);
+
+            var request = new { user_id = userId, subject, topic };
+            var result = await PostAsync<ExamQuizGenerationResult>("/api/quizzes/generate-content", request);
+
+            if (result == null || !result.Success || result.Data?.Questions == null || result.Data.Questions.Count == 0)
+            {
+                _logger.LogWarning("Génération de quiz d'entraînement échouée pour l'utilisateur {UserId} : {Error}", userId, result?.Error);
+                return null;
+            }
+
+            return result.Data.Questions;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur lors de la génération du quiz d'entraînement pour l'utilisateur {UserId}", userId);
+            return null;
+        }
+    }
+
     public async Task<GeneratedRevisionContentDto?> GenerateRevisionContentAsync(int userId, string subject, string? topic)
     {
         try
