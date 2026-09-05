@@ -31,11 +31,13 @@ logger = logging.getLogger(__name__)
 
 exam_quiz_router = APIRouter()
 
-# Assez de contenu pour couvrir une épreuve type sans dépasser la fenêtre du
-# modèle ni gonfler inutilement le coût de génération.
-MAX_PDF_PAGES = 20
-MAX_EXTRACTED_CHARS = 14000
-QUESTION_COUNT = 8
+# Assez de contenu pour couvrir une épreuve type (toutes les questions,
+# pas seulement les premières pages) sans dépasser la fenêtre du modèle.
+MAX_PDF_PAGES = 40
+MAX_EXTRACTED_CHARS = 24000
+# Garde-fou anti-dérive, pas un objectif : le prompt demande TOUTES les
+# questions réellement présentes dans le document, sans nombre fixe.
+MAX_QUESTIONS = 60
 
 
 class GenerateExamQuizRequest(BaseModel):
@@ -51,6 +53,11 @@ class QuizOptionQuestion(BaseModel):
     options: List[str]
     correctAnswer: str
     explanation: str
+    # Énoncé de l'exercice dont dépend la question (consigne, contexte,
+    # données)  identique pour toutes les questions d'un même exercice,
+    # pour que le frontend puisse les regrouper et afficher l'énoncé une
+    # seule fois au-dessus de ses questions.
+    statement: Optional[str] = None
 
 
 def _parse_s3_url(document_url: str) -> Optional[tuple[str, str, str]]:
@@ -120,26 +127,37 @@ def _generate_questions_from_text(content: str, title: str, category: Optional[s
         f"Voici le contenu extrait d'une épreuve intitulée « {title} »"
         f"{f' (matière : {category})' if category else ''} :\n\n"
         f"---\n{content}\n---\n\n"
-        f"Génère exactement {QUESTION_COUNT} questions à choix multiples qui évaluent la compréhension "
-        f"des exercices et notions PRÉSENTS DANS CE TEXTE, pas des questions génériques sur la matière. "
-        f"Base-toi uniquement sur le contenu ci-dessus. Mélange les niveaux de difficulté. "
+        f"Identifie TOUS les exercices et TOUTES les questions (y compris les sous-questions numérotées, "
+        f"ex. 1), 2), a), b)) réellement présents dans ce texte  ne te limite à AUCUN nombre fixe, couvre "
+        f"l'intégralité de l'épreuve du début à la fin. "
+        f"Pour chaque question : reprends l'énoncé de la question dans les mots EXACTS du document (ne "
+        f"l'invente pas, ne la reformule pas, ne la résume pas). Dans le champ \"statement\", indique le "
+        f"texte de l'exercice dont dépend cette question (sa consigne, son contexte, les données ou le "
+        f"texte à analyser), copié tel quel depuis le document ; si plusieurs questions appartiennent au "
+        f"même exercice, répète EXACTEMENT le même texte dans \"statement\" pour chacune d'elles afin "
+        f"qu'elles puissent être regroupées visuellement. Si une question n'a pas d'énoncé d'exercice "
+        f"distinct de la question elle-même, laisse \"statement\" à null. "
+        f"Comme il s'agit d'une évaluation chronométrée notée automatiquement, transforme chaque question "
+        f"en QCM à 4 options plausibles, une seule correspondant à la réponse correcte attendue par le "
+        f"document (ou à la réponse qu'apporterait un bon élève si la question est ouverte dans le document). "
         f'Format JSON strict, un tableau : '
-        f'[{{"id":"q1","question":"...","options":["A) ...","B) ...","C) ...","D) ..."],'
-        f'"correctAnswer":"B) ...","explanation":"..."}}] '
+        f'[{{"id":"q1","statement":"Enoncé de l\'exercice ou null","question":"...",'
+        f'"options":["A) ...","B) ...","C) ...","D) ..."],"correctAnswer":"B) ...","explanation":"..."}}] '
         f"correctAnswer doit correspondre EXACTEMENT à une des chaînes de options. "
         f"Réponds UNIQUEMENT avec le tableau JSON, sans texte autour ni balises de code."
     )
     system = (
         "Tu es WinAI, expert en évaluation pédagogique pour les examens camerounais. "
-        "Tu génères des QCM fidèles au contenu fourni, jamais des questions inventées hors sujet."
+        "Tu extrais fidèlement TOUTES les questions déjà présentes dans le document fourni, sans en "
+        "inventer de nouvelles, sans en omettre, et sans jamais modifier leur formulation d'origine."
     )
 
     client = get_deepseek_client()
     result = client.chat(
         messages=[{"role": "user", "content": prompt}],
         system_prompt=system,
-        max_tokens=2200,
-        temperature=0.4,
+        max_tokens=6000,
+        temperature=0.3,
     )
     raw = result.get("content", "").strip()
 
@@ -147,17 +165,19 @@ def _generate_questions_from_text(content: str, title: str, category: Optional[s
     try:
         match = re.search(r"\[.*\]", raw, re.DOTALL)
         parsed = json.loads(match.group()) if match else []
-        for i, q in enumerate(parsed[:QUESTION_COUNT]):
+        for i, q in enumerate(parsed[:MAX_QUESTIONS]):
             options = [str(o) for o in q.get("options", [])]
             correct = str(q.get("correctAnswer", ""))
             if not options or correct not in options:
                 continue
+            statement = q.get("statement")
             questions.append(QuizOptionQuestion(
                 id=str(q.get("id") or f"q{i + 1}"),
                 question=str(q.get("question", "")).strip(),
                 options=options,
                 correctAnswer=correct,
                 explanation=str(q.get("explanation", "")).strip(),
+                statement=(str(statement).strip() or None) if statement else None,
             ))
     except Exception as e:
         logger.warning(f"[exam-quiz] parse error: {e}")
