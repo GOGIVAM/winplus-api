@@ -149,6 +149,16 @@ public partial class ApplicationDbContext : DbContext
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
+        // ── AcademicRecord : une moyenne par élève et par année scolaire ──
+        modelBuilder.Entity<AcademicRecord>(entity =>
+        {
+            entity.HasIndex(e => new { e.StudentId, e.SchoolYear }).IsUnique();
+            entity.HasOne(e => e.Student)
+                  .WithMany()
+                  .HasForeignKey(e => e.StudentId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
         // ── WeeklyGoal : un objectif par utilisateur et par semaine ──
         modelBuilder.Entity<WeeklyGoal>(entity =>
         {
