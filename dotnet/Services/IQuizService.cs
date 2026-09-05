@@ -107,5 +107,5 @@ public interface IQuizService
     /// Génère un quiz d'entraînement personnalisé par IA sur une matière (la
     /// plus faible de l'utilisateur si non précisée) et le publie.
     /// </summary>
-    Task<QuizDto> GenerateAIQuizAsync(int userId, string? subject, string? topic);
+    Task<QuizDto> GenerateAIQuizAsync(int userId, string? subject, string? topic, string? difficulty = null);
 }

@@ -83,6 +83,9 @@ class QuizContentRequest(BaseModel):
     topic: Optional[str] = None
     level: Optional[str] = None
     context_hint: Optional[str] = None
+    #  easy | medium | hard  contrôle explicite demandé par l'élève (bouton
+    # "plus facile / plus dur"), distinct du niveau scolaire (`level`).
+    difficulty: Optional[str] = None
 
 
 # ─── 1. Generate smart notification ──────────────────────────────────────────
@@ -458,6 +461,19 @@ async def generate_quiz_content(
     topic_line = f"Sous-thème : {body.topic}\n" if body.topic else ""
     level_line = f"Niveau scolaire de l'élève : {body.level}.\n" if body.level else ""
 
+    difficulty = (body.difficulty or "").strip().lower()
+    if difficulty not in ("easy", "medium", "hard"):
+        difficulty = "medium"
+    DIFFICULTY_LINES = {
+        "easy": "Toutes les questions doivent être FACILES : une seule notion par question, "
+                "distracteurs clairement faux, aucun piège.\n",
+        "medium": "Mélange les niveaux de difficulté (facile à moyen), avec une ou deux "
+                  "questions plus difficiles en fin de quiz.\n",
+        "hard": "Toutes les questions doivent être DIFFICILES : plusieurs pas de "
+                "raisonnement, niveau concours/approfondissement.\n",
+    }
+    difficulty_line = DIFFICULTY_LINES[difficulty]
+
     if body.subject:
         subject_line = f"Matière : {body.subject}.\n"
         subject_json_field = ""
@@ -478,7 +494,7 @@ async def generate_quiz_content(
     prompt = (
         f"Génère exactement {QUIZ_QUESTION_COUNT} questions à choix multiples de niveau lycée/examens "
         f"camerounais.\n{subject_line}{level_line}{topic_line}\n{context_line}"
-        f"Mélange les niveaux de difficulté. "
+        f"{difficulty_line}"
         f'Format JSON strict, un objet unique : '
         f'{{{subject_json_field}"questions":[{{"id":"q1","question":"...",'
         f'"options":["A) ...","B) ...","C) ...","D) ..."],'
@@ -525,7 +541,7 @@ async def generate_quiz_content(
         if not questions:
             raise HTTPException(status_code=422, detail="La génération des questions a échoué. Réessaie.")
 
-        return {"success": True, "data": {"questions": questions, "subject": chosen_subject}}
+        return {"success": True, "data": {"questions": questions, "subject": chosen_subject, "difficulty": difficulty}}
     except HTTPException:
         raise
     except Exception as e:

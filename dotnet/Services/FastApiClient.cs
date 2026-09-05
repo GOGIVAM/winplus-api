@@ -36,7 +36,6 @@ public interface IFastApiClient
     // Méthodes métier
     Task<RecommendationResponse> GetRecommendationsAsync(int userId, string preferenceLevel, string category);
     Task<ProgressAnalysisResponse> AnalyzeProgressAsync(int userId, int subjectId, string depth);
-    Task<QuizGenerationResponse> GenerateQuizAsync(int userId, int subjectId, string subjectName, int questionCount, string difficulty);
     Task<PerformanceMetricsResponse> GetPerformanceAsync(int userId, string timePeriod);
     Task<LearningPathResponse> GenerateLearningPathAsync(int userId, string goalSubject, int weeks, int hoursPerWeek);
 
@@ -52,7 +51,7 @@ public interface IFastApiClient
     /// nul, DeepSeek choisit lui-même la matière à partir du niveau scolaire
     /// et du contexte fourni (objectifs actifs) — voir QuizService.GenerateAIQuizAsync.
     /// </summary>
-    Task<SubjectQuizGenerationResult?> GenerateSubjectQuizAsync(int userId, string? subject, string? topic, string? level, string? contextHint);
+    Task<SubjectQuizGenerationResult?> GenerateSubjectQuizAsync(int userId, string? subject, string? topic, string? level, string? contextHint, string? difficulty = null);
 
     /// <summary>
     /// Génère le contenu d'une fiche de révision personnalisée (erreurs de
@@ -438,84 +437,6 @@ public class FastApiClient : IFastApiClient
         }
     }
 
-    /// <summary>
-    /// Générer un quiz personnalisé
-    /// </summary>
-    public async Task<QuizGenerationResponse> GenerateQuizAsync(
-        int userId,
-        int subjectId,
-        string subjectName,
-        int questionCount,
-        string difficulty)
-    {
-        try
-        {
-            _logger.LogInformation("Génération de quiz pour l'utilisateur {UserId}, sujet {SubjectId}", userId, subjectId);
-
-            // ⚠ Route corrigée : POST /api/generate-quiz n'existe pas côté
-            // FastAPI, qui expose /api/adaptive-quiz (app.py). Cette route
-            // attend le nom de la matière (pas son id) et un palier
-            // "remediation | consolidation | stretch" plutôt qu'une difficulté
-            // libre ; on approxime ce palier à partir de la difficulté demandée.
-            // Sa réponse est en snake_case et ne colle pas au DTO
-            // QuizGenerationResponse : on la parse donc à la main ci-dessous.
-            var mode = (difficulty ?? "").Trim().ToLowerInvariant() switch
-            {
-                "easy" or "facile" => "remediation",
-                "hard" or "difficile" => "stretch",
-                _ => "consolidation",
-            };
-
-            var request = new
-            {
-                user_id = userId,
-                subject = subjectName,
-                count = Math.Clamp(questionCount, 3, 20),
-                mode
-            };
-
-            var raw = await PostAsync<JsonObject>("/api/adaptive-quiz", request);
-
-            if (raw == null || raw["questions"] is not JsonArray questionsJson)
-            {
-                _logger.LogWarning("Quiz non généré, utilisation fallback");
-                return GetDefaultQuizResponse(userId, subjectId);
-            }
-
-            var questions = questionsJson
-                .OfType<JsonObject>()
-                .Select(q => new QuizQuestion
-                {
-                    QuestionId = q["id"]?.GetValue<int>() ?? 0,
-                    QuestionText = q["question"]?.GetValue<string>() ?? "",
-                    QuestionType = "multiple-choice",
-                    Options = q["options"]?.AsArray().Select(o => o?.GetValue<string>() ?? "").ToList() ?? new List<string>(),
-                    Difficulty = q["difficulty"]?.GetValue<string>() ?? difficulty,
-                    CorrectAnswer = q["correct_answer"]?.GetValue<string>() ?? "",
-                    Explanation = q["explanation"]?.GetValue<string>() ?? "",
-                })
-                .ToList();
-
-            var response = new QuizGenerationResponse
-            {
-                QuizId = 0, // quiz généré à la volée, non persisté côté Python
-                UserId = userId,
-                SubjectId = subjectId,
-                Questions = questions,
-                EstimatedDurationMinutes = Math.Max(1, questions.Count * 2),
-                CreatedAt = DateTime.UtcNow,
-            };
-
-            _logger.LogInformation("✓ Quiz généré avec {Count} questions", questions.Count);
-            return response;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erreur lors de la génération du quiz");
-            return GetDefaultQuizResponse(userId, subjectId);
-        }
-    }
-
     private class ExamQuizGenerationResult
     {
         public bool Success { get; set; }
@@ -528,6 +449,8 @@ public class FastApiClient : IFastApiClient
         public List<QuizQuestionDto>? Questions { get; set; }
         /// <summary>Renseigné uniquement par /api/quizzes/generate-content quand la matière est choisie par l'IA.</summary>
         public string? Subject { get; set; }
+        /// <summary>Palier réellement appliqué ("easy"/"medium"/"hard"), renvoyé par /api/quizzes/generate-content.</summary>
+        public string? Difficulty { get; set; }
     }
 
     /// <summary>
@@ -587,13 +510,13 @@ public class FastApiClient : IFastApiClient
         return (null, detail);
     }
 
-    public async Task<SubjectQuizGenerationResult?> GenerateSubjectQuizAsync(int userId, string? subject, string? topic, string? level, string? contextHint)
+    public async Task<SubjectQuizGenerationResult?> GenerateSubjectQuizAsync(int userId, string? subject, string? topic, string? level, string? contextHint, string? difficulty = null)
     {
         try
         {
             _logger.LogInformation("Génération d'un quiz d'entraînement IA pour l'utilisateur {UserId} en {Subject}", userId, subject ?? "(matière à choisir par l'IA)");
 
-            var request = new { user_id = userId, subject, topic, level, context_hint = contextHint };
+            var request = new { user_id = userId, subject, topic, level, context_hint = contextHint, difficulty };
             var result = await PostAsync<ExamQuizGenerationResult>("/api/quizzes/generate-content", request);
 
             if (result == null || !result.Success || result.Data?.Questions == null || result.Data.Questions.Count == 0)
@@ -602,7 +525,7 @@ public class FastApiClient : IFastApiClient
                 return null;
             }
 
-            return new SubjectQuizGenerationResult { Subject = result.Data.Subject, Questions = result.Data.Questions };
+            return new SubjectQuizGenerationResult { Subject = result.Data.Subject, Difficulty = result.Data.Difficulty, Questions = result.Data.Questions };
         }
         catch (Exception ex)
         {
@@ -731,19 +654,6 @@ public class FastApiClient : IFastApiClient
             WeakAreas = new List<string>(),
             Strengths = new List<string>(),
             Recommendations = new List<string> { "Veuillez réessayer plus tard" }
-        };
-    }
-
-    private QuizGenerationResponse GetDefaultQuizResponse(int userId, int subjectId)
-    {
-        return new QuizGenerationResponse
-        {
-            QuizId = 0,
-            UserId = userId,
-            SubjectId = subjectId,
-            Questions = new List<QuizQuestion>(),
-            EstimatedDurationMinutes = 0,
-            CreatedAt = DateTime.UtcNow
         };
     }
 

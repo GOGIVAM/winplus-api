@@ -118,7 +118,7 @@ public class QuizzesController : ControllerBase
     [HttpPost("me/generate")]
     [ProducesResponseType(typeof(QuizDto), 200)]
     [ProducesResponseType(503)]
-    public async Task<ActionResult<QuizDto>> GenerateQuizForMe([FromBody] GenerateRevisionRequestDto? request)
+    public async Task<ActionResult<QuizDto>> GenerateQuizForMe([FromBody] GenerateQuizRequestDto? request)
     {
         var userId = GetUserId();
         if (userId == 0)
@@ -126,7 +126,7 @@ public class QuizzesController : ControllerBase
 
         try
         {
-            var quiz = await _quizService.GenerateAIQuizAsync(userId, request?.Subject, request?.Topic);
+            var quiz = await _quizService.GenerateAIQuizAsync(userId, request?.Subject, request?.Topic, request?.Difficulty);
             return Ok(quiz);
         }
         catch (InvalidOperationException ex)

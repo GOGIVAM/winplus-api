@@ -87,24 +87,6 @@ namespace Backend.Models.DTOs
     #region Quiz Generation
 
     /// <summary>
-    /// Request to generate quiz questions
-    /// </summary>
-    public class QuizGenerationRequest
-    {
-        [Required(ErrorMessage = "User ID is required")]
-        public int UserId { get; set; }
-
-        [Required(ErrorMessage = "Subject ID is required")]
-        public int SubjectId { get; set; }
-
-        [Range(1, 50, ErrorMessage = "Number of questions must be between 1 and 50")]
-        public int NumberOfQuestions { get; set; } = 10;
-
-        [MaxLength(50)]
-        public string Difficulty { get; set; } = "intermediate"; // easy, intermediate, hard
-    }
-
-    /// <summary>
     /// Single quiz question
     /// </summary>
     public class QuizQuestion

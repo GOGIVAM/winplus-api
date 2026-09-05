@@ -105,46 +105,11 @@ namespace Backend.Controllers;
             }
         }
 
-        [HttpPost("generate-quiz")]
-        [ProducesResponseType(typeof(QuizGenerationResponse), 200)]
-        [ProducesResponseType(400)]
-        [ProducesResponseType(401)]
-        [ProducesResponseType(500)]
-        public async Task<IActionResult> GenerateQuiz([FromBody] QuizGenerationRequest request)
-        {
-            try
-            {
-                if (!ModelState.IsValid)
-                    return BadRequest(ModelState);
-
-                // La route Python n'attend pas un SubjectId mais le nom de la
-                // matière (utilisé tel quel dans le prompt LLM) : on le résout
-                // ici plutôt que de le faire porter par FastApiClient, qui n'a
-                // pas accès à la base.
-                var subjectName = await _db.Subjects
-                    .Where(s => s.Id == request.SubjectId)
-                    .Select(s => s.Category)
-                    .FirstOrDefaultAsync() ?? "";
-
-                var response = await _aiService.GenerateQuizAsync(
-                    request.UserId,
-                    request.SubjectId,
-                    subjectName,
-                    request.NumberOfQuestions,
-                    request.Difficulty);
-
-                return Ok(response);
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error: {ex.Message}");
-                return StatusCode(500, new { message = "An error occurred" });
-            }
-        }
+        // "generate-quiz" a été retiré : chemin non branché à l'UI (ni
+        // catalogService.generateQuiz côté front) et strictement moins
+        // complet que POST /quizzes/me/generate (QuizService.GenerateAIQuizAsync)
+        // qui persiste le quiz, le rend rejouable/notable, et personnalise via
+        // les vraies erreurs récentes de l'élève plutôt qu'un simple subjectId.
 
         [HttpGet("performance")]
         [ProducesResponseType(typeof(PerformanceMetricsResponse), 200)]
@@ -856,6 +821,25 @@ namespace Backend.Controllers;
             }
             catch { }
             return raw;
+        }
+
+        // ── Feature 1a  POST /api/ai/generate-quiz-questions ─────────────────
+        // Manquant jusqu'ici : ContentPublishFlow.tsx (WinAI, création de
+        // contenu par un professeur) appelle déjà cette route côté frontend,
+        // mais seules les Features 1b/1c et les routes /teacher/* avaient leur
+        // proxy .NET  chaque génération de QCM échouait donc en 404.
+
+        /// <summary>Génère 10 QCM calibrés (matière/niveau/thème) pour la création de contenu par un professeur</summary>
+        [HttpPost("generate-quiz-questions")]
+        public async Task<IActionResult> GenerateQuizQuestions([FromBody] object body, CancellationToken ct)
+        {
+            var client = _httpClientFactory.CreateClient("FastApiClient");
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/ai/generate-quiz-questions");
+            req.Content = JsonContent.Create(body);
+            var auth = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+            var res = await client.SendAsync(req, ct);
+            return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
         }
 
         // ── Feature 1b  POST /api/ai/optimize-title ──────────────────────────

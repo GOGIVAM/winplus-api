@@ -522,8 +522,15 @@ public class QuizService : IQuizService
         return MapToDto(quiz);
     }
 
-    public async Task<QuizDto> GenerateAIQuizAsync(int userId, string? subject, string? topic)
+    public async Task<QuizDto> GenerateAIQuizAsync(int userId, string? subject, string? topic, string? difficulty = null)
     {
+        // Contrôle explicite du niveau (bouton "plus facile / plus dur" côté
+        // élève), distinct du niveau scolaire résolu plus bas. Normalisé ici
+        // car la valeur redescend telle quelle dans Quiz.Difficulty.
+        var normalizedDifficulty = (difficulty ?? "").Trim().ToLowerInvariant();
+        if (normalizedDifficulty is not ("easy" or "medium" or "hard"))
+            normalizedDifficulty = "medium";
+
         var resolvedSubject = subject;
 
         // Repli 1 : matière où le dernier score de quiz est le plus faible.
@@ -580,7 +587,7 @@ public class QuizService : IQuizService
             contextHint = string.Join("; ", hints);
         }
 
-        var questions = await _fastApiClient.GenerateSubjectQuizAsync(userId, resolvedSubject, topic, level, contextHint);
+        var questions = await _fastApiClient.GenerateSubjectQuizAsync(userId, resolvedSubject, topic, level, contextHint, normalizedDifficulty);
         if (questions == null || questions.Questions.Count == 0)
             throw new InvalidOperationException("La génération du quiz a échoué, réessaie dans un instant.");
 
@@ -592,7 +599,7 @@ public class QuizService : IQuizService
             Description = $"Généré par WinAI pour cibler tes lacunes en {resolvedSubject}.",
             Subject = resolvedSubject,
             QuestionsJson = JsonSerializer.Serialize(questions.Questions, CamelCaseJson),
-            Difficulty = "medium",
+            Difficulty = questions.Difficulty ?? normalizedDifficulty,
             TimeLimit = 15,
             PassingScore = 50,
             IsAIGenerated = true,

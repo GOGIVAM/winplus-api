@@ -57,7 +57,18 @@ public class QuizQuestionDto
 public class SubjectQuizGenerationResult
 {
     public string? Subject { get; set; }
+    public string? Difficulty { get; set; }
     public List<QuizQuestionDto> Questions { get; set; } = new();
+}
+
+/// <summary>Corps de la requête POST /quizzes/me/generate (bouton "Quiz d'entraînement IA").</summary>
+public class GenerateQuizRequestDto
+{
+    /// <summary>Si omis, la matière la plus faible de l'élève est utilisée (voir QuizService).</summary>
+    public string? Subject { get; set; }
+    public string? Topic { get; set; }
+    /// <summary>easy | medium | hard. Par défaut "medium" si omis ou invalide.</summary>
+    public string? Difficulty { get; set; }
 }
 
 public class CreateQuizRequestDto
