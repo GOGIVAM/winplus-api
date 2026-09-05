@@ -525,7 +525,7 @@ async def generate_quiz_content(
         if not questions:
             raise HTTPException(status_code=422, detail="La génération des questions a échoué. Réessaie.")
 
-        return {"success": True, "data": {"questions": questions}}
+        return {"success": True, "data": {"questions": questions, "subject": chosen_subject}}
     except HTTPException:
         raise
     except Exception as e:
