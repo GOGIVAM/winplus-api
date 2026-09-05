@@ -454,6 +454,9 @@ public class QuizService : IQuizService
                 Options = q.TryGetProperty("options", out var optsEl) && optsEl.ValueKind == JsonValueKind.Array
                     ? optsEl.EnumerateArray().Select(o => o.GetString() ?? "").ToList()
                     : new List<string>(),
+                Statement = q.TryGetProperty("statement", out var stEl) && stEl.ValueKind == JsonValueKind.String
+                    ? stEl.GetString()
+                    : null,
             }).ToList();
         }
         catch

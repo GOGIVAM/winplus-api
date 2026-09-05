@@ -40,6 +40,14 @@ public class QuizPlayQuestionDto
     public string Id { get; set; } = null!;
     public string Question { get; set; } = null!;
     public List<string> Options { get; set; } = new();
+
+    /// <summary>
+    /// Énoncé de l'exercice dont dépend la question (mode évaluation
+    /// uniquement, voir QuizService.GetOrCreateExamQuizAsync) : identique pour
+    /// toutes les questions d'un même exercice, à afficher au-dessus du bloc
+    /// question/réponse plutôt que sous forme de question isolée.
+    /// </summary>
+    public string? Statement { get; set; }
 }
 
 public class QuizQuestionDto
@@ -51,6 +59,7 @@ public class QuizQuestionDto
     public string? Explanation { get; set; }
     public int? Difficulty { get; set; }
     public string? Topic { get; set; }
+    public string? Statement { get; set; }
 }
 
 /// <summary>Résultat de génération IA d'un quiz d'entraînement (matière parfois choisie par DeepSeek lui-même).</summary>
