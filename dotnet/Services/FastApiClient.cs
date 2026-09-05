@@ -492,35 +492,58 @@ public class FastApiClient : IFastApiClient
     /// <summary>
     /// Génère les questions du "mode évaluation" à partir du texte réel
     /// extrait du PDF de l'épreuve (voir python/routes/exam_quiz_routes.py).
+    /// Le message d'erreur est celui renvoyé par Python (detail du
+    /// HTTPException) quand disponible, pour distinguer un cas légitime
+    /// ("PDF scanné") d'une vraie panne (dépendance manquante, S3, etc.) au
+    /// lieu d'un message générique identique dans tous les cas.
     /// </summary>
-    public async Task<List<QuizQuestionDto>?> GenerateExamQuizAsync(int examId, string documentUrl, string title, string? category)
+    public async Task<(List<QuizQuestionDto>? Questions, string? ErrorDetail)> GenerateExamQuizAsync(int examId, string documentUrl, string title, string? category)
     {
-        try
+        var request = new
         {
-            _logger.LogInformation("Génération du quiz d'évaluation pour l'épreuve {ExamId}", examId);
+            exam_id = examId,
+            document_url = documentUrl,
+            title,
+            category,
+        };
 
-            var request = new
-            {
-                exam_id = examId,
-                document_url = documentUrl,
-                title,
-                category,
-            };
+        var (statusCode, body) = await PostRawJsonAsync("/api/exam-quiz/generate", request);
 
-            var result = await PostAsync<ExamQuizGenerationResult>("/api/exam-quiz/generate", request);
-            if (result == null || !result.Success || result.Data?.Questions == null || result.Data.Questions.Count == 0)
+        if (statusCode is >= 200 and < 300 && body != null)
+        {
+            try
             {
-                _logger.LogWarning("Génération du quiz d'évaluation échouée pour l'épreuve {ExamId} : {Error}", examId, result?.Error);
-                return null;
+                var result = JsonSerializer.Deserialize<ExamQuizGenerationResult>(body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                var questions = result?.Data?.Questions;
+                if (questions is { Count: > 0 })
+                {
+                    _logger.LogInformation("Quiz d'évaluation généré pour l'épreuve {ExamId} : {Count} questions", examId, questions.Count);
+                    return (questions, null);
+                }
+                return (null, "Le service IA n'a renvoyé aucune question.");
             }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Réponse illisible du service IA pour l'épreuve {ExamId} : {Body}", examId, body);
+                return (null, "Réponse inattendue du service de génération.");
+            }
+        }
 
-            return result.Data.Questions;
-        }
-        catch (Exception ex)
+        // FastAPI encapsule le message d'une HTTPException dans { "detail": "..." }.
+        string? detail = null;
+        if (body != null)
         {
-            _logger.LogError(ex, "Erreur lors de la génération du quiz d'évaluation pour l'épreuve {ExamId}", examId);
-            return null;
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("detail", out var detailEl))
+                    detail = detailEl.GetString();
+            }
+            catch { /* corps non-JSON (502/503 générés par PostRawJsonAsync) */ }
         }
+
+        _logger.LogWarning("Génération du quiz d'évaluation échouée pour l'épreuve {ExamId} : HTTP {StatusCode}  {Detail}", examId, statusCode, detail ?? body);
+        return (null, detail);
     }
 
     public async Task<SubjectQuizGenerationResult?> GenerateSubjectQuizAsync(int userId, string? subject, string? topic, string? level, string? contextHint)
