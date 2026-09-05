@@ -79,8 +79,10 @@ class RevisionContentRequest(BaseModel):
 
 class QuizContentRequest(BaseModel):
     user_id: int
-    subject: str
+    subject: Optional[str] = None
     topic: Optional[str] = None
+    level: Optional[str] = None
+    context_hint: Optional[str] = None
 
 
 # ─── 1. Generate smart notification ──────────────────────────────────────────
@@ -421,48 +423,68 @@ async def generate_quiz_content(
     current_user: UserTokenData = Depends(verify_token),
 ):
     """
-    Génère un quiz d'entraînement (QCM) sur une matière, ciblé sur les
-    erreurs récentes de l'élève dans cette matière quand elles existent —
-    sinon des questions standards de niveau lycée/examens camerounais. Même
-    forme de réponse que /api/exam-quiz/generate ({success, data:
-    {questions}}) pour que le .NET (QuizService) réutilise le même parseur.
+    Génère un quiz d'entraînement (QCM). Deux cas :
+      - body.subject fourni : ciblé sur les erreurs récentes de l'élève dans
+        cette matière quand elles existent (QuizMistakes), sinon questions
+        standards de niveau lycée/examens camerounais ;
+      - body.subject absent (élève sans historique de quiz) : DeepSeek choisit
+        lui-même la matière la plus utile à partir du niveau scolaire et du
+        contexte fourni (objectifs actifs), et la renvoie dans la réponse.
+    Même forme de réponse que /api/exam-quiz/generate ({success, data:
+    {questions, subject}}) pour que le .NET (QuizService) réutilise le même
+    parseur.
     """
-    db = Database()
-    session = db.SessionLocal()
-    try:
-        cutoff = datetime.utcnow() - timedelta(days=60)
-        mistakes = (
-            session.query(QuizMistake)
-            .filter(
-                QuizMistake.UserId == body.user_id,
-                QuizMistake.Subject == body.subject,
-                QuizMistake.CreatedAt >= cutoff,
+    mistakes_text = ""
+    if body.subject:
+        db = Database()
+        session = db.SessionLocal()
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=60)
+            mistakes = (
+                session.query(QuizMistake)
+                .filter(
+                    QuizMistake.UserId == body.user_id,
+                    QuizMistake.Subject == body.subject,
+                    QuizMistake.CreatedAt >= cutoff,
+                )
+                .order_by(QuizMistake.CreatedAt.desc())
+                .limit(8)
+                .all()
             )
-            .order_by(QuizMistake.CreatedAt.desc())
-            .limit(8)
-            .all()
-        )
-        mistakes_text = "\n".join(f"- {m.Question[:200]}" for m in mistakes)
-    finally:
-        session.close()
+            mistakes_text = "\n".join(f"- {m.Question[:200]}" for m in mistakes)
+        finally:
+            session.close()
 
     topic_line = f"Sous-thème : {body.topic}\n" if body.topic else ""
-    context_line = (
-        f"L'élève a récemment eu du mal avec des questions proches de celles-ci "
-        f"(reste sur les mêmes notions, formulations différentes) :\n{mistakes_text}\n\n"
-        if mistakes_text else
-        "Aucune erreur récente enregistrée  couvre les notions fondamentales du programme.\n\n"
-    )
+    level_line = f"Niveau scolaire de l'élève : {body.level}.\n" if body.level else ""
+
+    if body.subject:
+        subject_line = f"Matière : {body.subject}.\n"
+        subject_json_field = ""
+        context_line = (
+            f"L'élève a récemment eu du mal avec des questions proches de celles-ci "
+            f"(reste sur les mêmes notions, formulations différentes) :\n{mistakes_text}\n\n"
+            if mistakes_text else
+            "Aucune erreur récente enregistrée  couvre les notions fondamentales du programme.\n\n"
+        )
+    else:
+        subject_line = (
+            f"Aucune matière n'est précisée : choisis toi-même celle qui aidera le plus cet élève, "
+            f"à partir de son niveau scolaire et des indices suivants : {body.context_hint or 'aucun indice disponible'}.\n"
+        )
+        subject_json_field = '"subject":"...",  // la matière que tu as choisie\n  '
+        context_line = ""
 
     prompt = (
         f"Génère exactement {QUIZ_QUESTION_COUNT} questions à choix multiples de niveau lycée/examens "
-        f"camerounais en {body.subject}.\n{topic_line}\n{context_line}"
+        f"camerounais.\n{subject_line}{level_line}{topic_line}\n{context_line}"
         f"Mélange les niveaux de difficulté. "
-        f'Format JSON strict, un tableau : '
-        f'[{{"id":"q1","question":"...","options":["A) ...","B) ...","C) ...","D) ..."],'
-        f'"correctAnswer":"B) ...","explanation":"..."}}] '
+        f'Format JSON strict, un objet unique : '
+        f'{{{subject_json_field}"questions":[{{"id":"q1","question":"...",'
+        f'"options":["A) ...","B) ...","C) ...","D) ..."],'
+        f'"correctAnswer":"B) ...","explanation":"..."}}]}} '
         f"correctAnswer doit correspondre EXACTEMENT à une des chaînes de options. "
-        f"Réponds UNIQUEMENT avec le tableau JSON, sans texte autour ni balises de code."
+        f"Réponds UNIQUEMENT avec cet objet JSON, sans texte autour ni balises de code."
     )
     system = (
         "Tu es WinAI, expert en évaluation pédagogique pour les examens camerounais. "
@@ -481,8 +503,10 @@ async def generate_quiz_content(
 
         import re as _re
         import json as _json
-        match = _re.search(r"\[.*\]", raw, _re.DOTALL)
-        parsed = _json.loads(match.group()) if match else []
+        match = _re.search(r"\{.*\}", raw, _re.DOTALL)
+        payload = _json.loads(match.group()) if match else {}
+        chosen_subject = body.subject or payload.get("subject")
+        parsed = payload.get("questions", [])
 
         questions = []
         for i, q in enumerate(parsed[:QUIZ_QUESTION_COUNT]):
