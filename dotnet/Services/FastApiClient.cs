@@ -253,6 +253,43 @@ public class FastApiClient : IFastApiClient
     }
 
     /// <summary>
+    /// POST brut : renvoie le code HTTP et le corps tels quels, sans passer
+    /// par EnsureSuccessStatusCode(). PostAsync&lt;T&gt; jette et avale le corps
+    /// sur tout code non-2xx, donc un message d'erreur utile côté Python
+    /// (ex: "PDF scanné, contenu illisible") n'atteignait jamais l'appelant
+    /// ni les logs  seul un null générique remontait.
+    /// </summary>
+    private async Task<(int StatusCode, string? Body)> PostRawJsonAsync(string endpoint, object data)
+    {
+        try
+        {
+            return await _circuitBreakerPolicy.ExecuteAsync(async () =>
+                await _retryPolicy.ExecuteAsync(async () =>
+                {
+                    using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+                    {
+                        Content = new StringContent(JsonSerializer.Serialize(data), Encoding.UTF8, "application/json")
+                    };
+                    AttachAuthorization(request);
+
+                    var response = await _httpClient.SendAsync(request);
+                    var body = await response.Content.ReadAsStringAsync();
+                    return ((int)response.StatusCode, (string?)body);
+                }));
+        }
+        catch (BrokenCircuitException ex)
+        {
+            _logger.LogError(ex, " Circuit ouvert: FastApi API indisponible pour {Endpoint}", endpoint);
+            return (503, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, " Erreur POST brut FastApi API {Endpoint}", endpoint);
+            return (502, null);
+        }
+    }
+
+    /// <summary>
     /// POST request avec retry + circuit breaker
     /// </summary>
     public async Task<T?> PostAsync<T>(string endpoint, object data) where T : class
