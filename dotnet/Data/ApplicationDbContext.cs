@@ -81,6 +81,7 @@ public partial class ApplicationDbContext : DbContext
     // Category and Learning entities
     public DbSet<Level> Levels => Set<Level>();
     public DbSet<Goal> Goals => Set<Goal>();
+    public DbSet<AcademicRecord> AcademicRecords => Set<AcademicRecord>();
     public DbSet<Promotion> Promotions => Set<Promotion>();
     public DbSet<HomePage> HomePages => Set<HomePage>();
     public DbSet<HomePageFeature> HomePageFeatures => Set<HomePageFeature>();
