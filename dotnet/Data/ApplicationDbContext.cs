@@ -234,10 +234,15 @@ public partial class ApplicationDbContext : DbContext
 
         modelBuilder.Entity<TutorVerificationDocument>(entity =>
         {
+            entity.HasIndex(e => new { e.Status, e.SubmittedAt });
             entity.HasOne(e => e.TutorProfile)
                   .WithMany(t => t.VerificationDocuments)
                   .HasForeignKey(e => e.TutorProfileId)
                   .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<User>()
+                  .WithMany()
+                  .HasForeignKey(e => e.ReviewedByUserId)
+                  .OnDelete(DeleteBehavior.SetNull);
         });
 
         // ── WeeklyGoal : un objectif par utilisateur et par semaine ──

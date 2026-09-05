@@ -119,10 +119,17 @@ CREATE TABLE IF NOT EXISTS "TutorVerificationDocuments" (
     "ReviewedAt"          TIMESTAMP WITH TIME ZONE,
     "ReviewedByUserId"    INTEGER,
     CONSTRAINT "FK_TutorVerificationDocuments_TutorProfiles_TutorProfileId"
-        FOREIGN KEY ("TutorProfileId") REFERENCES "TutorProfiles"("Id") ON DELETE CASCADE
+        FOREIGN KEY ("TutorProfileId") REFERENCES "TutorProfiles"("Id") ON DELETE CASCADE,
+    CONSTRAINT "FK_TutorVerificationDocuments_Users_ReviewedByUserId"
+        FOREIGN KEY ("ReviewedByUserId") REFERENCES "Users"("Id") ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS "IX_TutorVerificationDocuments_TutorProfileId" ON "TutorVerificationDocuments"("TutorProfileId");
+
+-- Sert la file d'attente admin (AdminController.GetPendingTutorVerificationDocuments,
+-- ajouté après ce script initial) : WHERE "Status" = 'pending' ORDER BY "SubmittedAt".
+CREATE INDEX IF NOT EXISTS "IX_TutorVerificationDocuments_Status_SubmittedAt"
+    ON "TutorVerificationDocuments"("Status", "SubmittedAt");
 
 -- ── Historique EF : évite que `dotnet ef migrations` s'y perde si l'équipe
 --    exécute un jour les migrations normalement (le reste du projet applique
