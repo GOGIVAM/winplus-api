@@ -539,7 +539,17 @@ class Database:
             session.close()
     
     def get_user_progress_stats(self, user_id: int) -> dict:
-        """Calcule les statistiques de progression d'un utilisateur"""
+        """Calcule les statistiques de progression d'un utilisateur.
+
+        S'appuie sur Enrollments quand ils existent (parcours "Formations"),
+        mais la quasi-totalité des élèves n'utilise que le catalogue
+        d'épreuves et n'a donc AUCUNE ligne Enrollment : renvoyer des
+        statistiques nulles dans ce cas cassait silencieusement toute
+        fonctionnalité basée dessus (ex: mode évaluation "Mon Parcours", qui
+        renvoyait 404 même pour un élève très actif). On retombe donc sur les
+        vraies traces d'activité (StudySessions, QuizMistakes, téléchargements)
+        quand Enrollments est vide.
+        """
         session = self.SessionLocal()
         try:
             # Stats des enrollments
@@ -549,18 +559,10 @@ class Database:
                     Enrollment.IsDeleted == False
                 )
             ).all()
-            
+
             if not enrollments:
-                return {
-                    'total_enrolled_subjects': 0,
-                    'completed_subjects': 0,
-                    'average_progress': 0.0,
-                    'total_learning_time_minutes': 0,
-                    'learning_frequency': 0,
-                    'strengths': [],
-                    'weak_areas': []
-                }
-            
+                return self._get_progress_stats_from_activity(session, user_id)
+
             total_enrolled = len(enrollments)
             completed = sum(1 for e in enrollments if e.IsCompleted)
             avg_progress = sum(float(e.ProgressPercentage or 0) for e in enrollments) / total_enrolled if total_enrolled > 0 else 0
@@ -610,7 +612,60 @@ class Database:
             }
         finally:
             session.close()
-    
+
+    def _get_progress_stats_from_activity(self, session, user_id: int) -> dict:
+        """Repli de get_user_progress_stats() quand l'élève n'a aucun
+        Enrollment (cas normal pour un usage catalogue d'épreuves) : dérive
+        les mêmes indicateurs de StudySessions (score par matière),
+        QuizMistakes (matières à renforcer) et DownloadHistories (matières
+        engagées). Ne referme pas la session : appelée depuis
+        get_user_progress_stats() qui gère déjà le `finally`.
+        """
+        study_sessions = session.query(StudySession).filter(StudySession.UserId == user_id).all()
+        mistakes = session.query(QuizMistake).filter(QuizMistake.UserId == user_id).all()
+        downloads = session.query(DownloadHistory).filter(DownloadHistory.UserId == user_id).all()
+
+        total_learning_time = sum(s.Duration or 0 for s in study_sessions)
+        learning_frequency = len(study_sessions) + len(mistakes) + len(downloads)
+
+        # Score moyen par matière à partir des sessions guidées notées.
+        scores_by_subject: dict = {}
+        for s in study_sessions:
+            if s.Score is not None and s.SubjectId is not None:
+                scores_by_subject.setdefault(s.SubjectId, []).append(float(s.Score))
+        subject_avg = {sid: sum(v) / len(v) for sid, v in scores_by_subject.items()}
+
+        def subject_title(subject_id: int):
+            subj = session.query(Subject).get(subject_id)
+            return subj.Title if subj else None
+
+        ranked_desc = sorted(subject_avg.items(), key=lambda kv: kv[1], reverse=True)
+        strengths = [title for sid, _ in ranked_desc[:3] if (title := subject_title(sid))]
+
+        ranked_asc = sorted(subject_avg.items(), key=lambda kv: kv[1])
+        weak_areas = [title for sid, avg in ranked_asc[:3] if avg < 80 and (title := subject_title(sid))]
+
+        # Pas encore de session notée : les matières où l'élève se trompe le
+        # plus en quiz sont un signal de faiblesse au moins aussi pertinent.
+        if not weak_areas and mistakes:
+            mistake_counts: dict = {}
+            for m in mistakes:
+                if m.Subject:
+                    mistake_counts[m.Subject] = mistake_counts.get(m.Subject, 0) + 1
+            weak_areas = [s for s, _ in sorted(mistake_counts.items(), key=lambda kv: kv[1], reverse=True)[:3]]
+
+        engaged_subject_ids = {d.SubjectId for d in downloads if d.SubjectId} | set(scores_by_subject.keys())
+
+        return {
+            'total_enrolled_subjects': len(engaged_subject_ids),
+            'completed_subjects': sum(1 for avg in subject_avg.values() if avg >= 80),
+            'average_progress': round(sum(subject_avg.values()) / len(subject_avg), 2) if subject_avg else 0.0,
+            'total_learning_time_minutes': total_learning_time,
+            'learning_frequency': learning_frequency,
+            'strengths': strengths,
+            'weak_areas': weak_areas,
+        }
+
     def get_user_learning_style(self, user_id: int) -> str | None:
         """Retourne le style d'apprentissage depuis ChatbotContexts (visual/auditory/reading_writing/kinesthetic)"""
         session = self.SessionLocal()

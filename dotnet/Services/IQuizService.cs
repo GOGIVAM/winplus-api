@@ -38,9 +38,12 @@ public interface IQuizService
     Task<IEnumerable<QuizDto>> SearchQuizzesAsync(string searchTerm, int page = 1, int pageSize = 20);
 
     /// <summary>
-    /// Récupère les quiz publiés
+    /// Récupère les quiz publiés. Un quiz généré par IA n'est renvoyé qu'à son
+    /// propriétaire (viewerUserId) : sans ce filtre, tout quiz IA généré pour
+    /// un élève était visible et rejouable par tous les autres via cette
+    /// route  seuls les quiz admin (IsAIGenerated=false) restent partagés.
     /// </summary>
-    Task<IEnumerable<QuizDto>> GetPublishedQuizzesAsync(int page = 1, int pageSize = 20);
+    Task<IEnumerable<QuizDto>> GetPublishedQuizzesAsync(int page = 1, int pageSize = 20, int? viewerUserId = null);
 
     /// <summary>
     /// Soumet les réponses d'un quiz et obtient les résultats avec évaluation
@@ -108,4 +111,16 @@ public interface IQuizService
     /// plus faible de l'utilisateur si non précisée) et le publie.
     /// </summary>
     Task<QuizDto> GenerateAIQuizAsync(int userId, string? subject, string? topic, string? difficulty = null);
+
+    /// <summary>Quiz IA générés par cet utilisateur, actifs par défaut (ou masqués si demandé).</summary>
+    Task<IEnumerable<QuizDto>> GetMyGeneratedQuizzesAsync(int userId, bool includeHidden = false, int page = 1, int pageSize = 50);
+
+    /// <summary>Masque/restaure un quiz IA de la liste active, sans toucher à ses statistiques.</summary>
+    Task HideQuizAsync(int userId, int id, bool hide);
+
+    /// <summary>Enregistre le signalement libre de l'élève sur ce quiz IA.</summary>
+    Task SetQuizDifficultyFeedbackAsync(int userId, int id, string feedback);
+
+    /// <summary>Supprime définitivement (IsDeleted) les quiz déjà masqués de cet utilisateur.</summary>
+    Task ClearMyQuizHistoryAsync(int userId);
 }

@@ -138,11 +138,11 @@ public class QuizService : IQuizService
         return quizzes.Select(MapToDto);
     }
 
-    public async Task<IEnumerable<QuizDto>> GetPublishedQuizzesAsync(int page = 1, int pageSize = 20)
+    public async Task<IEnumerable<QuizDto>> GetPublishedQuizzesAsync(int page = 1, int pageSize = 20, int? viewerUserId = null)
     {
         var quizzes = await _context.Quizzes
             .AsNoTracking()
-            .Where(q => q.IsPublished && !q.IsDeleted)
+            .Where(q => q.IsPublished && !q.IsDeleted && (!q.IsAIGenerated || q.CreatedByUserId == viewerUserId))
             .OrderByDescending(q => q.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
@@ -159,6 +159,19 @@ public class QuizService : IQuizService
 
         if (quiz == null)
             throw new KeyNotFoundException($"Quiz with id {quizId} not found");
+
+        // Une seule tentative pour un quiz généré par WinAI pour SOI  les
+        // réponses/corrections sont visibles dès la première fois, le
+        // rejouer ne testerait plus rien. Les quiz admin (IsAIGenerated
+        // false) restent librement rejouables, décision explicite du
+        // chantier : ce blocage ne doit viser QUE le contenu généré par IA
+        // pour cet élève précis, jamais un quiz partagé/attribué.
+        if (quiz.IsAIGenerated && quiz.CreatedByUserId == userId)
+        {
+            var alreadyAttempted = await _context.QuizAttempts.AnyAsync(a => a.UserId == userId && a.QuizId == quizId);
+            if (alreadyAttempted)
+                throw new InvalidOperationException("Tu as déjà répondu à ce quiz généré par WinAI. Génère-en un nouveau.");
+        }
 
         // Parser les questions depuis JSON
         var questionsJson = JsonDocument.Parse(quiz.QuestionsJson);
@@ -249,9 +262,13 @@ public class QuizService : IQuizService
 
     public async Task<IEnumerable<QuizAttemptDto>> GetUserQuizAttemptsAsync(int userId, int quizId)
     {
+        // !a.Quiz.IsDeleted explicite : sans référence à la navigation Quiz
+        // dans cette requête, le filtre global d'EF sur Quiz (!IsDeleted) ne
+        // s'applique pas  "Vider l'historique" (hard-delete des quiz
+        // masqués) laissait sinon leurs tentatives visibles ici.
         var attempts = await _context.QuizAttempts
             .AsNoTracking()
-            .Where(a => a.UserId == userId && a.QuizId == quizId)
+            .Where(a => a.UserId == userId && a.QuizId == quizId && !a.Quiz!.IsDeleted)
             .OrderByDescending(a => a.CompletedAt)
             .ToListAsync();
 
@@ -262,7 +279,7 @@ public class QuizService : IQuizService
     {
         var attempts = await _context.QuizAttempts
             .AsNoTracking()
-            .Where(a => a.UserId == userId)
+            .Where(a => a.UserId == userId && !a.Quiz!.IsDeleted)
             .OrderByDescending(a => a.CompletedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
@@ -439,6 +456,7 @@ public class QuizService : IQuizService
             UpdatedAt = quiz.UpdatedAt,
             PublishedAt = quiz.PublishedAt,
             IsAIGenerated = quiz.IsAIGenerated,
+            HiddenFromList = quiz.HiddenFromList,
         };
     }
 
@@ -590,7 +608,32 @@ public class QuizService : IQuizService
             contextHint = string.Join("; ", hints);
         }
 
-        var questions = await _fastApiClient.GenerateSubjectQuizAsync(userId, resolvedSubject, topic, level, contextHint, normalizedDifficulty);
+        // Anti-répétition : les questions des 2-3 derniers quiz IA de cet élève
+        // sur cette même matière, pour que DeepSeek évite de les reposer telles
+        // quelles  "régénérer" donnait sinon quasiment toujours le même quiz.
+        var recentQuestionTexts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(resolvedSubject))
+        {
+            var recentQuizzesJson = await _context.Quizzes
+                .Where(q => q.CreatedByUserId == userId && q.IsAIGenerated && q.Subject == resolvedSubject)
+                .OrderByDescending(q => q.CreatedAt)
+                .Take(3)
+                .Select(q => q.QuestionsJson)
+                .ToListAsync();
+
+            foreach (var json in recentQuizzesJson)
+            {
+                if (recentQuestionTexts.Count >= 15) break;
+                foreach (var q in ParsePlayQuestions(json))
+                {
+                    if (recentQuestionTexts.Count >= 15) break;
+                    if (!string.IsNullOrWhiteSpace(q.Question))
+                        recentQuestionTexts.Add(q.Question);
+                }
+            }
+        }
+
+        var questions = await _fastApiClient.GenerateSubjectQuizAsync(userId, resolvedSubject, topic, level, contextHint, normalizedDifficulty, recentQuestionTexts);
         if (questions == null || questions.Questions.Count == 0)
             throw new InvalidOperationException("La génération du quiz a échoué, réessaie dans un instant.");
 
@@ -607,6 +650,7 @@ public class QuizService : IQuizService
             PassingScore = 50,
             IsAIGenerated = true,
             IsPublished = true,
+            CreatedByUserId = userId,
             PublishedAt = DateTime.UtcNow,
             CreatedAt = DateTime.UtcNow,
         };
@@ -630,5 +674,69 @@ public class QuizService : IQuizService
             Passed = attempt.Passed,
             CompletedAt = attempt.CompletedAt,
         };
+    }
+
+    public async Task<IEnumerable<QuizDto>> GetMyGeneratedQuizzesAsync(int userId, bool includeHidden = false, int page = 1, int pageSize = 50)
+    {
+        var query = _context.Quizzes
+            .AsNoTracking()
+            .Where(q => q.CreatedByUserId == userId && q.IsAIGenerated);
+
+        if (!includeHidden)
+            query = query.Where(q => !q.HiddenFromList);
+
+        var quizzes = await query
+            .OrderByDescending(q => q.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+
+        return quizzes.Select(MapToDto);
+    }
+
+    public async Task HideQuizAsync(int userId, int id, bool hide)
+    {
+        var quiz = await _context.Quizzes.FirstOrDefaultAsync(q => q.Id == id);
+        if (quiz == null)
+            throw new KeyNotFoundException($"Quiz with id {id} not found");
+
+        if (!quiz.IsAIGenerated || quiz.CreatedByUserId != userId)
+            throw new UnauthorizedAccessException("Tu ne peux masquer que les quiz que tu as toi-même générés.");
+
+        quiz.HiddenFromList = hide;
+        quiz.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task SetQuizDifficultyFeedbackAsync(int userId, int id, string feedback)
+    {
+        var quiz = await _context.Quizzes.FirstOrDefaultAsync(q => q.Id == id);
+        if (quiz == null)
+            throw new KeyNotFoundException($"Quiz with id {id} not found");
+
+        if (!quiz.IsAIGenerated || quiz.CreatedByUserId != userId)
+            throw new UnauthorizedAccessException("Tu ne peux signaler que les quiz que tu as toi-même générés.");
+
+        quiz.DifficultyFeedback = feedback.Length > 500 ? feedback[..500] : feedback;
+        quiz.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task ClearMyQuizHistoryAsync(int userId)
+    {
+        // Hard-delete uniquement les quiz DÉJÀ masqués : "Vider l'historique"
+        // reste un geste réfléchi sur ce qu'on a déjà retiré de la liste
+        // active, jamais un moyen accidentel d'effacer un quiz encore visible.
+        var hidden = await _context.Quizzes
+            .Where(q => q.CreatedByUserId == userId && q.IsAIGenerated && q.HiddenFromList && !q.IsDeleted)
+            .ToListAsync();
+
+        foreach (var quiz in hidden)
+        {
+            quiz.IsDeleted = true;
+            quiz.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _context.SaveChangesAsync();
     }
 }

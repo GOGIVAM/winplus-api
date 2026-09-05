@@ -8,6 +8,8 @@ public class GenerateRevisionRequestDto
     /// <summary>Si omis, le sujet le plus faible de l'élève est utilisé (voir RevisionService).</summary>
     public string? Subject { get; set; }
     public string? Topic { get; set; }
+    /// <summary>easy | medium | hard. Par défaut "medium" si omis ou invalide.</summary>
+    public string? Difficulty { get; set; }
 }
 
 /// <summary>
@@ -18,6 +20,9 @@ public class GeneratedRevisionContentDto
 {
     public bool Success { get; set; }
     public string? Title { get; set; }
+
+    /// <summary>Matière choisie par DeepSeek quand aucune n'était imposée (repli "niveau seul").</summary>
+    public string? Subject { get; set; }
 
     [JsonPropertyName("content_markdown")]
     public string? ContentMarkdown { get; set; }
@@ -52,6 +57,9 @@ public class RevisionDto
     public string? Difficulty { get; set; }
     /// <summary>Générée par WinAI (true) ou attribuée par un prof/parent (false).</summary>
     public bool IsAIGenerated { get; set; }
+
+    /// <summary>Masquée de la liste active par son propriétaire (RevisionHistoryTable, onglet Masquées).</summary>
+    public bool HiddenFromList { get; set; }
 }
 
 public class CreateRevisionRequestDto
@@ -122,6 +130,12 @@ public class AssignRevisionRequestDto
     public int UserId { get; set; }
     public decimal? OriginalScore { get; set; }
     public int? TriggeredByLearningHistoryId { get; set; }
+}
+
+/// <summary>Corps de POST /revisions/{id}/feedback  signalement libre de l'élève.</summary>
+public class RevisionFeedbackRequestDto
+{
+    public string? Feedback { get; set; }
 }
 
 public class RevisionSearchFilterDto

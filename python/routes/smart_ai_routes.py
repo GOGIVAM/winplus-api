@@ -73,8 +73,15 @@ class ContentFitRequest(BaseModel):
 
 class RevisionContentRequest(BaseModel):
     user_id: int
-    subject: str
+    # Optionnel : quand l'élève n'a ni quiz, ni téléchargement, ni objectif
+    # exploitable, DeepSeek choisit lui-même la matière à partir de `level` et
+    # `context_hint` (miroir de QuizContentRequest / generate_quiz_content).
+    subject: Optional[str] = None
     topic: Optional[str] = None
+    level: Optional[str] = None
+    context_hint: Optional[str] = None
+    #  easy | medium | hard, contrôle explicite de l'élève.
+    difficulty: Optional[str] = None
 
 
 class QuizContentRequest(BaseModel):
@@ -86,6 +93,10 @@ class QuizContentRequest(BaseModel):
     #  easy | medium | hard  contrôle explicite demandé par l'élève (bouton
     # "plus facile / plus dur"), distinct du niveau scolaire (`level`).
     difficulty: Optional[str] = None
+    # Énoncés des questions des 2-3 derniers quiz IA du même élève sur cette
+    # matière (QuizService.GenerateAIQuizAsync)  anti-répétition, "régénérer"
+    # ne redonnait sinon quasi toujours le même quiz.
+    recent_question_texts: List[str] = []
 
 
 # ─── 1. Generate smart notification ──────────────────────────────────────────
@@ -332,23 +343,25 @@ async def generate_revision_content(
     try:
         cutoff = datetime.utcnow() - timedelta(days=60)
 
-        mistakes = (
-            session.query(QuizMistake)
-            .filter(
-                QuizMistake.UserId == body.user_id,
-                QuizMistake.Subject == body.subject,
-                QuizMistake.CreatedAt >= cutoff,
+        mistakes_text = "Aucune erreur récente enregistrée  base-toi sur les fondamentaux du sujet."
+        if body.subject:
+            mistakes = (
+                session.query(QuizMistake)
+                .filter(
+                    QuizMistake.UserId == body.user_id,
+                    QuizMistake.Subject == body.subject,
+                    QuizMistake.CreatedAt >= cutoff,
+                )
+                .order_by(QuizMistake.CreatedAt.desc())
+                .limit(10)
+                .all()
             )
-            .order_by(QuizMistake.CreatedAt.desc())
-            .limit(10)
-            .all()
-        )
-        mistakes_text = "\n".join(
-            f"- {m.Question[:200]}"
-            + (f" (réponse donnée : {m.GivenAnswer})" if m.GivenAnswer else "")
-            + (f" (bonne réponse : {m.CorrectAnswer})" if m.CorrectAnswer else "")
-            for m in mistakes
-        ) or "Aucune erreur récente enregistrée  base-toi sur les fondamentaux du sujet."
+            mistakes_text = "\n".join(
+                f"- {m.Question[:200]}"
+                + (f" (réponse donnée : {m.GivenAnswer})" if m.GivenAnswer else "")
+                + (f" (bonne réponse : {m.CorrectAnswer})" if m.CorrectAnswer else "")
+                for m in mistakes
+            ) or mistakes_text
 
         downloads = (
             session.query(Subject.Title)
@@ -372,17 +385,45 @@ async def generate_revision_content(
         session.close()
 
     topic_line = f"Sous-thème demandé : {body.topic}\n" if body.topic else ""
+    level_line = f"Niveau scolaire de l'élève : {body.level}.\n" if body.level else ""
+
+    difficulty = (body.difficulty or "").strip().lower()
+    if difficulty not in ("easy", "medium", "hard"):
+        difficulty = None
+    difficulty_line = f"Calibre la fiche pour une difficulté {difficulty}.\n" if difficulty else ""
+
+    if body.subject:
+        subject_line = f"Rédige une fiche de révision personnalisée en {body.subject}.\n"
+        subject_json_field = ""
+        context_lines = (
+            f"Erreurs récentes de l'élève dans cette matière :\n{mistakes_text}\n\n"
+            f"Épreuves récemment téléchargées (contexte de niveau) : {downloads_text}\n"
+            f"Objectifs actifs de l'élève : {goals_text}\n\n"
+        )
+    else:
+        # Repli "niveau seul" (RevisionService.GenerateAIRevisionAsync,
+        # Phase 3)  ni quiz, ni téléchargement, ni objectif exploitable :
+        # DeepSeek choisit lui-même une matière utile à partir du niveau
+        # scolaire et du contexte fourni, comme generate_quiz_content.
+        subject_line = (
+            f"Aucune matière n'est précisée : choisis toi-même celle qui aidera le plus cet élève, "
+            f"à partir de son niveau scolaire et des indices suivants : {body.context_hint or 'aucun indice disponible'}.\n"
+        )
+        subject_json_field = '"subject": "...",  // la matière que tu as choisie\n  '
+        context_lines = (
+            f"Épreuves récemment téléchargées (contexte de niveau) : {downloads_text}\n"
+            f"Objectifs actifs de l'élève : {goals_text}\n\n"
+        )
+
     prompt = (
         f"Tu es WinAI, professeur particulier pour un lycéen camerounais préparant ses examens.\n"
-        f"Rédige une fiche de révision personnalisée en {body.subject}.\n"
-        f"{topic_line}\n"
-        f"Erreurs récentes de l'élève dans cette matière :\n{mistakes_text}\n\n"
-        f"Épreuves récemment téléchargées (contexte de niveau) : {downloads_text}\n"
-        f"Objectifs actifs de l'élève : {goals_text}\n\n"
-        f"Concentre la fiche sur ce que l'élève a réellement raté, pas un résumé générique du "
-        f"programme. Réponds UNIQUEMENT en JSON (sans balises markdown autour) :\n"
+        f"{subject_line}{level_line}{topic_line}{difficulty_line}\n"
+        f"{context_lines}"
+        f"Concentre la fiche sur ce que l'élève a réellement raté ou doit travailler en priorité, pas "
+        f"un résumé générique du programme. Réponds UNIQUEMENT en JSON (sans balises markdown autour) :\n"
         "{\n"
-        '  "title": "...",  // court, spécifique au sous-thème réellement travaillé\n'
+        f"  {subject_json_field}"
+        '"title": "...",  // court, spécifique au sous-thème réellement travaillé\n'
         '  "content_markdown": "...",  // fiche complète en Markdown : ## sections, explications, '
         'exemples chiffrés, astuces méthode  400 à 700 mots\n'
         '  "difficulty": "easy" | "medium" | "hard",\n'
@@ -405,11 +446,14 @@ async def generate_revision_content(
         import json as _json
         data = _json.loads(content)
 
+        chosen_subject = body.subject or data.get("subject")
+
         return {
             "success": True,
-            "title": str(data.get("title") or f"Révision  {body.subject}")[:255],
+            "subject": chosen_subject,
+            "title": str(data.get("title") or (f"Révision  {chosen_subject}" if chosen_subject else "Fiche de révision"))[:255],
             "content_markdown": str(data.get("content_markdown") or ""),
-            "difficulty": data.get("difficulty") if data.get("difficulty") in ("easy", "medium", "hard") else "medium",
+            "difficulty": data.get("difficulty") if data.get("difficulty") in ("easy", "medium", "hard") else (difficulty or "medium"),
             "estimated_duration_minutes": int(data.get("estimated_duration_minutes") or 15),
         }
     except Exception as e:
@@ -491,10 +535,23 @@ async def generate_quiz_content(
         subject_json_field = '"subject":"...",  // la matière que tu as choisie\n  '
         context_line = ""
 
+    variety_line = (
+        "Varie les formats de question (définition, calcul, mise en situation concrète, analyse "
+        "d'erreur, vrai/faux justifié, application directe du cours...) et ne réutilise jamais deux "
+        "fois le même énoncé-type dans ce quiz.\n"
+    )
+    avoid_repeat_line = ""
+    if body.recent_question_texts:
+        recent_list = "\n".join(f"- {q[:200]}" for q in body.recent_question_texts[:15])
+        avoid_repeat_line = (
+            f"L'élève a déjà eu ces questions dans un quiz précédent sur cette matière  ne les répète "
+            f"PAS, même reformulées, choisis d'autres notions ou d'autres angles :\n{recent_list}\n\n"
+        )
+
     prompt = (
         f"Génère exactement {QUIZ_QUESTION_COUNT} questions à choix multiples de niveau lycée/examens "
         f"camerounais.\n{subject_line}{level_line}{topic_line}\n{context_line}"
-        f"{difficulty_line}"
+        f"{difficulty_line}{variety_line}{avoid_repeat_line}"
         f'Format JSON strict, un objet unique : '
         f'{{{subject_json_field}"questions":[{{"id":"q1","question":"...",'
         f'"options":["A) ...","B) ...","C) ...","D) ..."],'

@@ -51,13 +51,13 @@ public interface IFastApiClient
     /// nul, DeepSeek choisit lui-même la matière à partir du niveau scolaire
     /// et du contexte fourni (objectifs actifs)  voir QuizService.GenerateAIQuizAsync.
     /// </summary>
-    Task<SubjectQuizGenerationResult?> GenerateSubjectQuizAsync(int userId, string? subject, string? topic, string? level, string? contextHint, string? difficulty = null);
+    Task<SubjectQuizGenerationResult?> GenerateSubjectQuizAsync(int userId, string? subject, string? topic, string? level, string? contextHint, string? difficulty = null, List<string>? recentQuestionTexts = null);
 
     /// <summary>
     /// Génère le contenu d'une fiche de révision personnalisée (erreurs de
     /// quiz récentes, épreuves téléchargées, objectifs actifs de l'élève).
     /// </summary>
-    Task<GeneratedRevisionContentDto?> GenerateRevisionContentAsync(int userId, string subject, string? topic);
+    Task<GeneratedRevisionContentDto?> GenerateRevisionContentAsync(int userId, string? subject, string? topic, string? level = null, string? contextHint = null, string? difficulty = null);
 }
 
 public class FastApiClient : IFastApiClient
@@ -510,13 +510,13 @@ public class FastApiClient : IFastApiClient
         return (null, detail);
     }
 
-    public async Task<SubjectQuizGenerationResult?> GenerateSubjectQuizAsync(int userId, string? subject, string? topic, string? level, string? contextHint, string? difficulty = null)
+    public async Task<SubjectQuizGenerationResult?> GenerateSubjectQuizAsync(int userId, string? subject, string? topic, string? level, string? contextHint, string? difficulty = null, List<string>? recentQuestionTexts = null)
     {
         try
         {
             _logger.LogInformation("Génération d'un quiz d'entraînement IA pour l'utilisateur {UserId} en {Subject}", userId, subject ?? "(matière à choisir par l'IA)");
 
-            var request = new { user_id = userId, subject, topic, level, context_hint = contextHint, difficulty };
+            var request = new { user_id = userId, subject, topic, level, context_hint = contextHint, difficulty, recent_question_texts = recentQuestionTexts ?? new List<string>() };
             var result = await PostAsync<ExamQuizGenerationResult>("/api/quizzes/generate-content", request);
 
             if (result == null || !result.Success || result.Data?.Questions == null || result.Data.Questions.Count == 0)
@@ -534,13 +534,13 @@ public class FastApiClient : IFastApiClient
         }
     }
 
-    public async Task<GeneratedRevisionContentDto?> GenerateRevisionContentAsync(int userId, string subject, string? topic)
+    public async Task<GeneratedRevisionContentDto?> GenerateRevisionContentAsync(int userId, string? subject, string? topic, string? level = null, string? contextHint = null, string? difficulty = null)
     {
         try
         {
-            _logger.LogInformation("Génération d'une fiche de révision IA pour l'utilisateur {UserId} en {Subject}", userId, subject);
+            _logger.LogInformation("Génération d'une fiche de révision IA pour l'utilisateur {UserId} en {Subject}", userId, subject ?? "(matière à choisir par l'IA)");
 
-            var request = new { user_id = userId, subject, topic };
+            var request = new { user_id = userId, subject, topic, level, context_hint = contextHint, difficulty };
             var result = await PostAsync<GeneratedRevisionContentDto>("/api/revisions/generate-content", request);
 
             if (result == null || !result.Success || string.IsNullOrWhiteSpace(result.ContentMarkdown))

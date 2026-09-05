@@ -24,6 +24,9 @@ public class QuizDto
     public DateTime? PublishedAt { get; set; }
     public bool IsAIGenerated { get; set; }
 
+    /// <summary>Masqué de la liste active par son propriétaire (QuizHistoryTable, onglet Masquées).</summary>
+    public bool HiddenFromList { get; set; }
+
     /// <summary>
     /// Questions à afficher pour PASSER le quiz (sans correctAnswer/explanation,
     /// révélés seulement après soumission via QuizQuestionResultDto). Absent
@@ -151,6 +154,12 @@ public class QuizQuestionResultDto
     public bool IsCorrect { get; set; }
     public string? Explanation { get; set; }
     public int Points { get; set; }
+}
+
+/// <summary>Corps de POST /quizzes/{id}/feedback  signalement libre de l'élève.</summary>
+public class QuizFeedbackRequestDto
+{
+    public string? Feedback { get; set; }
 }
 
 public class QuizSearchFilterDto

@@ -225,9 +225,19 @@ class UserPerformanceAnalyzer:
             stats = self.db.get_user_progress_stats(user_id)
             enrollments = self.db.get_user_enrollments(user_id)
             learning_history = self.db.get_user_learning_history(user_id, limit=100)
-            
-            if not enrollments:
-                return {'success': False, 'error': 'Aucun enrollment trouvé'}
+
+            # La quasi-totalité des élèves n'a aucun Enrollment formel (concept
+            # lié aux "Formations", distinct du catalogue d'épreuves qu'ils
+            # utilisent réellement) : get_user_progress_stats() retombe alors
+            # sur leur vraie activité (StudySessions/QuizMistakes/téléchargements)
+            # et learning_frequency > 0 le signale. Exiger un Enrollment ici
+            # bloquait le parcours pour pratiquement tous les élèves actifs.
+            if not enrollments and stats['learning_frequency'] == 0:
+                return {
+                    'success': False,
+                    'error': "Pas encore assez d'activité pour générer un parcours personnalisé. "
+                             "Téléchargez une épreuve, faites un quiz ou une session de révision pour commencer.",
+                }
             
             # 2. Calculer la vélocité réelle d'apprentissage
             learning_velocity = self._calculate_learning_velocity(learning_history)

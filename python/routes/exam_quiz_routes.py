@@ -122,7 +122,19 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str:
     return "\n\n".join(chunks)[:MAX_EXTRACTED_CHARS]
 
 
-def _generate_questions_from_text(content: str, title: str, category: Optional[str]) -> List[QuizOptionQuestion]:
+def _generate_questions_from_text(
+    content: str,
+    title: str,
+    category: Optional[str],
+    recent_question_texts: Optional[List[str]] = None,
+) -> List[QuizOptionQuestion]:
+    avoid_repeat_line = ""
+    if recent_question_texts:
+        recent_list = "\n".join(f"- {q[:200]}" for q in recent_question_texts[:15])
+        avoid_repeat_line = (
+            f"\nSi une régénération est demandée, ces questions ont déjà été extraites précédemment  "
+            f"privilégie d'autres exercices/sous-questions du document si possible :\n{recent_list}\n"
+        )
     prompt = (
         f"Voici le contenu extrait d'une épreuve intitulée « {title} »"
         f"{f' (matière : {category})' if category else ''} :\n\n"
@@ -145,6 +157,7 @@ def _generate_questions_from_text(content: str, title: str, category: Optional[s
         f'"options":["A) ...","B) ...","C) ...","D) ..."],"correctAnswer":"B) ...","explanation":"..."}}] '
         f"correctAnswer doit correspondre EXACTEMENT à une des chaînes de options. "
         f"Réponds UNIQUEMENT avec le tableau JSON, sans texte autour ni balises de code."
+        f"{avoid_repeat_line}"
     )
     system = (
         "Tu es WinAI, expert en évaluation pédagogique pour les examens camerounais. "

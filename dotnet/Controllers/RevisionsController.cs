@@ -339,13 +339,120 @@ public class RevisionsController : ControllerBase
 
         try
         {
-            var revision = await _revisionService.GenerateAIRevisionAsync(userId, request?.Subject, request?.Topic);
+            var revision = await _revisionService.GenerateAIRevisionAsync(userId, request?.Subject, request?.Topic, request?.Difficulty);
             return Ok(revision);
         }
         catch (InvalidOperationException ex)
         {
             return StatusCode(503, new { message = ex.Message });
         }
+    }
+
+    /// <summary>
+    /// Fiches IA générées pour l'utilisateur courant, actives par défaut (ou
+    /// masquées si includeHidden=true)  alimente l'onglet Actives/Masquées de
+    /// RevisionHistoryTable.
+    /// </summary>
+    [HttpGet("me/generated")]
+    [ProducesResponseType(typeof(IEnumerable<RevisionDto>), 200)]
+    public async Task<ActionResult<IEnumerable<RevisionDto>>> GetMyGeneratedRevisions([FromQuery] bool includeHidden = false, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    {
+        var userId = GetUserId();
+        if (userId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        var revisions = await _revisionService.GetMyGeneratedRevisionsAsync(userId, includeHidden, page, pageSize);
+        return Ok(revisions);
+    }
+
+    /// <summary>Masque une fiche IA de la liste active, sans toucher à sa progression.</summary>
+    [HttpPost("{id}/hide")]
+    [ProducesResponseType(204)]
+    [ProducesResponseType(403)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> HideRevision(int id) => await SetRevisionHidden(id, true);
+
+    /// <summary>Restaure une fiche IA masquée dans la liste active.</summary>
+    [HttpPost("{id}/unhide")]
+    [ProducesResponseType(204)]
+    [ProducesResponseType(403)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> UnhideRevision(int id) => await SetRevisionHidden(id, false);
+
+    private async Task<IActionResult> SetRevisionHidden(int id, bool hide)
+    {
+        var userId = GetUserId();
+        if (userId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        try
+        {
+            await _revisionService.HideRevisionAsync(userId, id, hide);
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(403, new { message = ex.Message });
+        }
+    }
+
+    /// <summary>Signalement libre de l'élève sur une fiche IA.</summary>
+    [HttpPost("{id}/feedback")]
+    [ProducesResponseType(204)]
+    [ProducesResponseType(403)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> SetRevisionFeedback(int id, [FromBody] RevisionFeedbackRequestDto request)
+    {
+        var userId = GetUserId();
+        if (userId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        try
+        {
+            await _revisionService.SetRevisionContentFeedbackAsync(userId, id, request.Feedback ?? "");
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(403, new { message = ex.Message });
+        }
+    }
+
+    /// <summary>Supprime définitivement les fiches déjà masquées de l'utilisateur courant.</summary>
+    [HttpDelete("me/history")]
+    [ProducesResponseType(204)]
+    public async Task<IActionResult> ClearMyRevisionHistory()
+    {
+        var userId = GetUserId();
+        if (userId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        await _revisionService.ClearMyRevisionHistoryAsync(userId);
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Dates de complétion de fiches (ascendantes)  alimente le graphique
+    /// "Fiches terminées dans le temps" (Dashboard.jsx RevisionSection).
+    /// </summary>
+    [HttpGet("me/completions-timeline")]
+    [ProducesResponseType(typeof(IEnumerable<DateTime>), 200)]
+    public async Task<ActionResult<IEnumerable<DateTime>>> GetCompletionsTimeline()
+    {
+        var userId = GetUserId();
+        if (userId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        var timeline = await _revisionService.GetCompletionTimelineAsync(userId);
+        return Ok(timeline);
     }
 
     /// <summary>

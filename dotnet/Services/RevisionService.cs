@@ -477,13 +477,18 @@ public class RevisionService : IRevisionService
         return assignedEnrollments;
     }
 
-    public async Task<RevisionDto> GenerateAIRevisionAsync(int userId, string? subject, string? topic)
+    public async Task<RevisionDto> GenerateAIRevisionAsync(int userId, string? subject, string? topic, string? difficulty = null)
     {
+        var normalizedDifficulty = (difficulty ?? "").Trim().ToLowerInvariant();
+        if (normalizedDifficulty is not ("easy" or "medium" or "hard"))
+            normalizedDifficulty = null;
+
         var resolvedSubject = subject;
+
+        // Repli 1 : matière où le dernier score de quiz est le plus faible
+        // (même logique que AssignRevisionsBasedOnScoresAsync).
         if (string.IsNullOrWhiteSpace(resolvedSubject))
         {
-            // Même logique que AssignRevisionsBasedOnScoresAsync : la matière
-            // où le dernier score est le plus faible.
             var recentScores = await _context.QuizAttempts
                 .Where(a => a.UserId == userId)
                 .GroupBy(a => a.Quiz.Subject)
@@ -491,14 +496,54 @@ public class RevisionService : IRevisionService
                 .ToListAsync();
 
             resolvedSubject = recentScores.OrderBy(s => s.LatestScore).FirstOrDefault()?.Subject;
-
-            if (string.IsNullOrWhiteSpace(resolvedSubject))
-                throw new InvalidOperationException("Passe encore un quiz pour qu'on sache sur quelle matière te faire une fiche personnalisée.");
         }
 
-        var generated = await _fastApiClient.GenerateRevisionContentAsync(userId, resolvedSubject, topic);
+        // Repli 2 : catégorie de la dernière épreuve téléchargée  un élève
+        // sans tentative de quiz a pu déjà consulter des épreuves.
+        if (string.IsNullOrWhiteSpace(resolvedSubject))
+        {
+            resolvedSubject = await _context.DownloadHistories
+                .Where(d => d.UserId == userId)
+                .OrderByDescending(d => d.CreatedAt)
+                .Join(_context.Subjects, d => d.SubjectId, s => s.Id, (d, s) => s.Category)
+                .FirstOrDefaultAsync(c => !string.IsNullOrWhiteSpace(c));
+        }
+
+        // Repli 3 : ni quiz ni téléchargement  DeepSeek choisit la matière à
+        // partir du niveau scolaire, des objectifs actifs et de la dernière
+        // moyenne. Contrairement au quiz (plus exigeant, Phase 1), le niveau
+        // seul suffit ici à demander à DeepSeek de choisir : une fiche
+        // générique reste utile même sans autre signal.
+        string? contextHint = null;
+        var level = await _context.Users.Where(u => u.Id == userId).Select(u => u.Level).FirstOrDefaultAsync();
+        if (string.IsNullOrWhiteSpace(resolvedSubject))
+        {
+            var goals = await _context.Goals
+                .Where(g => g.UserId == userId && g.Status == "active")
+                .Select(g => (g.Title ?? "") + (g.Description != null ? " : " + g.Description : ""))
+                .Take(3)
+                .ToListAsync();
+
+            var latestGrade = await _context.AcademicRecords
+                .Where(r => r.StudentId == userId)
+                .OrderByDescending(r => r.SchoolYear)
+                .Select(r => new { r.SchoolYear, r.AverageGrade })
+                .FirstOrDefaultAsync();
+
+            if (string.IsNullOrWhiteSpace(level) && goals.Count == 0 && latestGrade == null)
+                throw new InvalidOperationException("Passe un quiz, télécharge une épreuve ou définis un objectif pour qu'on sache sur quelle matière te faire une fiche personnalisée.");
+
+            var hints = new List<string>(goals);
+            if (latestGrade != null)
+                hints.Add($"Moyenne scolaire {latestGrade.SchoolYear} : {latestGrade.AverageGrade}/20");
+            contextHint = hints.Count > 0 ? string.Join("; ", hints) : null;
+        }
+
+        var generated = await _fastApiClient.GenerateRevisionContentAsync(userId, resolvedSubject, topic, level, contextHint, normalizedDifficulty);
         if (generated == null)
             throw new InvalidOperationException("La génération de la fiche a échoué, réessaie dans un instant.");
+
+        resolvedSubject ??= generated.Subject ?? "Général";
 
         var revision = new Revision
         {
@@ -507,10 +552,11 @@ public class RevisionService : IRevisionService
             Topic = topic ?? resolvedSubject,
             Type = "Theory",
             Content = generated.ContentMarkdown,
-            Difficulty = generated.Difficulty,
+            Difficulty = generated.Difficulty ?? normalizedDifficulty,
             DurationMinutes = generated.EstimatedDurationMinutes,
             IsPublished = true,
             IsAIGenerated = true,
+            CreatedByUserId = userId,
             Status = "Available",
             CreatedAt = DateTime.UtcNow,
         };
@@ -544,6 +590,87 @@ public class RevisionService : IRevisionService
             PublishedAt = revision.PublishedAt,
             Difficulty = revision.Difficulty,
             IsAIGenerated = revision.IsAIGenerated,
+            HiddenFromList = revision.HiddenFromList,
         };
+    }
+
+    public async Task<IEnumerable<RevisionDto>> GetMyGeneratedRevisionsAsync(int userId, bool includeHidden = false, int page = 1, int pageSize = 50)
+    {
+        // Propriété via RevisionEnrollment plutôt que CreatedByUserId seul :
+        // les fiches IA générées avant l'ajout de cette colonne ne l'ont
+        // jamais renseignée, mais ont toujours une inscription (Auto
+        // AssignRevisionAsync est appelé juste après leur création).
+        var query = _context.Revisions
+            .AsNoTracking()
+            .Where(r => r.IsAIGenerated && r.UserEnrollments.Any(e => e.UserId == userId));
+
+        if (!includeHidden)
+            query = query.Where(r => !r.HiddenFromList);
+
+        var revisions = await query
+            .OrderByDescending(r => r.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+
+        return revisions.Select(MapToDto);
+    }
+
+    private async Task<bool> OwnsGeneratedRevisionAsync(int userId, Revision revision) =>
+        revision.IsAIGenerated &&
+        (revision.CreatedByUserId == userId ||
+         await _context.RevisionEnrollments.AnyAsync(e => e.RevisionId == revision.Id && e.UserId == userId));
+
+    public async Task HideRevisionAsync(int userId, int id, bool hide)
+    {
+        var revision = await _context.Revisions.FirstOrDefaultAsync(r => r.Id == id);
+        if (revision == null)
+            throw new KeyNotFoundException($"Revision with id {id} not found");
+
+        if (!await OwnsGeneratedRevisionAsync(userId, revision))
+            throw new UnauthorizedAccessException("Tu ne peux masquer que les fiches générées pour toi.");
+
+        revision.HiddenFromList = hide;
+        revision.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task SetRevisionContentFeedbackAsync(int userId, int id, string feedback)
+    {
+        var revision = await _context.Revisions.FirstOrDefaultAsync(r => r.Id == id);
+        if (revision == null)
+            throw new KeyNotFoundException($"Revision with id {id} not found");
+
+        if (!await OwnsGeneratedRevisionAsync(userId, revision))
+            throw new UnauthorizedAccessException("Tu ne peux signaler que les fiches générées pour toi.");
+
+        revision.ContentFeedback = feedback.Length > 500 ? feedback[..500] : feedback;
+        revision.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task ClearMyRevisionHistoryAsync(int userId)
+    {
+        var hidden = await _context.Revisions
+            .Where(r => r.IsAIGenerated && r.HiddenFromList && !r.IsDeleted && r.UserEnrollments.Any(e => e.UserId == userId))
+            .ToListAsync();
+
+        foreach (var revision in hidden)
+        {
+            revision.IsDeleted = true;
+            revision.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task<IEnumerable<DateTime>> GetCompletionTimelineAsync(int userId)
+    {
+        return await _context.RevisionEnrollments
+            .AsNoTracking()
+            .Where(e => e.UserId == userId && e.Status == "Completed" && e.CompletedAt != null && !e.Revision!.IsDeleted)
+            .OrderBy(e => e.CompletedAt)
+            .Select(e => e.CompletedAt!.Value)
+            .ToListAsync();
     }
 }

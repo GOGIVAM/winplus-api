@@ -107,7 +107,13 @@ public class QuizzesController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<QuizDto>), 200)]
     public async Task<ActionResult<IEnumerable<QuizDto>>> GetPublishedQuizzes([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
-        var quizzes = await _quizService.GetPublishedQuizzesAsync(page, pageSize);
+        // Route accessible anonymement : un visiteur non connecté ne doit voir
+        // aucun quiz généré par IA (pas de propriétaire à qui les rattacher),
+        // seulement les quiz admin, universellement partagés.
+        var callerId = GetUserId();
+        int? viewerUserId = callerId == 0 ? null : callerId;
+
+        var quizzes = await _quizService.GetPublishedQuizzesAsync(page, pageSize, viewerUserId);
         return Ok(quizzes);
     }
 
@@ -160,6 +166,10 @@ public class QuizzesController : ControllerBase
         catch (KeyNotFoundException)
         {
             return NotFound(new { message = "Quiz not found" });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
         }
     }
 
@@ -367,6 +377,97 @@ public class QuizzesController : ControllerBase
         {
             return NotFound(new { message = "Quiz not found" });
         }
+    }
+
+    /// <summary>
+    /// Quiz IA générés par l'utilisateur courant, actifs par défaut (ou
+    /// masqués si includeHidden=true)  alimente l'onglet Actives/Masquées de
+    /// QuizHistoryTable.
+    /// </summary>
+    [HttpGet("me/generated")]
+    [ProducesResponseType(typeof(IEnumerable<QuizDto>), 200)]
+    public async Task<ActionResult<IEnumerable<QuizDto>>> GetMyGeneratedQuizzes([FromQuery] bool includeHidden = false, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    {
+        var userId = GetUserId();
+        if (userId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        var quizzes = await _quizService.GetMyGeneratedQuizzesAsync(userId, includeHidden, page, pageSize);
+        return Ok(quizzes);
+    }
+
+    /// <summary>Masque un quiz IA de la liste active, sans toucher à ses statistiques.</summary>
+    [HttpPost("{id}/hide")]
+    [ProducesResponseType(204)]
+    [ProducesResponseType(403)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> HideQuiz(int id) => await SetQuizHidden(id, true);
+
+    /// <summary>Restaure un quiz IA masqué dans la liste active.</summary>
+    [HttpPost("{id}/unhide")]
+    [ProducesResponseType(204)]
+    [ProducesResponseType(403)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> UnhideQuiz(int id) => await SetQuizHidden(id, false);
+
+    private async Task<IActionResult> SetQuizHidden(int id, bool hide)
+    {
+        var userId = GetUserId();
+        if (userId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        try
+        {
+            await _quizService.HideQuizAsync(userId, id, hide);
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(403, new { message = ex.Message });
+        }
+    }
+
+    /// <summary>Signalement libre de l'élève sur un quiz IA ("trop facile", "hors-sujet"...).</summary>
+    [HttpPost("{id}/feedback")]
+    [ProducesResponseType(204)]
+    [ProducesResponseType(403)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> SetQuizFeedback(int id, [FromBody] QuizFeedbackRequestDto request)
+    {
+        var userId = GetUserId();
+        if (userId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        try
+        {
+            await _quizService.SetQuizDifficultyFeedbackAsync(userId, id, request.Feedback ?? "");
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(403, new { message = ex.Message });
+        }
+    }
+
+    /// <summary>Supprime définitivement les quiz déjà masqués de l'utilisateur courant.</summary>
+    [HttpDelete("me/history")]
+    [ProducesResponseType(204)]
+    public async Task<IActionResult> ClearMyQuizHistory()
+    {
+        var userId = GetUserId();
+        if (userId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        await _quizService.ClearMyQuizHistoryAsync(userId);
+        return NoContent();
     }
 
     private int GetUserId()

@@ -103,5 +103,20 @@ public interface IRevisionService
     /// l'utilisateur. Si <paramref name="subject"/> est omis, la matière la
     /// plus faible de l'utilisateur est utilisée.
     /// </summary>
-    Task<RevisionDto> GenerateAIRevisionAsync(int userId, string? subject, string? topic);
+    Task<RevisionDto> GenerateAIRevisionAsync(int userId, string? subject, string? topic, string? difficulty = null);
+
+    /// <summary>Fiches IA générées pour cet utilisateur, actives par défaut (ou masquées si demandé).</summary>
+    Task<IEnumerable<RevisionDto>> GetMyGeneratedRevisionsAsync(int userId, bool includeHidden = false, int page = 1, int pageSize = 50);
+
+    /// <summary>Masque/restaure une fiche IA de la liste active, sans toucher à sa progression.</summary>
+    Task HideRevisionAsync(int userId, int id, bool hide);
+
+    /// <summary>Enregistre le signalement libre de l'élève sur cette fiche IA.</summary>
+    Task SetRevisionContentFeedbackAsync(int userId, int id, string feedback);
+
+    /// <summary>Supprime définitivement (IsDeleted) les fiches déjà masquées de cet utilisateur.</summary>
+    Task ClearMyRevisionHistoryAsync(int userId);
+
+    /// <summary>Dates de complétion ascendantes  graphique "Fiches terminées dans le temps".</summary>
+    Task<IEnumerable<DateTime>> GetCompletionTimelineAsync(int userId);
 }

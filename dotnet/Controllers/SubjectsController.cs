@@ -88,6 +88,11 @@ public class SubjectsController : ControllerBase
         examId = exam?.Id,
         examType = exam?.ExamType,
         level = exam?.Level,
+        // Niveau(x) de classe ciblé(s) par LA MATIÈRE elle-même (Subject.Level,
+        // taggée en admin), distinct de `level` ci-dessus qui vient de l'Exam
+        // (ex: "Terminale C" pour cette épreuve précise). Sert au sélecteur
+        // matière+difficulté de la génération de quiz/fiches IA.
+        subjectLevel = s.Level,
         year = exam?.Year,
         session = exam?.Session,
         durationMinutes = exam?.DurationMinutes,
@@ -470,11 +475,11 @@ public class SubjectsController : ControllerBase
     /// Récupère toutes les catégories disponibles
     /// </summary>
     [HttpGet("categories")]
-    public async Task<IActionResult> GetCategories()
+    public async Task<IActionResult> GetCategories([FromQuery] string? level = null)
     {
         try
         {
-            var categories = await _subjectService.GetCategoriesAsync();
+            var categories = await _subjectService.GetCategoriesAsync(level);
             return Ok(categories);
         }
         catch (Exception ex)
