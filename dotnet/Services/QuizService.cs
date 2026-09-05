@@ -16,6 +16,14 @@ public class QuizService : IQuizService
     private readonly ILogger<QuizService> _logger;
     private const double PASSING_SCORE = 50.0;
 
+    // ParsePlayQuestions et SubmitQuizAttemptAsync lisent QuestionsJson avec des
+    // clés minuscules ("id", "question", "correctAnswer"...), le même format que
+    // renvoie Python. JsonSerializer.Serialize(objet) sans cette policy produit
+    // des clés PascalCase ("Id", "Question"...) que JsonElement.GetProperty ne
+    // retrouve jamais (recherche sensible à la casse)  le quiz s'enregistrait
+    // sans erreur mais s'affichait vide côté élève (questions/options blanches).
+    private static readonly JsonSerializerOptions CamelCaseJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
     public QuizService(ApplicationDbContext context, IFastApiClient fastApiClient, ILogger<QuizService> logger)
     {
         _context = context;
@@ -279,7 +287,7 @@ public class QuizService : IQuizService
             SubjectId = request.SubjectId,
             ExamId = request.ExamId,
             Subject = request.Subject,
-            QuestionsJson = JsonSerializer.Serialize(request.Questions),
+            QuestionsJson = JsonSerializer.Serialize(request.Questions, CamelCaseJson),
             Difficulty = difficultyMap.ContainsKey(request.Difficulty) ? difficultyMap[request.Difficulty] : "medium",
             TimeLimit = request.DurationMinutes,
             IsPublished = false,
@@ -305,7 +313,7 @@ public class QuizService : IQuizService
         if (!string.IsNullOrEmpty(request.Subject))
             quiz.Subject = request.Subject;
         if (request.Questions != null && request.Questions.Any())
-            quiz.QuestionsJson = JsonSerializer.Serialize(request.Questions);
+            quiz.QuestionsJson = JsonSerializer.Serialize(request.Questions, CamelCaseJson);
         if (request.Difficulty.HasValue)
         {
             var difficultyMap = new Dictionary<int, string> 
@@ -496,7 +504,7 @@ public class QuizService : IQuizService
             Description = $"Épreuve chronométrée générée à partir du contenu de « {exam.Title} ».",
             Subject = exam.Category ?? "Général",
             Difficulty = exam.Difficulty ?? "moyen",
-            QuestionsJson = JsonSerializer.Serialize(generated),
+            QuestionsJson = JsonSerializer.Serialize(generated, CamelCaseJson),
             TimeLimit = exam.DurationMinutes ?? 30,
             PassingScore = 50,
             SubjectId = exam.SubjectId,
@@ -583,7 +591,7 @@ public class QuizService : IQuizService
             Title = topic != null ? $"Quiz  {topic}" : $"Quiz  {resolvedSubject}",
             Description = $"Généré par WinAI pour cibler tes lacunes en {resolvedSubject}.",
             Subject = resolvedSubject,
-            QuestionsJson = JsonSerializer.Serialize(questions.Questions),
+            QuestionsJson = JsonSerializer.Serialize(questions.Questions, CamelCaseJson),
             Difficulty = "medium",
             TimeLimit = 15,
             PassingScore = 50,
