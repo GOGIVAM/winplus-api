@@ -562,7 +562,7 @@ public class SubjectsController : ControllerBase
     /// </summary>
     [HttpGet("{id}/view")]
     [Authorize]
-    public async Task<IActionResult> ViewStream(int id)
+    public async Task<IActionResult> ViewStream(int id, [FromQuery] bool preview = false)
     {
         var (subject, exam, error) = await ResolveAccessibleExamAsync(id);
         if (error != null) return error;
@@ -584,21 +584,30 @@ public class SubjectsController : ControllerBase
             // le compteur « Épreuves téléchargées » à l'infini. C'est aussi
             // l'hypothèse déjà faite ailleurs (GetExamsRecommended exclut les
             // épreuves « déjà téléchargées » par un simple test d'existence).
+            //
+            // preview=true : appel silencieux de génération de vignette
+            // (RealPagePreview du catalogue charge les 2 premières pages de
+            // chaque épreuve gratuite dès l'affichage de la carte, sans que
+            // l'élève n'ait rien demandé)  ça ne doit jamais compter comme un
+            // téléchargement ni apparaître dans l'historique.
             var userId = User.GetUserId();
-            var alreadyLogged = await _context.DownloadHistories
-                .AnyAsync(d => d.UserId == userId && d.ExamId == exam.Id);
-            if (!alreadyLogged)
+            if (!preview)
             {
-                exam.DownloadCount += 1;
-                _context.DownloadHistories.Add(new DownloadHistory
+                var alreadyLogged = await _context.DownloadHistories
+                    .AnyAsync(d => d.UserId == userId && d.ExamId == exam.Id);
+                if (!alreadyLogged)
                 {
-                    UserId = userId,
-                    SubjectId = id,
-                    ExamId = exam.Id,
-                    FileName = $"{subject!.Title}.pdf",
-                    CreatedAt = DateTime.UtcNow,
-                });
-                await _context.SaveChangesAsync();
+                    exam.DownloadCount += 1;
+                    _context.DownloadHistories.Add(new DownloadHistory
+                    {
+                        UserId = userId,
+                        SubjectId = id,
+                        ExamId = exam.Id,
+                        FileName = $"{subject!.Title}.pdf",
+                        CreatedAt = DateTime.UtcNow,
+                    });
+                    await _context.SaveChangesAsync();
+                }
             }
 
             // Pas de Content-Disposition: attachment  le fichier reste "en
