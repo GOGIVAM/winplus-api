@@ -54,17 +54,35 @@ class QuizOptionQuestion(BaseModel):
 
 
 def _parse_s3_url(document_url: str) -> Optional[tuple[str, str, str]]:
-    """https://{bucket}.s3.{region}.amazonaws.com/{key} → (bucket, region, key)."""
+    """Extrait (bucket, region, key) d'une URL S3, quel que soit son style :
+    - virtual-hosted : {bucket}.s3.{region}.amazonaws.com/{key}
+    - virtual-hosted legacy (tiret) : {bucket}.s3-{region}.amazonaws.com/{key}
+    - virtual-hosted sans région (us-east-1) : {bucket}.s3.amazonaws.com/{key}
+    - path-style : s3.{region}.amazonaws.com/{bucket}/{key}
+    Les URL saisies à la main par un admin (AdminExamsController.DocumentUrl)
+    ne sont pas garanties dans le format standard produit par StorageService
+    côté .NET  d'où la tolérance à ces variantes plutôt qu'un seul regex strict.
+    """
     try:
         parsed = urlparse(document_url)
-        match = re.match(r"^([^.]+)\.s3\.([^.]+)\.amazonaws\.com$", parsed.netloc)
-        if not match:
+        host = parsed.netloc
+        path = unquote(parsed.path.lstrip("/"))
+        if not host.endswith(".amazonaws.com") or not path:
             return None
-        bucket, region = match.group(1), match.group(2)
-        key = unquote(parsed.path.lstrip("/"))
-        if not key:
-            return None
-        return bucket, region, key
+
+        path_style = re.match(r"^s3[.-]?([a-z0-9-]+)?\.amazonaws\.com$", host)
+        if path_style:
+            if "/" not in path:
+                return None
+            bucket, key = path.split("/", 1)
+            return (bucket, path_style.group(1) or "us-east-1", key) if bucket and key else None
+
+        vhost = re.match(r"^(.+)\.s3[.-]?([a-z0-9-]+)?\.amazonaws\.com$", host)
+        if vhost:
+            bucket = vhost.group(1)
+            return (bucket, vhost.group(2) or "us-east-1", path) if bucket else None
+
+        return None
     except Exception:
         return None
 
