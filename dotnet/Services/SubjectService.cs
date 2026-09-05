@@ -13,7 +13,7 @@ public interface ISubjectService
     Task<IEnumerable<Subject>> SearchSubjectsAsync(string searchTerm);
     Task<IEnumerable<Subject>> GetPopularSubjectsAsync(int limit = 10);
     Task<IEnumerable<Subject>> GetSimilarSubjectsAsync(int subjectId, int limit = 5);
-    Task<IEnumerable<string>> GetCategoriesAsync();
+    Task<IEnumerable<string>> GetCategoriesAsync(string? level = null);
     Task<Dictionary<string, IEnumerable<string>>> GetFiltersAsync();
     Task<Subject> CreateSubjectAsync(Subject subject);
     Task<Subject> UpdateSubjectAsync(Subject subject);
@@ -274,13 +274,24 @@ public class SubjectService : ISubjectService
         }
     }
 
-    public async Task<IEnumerable<string>> GetCategoriesAsync()
+    public async Task<IEnumerable<string>> GetCategoriesAsync(string? level = null)
     {
         try
         {
             var subjects = await _subjectRepository.GetAllAsync();
-            return subjects
-                .Where(s => !string.IsNullOrEmpty(s.Category))
+            var query = subjects.Where(s => !string.IsNullOrEmpty(s.Category));
+
+            // Une matière sans Level renseigné (non taggée) reste visible à tous
+            // les niveaux  seule une matière explicitement taggée avec d'autres
+            // niveaux, sans le niveau demandé, est exclue.
+            if (!string.IsNullOrWhiteSpace(level))
+            {
+                query = query.Where(s => string.IsNullOrWhiteSpace(s.Level) ||
+                    s.Level.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                        .Any(l => string.Equals(l, level, StringComparison.OrdinalIgnoreCase)));
+            }
+
+            return query
                 .Select(s => s.Category!)
                 .Distinct()
                 .OrderBy(c => c);

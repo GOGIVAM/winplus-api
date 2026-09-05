@@ -154,6 +154,17 @@ public class Revision
     /// </summary>
     public bool IsAIGenerated { get; set; } = false;
 
+    /// <summary>
+    /// Masquée de la liste active par son propriétaire, sans effacer sa
+    /// progression (distinct de IsDeleted). Vidée uniquement par
+    /// ClearMyRevisionHistoryAsync.
+    /// </summary>
+    public bool HiddenFromList { get; set; } = false;
+
+    /// <summary>Signalement libre de l'élève sur le contenu généré.</summary>
+    [StringLength(500)]
+    public string? ContentFeedback { get; set; }
+
     // Relations
     [ForeignKey(nameof(SubjectId))]
     public virtual Subject? Subject_Reference { get; set; }

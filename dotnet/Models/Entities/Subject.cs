@@ -13,7 +13,14 @@ public class Subject
     public string? Description { get; set; }
     
     public string? Category { get; set; }
-    
+
+    /// <summary>
+    /// Niveau(x) de classe ciblé(s), liste séparée par virgules (ex: "Terminale,Premiere").
+    /// Null = visible à tous les niveaux. Sert au filtrage du sélecteur matière
+    /// à la génération de quiz/fiches IA (GET /api/subjects/categories?level=).
+    /// </summary>
+    public string? Level { get; set; }
+
     public string? ThumbnailUrl { get; set; }
     
     public decimal Price { get; set; }

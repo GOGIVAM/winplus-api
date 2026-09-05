@@ -205,6 +205,7 @@ public partial class ApplicationDbContext : DbContext
             entity.Property(e => e.Title).IsRequired().HasMaxLength(255);
             entity.Property(e => e.Description).HasMaxLength(2000);
             entity.Property(e => e.Category).HasMaxLength(100);
+            entity.Property(e => e.Level).HasMaxLength(255);
             entity.Property(e => e.Price).HasPrecision(10, 2);
             entity.Property(e => e.AverageRating).HasPrecision(3, 2);
             entity.HasMany(e => e.Contents)
@@ -652,8 +653,10 @@ modelBuilder.Entity<Exam>(entity =>
             entity.Property(e => e.Subject).IsRequired().HasMaxLength(100);
             entity.Property(e => e.QuestionsJson).IsRequired().HasColumnType("jsonb");
             entity.Property(e => e.AverageScore).HasPrecision(5, 2);
+            entity.Property(e => e.DifficultyFeedback).HasMaxLength(500);
             entity.HasIndex(e => e.Subject);
             entity.HasIndex(e => e.IsAIGenerated);
+            entity.HasIndex(e => e.CreatedByUserId);
             entity.HasOne(e => e.Subject_Reference)
                 .WithMany(s => s.Quizzes)
                 .HasForeignKey(e => e.SubjectId)
@@ -661,6 +664,10 @@ modelBuilder.Entity<Exam>(entity =>
             entity.HasOne(e => e.Exam_Reference)
                 .WithMany(ex => ex.Quizzes)
                 .HasForeignKey(e => e.ExamId)
+                .OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(e => e.CreatedByUser)
+                .WithMany() // Pas de back-reference : miroir de Revision.CreatedByUser
+                .HasForeignKey(e => e.CreatedByUserId)
                 .OnDelete(DeleteBehavior.SetNull);
             entity.HasMany(e => e.Attempts_Collection)
                 .WithOne(a => a.Quiz)
@@ -696,6 +703,7 @@ modelBuilder.Entity<Exam>(entity =>
             entity.Property(e => e.Subject).IsRequired().HasMaxLength(100);
             entity.Property(e => e.Type).IsRequired().HasMaxLength(50);
             entity.Property(e => e.ImprovedScore).HasPrecision(5, 2);
+            entity.Property(e => e.ContentFeedback).HasMaxLength(500);
             entity.HasIndex(e => e.Subject);
             entity.HasIndex(e => e.Type);
             entity.HasIndex(e => new { e.SubjectId, e.Status });

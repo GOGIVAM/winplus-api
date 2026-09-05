@@ -121,6 +121,25 @@ public class Quiz
     /// </summary>
     public bool IsDeleted { get; set; } = false;
 
+    /// <summary>
+    /// Élève propriétaire, uniquement renseigné pour les quiz générés par IA
+    /// (IsAIGenerated = true). Sert à scoper "masquer mon quiz" et le blocage
+    /// du retake à l'élève qui l'a généré  les quiz admin restent null et
+    /// librement rejouables par tous.
+    /// </summary>
+    public int? CreatedByUserId { get; set; }
+
+    /// <summary>
+    /// Masqué de la liste "Quiz prêts à démarrer" par son propriétaire, sans
+    /// effacer ses tentatives/statistiques (distinct de IsDeleted, qui lui est
+    /// filtré globalement par EF). Vidé uniquement par ClearMyQuizHistoryAsync.
+    /// </summary>
+    public bool HiddenFromList { get; set; } = false;
+
+    /// <summary>Signalement libre de l'élève ("trop facile", "hors-sujet"...).</summary>
+    [StringLength(500)]
+    public string? DifficultyFeedback { get; set; }
+
     // Timestamps
     [Required]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -135,6 +154,9 @@ public class Quiz
 
     [ForeignKey(nameof(ExamId))]
     public virtual Exam? Exam_Reference { get; set; }
+
+    [ForeignKey(nameof(CreatedByUserId))]
+    public virtual User? CreatedByUser { get; set; }
 
     public virtual ICollection<QuizAttempt> Attempts_Collection { get; set; } = new List<QuizAttempt>();
 }
