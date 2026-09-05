@@ -362,6 +362,7 @@ builder.Services.AddScoped<ICategoryService, CategoryService>();
 // Exam, Quiz, Revision Services (Latest addition for content management)
 builder.Services.AddScoped<IExamService, ExamService>();
 builder.Services.AddScoped<IQuizService, QuizService>();
+builder.Services.AddScoped<ITutorProfileService, TutorProfileService>();
 builder.Services.AddScoped<IDailyScoreService, DailyScoreService>();
 builder.Services.AddScoped<IRevisionService, RevisionService>();
 

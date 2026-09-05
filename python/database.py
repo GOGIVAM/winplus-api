@@ -301,6 +301,38 @@ class StudySession(Base):
     CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
 
+class TutorProfile(Base):
+    """Profil Mode Répétiteur  mappé sur TutorProfiles (.NET, Module 1)."""
+    __tablename__ = 'TutorProfiles'
+
+    Id = Column(Integer, primary_key=True)
+    UserId = Column(Integer, ForeignKey('Users.Id'), nullable=False, index=True)
+    Title = Column(String(150))
+    TutorBio = Column(String(300))
+    HourlyRateXaf = Column(Numeric(10, 2))
+    IsDiplomaVerified = Column(Boolean, nullable=False, default=False)
+    IsActive = Column(Boolean, nullable=False, default=False)
+    OnboardingStep = Column(Integer, nullable=False, default=0)
+
+
+class TutorSubject(Base):
+    """Matière enseignée en cours particulier  mappé sur TutorSubjects (.NET)."""
+    __tablename__ = 'TutorSubjects'
+
+    Id = Column(Integer, primary_key=True)
+    TutorProfileId = Column(Integer, ForeignKey('TutorProfiles.Id'), nullable=False, index=True)
+    Subject = Column(String(100), nullable=False)
+
+
+class TutorLevel(Base):
+    """Niveau couvert par le répétiteur  mappé sur TutorLevels (.NET)."""
+    __tablename__ = 'TutorLevels'
+
+    Id = Column(Integer, primary_key=True)
+    TutorProfileId = Column(Integer, ForeignKey('TutorProfiles.Id'), nullable=False, index=True)
+    Level = Column(String(100), nullable=False)
+
+
 # ================== INITIALISATION DB ==================
 
 class Database:

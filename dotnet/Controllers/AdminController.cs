@@ -1676,6 +1676,84 @@ public class AdminController : ControllerBase
         _logger.LogInformation("Admin verified teacher {TeacherId}", id);
         return Ok(new { message = "Professeur vérifié", verified = true });
     }
+
+    // ── Vérification diplôme Répétiteur (Module 1, US-PRO-03, Workflow 1 étape 5) ──
+
+    /// <summary>File de vérification des diplômes déposés pour le badge "Vérifié Diplôme".</summary>
+    [HttpGet("tutor-verification-documents")]
+    public async Task<IActionResult> GetPendingTutorVerificationDocuments()
+    {
+        var docs = await _db.TutorVerificationDocuments
+            .Include(d => d.TutorProfile!).ThenInclude(p => p!.User)
+            .Where(d => d.Status == "pending")
+            .OrderBy(d => d.SubmittedAt)
+            .Select(d => new
+            {
+                d.Id,
+                d.DocumentUrl,
+                d.SubmittedAt,
+                userId = d.TutorProfile!.UserId,
+                userName = (d.TutorProfile.User!.FirstName + " " + d.TutorProfile.User.LastName).Trim(),
+                userEmail = d.TutorProfile.User.Email,
+            })
+            .ToListAsync();
+        return Ok(docs);
+    }
+
+    /// <summary>Approuve un diplôme : le badge "Vérifié Diplôme" s'affiche immédiatement sur le profil public.</summary>
+    [HttpPost("tutor-verification-documents/{id:int}/approve")]
+    public async Task<IActionResult> ApproveTutorVerificationDocument(int id)
+    {
+        var doc = await _db.TutorVerificationDocuments
+            .Include(d => d.TutorProfile!).ThenInclude(p => p!.User)
+            .FirstOrDefaultAsync(d => d.Id == id);
+        if (doc == null) return NotFound(new { error = "Document introuvable" });
+
+        doc.Status = "approved";
+        doc.ReviewedAt = DateTime.UtcNow;
+        doc.ReviewedByUserId = User.GetUserId();
+        if (doc.TutorProfile != null)
+            doc.TutorProfile.IsDiplomaVerified = true;
+        await _db.SaveChangesAsync();
+
+        var email = doc.TutorProfile?.User?.Email;
+        if (!string.IsNullOrEmpty(email))
+        {
+            _ = _email.SendGenericEmailAsync(email, "Diplôme vérifié — WinPlus",
+                "<p>Bonne nouvelle : ton diplôme a été validé par l'équipe WinPlus. " +
+                "Le badge « Vérifié Diplôme » est maintenant visible sur ton profil répétiteur.</p>");
+        }
+
+        _logger.LogInformation("Admin {AdminId} a approuvé le document de vérification {DocId}", User.GetUserId(), id);
+        return Ok(new { message = "Diplôme approuvé", verified = true });
+    }
+
+    /// <summary>Rejette un diplôme avec un motif ; le professeur peut redéposer un nouveau document.</summary>
+    [HttpPost("tutor-verification-documents/{id:int}/reject")]
+    public async Task<IActionResult> RejectTutorVerificationDocument(int id, [FromBody] RejectSubjectRequest request)
+    {
+        var doc = await _db.TutorVerificationDocuments
+            .Include(d => d.TutorProfile!).ThenInclude(p => p!.User)
+            .FirstOrDefaultAsync(d => d.Id == id);
+        if (doc == null) return NotFound(new { error = "Document introuvable" });
+
+        doc.Status = "rejected";
+        doc.RejectionReason = string.IsNullOrWhiteSpace(request.Reason) ? "Document illisible ou non conforme." : request.Reason;
+        doc.ReviewedAt = DateTime.UtcNow;
+        doc.ReviewedByUserId = User.GetUserId();
+        await _db.SaveChangesAsync();
+
+        var email = doc.TutorProfile?.User?.Email;
+        if (!string.IsNullOrEmpty(email))
+        {
+            _ = _email.SendGenericEmailAsync(email, "Diplôme non validé — WinPlus",
+                $"<p>Ton document n'a pas pu être validé : <strong>{doc.RejectionReason}</strong>. " +
+                "Tu peux déposer un nouveau document depuis ton profil répétiteur.</p>");
+        }
+
+        _logger.LogInformation("Admin {AdminId} a rejeté le document de vérification {DocId}", User.GetUserId(), id);
+        return Ok(new { message = "Diplôme rejeté", verified = false });
+    }
 }
 
 public record AdminActivityEntry(string Id, string Type, DateTime Timestamp, string Title, string Description, string Status, string UserName, string UserEmail, string Target);

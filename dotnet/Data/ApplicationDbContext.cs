@@ -90,6 +90,16 @@ public partial class ApplicationDbContext : DbContext
     // Liaison parent-enfant, classes enseignant, messagerie directe
     public DbSet<ParentStudentLink> ParentStudentLinks => Set<ParentStudentLink>();
     public DbSet<TeacherStudentLink> TeacherStudentLinks => Set<TeacherStudentLink>();
+
+    // Mode Répétiteur (Module 1 — profil et onboarding cours particuliers)
+    public DbSet<TutorProfile> TutorProfiles => Set<TutorProfile>();
+    public DbSet<TutorSubject> TutorSubjects => Set<TutorSubject>();
+    public DbSet<TutorLevel> TutorLevels => Set<TutorLevel>();
+    public DbSet<TutorSpecialty> TutorSpecialties => Set<TutorSpecialty>();
+    public DbSet<TutorInterventionZone> TutorInterventionZones => Set<TutorInterventionZone>();
+    public DbSet<TutorPackage> TutorPackages => Set<TutorPackage>();
+    public DbSet<TutorAvailabilitySlot> TutorAvailabilitySlots => Set<TutorAvailabilitySlot>();
+    public DbSet<TutorVerificationDocument> TutorVerificationDocuments => Set<TutorVerificationDocument>();
     public DbSet<TeacherClass> TeacherClasses => Set<TeacherClass>();
     public DbSet<DirectMessage> DirectMessages => Set<DirectMessage>();
 
@@ -156,6 +166,77 @@ public partial class ApplicationDbContext : DbContext
             entity.HasOne(e => e.Student)
                   .WithMany()
                   .HasForeignKey(e => e.StudentId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── TutorProfile (Mode Répétiteur) : un seul profil par utilisateur ──
+        modelBuilder.Entity<TutorProfile>(entity =>
+        {
+            entity.HasIndex(e => e.UserId).IsUnique();
+            entity.Property(e => e.HourlyRateXaf).HasColumnType("numeric(10,2)");
+            entity.Property(e => e.TrialSessionPriceXaf).HasColumnType("numeric(10,2)");
+            entity.HasOne(e => e.User)
+                  .WithOne()
+                  .HasForeignKey<TutorProfile>(e => e.UserId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorSubject>(entity =>
+        {
+            entity.HasIndex(e => new { e.TutorProfileId, e.Subject }).IsUnique();
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany(t => t.Subjects)
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorLevel>(entity =>
+        {
+            entity.HasIndex(e => new { e.TutorProfileId, e.Level }).IsUnique();
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany(t => t.Levels)
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorSpecialty>(entity =>
+        {
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany(t => t.Specialties)
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorInterventionZone>(entity =>
+        {
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany(t => t.InterventionZones)
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorPackage>(entity =>
+        {
+            entity.Property(e => e.TotalPriceXaf).HasColumnType("numeric(10,2)");
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany(t => t.Packages)
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorAvailabilitySlot>(entity =>
+        {
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany(t => t.AvailabilitySlots)
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorVerificationDocument>(entity =>
+        {
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany(t => t.VerificationDocuments)
+                  .HasForeignKey(e => e.TutorProfileId)
                   .OnDelete(DeleteBehavior.Cascade);
         });
 

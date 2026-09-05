@@ -18,10 +18,12 @@ from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 
 from auth import verify_token, UserTokenData
 from database import (
     Database, QuizAttempt, DailyScore, Enrollment, Subject, User,
+    TutorProfile, TutorSubject, TutorLevel,
 )
 from services.deepseek_client import get_deepseek_client
 
@@ -779,3 +781,178 @@ async def analyze_submission(
         "suggested_comment": "Vous montrez une bonne compréhension générale. Revoyez la démarche étape par étape pour consolider vos acquis.",
         "score_suggestion": 12,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature 7  POST /teacher/suggest-tutor-rate (Module 1, US-PRO-05/US-PRO-07)
+# Suggère un tarif horaire pour le Mode Répétiteur, basé en priorité sur les
+# tarifs réels déjà pratiqués sur WinPlus pour la même matière/le même niveau
+# (Median réel), et seulement à défaut de données suffisantes sur une
+# estimation raisonnée par DeepSeek  pour ne jamais présenter un chiffre
+# inventé comme une donnée de marché.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SuggestTutorRateRequest(BaseModel):
+    subject: str
+    level: Optional[str] = None
+    city: Optional[str] = None
+
+
+class SuggestTutorRateResponse(BaseModel):
+    suggested_rate_xaf: int
+    range_low_xaf: int
+    range_high_xaf: int
+    based_on: str  # "market_data" | "estimation"
+    sample_size: int
+    explanation: str
+
+
+MIN_SAMPLE_FOR_MARKET_DATA = 3
+
+
+@teacher_ai_router.post("/teacher/suggest-tutor-rate", response_model=SuggestTutorRateResponse)
+async def suggest_tutor_rate(
+    body: SuggestTutorRateRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    db = Database()
+    session = db.SessionLocal()
+    try:
+        query = (
+            session.query(TutorProfile.HourlyRateXaf)
+            .join(TutorSubject, TutorSubject.TutorProfileId == TutorProfile.Id)
+            .filter(
+                TutorProfile.IsActive == True,  # noqa: E712
+                TutorProfile.HourlyRateXaf.isnot(None),
+                func.lower(TutorSubject.Subject) == body.subject.strip().lower(),
+            )
+        )
+        if body.level:
+            query = query.join(TutorLevel, TutorLevel.TutorProfileId == TutorProfile.Id).filter(
+                func.lower(TutorLevel.Level) == body.level.strip().lower()
+            )
+        rates = sorted(r[0] for r in query.all() if r[0] is not None)
+    finally:
+        session.close()
+
+    if len(rates) >= MIN_SAMPLE_FOR_MARKET_DATA:
+        mid = len(rates) // 2
+        median = rates[mid] if len(rates) % 2 else (rates[mid - 1] + rates[mid]) / 2
+        low, high = rates[0], rates[-1]
+        return SuggestTutorRateResponse(
+            suggested_rate_xaf=int(median),
+            range_low_xaf=int(low),
+            range_high_xaf=int(high),
+            based_on="market_data",
+            sample_size=len(rates),
+            explanation=(
+                f"Basé sur {len(rates)} répétiteurs déjà actifs sur WinPlus en {body.subject}"
+                f"{f' niveau {body.level}' if body.level else ''} : tarif médian observé."
+            ),
+        )
+
+    # Pas assez de données réelles : estimation raisonnée, explicitement
+    # signalée comme telle (based_on="estimation") plutôt que présentée comme
+    # un fait de marché.
+    prompt = (
+        f"Estime un tarif horaire de cours particulier au Cameroun (Douala/Yaoundé), "
+        f"en Francs CFA (XAF), pour un répétiteur en {body.subject}"
+        f"{f', niveau {body.level}' if body.level else ''}"
+        f"{f', ville {body.city}' if body.city else ''}.\n"
+        "Réponds en JSON strict : "
+        '{"suggested_rate_xaf": 3000, "range_low_xaf": 2000, "range_high_xaf": 4500, '
+        '"explanation": "1-2 phrases justifiant l\'estimation"}'
+    )
+    system = (
+        "Tu es WinAI, expert du marché du soutien scolaire privé au Cameroun. "
+        "Donne des estimations réalistes en Francs CFA, jamais en euros ou dollars."
+    )
+    raw = _deepseek_json(prompt, system, max_tokens=250)
+    if raw and isinstance(raw, dict) and raw.get("suggested_rate_xaf"):
+        return SuggestTutorRateResponse(
+            suggested_rate_xaf=int(raw["suggested_rate_xaf"]),
+            range_low_xaf=int(raw.get("range_low_xaf", raw["suggested_rate_xaf"] * 0.7)),
+            range_high_xaf=int(raw.get("range_high_xaf", raw["suggested_rate_xaf"] * 1.5)),
+            based_on="estimation",
+            sample_size=len(rates),
+            explanation=str(raw.get("explanation", "Estimation WinAI faute de données suffisantes sur la plateforme.")),
+        )
+
+    return SuggestTutorRateResponse(
+        suggested_rate_xaf=3000,
+        range_low_xaf=2000,
+        range_high_xaf=5000,
+        based_on="estimation",
+        sample_size=len(rates),
+        explanation="Estimation par défaut  pas encore assez de répétiteurs actifs sur WinPlus dans cette matière pour une donnée de marché fiable.",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature 8  POST /teacher/analyze-tutor-profile (Module 1, US-PRO-04)
+# Analyse le profil répétiteur et suggère des améliorations concrètes.
+# Le score de complétude "structurel" (champs remplis) est déjà calculé côté
+# .NET (TutorProfileService.ComputeCompletion) ; WinAI ajoute ici un avis
+# qualitatif que seul un LLM peut donner (qualité de la bio, différenciation).
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AnalyzeTutorProfileRequest(BaseModel):
+    title: Optional[str] = None
+    tutor_bio: Optional[str] = None
+    subjects: List[str] = []
+    levels: List[str] = []
+    hourly_rate_xaf: Optional[int] = None
+    has_video: bool = False
+    missing_fields: List[str] = []
+
+
+class TutorProfileSuggestion(BaseModel):
+    field: str
+    suggestion: str
+
+
+class AnalyzeTutorProfileResponse(BaseModel):
+    suggestions: List[TutorProfileSuggestion]
+
+
+@teacher_ai_router.post("/teacher/analyze-tutor-profile", response_model=AnalyzeTutorProfileResponse)
+async def analyze_tutor_profile(
+    body: AnalyzeTutorProfileRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    missing_line = f"Champs structurels manquants : {', '.join(body.missing_fields)}.\n" if body.missing_fields else "Tous les champs structurels sont remplis.\n"
+    prompt = (
+        "Voici le profil répétiteur d'un professeur sur WinPlus :\n"
+        f"Titre : {body.title or '(vide)'}\n"
+        f"Bio : {body.tutor_bio or '(vide)'}\n"
+        f"Matières : {', '.join(body.subjects) or '(aucune)'}\n"
+        f"Niveaux : {', '.join(body.levels) or '(aucun)'}\n"
+        f"Tarif horaire : {body.hourly_rate_xaf or '(non défini)'} XAF\n"
+        f"Vidéo de présentation : {'oui' if body.has_video else 'non'}\n"
+        f"{missing_line}\n"
+        "Donne 3 à 5 suggestions concrètes et actionnables pour améliorer l'attractivité de ce profil "
+        "auprès d'élèves camerounais (pas de généralités  chaque suggestion doit se rattacher à un "
+        "champ précis du profil). Format JSON strict : "
+        '[{"field":"bio","suggestion":"..."}, ...] — field parmi : title, bio, subjects, levels, hourlyRate, video, general.'
+    )
+    system = (
+        "Tu es WinAI, coach en optimisation de profil pour répétiteurs. "
+        "Réponds uniquement avec un tableau JSON valide, suggestions courtes et concrètes."
+    )
+    raw = _deepseek_json(prompt, system, max_tokens=500)
+
+    suggestions: List[TutorProfileSuggestion] = []
+    if isinstance(raw, list):
+        for item in raw[:5]:
+            field = str(item.get("field", "general"))
+            suggestion = str(item.get("suggestion", "")).strip()
+            if suggestion:
+                suggestions.append(TutorProfileSuggestion(field=field, suggestion=suggestion))
+
+    if not suggestions:
+        suggestions.append(TutorProfileSuggestion(
+            field="general",
+            suggestion="Complète ta bio et ajoute une vidéo de présentation : les profils avec vidéo reçoivent nettement plus de réservations.",
+        ))
+
+    return AnalyzeTutorProfileResponse(suggestions=suggestions)
