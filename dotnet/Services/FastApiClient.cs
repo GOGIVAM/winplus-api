@@ -448,6 +448,8 @@ public class FastApiClient : IFastApiClient
     private class ExamQuizData
     {
         public List<QuizQuestionDto>? Questions { get; set; }
+        /// <summary>Renseigné uniquement par /api/quizzes/generate-content quand la matière est choisie par l'IA.</summary>
+        public string? Subject { get; set; }
     }
 
     /// <summary>
