@@ -380,6 +380,15 @@ public class RevisionsController : ControllerBase
 
             return File(buffer, "application/pdf");
         }
+        catch (AmazonS3Exception ex) when (ex.ErrorCode is "NoSuchKey" or "NotFound" || ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            // Le fichier référencé par DocumentUrl n'existe plus (ou pas encore)
+            // dans le stockage  ce n'est pas une panne serveur mais un contenu
+            // manquant, à re-téléverser depuis l'admin. Un 500 générique cachait
+            // cette distinction et laissait l'utilisateur sur une erreur opaque.
+            _logger.LogWarning(ex, "Document introuvable dans le stockage pour la fiche {RevisionId}", id);
+            return NotFound(new { error = "Le document de cette fiche n'est plus disponible. Contactez un administrateur." });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erreur lors du streaming du document de la fiche {RevisionId}", id);

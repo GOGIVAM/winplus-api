@@ -46,6 +46,13 @@ public interface IFastApiClient
     Task<List<QuizQuestionDto>?> GenerateExamQuizAsync(int examId, string documentUrl, string title, string? category);
 
     /// <summary>
+    /// Génère un quiz d'entraînement (QCM) sur une matière, informé par les
+    /// erreurs récentes de l'utilisateur dans cette matière — pas lié à une
+    /// épreuve précise, contrairement à GenerateExamQuizAsync.
+    /// </summary>
+    Task<List<QuizQuestionDto>?> GenerateSubjectQuizAsync(int userId, string subject, string? topic);
+
+    /// <summary>
     /// Génère le contenu d'une fiche de révision personnalisée (erreurs de
     /// quiz récentes, épreuves téléchargées, objectifs actifs de l'élève).
     /// </summary>

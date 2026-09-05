@@ -102,4 +102,10 @@ public interface IQuizService
     /// Obtient le score moyen d'un quiz
     /// </summary>
     Task<double> GetQuizAverageScoreAsync(int id);
+
+    /// <summary>
+    /// Génère un quiz d'entraînement personnalisé par IA sur une matière (la
+    /// plus faible de l'utilisateur si non précisée) et le publie.
+    /// </summary>
+    Task<QuizDto> GenerateAIQuizAsync(int userId, string? subject, string? topic);
 }

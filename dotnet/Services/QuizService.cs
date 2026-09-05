@@ -504,6 +504,49 @@ public class QuizService : IQuizService
         return MapToDto(quiz);
     }
 
+    public async Task<QuizDto> GenerateAIQuizAsync(int userId, string? subject, string? topic)
+    {
+        var resolvedSubject = subject;
+        if (string.IsNullOrWhiteSpace(resolvedSubject))
+        {
+            var recentScores = await _context.QuizAttempts
+                .Where(a => a.UserId == userId)
+                .GroupBy(a => a.Quiz.Subject)
+                .Select(g => new { Subject = g.Key, LatestScore = g.OrderByDescending(a => a.CompletedAt).First().Score })
+                .ToListAsync();
+
+            resolvedSubject = recentScores.OrderBy(s => s.LatestScore).FirstOrDefault()?.Subject;
+
+            if (string.IsNullOrWhiteSpace(resolvedSubject))
+                throw new InvalidOperationException("Passe encore un quiz pour qu'on sache sur quelle matière t'entraîner.");
+        }
+
+        var questions = await _fastApiClient.GenerateSubjectQuizAsync(userId, resolvedSubject, topic);
+        if (questions == null || questions.Count == 0)
+            throw new InvalidOperationException("La génération du quiz a échoué, réessaie dans un instant.");
+
+        var quiz = new Quiz
+        {
+            Title = topic != null ? $"Quiz  {topic}" : $"Quiz  {resolvedSubject}",
+            Description = $"Généré par WinAI pour cibler tes lacunes en {resolvedSubject}.",
+            Subject = resolvedSubject,
+            QuestionsJson = JsonSerializer.Serialize(questions),
+            Difficulty = "medium",
+            TimeLimit = 15,
+            PassingScore = 50,
+            IsAIGenerated = true,
+            IsPublished = true,
+            PublishedAt = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow,
+        };
+
+        _context.Quizzes.Add(quiz);
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Quiz d'entraînement IA généré pour l'utilisateur {UserId} en {Subject} ({Count} questions)", userId, resolvedSubject, questions.Count);
+        return MapToDto(quiz);
+    }
+
     private QuizAttemptDto MapAttemptToDto(QuizAttempt attempt)
     {
         return new QuizAttemptDto
