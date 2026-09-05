@@ -1,3 +1,4 @@
+using Amazon.S3;
 using Backend.Data;
 using Backend.Models.DTOs;
 using Backend.Services;
