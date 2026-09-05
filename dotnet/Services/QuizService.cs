@@ -535,7 +535,8 @@ public class QuizService : IQuizService
         }
 
         // Repli 3 : ni quiz ni téléchargement  on laisse DeepSeek choisir une
-        // matière pertinente à partir du niveau scolaire et des objectifs
+        // matière pertinente à partir du niveau scolaire, de la moyenne
+        // (bulletin, saisie par l'élève ou un parent lié) et des objectifs
         // actifs de l'élève (ex: « progresser en maths » dans un objectif).
         string? contextHint = null;
         var level = await _context.Users.Where(u => u.Id == userId).Select(u => u.Level).FirstOrDefaultAsync();
@@ -547,10 +548,19 @@ public class QuizService : IQuizService
                 .Take(3)
                 .ToListAsync();
 
-            if (goals.Count == 0)
+            var latestGrade = await _context.AcademicRecords
+                .Where(r => r.StudentId == userId)
+                .OrderByDescending(r => r.SchoolYear)
+                .Select(r => new { r.SchoolYear, r.AverageGrade })
+                .FirstOrDefaultAsync();
+
+            if (goals.Count == 0 && latestGrade == null)
                 throw new InvalidOperationException("Passe un quiz, télécharge une épreuve ou définis un objectif pour qu'on sache sur quelle matière t'entraîner.");
 
-            contextHint = string.Join("; ", goals);
+            var hints = new List<string>(goals);
+            if (latestGrade != null)
+                hints.Add($"Moyenne scolaire {latestGrade.SchoolYear} : {latestGrade.AverageGrade}/20");
+            contextHint = string.Join("; ", hints);
         }
 
         var questions = await _fastApiClient.GenerateSubjectQuizAsync(userId, resolvedSubject, topic, level, contextHint);
