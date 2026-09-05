@@ -477,9 +477,18 @@ public class QuizService : IQuizService
         if (string.IsNullOrWhiteSpace(exam.DocumentUrl))
             throw new InvalidOperationException("Cette épreuve n'a pas de fichier PDF associé.");
 
-        var generated = await _fastApiClient.GenerateExamQuizAsync(examId, exam.DocumentUrl, exam.Title, exam.Category);
+        var (generated, errorDetail) = await _fastApiClient.GenerateExamQuizAsync(examId, exam.DocumentUrl, exam.Title, exam.Category);
         if (generated == null || generated.Count == 0)
-            throw new InvalidOperationException("Impossible de générer une évaluation : le contenu du PDF n'a pas pu être analysé.");
+        {
+            // Le message vient de Python quand disponible (ex: "PDF scanné, contenu
+            // illisible") : un message générique identique dans tous les cas
+            // masquait la vraie cause (dépendance manquante, S3, etc.) autant pour
+            // l'utilisateur que pour le débogage.
+            var message = !string.IsNullOrWhiteSpace(errorDetail)
+                ? $"Impossible de générer une évaluation : {errorDetail}"
+                : "Impossible de générer une évaluation : le service IA n'a pas répondu. Réessayez dans quelques instants.";
+            throw new InvalidOperationException(message);
+        }
 
         var quiz = new Quiz
         {

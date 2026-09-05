@@ -43,7 +43,7 @@ public interface IFastApiClient
     /// PDF de l'épreuve (extraction de texte + LLM côté Python). Renvoie
     /// null si le service est indisponible ou si le PDF n'a pas pu être lu.
     /// </summary>
-    Task<List<QuizQuestionDto>?> GenerateExamQuizAsync(int examId, string documentUrl, string title, string? category);
+    Task<(List<QuizQuestionDto>? Questions, string? ErrorDetail)> GenerateExamQuizAsync(int examId, string documentUrl, string title, string? category);
 
     /// <summary>
     /// Génère un quiz d'entraînement (QCM). Si <paramref name="subject"/> est
