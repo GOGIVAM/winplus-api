@@ -528,7 +528,7 @@ public class QuizService : IQuizService
         if (string.IsNullOrWhiteSpace(resolvedSubject))
         {
             resolvedSubject = await _context.DownloadHistories
-                .Where(d => d.UserId == userId && d.SubjectId != null)
+                .Where(d => d.UserId == userId)
                 .OrderByDescending(d => d.CreatedAt)
                 .Join(_context.Subjects, d => d.SubjectId, s => s.Id, (d, s) => s.Category)
                 .FirstOrDefaultAsync(c => !string.IsNullOrWhiteSpace(c));
