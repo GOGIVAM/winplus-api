@@ -490,6 +490,15 @@ public class QuizService : IQuizService
     /// réutilisé pour toutes les tentatives suivantes  régénérer à chaque
     /// fois donnerait des questions différentes d'une tentative à l'autre,
     /// rendant les scores incomparables.
+    ///
+    /// Exception : tant qu'AUCUNE tentative n'a encore été soumise
+    /// (Attempts == 0), le quiz existant est régénéré avec la logique de
+    /// génération la plus récente au lieu d'être simplement retourné tel
+    /// quel. Sans ça, une épreuve dont le quiz avait été généré avant une
+    /// amélioration du prompt (ex: 8 questions au lieu de la totalité, pas
+    /// d'énoncé d'exercice) restait bloquée sur cette ancienne version pour
+    /// toujours, même après correction du service de génération  puisqu'aucun
+    /// score n'existe encore, rien n'est perdu à la régénérer.
     /// </summary>
     public async Task<QuizDto> GetOrCreateExamQuizAsync(int examId)
     {
@@ -497,7 +506,7 @@ public class QuizService : IQuizService
             .Where(q => q.ExamId == examId && !q.IsDeleted)
             .OrderByDescending(q => q.CreatedAt)
             .FirstOrDefaultAsync();
-        if (existing != null)
+        if (existing != null && existing.Attempts > 0)
             return MapToDto(existing);
 
         var exam = await _context.Exams.FirstOrDefaultAsync(e => e.Id == examId && !e.IsDeleted);
@@ -509,6 +518,12 @@ public class QuizService : IQuizService
         var (generated, errorDetail) = await _fastApiClient.GenerateExamQuizAsync(examId, exam.DocumentUrl, exam.Title, exam.Category);
         if (generated == null || generated.Count == 0)
         {
+            // Si une régénération échoue (ex: service IA temporairement indisponible)
+            // mais qu'une version précédente existe déjà, mieux vaut la renvoyer que
+            // de bloquer complètement l'évaluation.
+            if (existing != null)
+                return MapToDto(existing);
+
             // Le message vient de Python quand disponible (ex: "PDF scanné, contenu
             // illisible") : un message générique identique dans tous les cas
             // masquait la vraie cause (dépendance manquante, S3, etc.) autant pour
@@ -519,27 +534,38 @@ public class QuizService : IQuizService
             throw new InvalidOperationException(message);
         }
 
-        var quiz = new Quiz
+        Quiz quiz;
+        if (existing != null)
         {
-            Title = $"Évaluation  {exam.Title}",
-            Description = $"Épreuve chronométrée générée à partir du contenu de « {exam.Title} ».",
-            Subject = exam.Category ?? "Général",
-            Difficulty = exam.Difficulty ?? "moyen",
-            QuestionsJson = JsonSerializer.Serialize(generated, CamelCaseJson),
-            TimeLimit = exam.DurationMinutes ?? 30,
-            PassingScore = 50,
-            SubjectId = exam.SubjectId,
-            ExamId = examId,
-            IsAIGenerated = true,
-            IsPublished = true,
-            PublishedAt = DateTime.UtcNow,
-            CreatedAt = DateTime.UtcNow,
-        };
+            existing.QuestionsJson = JsonSerializer.Serialize(generated, CamelCaseJson);
+            existing.TimeLimit = exam.DurationMinutes ?? existing.TimeLimit;
+            existing.UpdatedAt = DateTime.UtcNow;
+            quiz = existing;
+        }
+        else
+        {
+            quiz = new Quiz
+            {
+                Title = $"Évaluation  {exam.Title}",
+                Description = $"Épreuve chronométrée générée à partir du contenu de « {exam.Title} ».",
+                Subject = exam.Category ?? "Général",
+                Difficulty = exam.Difficulty ?? "moyen",
+                QuestionsJson = JsonSerializer.Serialize(generated, CamelCaseJson),
+                TimeLimit = exam.DurationMinutes ?? 30,
+                PassingScore = 50,
+                SubjectId = exam.SubjectId,
+                ExamId = examId,
+                IsAIGenerated = true,
+                IsPublished = true,
+                PublishedAt = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow,
+            };
+            _context.Quizzes.Add(quiz);
+        }
 
-        _context.Quizzes.Add(quiz);
         await _context.SaveChangesAsync();
 
-        _logger.LogInformation("Quiz d'évaluation généré pour l'épreuve {ExamId} ({Count} questions)", examId, generated.Count);
+        _logger.LogInformation("Quiz d'évaluation (re)généré pour l'épreuve {ExamId} ({Count} questions)", examId, generated.Count);
         return MapToDto(quiz);
     }
 

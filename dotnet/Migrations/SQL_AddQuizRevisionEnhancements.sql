@@ -14,9 +14,20 @@ ALTER TABLE "Quizzes"
     ADD COLUMN IF NOT EXISTS "HiddenFromList" boolean NOT NULL DEFAULT false,
     ADD COLUMN IF NOT EXISTS "DifficultyFeedback" character varying(500) NULL;
 
-ALTER TABLE "Quizzes"
-    ADD CONSTRAINT "FK_Quizzes_Users_CreatedByUserId"
-        FOREIGN KEY ("CreatedByUserId") REFERENCES "Users" ("Id") ON DELETE SET NULL;
+-- Postgres n'a pas de ADD CONSTRAINT IF NOT EXISTS : sans cette garde, relancer
+-- le script (ex: après un premier passage déjà appliqué) faisait échouer toute
+-- la transaction ici et annulait aussi les instructions suivantes (index,
+-- colonnes Revisions) même si elles, elles n'avaient pas encore été jouées.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'FK_Quizzes_Users_CreatedByUserId'
+    ) THEN
+        ALTER TABLE "Quizzes"
+            ADD CONSTRAINT "FK_Quizzes_Users_CreatedByUserId"
+                FOREIGN KEY ("CreatedByUserId") REFERENCES "Users" ("Id") ON DELETE SET NULL;
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS "IX_Quizzes_CreatedByUserId" ON "Quizzes" ("CreatedByUserId");
 
