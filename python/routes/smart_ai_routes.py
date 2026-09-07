@@ -431,33 +431,46 @@ async def generate_revision_content(
         "}"
     )
 
+    raw = ""
     try:
         client = get_deepseek_client()
         result = client.chat(
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=1800,
+            max_tokens=2200,
             temperature=0.5,
         )
-        content = result.get("content", "").strip()
+        raw = result.get("content", "").strip()
+        content = raw
         if content.startswith("```"):
             lines = content.split("\n")
             content = "\n".join(lines[1:]).rstrip("`").strip()
 
+        # DeepSeek ajoute parfois une phrase avant/après le JSON malgré la
+        # consigne ("Voici la fiche : {...}")  json.loads() plantait alors
+        # immédiatement sur tout le bloc. Même extraction par regex que
+        # generate_quiz_content, pour ne garder que l'objet JSON lui-même.
         import json as _json
-        data = _json.loads(content)
+        import re as _re
+        match = _re.search(r"\{.*\}", content, _re.DOTALL)
+        if not match:
+            raise ValueError("Aucun objet JSON trouvé dans la réponse de DeepSeek.")
+        data = _json.loads(match.group())
 
         chosen_subject = body.subject or data.get("subject")
+        content_markdown = str(data.get("content_markdown") or "")
+        if not content_markdown.strip():
+            raise ValueError("content_markdown vide dans la réponse de DeepSeek.")
 
         return {
             "success": True,
             "subject": chosen_subject,
             "title": str(data.get("title") or (f"Révision  {chosen_subject}" if chosen_subject else "Fiche de révision"))[:255],
-            "content_markdown": str(data.get("content_markdown") or ""),
+            "content_markdown": content_markdown,
             "difficulty": data.get("difficulty") if data.get("difficulty") in ("easy", "medium", "hard") else (difficulty or "medium"),
             "estimated_duration_minutes": int(data.get("estimated_duration_minutes") or 15),
         }
     except Exception as e:
-        logger.error(f"[revision-content] error: {e}")
+        logger.error(f"[revision-content] error: {e}  raw DeepSeek content: {raw[:500]!r}")
         raise HTTPException(status_code=500, detail="Génération de la fiche impossible pour le moment.")
 
 
@@ -564,12 +577,18 @@ async def generate_quiz_content(
         "Tu génères des QCM rigoureux et pertinents, jamais de questions hors sujet."
     )
 
+    raw = ""
     try:
         client = get_deepseek_client()
         result = client.chat(
             messages=[{"role": "user", "content": prompt}],
             system_prompt=system,
-            max_tokens=2200,
+            # 2200 tokens laissait parfois le JSON coupé en fin de génération
+            # une fois les consignes de variété/anti-répétition ajoutées
+            # (explications plus longues par question)  json.loads() sur un
+            # objet tronqué levait alors une exception non gérée (500 générique
+            # au lieu du 422 "réessaie" prévu pour une génération ratée).
+            max_tokens=2800,
             temperature=0.5,
         )
         raw = result.get("content", "").strip()
@@ -577,7 +596,10 @@ async def generate_quiz_content(
         import re as _re
         import json as _json
         match = _re.search(r"\{.*\}", raw, _re.DOTALL)
-        payload = _json.loads(match.group()) if match else {}
+        try:
+            payload = _json.loads(match.group()) if match else {}
+        except _json.JSONDecodeError:
+            payload = {}
         chosen_subject = body.subject or payload.get("subject")
         parsed = payload.get("questions", [])
 
@@ -602,5 +624,5 @@ async def generate_quiz_content(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[quiz-content] error: {e}")
+        logger.error(f"[quiz-content] error: {e}  raw DeepSeek content: {raw[:500]!r}")
         raise HTTPException(status_code=500, detail="Génération du quiz impossible pour le moment.")
