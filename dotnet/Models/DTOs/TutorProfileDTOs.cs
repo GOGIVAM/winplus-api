@@ -26,6 +26,10 @@ public class TutorProfileDto
     public int? MaxSessionsPerWeek { get; set; }
     public bool IsOnVacation { get; set; }
 
+    public int FullRefundHours { get; set; }
+    public int PartialRefundPercent { get; set; }
+    public int NoRefundHours { get; set; }
+
     public bool IsDiplomaVerified { get; set; }
     /// <summary>≥10 séances marquées "Effectuée".</summary>
     public bool IsExperienced { get; set; }
@@ -118,6 +122,10 @@ public class UpdateTutorProfileRequestDto
     public int? MaxSessionsPerWeek { get; set; }
     public List<TutorAvailabilitySlotDto>? AvailabilitySlots { get; set; }
 
+    public int? FullRefundHours { get; set; }
+    public int? PartialRefundPercent { get; set; }
+    public int? NoRefundHours { get; set; }
+
     /// <summary>Étape atteinte (1-5), pour reprendre l'onboarding où l'utilisateur s'était arrêté.</summary>
     public int? OnboardingStep { get; set; }
 }
@@ -162,4 +170,6 @@ public class TutorSearchResultDto
     public int ReviewCount { get; set; }
     public List<string> Subjects { get; set; } = new();
     public List<string> Levels { get; set; } = new();
+    /// <summary>Premier créneau réservable dans les 14 prochains jours (null si aucun).</summary>
+    public DateTime? NextAvailableSlot { get; set; }
 }

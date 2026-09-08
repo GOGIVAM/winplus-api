@@ -119,6 +119,9 @@ public partial class ApplicationDbContext : DbContext
     // Catalogue et achat de contenu (Module 2)
     public DbSet<TeacherClassContent> TeacherClassContents => Set<TeacherClassContent>();
 
+    // Messagerie : archivage de conversation (Module 7)
+    public DbSet<ArchivedConversation> ArchivedConversations => Set<ArchivedConversation>();
+
     // Devoirs et corrections (Module 4)
     public DbSet<Assignment> Assignments => Set<Assignment>();
     public DbSet<Submission> Submissions => Set<Submission>();
@@ -365,6 +368,15 @@ public partial class ApplicationDbContext : DbContext
             entity.HasOne(e => e.Subject)
                   .WithMany()
                   .HasForeignKey(e => e.SubjectId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ArchivedConversation>(entity =>
+        {
+            entity.HasIndex(e => new { e.UserId, e.OtherUserId }).IsUnique();
+            entity.HasOne(e => e.User)
+                  .WithMany()
+                  .HasForeignKey(e => e.UserId)
                   .OnDelete(DeleteBehavior.Cascade);
         });
 

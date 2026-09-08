@@ -1,7 +1,9 @@
+using System.Data;
 using Backend.Data;
 using Backend.Models.DTOs;
 using Backend.Models.Entities;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace Backend.Services;
 
@@ -61,19 +63,6 @@ public class TutorBookingService : ITutorBookingService
         if (sessionStartUtc < DateTime.UtcNow.AddHours(tutorProfile.NoticeHours))
             throw new InvalidOperationException($"Ce répétiteur demande un préavis minimum de {tutorProfile.NoticeHours} heures.");
 
-        var conflict = await _context.TutorBookings.AnyAsync(b =>
-            b.TutorProfileId == tutorProfile.Id && b.SessionDate == request.SessionDate &&
-            ActiveStatuses.Contains(b.Status) && b.StartTime < end && b.EndTime > start);
-        if (conflict)
-            throw new InvalidOperationException("Ce créneau vient d'être réservé par un autre élève.");
-
-        if (tutorProfile.MaxSessionsPerWeek is int max)
-        {
-            var weekCount = await CountActiveBookingsInWeekAsync(tutorProfile.Id, GetWeekStart(request.SessionDate));
-            if (weekCount >= max)
-                throw new InvalidOperationException("Ce répétiteur a atteint son nombre maximum de séances pour cette semaine. Choisis une autre semaine.");
-        }
-
         var durationHours = (decimal)(end - start).TotalHours;
         var price = Math.Round((tutorProfile.HourlyRateXaf ?? 0) * durationHours, 0);
 
@@ -90,8 +79,41 @@ public class TutorBookingService : ITutorBookingService
             Status = "pending_payment",
             PhoneNumber = request.Phone,
         };
-        _context.TutorBookings.Add(booking);
-        await _context.SaveChangesAsync();
+
+        // Vérifier le conflit puis insérer n'est pas atomique : sans protection,
+        // deux élèves tapant "Réserver" sur le même créneau au même instant
+        // passent tous les deux le contrôle avant que l'un des deux n'ait
+        // encore écrit sa ligne, et les deux réservations sont créées. Une
+        // transaction Serializable détecte cette collision au COMMIT (Postgres
+        // lève 40001) plutôt que d'écrire silencieusement un double-booking.
+        await using var tx = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+        try
+        {
+            var conflict = await _context.TutorBookings.AnyAsync(b =>
+                b.TutorProfileId == tutorProfile.Id && b.SessionDate == request.SessionDate &&
+                ActiveStatuses.Contains(b.Status) && b.StartTime < end && b.EndTime > start);
+            if (conflict)
+                throw new InvalidOperationException("Ce créneau vient d'être réservé par un autre élève.");
+
+            if (tutorProfile.MaxSessionsPerWeek is int max)
+            {
+                var weekCount = await CountActiveBookingsInWeekAsync(tutorProfile.Id, GetWeekStart(request.SessionDate));
+                if (weekCount >= max)
+                    throw new InvalidOperationException("Ce répétiteur a atteint son nombre maximum de séances pour cette semaine. Choisis une autre semaine.");
+            }
+
+            _context.TutorBookings.Add(booking);
+            await _context.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "40001" })
+        {
+            throw new InvalidOperationException("Ce créneau vient d'être réservé par un autre élève.");
+        }
+        catch (PostgresException ex) when (ex.SqlState == "40001")
+        {
+            throw new InvalidOperationException("Ce créneau vient d'être réservé par un autre élève.");
+        }
 
         var student = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == studentUserId);
         var studentEmail = student?.Email ?? $"user{studentUserId}@winplus.cm";
@@ -182,12 +204,28 @@ public class TutorBookingService : ITutorBookingService
         if (booking.Status is "cancelled" or "completed")
             throw new InvalidOperationException("Cette réservation ne peut plus être annulée.");
 
+        var hadCompletedPayment = booking.PaymentStatus == "completed";
+
         booking.Status = "cancelled";
         booking.CancelledByUserId = userId;
         booking.CancelledAt = DateTime.UtcNow;
         booking.CancellationReason = string.IsNullOrWhiteSpace(reason) ? null : reason;
         booking.UpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
+
+        // Politique d'annulation (référentiel §I.C) : ne s'applique que si
+        // c'est l'élève qui annule un paiement déjà encaissé — une annulation
+        // à l'initiative du répétiteur reste toujours remboursée à 100%,
+        // l'élève ne doit jamais être pénalisé pour une décision qui ne vient
+        // pas de lui.
+        if (hadCompletedPayment)
+        {
+            var refundPercent = isTutor ? 100 : ComputeRefundPercent(booking);
+            await SimulateRefundAsync(booking, "annulée", refundPercent);
+        }
+        else
+        {
+            await _context.SaveChangesAsync();
+        }
 
         var notifiedUserId = isStudent ? booking.TutorProfile?.UserId : booking.StudentUserId;
         if (notifiedUserId.HasValue)
@@ -327,17 +365,29 @@ public class TutorBookingService : ITutorBookingService
     /// sur PaymentService.RefundPaymentAsync (flip de statut uniquement) — donc
     /// le virement Mobile Money réel reste un geste manuel à faire côté admin.
     /// </summary>
-    private async Task SimulateRefundAsync(TutorBooking booking, string reasonLabel)
+    private async Task SimulateRefundAsync(TutorBooking booking, string reasonLabel, int refundPercent = 100)
     {
-        booking.PaymentStatus = "refunded";
+        booking.PaymentStatus = refundPercent > 0 ? "refunded" : "forfeited";
+        booking.RefundPercent = refundPercent;
         await _context.SaveChangesAsync();
 
+        var refundAmount = Math.Round(booking.PriceXaf * refundPercent / 100m, 0);
+        var studentMessage = refundPercent switch
+        {
+            100 => $"Ta séance du {booking.SessionDate:dd/MM/yyyy} a été {reasonLabel}. Remboursement total en cours.",
+            0 => $"Ta séance du {booking.SessionDate:dd/MM/yyyy} a été {reasonLabel}. Politique d'annulation du répétiteur : aucun remboursement pour une annulation aussi tardive.",
+            _ => $"Ta séance du {booking.SessionDate:dd/MM/yyyy} a été {reasonLabel}. Politique d'annulation du répétiteur : {refundPercent}% remboursés ({refundAmount:0} XAF).",
+        };
         await _ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Réservation " + reasonLabel,
-            $"Ta séance du {booking.SessionDate:dd/MM/yyyy} a été {reasonLabel}. Remboursement en cours.",
-            userId: booking.StudentUserId, type: "TutorBooking");
-        await _ntfy.PublishAdminAsync("Remboursement manuel requis — cours particulier",
-            $"Réservation #{booking.Id} ({booking.PriceXaf} XAF, réf. {booking.NotchpayReference}) : rembourser l'élève #{booking.StudentUserId} via NotchPay/MoMo.",
-            tags: new[] { "moneybag" });
+            studentMessage, userId: booking.StudentUserId, type: "TutorBooking");
+
+        if (refundPercent > 0)
+        {
+            await _ntfy.PublishAdminAsync("Remboursement manuel requis — cours particulier",
+                $"Réservation #{booking.Id} ({refundAmount:0}/{booking.PriceXaf} XAF, réf. {booking.NotchpayReference}) : " +
+                $"rembourser l'élève #{booking.StudentUserId} via NotchPay/MoMo ({refundPercent}% selon la politique d'annulation).",
+                tags: new[] { "moneybag" });
+        }
     }
 
     public async Task<List<TutorAvailabilityOccurrenceDto>> GetAvailabilityCalendarAsync(int tutorUserId, DateOnly weekStart)
@@ -439,6 +489,25 @@ public class TutorBookingService : ITutorBookingService
     }
 
     private static DateOnly GetWeekStart(DateOnly date) => date.AddDays(-(((int)date.DayOfWeek + 6) % 7));
+
+    /// <summary>
+    /// Politique d'annulation configurable par le répétiteur (référentiel §I.C,
+    /// TutorProfile.FullRefundHours/PartialRefundPercent/NoRefundHours) :
+    /// remboursement total au-delà de FullRefundHours, partiel entre
+    /// NoRefundHours et FullRefundHours, aucun en-deçà de NoRefundHours.
+    /// </summary>
+    private static int ComputeRefundPercent(TutorBooking booking)
+    {
+        var profile = booking.TutorProfile;
+        if (profile == null) return 100;
+
+        var sessionStartUtc = booking.SessionDate.ToDateTime(TimeOnly.FromTimeSpan(booking.StartTime), DateTimeKind.Utc);
+        var hoursUntilSession = (sessionStartUtc - DateTime.UtcNow).TotalHours;
+
+        if (hoursUntilSession >= profile.FullRefundHours) return 100;
+        if (hoursUntilSession < profile.NoRefundHours) return 0;
+        return Math.Clamp(profile.PartialRefundPercent, 0, 100);
+    }
 
     /// <summary>9 chiffres locaux → préfixe "237" ajouté ; déjà préfixé (237… ou +237…) → inchangé.</summary>
     private static string NormalizePhoneToE164(string phone)

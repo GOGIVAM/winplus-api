@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
@@ -18,7 +19,7 @@ namespace Backend.Services;
 /// </summary>
 public interface ICustomAuthService
 {
-    Task<AuthResult> SignUpAsync(string email, string password, string firstName, string lastName, string? phone = null);
+    Task<AuthResult> SignUpAsync(string email, string password, string firstName, string lastName, string? phone = null, string? role = null);
     Task<AuthResult> SignInAsync(string email, string password, HttpRequest request, bool rememberMe = false);
     Task<AuthResult> VerifyEmailAsync(int userId, string verificationCode);
     Task<AuthResult> ResendVerificationCodeAsync(string email);
@@ -87,12 +88,18 @@ public class CustomAuthService : ICustomAuthService
             return false;
         }
 
+    private static readonly HashSet<string> AllowedSignUpRoles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "student", "teacher", "parent"
+    };
+
     public async Task<AuthResult> SignUpAsync(
         string email,
         string password,
         string firstName,
         string lastName,
-        string? phone = null)
+        string? phone = null,
+        string? role = null)
     {
         try
         {
@@ -147,6 +154,13 @@ public class CustomAuthService : ICustomAuthService
             // Hash password
             var passwordHash = BC.HashPassword(password);
 
+            // Le rôle est fourni par le client (student/teacher/parent) ; on retombe
+            // sur "student" si absent ou hors de la liste autorisée (ex: "admin" ne
+            // peut pas être auto-attribué à l'inscription).
+            var normalizedRole = !string.IsNullOrWhiteSpace(role) && AllowedSignUpRoles.Contains(role)
+                ? role.ToLowerInvariant()
+                : "student";
+
             // Create user
             var user = new User
             {
@@ -158,7 +172,7 @@ public class CustomAuthService : ICustomAuthService
                 IsActive = true,
                 IsEmailVerified = false,
                 CreatedAt = DateTime.UtcNow,
-                Role = "student"
+                Role = normalizedRole
             };
 
             _dbContext.Users.Add(user);

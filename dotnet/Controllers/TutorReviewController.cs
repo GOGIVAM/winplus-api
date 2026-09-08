@@ -37,6 +37,19 @@ public class TutorReviewController : ControllerBase
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
     }
 
+    /// <summary>Signale un avis comme abusif — l'équipe WinPlus tranche.</summary>
+    [HttpPost("{id:int}/report")]
+    [Authorize]
+    public async Task<IActionResult> Report(int id, [FromBody] ReportTutorReviewRequestDto request)
+    {
+        try
+        {
+            await _service.ReportAsync(User.GetUserId(), id, request.Reason);
+            return Ok(new { message = "Avis signalé. L'équipe WinPlus va l'examiner." });
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
     /// <summary>Avis publics d'un répétiteur (fiche publique).</summary>
     [HttpGet("tutor/{tutorUserId:int}")]
     [AllowAnonymous]

@@ -57,6 +57,14 @@ public class TutorBooking
     public string? CancellationReason { get; set; }
     public int? CancelledByUserId { get; set; }
     public DateTime? CancelledAt { get; set; }
+
+    /// <summary>
+    /// Part remboursée à l'élève lors d'une annulation par l'élève lui-même
+    /// (0-100), calculée depuis la politique d'annulation du répétiteur au
+    /// moment de l'annulation. Null si annulée par le répétiteur (toujours
+    /// remboursement total dans ce cas) ou pas encore annulée.
+    /// </summary>
+    public int? RefundPercent { get; set; }
     public DateTime? ConfirmedAt { get; set; }
 
     /// <summary>Séance marquée "Effectuée" par le répétiteur (déclenche la fenêtre de contestation de 2h).</summary>

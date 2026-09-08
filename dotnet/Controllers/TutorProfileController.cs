@@ -119,7 +119,14 @@ public class TutorProfileController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(request.DocumentUrl))
             return BadRequest(new { message = "URL du document requise." });
-        return Ok(await _service.SubmitVerificationDocumentAsync(User.GetUserId(), request.DocumentUrl));
+        try
+        {
+            return Ok(await _service.SubmitVerificationDocumentAsync(User.GetUserId(), request.DocumentUrl));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     /// <summary>Fiche publique d'un répétiteur (US-10, côté élève) — 404 si non actif.</summary>
@@ -153,6 +160,8 @@ public class TutorProfileController : ControllerBase
         [FromQuery] int pageSize = 20,
         [FromQuery] string? mode = null,
         [FromQuery] string? city = null,
-        [FromQuery] bool availableSoon = false)
-        => Ok(await _service.SearchAsync(subject, level, maxHourlyRateXaf, verifiedOnly, page, pageSize, mode, city, availableSoon));
+        [FromQuery] bool availableSoon = false,
+        [FromQuery] double? minRating = null,
+        [FromQuery] string? sort = null)
+        => Ok(await _service.SearchAsync(subject, level, maxHourlyRateXaf, verifiedOnly, page, pageSize, mode, city, availableSoon, minRating, sort));
 }

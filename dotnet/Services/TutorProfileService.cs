@@ -44,7 +44,22 @@ public class TutorProfileService : ITutorProfileService
 
         profile = new TutorProfile { UserId = userId };
         _context.TutorProfiles.Add(profile);
-        await _context.SaveChangesAsync();
+        try
+        {
+            await _context.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            // Double clic / double appel (ex. effet React invoqué deux fois) :
+            // l'index unique sur UserId a rejeté la deuxième création
+            // concurrente. Ce n'est pas une vraie erreur si la ligne existe
+            // déjà — on l'utilise au lieu de renvoyer un 500 au client ;
+            // sinon, l'échec était pour une autre raison, à relancer.
+            _context.Entry(profile).State = EntityState.Detached;
+            var existing = await _context.TutorProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
+            if (existing == null) throw;
+            profile = existing;
+        }
 
         // Recharge avec les collections vides mais initialisées (évite un null-check partout).
         profile.Subjects = new List<TutorSubject>();
@@ -67,16 +82,20 @@ public class TutorProfileService : ITutorProfileService
     {
         var profile = await GetOrCreateEntityAsync(userId);
 
-        if (request.Title != null) profile.Title = request.Title;
+        // Tronqué systématiquement à la longueur de colonne : sans ça, un champ
+        // trop long (copier-coller d'une bio depuis ailleurs, par ex.) ne
+        // remontait pas une erreur de validation claire mais un 500 brut de
+        // Postgres ("value too long for type character varying(n)").
+        if (request.Title != null) profile.Title = Truncate(request.Title, 150);
         if (request.TutorBio != null) profile.TutorBio = Truncate(request.TutorBio, 300);
-        if (request.VideoUrl != null) profile.VideoUrl = request.VideoUrl;
-        if (request.TeachingStyle != null) profile.TeachingStyle = request.TeachingStyle;
+        if (request.VideoUrl != null) profile.VideoUrl = Truncate(request.VideoUrl, 500);
+        if (request.TeachingStyle != null) profile.TeachingStyle = Truncate(request.TeachingStyle, 30);
 
         if (request.OffersAtStudentHome.HasValue) profile.OffersAtStudentHome = request.OffersAtStudentHome.Value;
         if (request.OffersAtTutorHome.HasValue) profile.OffersAtTutorHome = request.OffersAtTutorHome.Value;
         if (request.OffersOnline.HasValue) profile.OffersOnline = request.OffersOnline.Value;
         if (request.OffersNeutralPlace.HasValue) profile.OffersNeutralPlace = request.OffersNeutralPlace.Value;
-        if (request.TutorHomeAddressHint != null) profile.TutorHomeAddressHint = request.TutorHomeAddressHint;
+        if (request.TutorHomeAddressHint != null) profile.TutorHomeAddressHint = Truncate(request.TutorHomeAddressHint, 200);
 
         if (request.HourlyRateXaf.HasValue) profile.HourlyRateXaf = request.HourlyRateXaf.Value;
         if (request.TrialSessionEnabled.HasValue) profile.TrialSessionEnabled = request.TrialSessionEnabled.Value;
@@ -85,17 +104,26 @@ public class TutorProfileService : ITutorProfileService
         if (request.NoticeHours.HasValue) profile.NoticeHours = request.NoticeHours.Value is 12 or 24 or 48 ? request.NoticeHours.Value : 24;
         if (request.MaxSessionsPerWeek.HasValue) profile.MaxSessionsPerWeek = request.MaxSessionsPerWeek.Value;
 
+        if (request.FullRefundHours.HasValue) profile.FullRefundHours = Math.Clamp(request.FullRefundHours.Value, 0, 168);
+        if (request.PartialRefundPercent.HasValue) profile.PartialRefundPercent = Math.Clamp(request.PartialRefundPercent.Value, 0, 100);
+        if (request.NoRefundHours.HasValue) profile.NoRefundHours = Math.Clamp(request.NoRefundHours.Value, 0, profile.FullRefundHours);
+
         if (request.OnboardingStep.HasValue) profile.OnboardingStep = Math.Clamp(request.OnboardingStep.Value, 0, 5);
 
-        if (request.Subjects != null) ReplaceCollection(profile.Subjects, request.Subjects, s => new TutorSubject { TutorProfileId = profile.Id, Subject = s });
-        if (request.Levels != null) ReplaceCollection(profile.Levels, request.Levels, l => new TutorLevel { TutorProfileId = profile.Id, Level = l });
-        if (request.Specialties != null) ReplaceCollection(profile.Specialties, request.Specialties, s => new TutorSpecialty { TutorProfileId = profile.Id, Label = s });
+        if (request.Subjects != null) ReplaceCollection(profile.Subjects, request.Subjects, s => new TutorSubject { TutorProfileId = profile.Id, Subject = Truncate(s, 100) });
+        if (request.Levels != null) ReplaceCollection(profile.Levels, request.Levels, l => new TutorLevel { TutorProfileId = profile.Id, Level = Truncate(l, 100) });
+        if (request.Specialties != null) ReplaceCollection(profile.Specialties, request.Specialties, s => new TutorSpecialty { TutorProfileId = profile.Id, Label = Truncate(s, 100) });
 
         if (request.InterventionZones != null)
         {
             _context.TutorInterventionZones.RemoveRange(profile.InterventionZones);
             profile.InterventionZones = request.InterventionZones
-                .Select(z => new TutorInterventionZone { TutorProfileId = profile.Id, City = z.City, Quartier = z.Quartier })
+                .Select(z => new TutorInterventionZone
+                {
+                    TutorProfileId = profile.Id,
+                    City = Truncate(z.City, 100),
+                    Quartier = z.Quartier == null ? null : Truncate(z.Quartier, 100),
+                })
                 .ToList();
         }
 
@@ -104,7 +132,7 @@ public class TutorProfileService : ITutorProfileService
             _context.TutorPackages.RemoveRange(profile.Packages);
             profile.Packages = request.Packages
                 .Take(3) // "jusqu'à 3 forfaits" (US-PRO-10)
-                .Select(p => new TutorPackage { TutorProfileId = profile.Id, Name = p.Name, SessionsCount = p.SessionsCount, TotalPriceXaf = p.TotalPriceXaf, IsActive = p.IsActive })
+                .Select(p => new TutorPackage { TutorProfileId = profile.Id, Name = Truncate(p.Name, 100), SessionsCount = p.SessionsCount, TotalPriceXaf = p.TotalPriceXaf, IsActive = p.IsActive })
                 .ToList();
         }
 
@@ -188,6 +216,13 @@ public class TutorProfileService : ITutorProfileService
 
     public async Task<TutorVerificationDocumentDto> SubmitVerificationDocumentAsync(int userId, string documentUrl)
     {
+        // Contrairement aux champs texte libre (tronqués silencieusement plus
+        // haut), une URL tronquée serait cassée plutôt que raccourcie
+        // proprement : on rejette avec un message clair au lieu de laisser
+        // Postgres échouer sur "value too long for type character varying(500)".
+        if (documentUrl.Length > 500)
+            throw new InvalidOperationException("Le lien du document est invalide (trop long).");
+
         var profile = await GetOrCreateEntityAsync(userId);
         var doc = new TutorVerificationDocument
         {
@@ -219,10 +254,10 @@ public class TutorProfileService : ITutorProfileService
             .Include(p => p.Subjects).Include(p => p.Levels).Include(p => p.Specialties)
             .Include(p => p.InterventionZones).Include(p => p.Packages).Include(p => p.AvailabilitySlots)
             .FirstOrDefaultAsync(p => p.UserId == userId && p.IsActive);
-        return profile == null ? null : await MapToDtoAsync(profile);
+        return profile == null ? null : await MapToDtoAsync(profile, isPublicView: true);
     }
 
-    public async Task<List<TutorSearchResultDto>> SearchAsync(string? subject, string? level, decimal? maxHourlyRateXaf, bool verifiedOnly, int page, int pageSize, string? mode = null, string? city = null, bool availableSoon = false)
+    public async Task<List<TutorSearchResultDto>> SearchAsync(string? subject, string? level, decimal? maxHourlyRateXaf, bool verifiedOnly, int page, int pageSize, string? mode = null, string? city = null, bool availableSoon = false, double? minRating = null, string? sort = null)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 50);
@@ -300,6 +335,11 @@ public class TutorProfileService : ITutorProfileService
             .Select(g => new { g.Key, Avg = g.Average(r => (double)r.Rating), Count = g.Count() })
             .ToDictionaryAsync(x => x.Key, x => (x.Avg, x.Count));
 
+        // Note minimale (US-REP-01) : filtre après le calcul batch des notes,
+        // pour ne pas refaire une requête par candidat.
+        if (minRating.HasValue)
+            candidates = candidates.Where(p => ratingStats.TryGetValue(p.Id, out var rs) && rs.Avg >= minRating.Value).ToList();
+
         double RelevanceScore(TutorProfile p)
         {
             var completed = completedCounts.GetValueOrDefault(p.Id);
@@ -311,11 +351,40 @@ public class TutorProfileService : ITutorProfileService
             return avgRating * (1 + completed) * reactivity;
         }
 
-        var ordered = candidates
-            .OrderByDescending(RelevanceScore)
-            .ThenByDescending(p => p.IsDiplomaVerified)
-            .ThenBy(p => p.HourlyRateXaf)
-            .ToList();
+        // Prochain créneau réservable (14 jours, même logique honnête que
+        // `availableSoon` : approximé depuis la grille déclarée, sans croiser
+        // les réservations déjà prises pour ne pas exploser le coût de la page).
+        DateTime? NextSlot(TutorProfile p)
+        {
+            var now = DateTime.UtcNow;
+            for (var d = 0; d < 14; d++)
+            {
+                var date = DateOnly.FromDateTime(now).AddDays(d);
+                var dow = (int)date.DayOfWeek;
+                var slot = p.AvailabilitySlots
+                    .Where(s => s.IsActive && s.DayOfWeek == dow)
+                    .Select(s => date.ToDateTime(TimeOnly.FromTimeSpan(s.StartTime), DateTimeKind.Utc))
+                    .Where(dt => dt >= now.AddHours(p.NoticeHours))
+                    .OrderBy(dt => dt)
+                    .FirstOrDefault();
+                if (slot != default) return slot;
+            }
+            return null;
+        }
+
+        var nextSlots = candidates.ToDictionary(p => p.Id, NextSlot);
+
+        var ordered = sort switch
+        {
+            "price-asc" => candidates.OrderBy(p => p.HourlyRateXaf ?? decimal.MaxValue).ToList(),
+            "price-desc" => candidates.OrderByDescending(p => p.HourlyRateXaf ?? 0).ToList(),
+            "next-slot" => candidates.OrderBy(p => nextSlots[p.Id] ?? DateTime.MaxValue).ToList(),
+            _ => candidates
+                .OrderByDescending(RelevanceScore)
+                .ThenByDescending(p => p.IsDiplomaVerified)
+                .ThenBy(p => p.HourlyRateXaf)
+                .ToList(),
+        };
 
         var results = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
 
@@ -331,6 +400,7 @@ public class TutorProfileService : ITutorProfileService
             ReviewCount = ratingStats.TryGetValue(p.Id, out var prc) ? prc.Count : 0,
             Subjects = p.Subjects.Select(s => s.Subject).ToList(),
             Levels = p.Levels.Select(l => l.Level).ToList(),
+            NextAvailableSlot = nextSlots.GetValueOrDefault(p.Id),
         }).ToList();
     }
 
@@ -380,10 +450,18 @@ public class TutorProfileService : ITutorProfileService
         );
     }
 
-    private async Task<TutorProfileDto> MapToDtoAsync(TutorProfile profile)
+    /// <summary>
+    /// isPublicView=true (fiche vue par un élève, GetPublicProfileAsync) masque
+    /// explicitement les champs réservés au professeur propriétaire — plutôt
+    /// que de compter sur le fait que GetPublicProfileAsync n'inclut pas
+    /// VerificationDocuments : un futur Include ajouté là-bas sans y penser
+    /// exposerait sinon le motif de refus de diplôme (donnée admin) à
+    /// n'importe quel visiteur de la fiche publique.
+    /// </summary>
+    private async Task<TutorProfileDto> MapToDtoAsync(TutorProfile profile, bool isPublicView = false)
     {
         var user = profile.User ?? await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == profile.UserId);
-        var latestDoc = profile.VerificationDocuments
+        var latestDoc = isPublicView ? null : profile.VerificationDocuments
             .OrderByDescending(d => d.SubmittedAt)
             .FirstOrDefault();
         var reputation = await ComputeReputationAsync(profile.Id);
@@ -409,14 +487,20 @@ public class TutorProfileService : ITutorProfileService
             NoticeHours = profile.NoticeHours,
             MaxSessionsPerWeek = profile.MaxSessionsPerWeek,
             IsOnVacation = profile.IsOnVacation,
+            FullRefundHours = profile.FullRefundHours,
+            PartialRefundPercent = profile.PartialRefundPercent,
+            NoRefundHours = profile.NoRefundHours,
             IsDiplomaVerified = profile.IsDiplomaVerified,
             IsExperienced = reputation.IsExperienced,
             IsHighlyResponsive = reputation.IsHighlyResponsive,
             AverageRating = reputation.AverageRating,
             ReviewCount = reputation.ReviewCount,
             IsActive = profile.IsActive,
-            OnboardingStep = profile.OnboardingStep,
-            CompletionScore = ComputeCompletion(profile, !string.IsNullOrWhiteSpace(user?.AvatarUrl) || !string.IsNullOrWhiteSpace(user?.ProfileImageUrl)).Score,
+            // Progression d'onboarding et score de complétude : usage interne au
+            // propriétaire du profil, sans intérêt (et sans raison d'être exposés)
+            // pour un élève qui consulte la fiche publique.
+            OnboardingStep = isPublicView ? 0 : profile.OnboardingStep,
+            CompletionScore = isPublicView ? 0 : ComputeCompletion(profile, !string.IsNullOrWhiteSpace(user?.AvatarUrl) || !string.IsNullOrWhiteSpace(user?.ProfileImageUrl)).Score,
             Subjects = profile.Subjects.Select(s => s.Subject).ToList(),
             Levels = profile.Levels.Select(l => l.Level).ToList(),
             Specialties = profile.Specialties.Select(s => s.Label).ToList(),

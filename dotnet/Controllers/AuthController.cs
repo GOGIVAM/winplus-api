@@ -72,7 +72,8 @@ public class AuthController : ControllerBase
                 request.Password,
                 request.FirstName ?? "",
                 request.LastName ?? "",
-                request.Phone);
+                request.Phone,
+                request.Role);
 
             if (!result.Success)
             {

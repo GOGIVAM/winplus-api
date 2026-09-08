@@ -26,6 +26,13 @@ public class TutorReview
     public string? TutorReply { get; set; }
     public DateTime? TutorRepliedAt { get; set; }
 
+    /// <summary>Signalement d'avis abusif (référentiel §I "Signalement d'un avis abusif possible").</summary>
+    public bool IsReported { get; set; }
+    [MaxLength(500)]
+    public string? ReportReason { get; set; }
+    public int? ReportedByUserId { get; set; }
+    public DateTime? ReportedAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     [ForeignKey(nameof(TutorBookingId))]

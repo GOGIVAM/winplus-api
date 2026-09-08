@@ -68,6 +68,14 @@ public class TutorProfile
     /// <summary>Dernière étape complétée de l'onboarding (1-5), pour reprendre où l'utilisateur s'était arrêté.</summary>
     public int OnboardingStep { get; set; } = 0;
 
+    // ── Politique d'annulation (référentiel §I.C) ───────────────────────────
+    /// <summary>Remboursement total si annulation à plus de N heures de la séance.</summary>
+    public int FullRefundHours { get; set; } = 24;
+    /// <summary>Pourcentage remboursé entre NoRefundHours et FullRefundHours (0-100).</summary>
+    public int PartialRefundPercent { get; set; } = 50;
+    /// <summary>Aucun remboursement en-deçà de N heures avant la séance.</summary>
+    public int NoRefundHours { get; set; } = 2;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 

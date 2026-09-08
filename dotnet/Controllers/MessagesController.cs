@@ -135,6 +135,24 @@ public class MessagesController : ControllerBase
              (e.Course.InstructorId == userId2 && e.UserId == userId1))))
             return true;
 
+        // 7. Répétiteur actif ↔ n'importe quel élève (messagerie pré-réservation,
+        // référentiel §I.C : "l'élève et le répétiteur échangent avant de
+        // confirmer" — par définition, aucune relation n'existe encore à ce
+        // stade. Un profil répétiteur actif est public et bookable par
+        // n'importe qui : le rendre injoignable en message contredirait le
+        // bouton "Message" affiché sur sa fiche publique.
+        if (await _db.TutorProfiles.AnyAsync(p => p.IsActive &&
+            (p.UserId == userId1 || p.UserId == userId2)))
+            return true;
+
+        // 8. Élève ayant déjà réservé une séance avec ce répétiteur (couvre le
+        // cas où le profil a depuis été désactivé/mis en vacances : la
+        // conversation ouverte pendant la relation ne doit pas se refermer).
+        if (await _db.TutorBookings.AnyAsync(b =>
+            (b.TutorProfile!.UserId == userId1 && b.StudentUserId == userId2) ||
+            (b.TutorProfile!.UserId == userId2 && b.StudentUserId == userId1)))
+            return true;
+
         return false;
     }
 
@@ -219,7 +237,7 @@ public class MessagesController : ControllerBase
 
     /// <summary>Liste toutes les conversations de l'utilisateur connecté.</summary>
     [HttpGet("conversations")]
-    public async Task<IActionResult> GetConversations()
+    public async Task<IActionResult> GetConversations([FromQuery] bool archived = false)
     {
         try
         {
@@ -241,7 +259,16 @@ public class MessagesController : ControllerBase
                 .Distinct()
                 .ToListAsync();
 
-            var participantIds = fromIds.Union(toIds).Distinct().ToList();
+            var archivedIds = await _db.ArchivedConversations
+                .AsNoTracking()
+                .Where(a => a.UserId == me)
+                .Select(a => a.OtherUserId)
+                .ToListAsync();
+            var archivedSet = archivedIds.ToHashSet();
+
+            var participantIds = fromIds.Union(toIds).Distinct()
+                .Where(pid => archived ? archivedSet.Contains(pid) : !archivedSet.Contains(pid))
+                .ToList();
 
             var participants = await _db.Users
                 .AsNoTracking()
@@ -289,6 +316,34 @@ public class MessagesController : ControllerBase
             _logger.LogError(ex, "Error getting conversations");
             return StatusCode(500, new { error = "Internal server error" });
         }
+    }
+
+    /// <summary>Archive une conversation — pour soi uniquement, l'autre participant n'est pas affecté.</summary>
+    [HttpPost("conversations/{participantId:int}/archive")]
+    public async Task<IActionResult> ArchiveConversation(int participantId)
+    {
+        var me = User.GetUserId();
+        var already = await _db.ArchivedConversations.AnyAsync(a => a.UserId == me && a.OtherUserId == participantId);
+        if (!already)
+        {
+            _db.ArchivedConversations.Add(new ArchivedConversation { UserId = me, OtherUserId = participantId });
+            await _db.SaveChangesAsync();
+        }
+        return Ok(new { success = true });
+    }
+
+    /// <summary>Désarchive une conversation.</summary>
+    [HttpDelete("conversations/{participantId:int}/archive")]
+    public async Task<IActionResult> UnarchiveConversation(int participantId)
+    {
+        var me = User.GetUserId();
+        var entry = await _db.ArchivedConversations.FirstOrDefaultAsync(a => a.UserId == me && a.OtherUserId == participantId);
+        if (entry != null)
+        {
+            _db.ArchivedConversations.Remove(entry);
+            await _db.SaveChangesAsync();
+        }
+        return Ok(new { success = true });
     }
 
     /// <summary>Démarrer une nouvelle conversation (envoie le premier message).</summary>
