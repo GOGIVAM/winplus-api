@@ -11,6 +11,16 @@ public class UpdateProfileRequest
     [MaxLength(100)] public string? Level { get; set; }
     [MaxLength(100)] public string? City { get; set; }
     [MaxLength(50)]  public string? LearningStyle { get; set; }
+
+    /// <summary>Onboarding élève — filière/série (US CompleteProfile).</summary>
+    [MaxLength(150)] public string? Specialization { get; set; }
+    /// <summary>Onboarding élève — examen ou concours visé.</summary>
+    [MaxLength(150)] public string? TargetExam { get; set; }
+
+    /// <summary>Onboarding professeur — matières enseignées (US-PRO-02). Null = inchangé.</summary>
+    public List<string>? TeachingSubjects { get; set; }
+    /// <summary>Onboarding professeur — niveaux enseignés (US-PRO-02). Null = inchangé.</summary>
+    public List<string>? TeachingLevels { get; set; }
 }
 
 public class ProfileResponse
@@ -23,6 +33,10 @@ public class ProfileResponse
     public string? Bio { get; set; }
     public string? Level { get; set; }
     public string? City { get; set; }
+    public string? Specialization { get; set; }
+    public string? TargetExam { get; set; }
+    public List<string> TeachingSubjects { get; set; } = new();
+    public List<string> TeachingLevels { get; set; } = new();
     public string? AvatarUrl { get; set; }
     public string? CoverUrl { get; set; }
     public string? Role { get; set; }

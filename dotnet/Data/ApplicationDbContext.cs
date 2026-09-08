@@ -473,6 +473,8 @@ public partial class ApplicationDbContext : DbContext
             entity.Property(e => e.FirstName).HasMaxLength(100);
             entity.Property(e => e.LastName).HasMaxLength(100);
             entity.Property(e => e.Bio).HasMaxLength(1000);
+            entity.Property(e => e.TeachingSubjects).HasColumnType("text[]");
+            entity.Property(e => e.TeachingLevels).HasColumnType("text[]");
             entity.HasIndex(e => e.CognitoId).IsUnique().HasFilter("\"CognitoId\" IS NOT NULL");
             entity.HasIndex(e => e.Email).IsUnique();
         });

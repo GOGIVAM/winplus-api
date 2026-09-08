@@ -71,6 +71,10 @@ public class UsersController : ControllerBase
                 Bio = user.Bio,
                 Level = user.Level,
                 City = user.City,
+                Specialization = user.Specialization,
+                TargetExam = user.TargetExam,
+                TeachingSubjects = user.TeachingSubjects,
+                TeachingLevels = user.TeachingLevels,
                 AvatarUrl = user.AvatarUrl,
                 CoverUrl = user.CoverUrl,
                 Role = user.Role,
@@ -137,6 +141,10 @@ public class UsersController : ControllerBase
             if (request.Bio != null) user.Bio = request.Bio;
             if (request.Level != null) user.Level = request.Level;
             if (request.City != null) user.City = request.City;
+            if (request.Specialization != null) user.Specialization = request.Specialization;
+            if (request.TargetExam != null) user.TargetExam = request.TargetExam;
+            if (request.TeachingSubjects != null) user.TeachingSubjects = request.TeachingSubjects;
+            if (request.TeachingLevels != null) user.TeachingLevels = request.TeachingLevels;
 
             var updated = await _userService.UpdateUserAsync(user);
 
@@ -166,6 +174,10 @@ public class UsersController : ControllerBase
                 Bio = updated.Bio,
                 Level = updated.Level,
                 City = updated.City,
+                Specialization = updated.Specialization,
+                TargetExam = updated.TargetExam,
+                TeachingSubjects = updated.TeachingSubjects,
+                TeachingLevels = updated.TeachingLevels,
                 AvatarUrl = updated.AvatarUrl,
                 CoverUrl = updated.CoverUrl,
                 Role = updated.Role,

@@ -50,6 +50,25 @@ public class User
     [MaxLength(100)]
     public string? City { get; set; }
 
+    /// <summary>Filière/série déclarée par un élève à la complétion de profil (US onboarding élève).</summary>
+    [MaxLength(150)]
+    public string? Specialization { get; set; }
+
+    /// <summary>Examen ou concours visé, déclaré par un élève à la complétion de profil.</summary>
+    [MaxLength(150)]
+    public string? TargetExam { get; set; }
+
+    /// <summary>
+    /// Matières enseignées déclarées par un professeur (Role = "teacher") à la complétion
+    /// de profil — US-PRO-02. Indépendant du mode Répétiteur (voir TutorProfile.Subjects) :
+    /// sert de base au profil "Professeur Catalogue" et peut préremplir l'onboarding
+    /// Répétiteur si l'utilisateur active ce mode plus tard.
+    /// </summary>
+    public List<string> TeachingSubjects { get; set; } = new();
+
+    /// <summary>Niveaux enseignés déclarés par un professeur — US-PRO-02.</summary>
+    public List<string> TeachingLevels { get; set; } = new();
+
     /// <summary>
     /// Institution rattachée (comptes institution et leurs élèves).
     /// Avant cette colonne, le dashboard institution utilisait l'id de
