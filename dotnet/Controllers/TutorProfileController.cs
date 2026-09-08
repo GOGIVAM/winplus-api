@@ -53,6 +53,15 @@ public class TutorProfileController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// État du mode Répétiteur sans jamais créer de profil (à la différence de GET me).
+    /// Utilisé par le bandeau de rappel du dashboard Professeur : n'affiche rien pour
+    /// un prof qui n'a jamais ouvert les paramètres "Mode Répétiteur" (opt-in, US-PRO-05).
+    /// </summary>
+    [HttpGet("me/status")]
+    public async Task<ActionResult<TutorOnboardingStatusDto>> GetStatus()
+        => Ok(await _service.GetStatusAsync(User.GetUserId()));
+
     /// <summary>Sauvegarde partielle d'une étape de l'onboarding ou d'un champ modifié depuis les paramètres.</summary>
     [HttpPut("me")]
     public async Task<ActionResult<TutorProfileDto>> UpdateMine([FromBody] UpdateTutorProfileRequestDto request)

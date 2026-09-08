@@ -78,6 +78,26 @@ public class TutorProfileService : ITutorProfileService
         return await MapToDtoAsync(profile);
     }
 
+    public async Task<TutorOnboardingStatusDto> GetStatusAsync(int userId)
+    {
+        var profile = await _context.TutorProfiles.AsNoTracking()
+            .Include(p => p.User)
+            .FirstOrDefaultAsync(p => p.UserId == userId);
+        if (profile == null)
+            return new TutorOnboardingStatusDto { Started = false, OnboardingStep = 0, CompletionScore = 0, IsActive = false, MissingItems = new() };
+
+        var hasPhoto = !string.IsNullOrWhiteSpace(profile.User?.AvatarUrl) || !string.IsNullOrWhiteSpace(profile.User?.ProfileImageUrl);
+        var completion = ComputeCompletion(profile, hasPhoto);
+        return new TutorOnboardingStatusDto
+        {
+            Started = true,
+            OnboardingStep = profile.OnboardingStep,
+            CompletionScore = completion.Score,
+            IsActive = profile.IsActive,
+            MissingItems = completion.MissingItems,
+        };
+    }
+
     public async Task<TutorProfileDto> UpdateAsync(int userId, UpdateTutorProfileRequestDto request)
     {
         var profile = await GetOrCreateEntityAsync(userId);

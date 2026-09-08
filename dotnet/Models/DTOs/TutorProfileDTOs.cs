@@ -157,6 +157,21 @@ public class TutorProfileMissingItemDto
     public string Label { get; set; } = null!;
 }
 
+/// <summary>
+/// État léger du mode Répétiteur, sans jamais créer de profil (contrairement à
+/// GetOrCreateAsync) — sert à un rappel discret sur le dashboard Professeur
+/// qui ne doit apparaître que si le prof a déjà commencé l'onboarding de son
+/// plein gré (US-PRO-05 : activation opt-in depuis les paramètres).
+/// </summary>
+public class TutorOnboardingStatusDto
+{
+    public bool Started { get; set; }
+    public int OnboardingStep { get; set; }
+    public int CompletionScore { get; set; }
+    public bool IsActive { get; set; }
+    public List<TutorProfileMissingItemDto> MissingItems { get; set; } = new();
+}
+
 /// <summary>Résultat d'une recherche de répétiteur côté élève (Module B du référentiel).</summary>
 public class TutorSearchResultDto
 {
