@@ -143,6 +143,12 @@ public class SubjectsController : ControllerBase
             {
                 "price" => isAscending ? query.OrderBy(s => s.Price) : query.OrderByDescending(s => s.Price),
                 "title" => isAscending ? query.OrderBy(s => s.Title) : query.OrderByDescending(s => s.Title),
+                // "Les épreuves les plus téléchargées" (landing page) : sans ce cas,
+                // sortBy=popular retombait silencieusement sur createdAt desc et le
+                // titre de la section ne correspondait à rien de réel.
+                "popular" => isAscending ? query.OrderBy(s => s.DownloadCount) : query.OrderByDescending(s => s.DownloadCount),
+                "recent" => query.OrderByDescending(s => s.CreatedAt),
+                "featured" => query.OrderByDescending(s => s.IsFeatured).ThenByDescending(s => s.CreatedAt),
                 _ => isAscending ? query.OrderBy(s => s.CreatedAt) : query.OrderByDescending(s => s.CreatedAt)
             };
 
