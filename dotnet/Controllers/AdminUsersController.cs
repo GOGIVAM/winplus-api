@@ -165,6 +165,14 @@ public class AdminUsersController : ControllerBase
     /// <summary>Une session est considérée active si vue il y a moins de 5 minutes.</summary>
     private static readonly TimeSpan OnlineWindow = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// Sentinelle pour trier les abonnements sans date de fin en premier
+    /// (OrderByDescending). DateTime.MaxValue a Kind=Unspecified : envoyé tel
+    /// quel comme paramètre dans une requête EF traduite en SQL contre une
+    /// colonne timestamptz, Npgsql le rejette (500). D'où le Kind=Utc explicite.
+    /// </summary>
+    private static readonly DateTime MaxSortableDate = DateTime.SpecifyKind(DateTime.MaxValue, DateTimeKind.Utc);
+
     private static readonly string[] AllowedRoles = { "student", "teacher", "parent", "admin" };
 
     private readonly ApplicationDbContext _db;
@@ -571,7 +579,7 @@ public class AdminUsersController : ControllerBase
     {
         var sub = await _db.Subscriptions
             .Where(s => s.UserId == userId && !s.IsDeleted)
-            .OrderByDescending(s => s.EndDate ?? DateTime.MaxValue)
+            .OrderByDescending(s => s.EndDate ?? MaxSortableDate)
             .FirstOrDefaultAsync();
         if (sub == null) return (null, "none", null);
         var planName = await _db.PricingPlans.Where(p => p.Id == sub.PricingPlanId).Select(p => p.Name).FirstOrDefaultAsync();
@@ -632,7 +640,7 @@ public class AdminUsersController : ControllerBase
             var subsUserIds = ids;
             var subs = await _db.Subscriptions
                 .Where(s => subsUserIds.Contains(s.UserId) && !s.IsDeleted)
-                .OrderByDescending(s => s.EndDate ?? DateTime.MaxValue)
+                .OrderByDescending(s => s.EndDate ?? MaxSortableDate)
                 .ToListAsync();
             var planIds  = subs.Select(s => s.PricingPlanId).Distinct().ToList();
             var planNames = await _db.PricingPlans
@@ -734,7 +742,7 @@ public class AdminUsersController : ControllerBase
 
             var subs = await _db.Subscriptions
                 .Where(s => ids.Contains(s.UserId) && !s.IsDeleted)
-                .OrderByDescending(s => s.EndDate ?? DateTime.MaxValue)
+                .OrderByDescending(s => s.EndDate ?? MaxSortableDate)
                 .ToListAsync();
             var planIds   = subs.Select(s => s.PricingPlanId).Distinct().ToList();
             var planNames = await _db.PricingPlans
@@ -841,7 +849,7 @@ public class AdminUsersController : ControllerBase
 
             var subs = await _db.Subscriptions
                 .Where(s => ids.Contains(s.UserId) && !s.IsDeleted)
-                .OrderByDescending(s => s.EndDate ?? DateTime.MaxValue)
+                .OrderByDescending(s => s.EndDate ?? MaxSortableDate)
                 .ToListAsync();
             var planIds   = subs.Select(s => s.PricingPlanId).Distinct().ToList();
             var planNames = await _db.PricingPlans
@@ -959,7 +967,7 @@ public class AdminUsersController : ControllerBase
 
             var subs = await _db.Subscriptions
                 .Where(s => ids.Contains(s.UserId) && !s.IsDeleted)
-                .OrderByDescending(s => s.EndDate ?? DateTime.MaxValue)
+                .OrderByDescending(s => s.EndDate ?? MaxSortableDate)
                 .ToListAsync();
             var planIds   = subs.Select(s => s.PricingPlanId).Distinct().ToList();
             var planNames = await _db.PricingPlans
@@ -1485,7 +1493,7 @@ public class AdminUsersController : ControllerBase
 
         var existing = await _db.Subscriptions
             .Where(s => s.UserId == id && !s.IsDeleted && s.Status == "active")
-            .OrderByDescending(s => s.EndDate ?? DateTime.MaxValue)
+            .OrderByDescending(s => s.EndDate ?? MaxSortableDate)
             .FirstOrDefaultAsync();
 
         if (existing != null)
