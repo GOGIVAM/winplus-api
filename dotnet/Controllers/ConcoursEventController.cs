@@ -50,7 +50,25 @@ public class ConcoursEventController : ControllerBase
         if (ev is null) return NotFound();
         return Ok(new ConcoursEventDto(ev));
     }
+
+    /// <summary>Conseils de réussite + FAQ (Module 2, US-CAT-09).</summary>
+    [HttpPut("{id:int}/content")]
+    [Microsoft.AspNetCore.Authorization.Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> UpdateContent(int id, [FromBody] UpdateConcoursContentRequest request)
+    {
+        var ev = await _db.ConcoursEvents.FirstOrDefaultAsync(e => e.Id == id);
+        if (ev is null) return NotFound();
+
+        if (request.Tips != null) ev.Tips = request.Tips.Length > 2000 ? request.Tips[..2000] : request.Tips;
+        if (request.FaqJson != null) ev.FaqJson = request.FaqJson;
+        ev.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        return Ok(new ConcoursEventDto(ev));
+    }
 }
+
+public record UpdateConcoursContentRequest(string? Tips, string? FaqJson);
 
 public record ConcoursEventDto(
     int Id,
@@ -65,7 +83,9 @@ public record ConcoursEventDto(
     int? EnrollmentFeeXaf,
     string? OfficialRegistrationUrl,
     string? Notes,
-    string RegistrationStatus
+    string RegistrationStatus,
+    string? Tips,
+    string? FaqJson
 )
 {
     public ConcoursEventDto(ConcoursEvent e) : this(
@@ -81,7 +101,9 @@ public record ConcoursEventDto(
         e.EnrollmentFeeXaf,
         e.OfficialRegistrationUrl,
         e.Notes,
-        ComputeStatus(e)
+        ComputeStatus(e),
+        e.Tips,
+        e.FaqJson
     ) { }
 
     private static string ComputeStatus(ConcoursEvent e)

@@ -18,10 +18,13 @@ from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 
 from auth import verify_token, UserTokenData
 from database import (
     Database, QuizAttempt, DailyScore, Enrollment, Subject, User,
+    TutorProfile, TutorSubject, TutorLevel, CourseContent, Order, OrderItem,
+    DownloadHistory,
 )
 from services.deepseek_client import get_deepseek_client
 
@@ -441,6 +444,7 @@ class ContentImpactResponse(BaseModel):
     completion_rate: float
     avg_score_improvement: float
     student_retention: float
+    avg_rating: float
 
 @teacher_ai_router.get("/teacher/content-impact/{content_id}", response_model=ContentImpactResponse)
 async def get_content_impact(
@@ -467,6 +471,7 @@ async def get_content_impact(
                 "completion_rate": 0.0,
                 "avg_score_improvement": 0.0,
                 "student_retention": 0.0,
+                "avg_rating": float(subject.AverageRating or 0),
             }
 
         student_ids = [e.UserId for e in enrollments]
@@ -540,6 +545,7 @@ async def get_content_impact(
             "completion_rate": completion_rate,
             "avg_score_improvement": avg_improvement,
             "student_retention": student_retention,
+            "avg_rating": avg_rating,
         }
 
     except HTTPException:
@@ -728,32 +734,78 @@ class AnalyzeSubmissionRequest(BaseModel):
     expected_answer: Optional[str] = None
     subject: Optional[str] = None
     level: Optional[str] = None
+    #  mcq | short | essay (US-COR-06) : conditionne la forme de l'analyse.
+    # Pour "mcq", is_correct doit être fourni par l'appelant (la justesse
+    # d'un QCM se vérifie mécaniquement, pas par un LLM) ; l'IA n'est même
+    # pas appelée dans ce cas.
+    question_type: str = "essay"
+    is_correct: Optional[bool] = None
+    max_score: int = 20
 
 class AnalyzeSubmissionResponse(BaseModel):
     error_type: str
     error_details: str
     suggested_comment: str
     score_suggestion: int
+    #  Formulations alternatives du même commentaire (chips cliquables,
+    # US-COR-02), générées dans le même appel plutôt que par un endpoint
+    # séparé  pas de round-trip supplémentaire, toujours cohérentes avec
+    # l'analyse ci-dessus.
+    alternative_comments: List[str] = []
+    #  Intervalle de confiance pour une réponse courte (US-COR-06), ex "13-15".
+    score_range: Optional[str] = None
+    #  Éléments présents/absents par rapport au barème, pour un développement long.
+    highlights_present: List[str] = []
+    highlights_absent: List[str] = []
 
 @teacher_ai_router.post("/teacher/analyze-submission", response_model=AnalyzeSubmissionResponse)
 async def analyze_submission(
     body: AnalyzeSubmissionRequest,
     current_user: UserTokenData = Depends(verify_token),
 ):
+    # QCM : correction mécanique, pas d'appel IA (US-COR-06 "notation
+    # automatique directe"). is_correct vient de la comparaison faite par
+    # l'appelant entre la réponse choisie et la bonne réponse du quiz.
+    if body.question_type == "mcq":
+        correct = bool(body.is_correct)
+        score = body.max_score if correct else 0
+        return {
+            "error_type": "none" if correct else "conceptual",
+            "error_details": "Réponse correcte." if correct else "Réponse incorrecte pour ce QCM.",
+            "suggested_comment": "Bonne réponse !" if correct else "Revois cette notion avant le prochain contrôle.",
+            "score_suggestion": score,
+            "alternative_comments": [],
+            "score_range": None,
+            "highlights_present": [],
+            "highlights_absent": [],
+        }
+
     expected_block = (
         f"RÉPONSE ATTENDUE :\n{body.expected_answer[:1000]}\n\n"
         if body.expected_answer else ""
     )
+    is_essay = body.question_type == "essay"
+    type_instructions = (
+        (
+            '5. "highlights_present" : tableau des éléments/notions du barème correctement traités par l\'élève\n'
+            '6. "highlights_absent" : tableau des éléments/notions du barème manquants ou mal traités\n'
+        ) if is_essay else (
+            '5. "score_range" : intervalle de confiance de la note sous forme "min-max" (ex: "13-15"), max_score inclus\n'
+        )
+    )
     prompt = (
-        f"Matière : {body.subject or 'non précisée'}  Niveau : {body.level or 'non précisé'}\n\n"
+        f"Matière : {body.subject or 'non précisée'}  Niveau : {body.level or 'non précisé'}  "
+        f"Type de question : {'développement long' if is_essay else 'réponse courte'}  Barème sur {body.max_score}.\n\n"
         f"TRAVAIL DE L'ÉLÈVE :\n{body.submission_text[:2000]}\n\n"
         + expected_block
         + "Analyse ce travail et génère :\n"
         '1. "error_type" : "methodological" (erreur de méthode) | "calculation" (erreur de calcul) | "conceptual" (incompréhension du concept) | "none" (correct)\n'
         '2. "error_details" : description précise de l\'erreur, 1-2 phrases\n'
         '3. "suggested_comment" : commentaire pédagogique bienveillant pour l\'élève, 3-4 phrases\n'
-        '4. "score_suggestion" : note suggérée sur 20 (entier 0-20)\n'
-        'JSON : {"error_type":"...","error_details":"...","suggested_comment":"...","score_suggestion":15}'
+        f'4. "score_suggestion" : note suggérée sur {body.max_score} (entier)\n'
+        + type_instructions +
+        '7. "alternative_comments" : tableau de 2-3 reformulations courtes et différentes du commentaire, même sens\n'
+        'Réponds en JSON strict avec exactement ces champs.'
     )
     system = (
         "Tu es WinAI, assistant de correction pédagogique bienveillant. "
@@ -761,21 +813,775 @@ async def analyze_submission(
         "Réponds uniquement avec du JSON valide."
     )
 
-    raw = _deepseek_json(prompt, system, max_tokens=400)
+    raw = _deepseek_json(prompt, system, max_tokens=600)
     if raw and isinstance(raw, dict):
         error_type = raw.get("error_type", "methodological")
         if error_type not in ("methodological", "calculation", "conceptual", "none"):
             error_type = "methodological"
+        alt = raw.get("alternative_comments", [])
+        alt = [str(a) for a in alt][:3] if isinstance(alt, list) else []
         return {
             "error_type": error_type,
             "error_details": str(raw.get("error_details", "Vérifiez la démarche utilisée.")),
             "suggested_comment": str(raw.get("suggested_comment", "Bon travail  quelques points à consolider.")),
-            "score_suggestion": max(0, min(20, int(raw.get("score_suggestion", 12)))),
+            "score_suggestion": max(0, min(body.max_score, int(raw.get("score_suggestion", body.max_score // 2)))),
+            "alternative_comments": alt,
+            "score_range": str(raw.get("score_range")) if not is_essay and raw.get("score_range") else None,
+            "highlights_present": [str(h) for h in raw.get("highlights_present", [])] if is_essay else [],
+            "highlights_absent": [str(h) for h in raw.get("highlights_absent", [])] if is_essay else [],
         }
 
     return {
         "error_type": "methodological",
         "error_details": "WinAI a analysé le travail  vérifiez manuellement la démarche appliquée.",
         "suggested_comment": "Vous montrez une bonne compréhension générale. Revoyez la démarche étape par étape pour consolider vos acquis.",
-        "score_suggestion": 12,
+        "score_suggestion": body.max_score // 2,
+        "alternative_comments": [],
+        "score_range": None,
+        "highlights_present": [],
+        "highlights_absent": [],
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature 7  POST /teacher/suggest-tutor-rate (Module 1, US-PRO-05/US-PRO-07)
+# Suggère un tarif horaire pour le Mode Répétiteur, basé en priorité sur les
+# tarifs réels déjà pratiqués sur WinPlus pour la même matière/le même niveau
+# (Median réel), et seulement à défaut de données suffisantes sur une
+# estimation raisonnée par DeepSeek  pour ne jamais présenter un chiffre
+# inventé comme une donnée de marché.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SuggestTutorRateRequest(BaseModel):
+    subject: str
+    level: Optional[str] = None
+    city: Optional[str] = None
+
+
+class SuggestTutorRateResponse(BaseModel):
+    suggested_rate_xaf: int
+    range_low_xaf: int
+    range_high_xaf: int
+    based_on: str  # "market_data" | "estimation"
+    sample_size: int
+    explanation: str
+
+
+MIN_SAMPLE_FOR_MARKET_DATA = 3
+
+
+@teacher_ai_router.post("/teacher/suggest-tutor-rate", response_model=SuggestTutorRateResponse)
+async def suggest_tutor_rate(
+    body: SuggestTutorRateRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    db = Database()
+    session = db.SessionLocal()
+    try:
+        query = (
+            session.query(TutorProfile.HourlyRateXaf)
+            .join(TutorSubject, TutorSubject.TutorProfileId == TutorProfile.Id)
+            .filter(
+                TutorProfile.IsActive == True,  # noqa: E712
+                TutorProfile.HourlyRateXaf.isnot(None),
+                func.lower(TutorSubject.Subject) == body.subject.strip().lower(),
+            )
+        )
+        if body.level:
+            query = query.join(TutorLevel, TutorLevel.TutorProfileId == TutorProfile.Id).filter(
+                func.lower(TutorLevel.Level) == body.level.strip().lower()
+            )
+        rates = sorted(r[0] for r in query.all() if r[0] is not None)
+    finally:
+        session.close()
+
+    if len(rates) >= MIN_SAMPLE_FOR_MARKET_DATA:
+        mid = len(rates) // 2
+        median = rates[mid] if len(rates) % 2 else (rates[mid - 1] + rates[mid]) / 2
+        low, high = rates[0], rates[-1]
+        return SuggestTutorRateResponse(
+            suggested_rate_xaf=int(median),
+            range_low_xaf=int(low),
+            range_high_xaf=int(high),
+            based_on="market_data",
+            sample_size=len(rates),
+            explanation=(
+                f"Basé sur {len(rates)} répétiteurs déjà actifs sur WinPlus en {body.subject}"
+                f"{f' niveau {body.level}' if body.level else ''} : tarif médian observé."
+            ),
+        )
+
+    # Pas assez de données réelles : estimation raisonnée, explicitement
+    # signalée comme telle (based_on="estimation") plutôt que présentée comme
+    # un fait de marché.
+    prompt = (
+        f"Estime un tarif horaire de cours particulier au Cameroun (Douala/Yaoundé), "
+        f"en Francs CFA (XAF), pour un répétiteur en {body.subject}"
+        f"{f', niveau {body.level}' if body.level else ''}"
+        f"{f', ville {body.city}' if body.city else ''}.\n"
+        "Réponds en JSON strict : "
+        '{"suggested_rate_xaf": 3000, "range_low_xaf": 2000, "range_high_xaf": 4500, '
+        '"explanation": "1-2 phrases justifiant l\'estimation"}'
+    )
+    system = (
+        "Tu es WinAI, expert du marché du soutien scolaire privé au Cameroun. "
+        "Donne des estimations réalistes en Francs CFA, jamais en euros ou dollars."
+    )
+    raw = _deepseek_json(prompt, system, max_tokens=250)
+    if raw and isinstance(raw, dict) and raw.get("suggested_rate_xaf"):
+        return SuggestTutorRateResponse(
+            suggested_rate_xaf=int(raw["suggested_rate_xaf"]),
+            range_low_xaf=int(raw.get("range_low_xaf", raw["suggested_rate_xaf"] * 0.7)),
+            range_high_xaf=int(raw.get("range_high_xaf", raw["suggested_rate_xaf"] * 1.5)),
+            based_on="estimation",
+            sample_size=len(rates),
+            explanation=str(raw.get("explanation", "Estimation WinAI faute de données suffisantes sur la plateforme.")),
+        )
+
+    return SuggestTutorRateResponse(
+        suggested_rate_xaf=3000,
+        range_low_xaf=2000,
+        range_high_xaf=5000,
+        based_on="estimation",
+        sample_size=len(rates),
+        explanation="Estimation par défaut  pas encore assez de répétiteurs actifs sur WinPlus dans cette matière pour une donnée de marché fiable.",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature 8  POST /teacher/analyze-tutor-profile (Module 1, US-PRO-04)
+# Analyse le profil répétiteur et suggère des améliorations concrètes.
+# Le score de complétude "structurel" (champs remplis) est déjà calculé côté
+# .NET (TutorProfileService.ComputeCompletion) ; WinAI ajoute ici un avis
+# qualitatif que seul un LLM peut donner (qualité de la bio, différenciation).
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AnalyzeTutorProfileRequest(BaseModel):
+    title: Optional[str] = None
+    tutor_bio: Optional[str] = None
+    subjects: List[str] = []
+    levels: List[str] = []
+    hourly_rate_xaf: Optional[int] = None
+    has_video: bool = False
+    missing_fields: List[str] = []
+
+
+class TutorProfileSuggestion(BaseModel):
+    field: str
+    suggestion: str
+
+
+class AnalyzeTutorProfileResponse(BaseModel):
+    suggestions: List[TutorProfileSuggestion]
+
+
+@teacher_ai_router.post("/teacher/analyze-tutor-profile", response_model=AnalyzeTutorProfileResponse)
+async def analyze_tutor_profile(
+    body: AnalyzeTutorProfileRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    missing_line = f"Champs structurels manquants : {', '.join(body.missing_fields)}.\n" if body.missing_fields else "Tous les champs structurels sont remplis.\n"
+    prompt = (
+        "Voici le profil répétiteur d'un professeur sur WinPlus :\n"
+        f"Titre : {body.title or '(vide)'}\n"
+        f"Bio : {body.tutor_bio or '(vide)'}\n"
+        f"Matières : {', '.join(body.subjects) or '(aucune)'}\n"
+        f"Niveaux : {', '.join(body.levels) or '(aucun)'}\n"
+        f"Tarif horaire : {body.hourly_rate_xaf or '(non défini)'} XAF\n"
+        f"Vidéo de présentation : {'oui' if body.has_video else 'non'}\n"
+        f"{missing_line}\n"
+        "Donne 3 à 5 suggestions concrètes et actionnables pour améliorer l'attractivité de ce profil "
+        "auprès d'élèves camerounais (pas de généralités  chaque suggestion doit se rattacher à un "
+        "champ précis du profil). Format JSON strict : "
+        '[{"field":"bio","suggestion":"..."}, ...] — field parmi : title, bio, subjects, levels, hourlyRate, video, general.'
+    )
+    system = (
+        "Tu es WinAI, coach en optimisation de profil pour répétiteurs. "
+        "Réponds uniquement avec un tableau JSON valide, suggestions courtes et concrètes."
+    )
+    raw = _deepseek_json(prompt, system, max_tokens=500)
+
+    suggestions: List[TutorProfileSuggestion] = []
+    if isinstance(raw, list):
+        for item in raw[:5]:
+            field = str(item.get("field", "general"))
+            suggestion = str(item.get("suggestion", "")).strip()
+            if suggestion:
+                suggestions.append(TutorProfileSuggestion(field=field, suggestion=suggestion))
+
+    if not suggestions:
+        suggestions.append(TutorProfileSuggestion(
+            field="general",
+            suggestion="Complète ta bio et ajoute une vidéo de présentation : les profils avec vidéo reçoivent nettement plus de réservations.",
+        ))
+
+    return AnalyzeTutorProfileResponse(suggestions=suggestions)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature 9  GET /teacher/recommended-purchases (Module 2, US-CAT-07)
+# Recommandations d'achat pour le professeur-acheteur : contenus bien notés
+# dans ses propres matières, qu'il ne possède pas encore (ni auteur, ni acheté).
+# ─────────────────────────────────────────────────────────────────────────────
+
+class RecommendedPurchase(BaseModel):
+    subjectId: int
+    title: str
+    category: Optional[str]
+    averageRating: float
+    price: float
+    justification: str
+
+
+class RecommendedPurchasesResponse(BaseModel):
+    items: List[RecommendedPurchase]
+
+
+@teacher_ai_router.get("/teacher/recommended-purchases", response_model=RecommendedPurchasesResponse)
+async def get_recommended_purchases(current_user: UserTokenData = Depends(verify_token)):
+    db = Database()
+    session = db.SessionLocal()
+    try:
+        teacher_id = current_user.user_id
+
+        my_categories = [
+            row[0] for row in session.query(Subject.Category)
+            .join(CourseContent, CourseContent.SubjectId == Subject.Id)
+            .filter(CourseContent.CreatedByUserId == teacher_id, Subject.Category.isnot(None))
+            .distinct().all()
+        ]
+
+        owned_ids = {
+            row[0] for row in session.query(OrderItem.SubjectId)
+            .join(Order, Order.Id == OrderItem.OrderId)
+            .filter(Order.UserId == teacher_id, Order.Status == 'completed')
+            .all()
+        }
+        owned_ids |= {
+            row[0] for row in session.query(Subject.Id).filter(Subject.AuthorUserId == teacher_id).all()
+        }
+
+        query = session.query(Subject).filter(
+            Subject.IsPublished == True,  # noqa: E712
+            Subject.IsDeleted == False,  # noqa: E712
+            ~Subject.Id.in_(owned_ids) if owned_ids else True,
+        )
+        used_fallback = False
+        if my_categories:
+            query = query.filter(Subject.Category.in_(my_categories))
+        else:
+            used_fallback = True
+
+        top = query.order_by(Subject.AverageRating.desc(), Subject.EnrollmentCount.desc()).limit(5).all()
+
+        items = []
+        for s in top:
+            if used_fallback:
+                justification = f"Contenu très bien noté ({float(s.AverageRating):.1f}/5) pour démarrer ta bibliothèque."
+            else:
+                justification = f"Bien noté ({float(s.AverageRating):.1f}/5) en {s.Category} — ta matière de prédilection."
+            items.append(RecommendedPurchase(
+                subjectId=s.Id, title=s.Title, category=s.Category,
+                averageRating=float(s.AverageRating or 0), price=float(s.Price or 0),
+                justification=justification,
+            ))
+        return RecommendedPurchasesResponse(items=items)
+    finally:
+        session.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature 10  GET /teacher/editorial-watch (Module 2, US-CAT-09 "veille éditoriale")
+# Matières où la demande (téléchargements) dépasse largement l'offre
+# (contenus publiés par des professeurs) : opportunité de publication.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class EditorialWatchItem(BaseModel):
+    category: str
+    downloadsLast30Days: int
+    publishedContentCount: int
+    message: str
+
+
+class EditorialWatchResponse(BaseModel):
+    items: List[EditorialWatchItem]
+
+
+@teacher_ai_router.get("/teacher/editorial-watch", response_model=EditorialWatchResponse)
+async def get_editorial_watch(current_user: UserTokenData = Depends(verify_token)):
+    db = Database()
+    session = db.SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - timedelta(days=30)
+
+        demand_rows = (
+            session.query(Subject.Category)
+            .join(DownloadHistory, DownloadHistory.SubjectId == Subject.Id)
+            .filter(DownloadHistory.CreatedAt >= cutoff, Subject.Category.isnot(None))
+            .all()
+        )
+        # Comptage manuel (évite de dépendre d'un import func supplémentaire ici).
+        demand: dict = {}
+        for (category,) in demand_rows:
+            demand[category] = demand.get(category, 0) + 1
+
+        supply_rows = (
+            session.query(Subject.Category)
+            .join(CourseContent, CourseContent.SubjectId == Subject.Id)
+            .filter(Subject.Category.isnot(None))
+            .all()
+        )
+        supply: dict = {}
+        for (category,) in supply_rows:
+            supply[category] = supply.get(category, 0) + 1
+
+        items = []
+        for category, downloads in sorted(demand.items(), key=lambda kv: kv[1], reverse=True):
+            published = supply.get(category, 0)
+            if downloads < 10:
+                continue  # signal trop faible pour être actionnable
+            ratio = downloads / max(published, 1)
+            if ratio < 3:
+                continue  # offre déjà correcte face à la demande
+            items.append(EditorialWatchItem(
+                category=category,
+                downloadsLast30Days=downloads,
+                publishedContentCount=published,
+                message=(
+                    f"{downloads} téléchargements ce mois-ci en {category} pour seulement {published} "
+                    f"contenu(s) publié(s) : publier maintenant te positionnerait tôt sur ce créneau."
+                ),
+            ))
+        return EditorialWatchResponse(items=items[:5])
+    finally:
+        session.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature 11  POST /teacher/session-summary (Module 5, US-SES-04)
+# Résume une transcription collée par le professeur  aucune capture
+# audio/vidéo n'existe dans ce projet (le live se tient sur un lien externe,
+# WinPlus n'enregistre rien), donc pas de "transcription automatique" au sens
+# propre : WinAI structure un texte déjà obtenu par le professeur.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SessionSummaryRequest(BaseModel):
+    transcript_text: str
+
+
+class SessionSummaryResponse(BaseModel):
+    points_covered: List[str]
+    student_questions: List[str]
+    decisions: List[str]
+    homework: List[str]
+    summary_text: str
+
+
+@teacher_ai_router.post("/teacher/session-summary", response_model=SessionSummaryResponse)
+async def generate_session_summary(
+    body: SessionSummaryRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    if len(body.transcript_text.strip()) < 30:
+        raise HTTPException(status_code=422, detail="Transcription trop courte pour être résumée.")
+
+    prompt = (
+        "Voici la transcription (ou les notes) d'une session de cours en ligne :\n\n"
+        f"{body.transcript_text[:6000]}\n\n"
+        "Génère un compte-rendu structuré en JSON avec exactement ces champs :\n"
+        '1. "points_covered" : tableau des points/notions abordés\n'
+        '2. "student_questions" : tableau des questions posées par les élèves (vide si aucune identifiable)\n'
+        '3. "decisions" : tableau des décisions prises (dates de rattrapage, changements de programme...)\n'
+        '4. "homework" : tableau des devoirs annoncés (vide si aucun)\n'
+        '5. "summary_text" : le compte-rendu complet en 4-6 phrases, prêt à être envoyé aux élèves tel quel\n'
+        'Réponds en JSON strict, sans texte autour.'
+    )
+    system = (
+        "Tu es WinAI, assistant de compte-rendu pédagogique. Sois fidèle au contenu fourni, "
+        "n'invente rien qui ne soit pas dans la transcription. Réponds uniquement en JSON valide."
+    )
+
+    raw = _deepseek_json(prompt, system, max_tokens=800)
+    if raw and isinstance(raw, dict):
+        return SessionSummaryResponse(
+            points_covered=[str(p) for p in raw.get("points_covered", [])],
+            student_questions=[str(q) for q in raw.get("student_questions", [])],
+            decisions=[str(d) for d in raw.get("decisions", [])],
+            homework=[str(h) for h in raw.get("homework", [])],
+            summary_text=str(raw.get("summary_text", "")).strip(),
+        )
+
+    raise HTTPException(status_code=500, detail="Génération du compte-rendu impossible pour le moment.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature 12  POST /teacher/student-revision-sheet (Module 6, US-REP-11)
+# Fiche de révision personnalisée générée à partir des comptes-rendus de
+# séances précédentes du couple répétiteur/élève (aucune source de "scores
+# aux quiz" n'est fournie ici — la fiche s'appuie sur les comptes-rendus
+# textuels réellement disponibles, voir TutorBookingController).
+# ─────────────────────────────────────────────────────────────────────────────
+
+class RevisionSheetRequest(BaseModel):
+    student_name: str
+    subject: Optional[str] = None
+    session_summaries: List[str]
+
+
+class RevisionSheetResponse(BaseModel):
+    priority_topics: List[str]
+    recommended_exercises: List[str]
+    key_methods: List[str]
+    sheet_text: str
+
+
+@teacher_ai_router.post("/teacher/student-revision-sheet", response_model=RevisionSheetResponse)
+async def generate_revision_sheet(
+    body: RevisionSheetRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    if not body.session_summaries:
+        raise HTTPException(status_code=422, detail="Aucun compte-rendu de séance disponible pour cet élève.")
+
+    summaries_text = "\n---\n".join(s[:800] for s in body.session_summaries[:20])
+    prompt = (
+        f"Élève : {body.student_name}" + (f" — Matière : {body.subject}" if body.subject else "") + "\n\n"
+        f"Comptes-rendus des séances précédentes de cours particulier :\n{summaries_text}\n\n"
+        "Génère une fiche de révision personnalisée en JSON avec exactement ces champs :\n"
+        '1. "priority_topics" : notions à revoir en priorité, identifiées depuis les comptes-rendus\n'
+        '2. "recommended_exercises" : types d\'exercices recommandés pour ces notions\n'
+        '3. "key_methods" : méthodes et formules clés à rappeler\n'
+        '4. "sheet_text" : la fiche complète rédigée, prête à être partagée avec l\'élève\n'
+        'Réponds en JSON strict, sans texte autour.'
+    )
+    system = (
+        "Tu es WinAI, assistant pédagogique pour répétiteurs. Base-toi uniquement sur les comptes-rendus "
+        "fournis, n'invente aucune notion qui n'y apparaît pas. Réponds uniquement en JSON valide."
+    )
+
+    raw = _deepseek_json(prompt, system, max_tokens=900)
+    if raw and isinstance(raw, dict):
+        return RevisionSheetResponse(
+            priority_topics=[str(t) for t in raw.get("priority_topics", [])],
+            recommended_exercises=[str(e) for e in raw.get("recommended_exercises", [])],
+            key_methods=[str(m) for m in raw.get("key_methods", [])],
+            sheet_text=str(raw.get("sheet_text", "")).strip(),
+        )
+
+    raise HTTPException(status_code=500, detail="Génération de la fiche de révision impossible pour le moment.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature 13  POST /teacher/coaching-report (Module 6, US-REP-12)
+# Rapport mensuel de coaching pédagogique, généré depuis les avis élèves
+# reçus par le répétiteur sur la période.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CoachingReportRequest(BaseModel):
+    month_label: str
+    reviews: List[str]
+    subjects_taught: List[str] = []
+    sessions_count: int = 0
+    average_rating: Optional[float] = None
+
+
+class CoachingReportResponse(BaseModel):
+    strengths: List[str]
+    subjects_improving: List[str]
+    stagnation_patterns: List[str]
+    recommendations: List[str]
+    report_text: str
+
+
+@teacher_ai_router.post("/teacher/coaching-report", response_model=CoachingReportResponse)
+async def generate_coaching_report(
+    body: CoachingReportRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    if not body.reviews and body.sessions_count == 0:
+        raise HTTPException(status_code=422, detail="Pas assez de données pour générer un rapport ce mois-ci.")
+
+    reviews_text = "\n---\n".join(r[:400] for r in body.reviews[:30]) or "(aucun avis reçu ce mois-ci)"
+    prompt = (
+        f"Période : {body.month_label}\n"
+        f"Séances effectuées : {body.sessions_count}\n"
+        f"Note moyenne : {body.average_rating if body.average_rating is not None else 'N/A'}\n"
+        f"Matières enseignées : {', '.join(body.subjects_taught) or 'N/A'}\n\n"
+        f"Avis élèves reçus ce mois :\n{reviews_text}\n\n"
+        "Génère un rapport de coaching pédagogique en JSON avec exactement ces champs :\n"
+        '1. "strengths" : points forts relevés dans les avis élèves\n'
+        '2. "subjects_improving" : matières où les élèves progressent le plus (déduit du contexte)\n'
+        '3. "stagnation_patterns" : patterns de stagnation ou signaux d\'alerte identifiés\n'
+        '4. "recommendations" : recommandations concrètes et actionnables sur la pratique pédagogique\n'
+        '5. "report_text" : le rapport complet rédigé en 5-8 phrases\n'
+        'Réponds en JSON strict, sans texte autour. Si les données sont limitées, reste factuel et concis '
+        'plutôt que d\'inventer des détails.'
+    )
+    system = (
+        "Tu es WinAI, coach pédagogique pour répétiteurs sur la plateforme WinPlus. Base-toi uniquement "
+        "sur les données fournies. Réponds uniquement en JSON valide."
+    )
+
+    raw = _deepseek_json(prompt, system, max_tokens=900)
+    if raw and isinstance(raw, dict):
+        return CoachingReportResponse(
+            strengths=[str(s) for s in raw.get("strengths", [])],
+            subjects_improving=[str(s) for s in raw.get("subjects_improving", [])],
+            stagnation_patterns=[str(s) for s in raw.get("stagnation_patterns", [])],
+            recommendations=[str(r) for r in raw.get("recommendations", [])],
+            report_text=str(raw.get("report_text", "")).strip(),
+        )
+
+    raise HTTPException(status_code=500, detail="Génération du rapport de coaching impossible pour le moment.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Module 7  Messagerie : suggestions WinAI (US-MSG-07) et rapport parent (US-MSG-10)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class QuickRepliesRequest(BaseModel):
+    message_text: str
+
+
+class QuickRepliesResponse(BaseModel):
+    suggestions: List[str]
+
+
+@teacher_ai_router.post("/messaging/quick-replies", response_model=QuickRepliesResponse)
+async def generate_quick_replies(
+    body: QuickRepliesRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    if len(body.message_text.strip()) < 2:
+        raise HTTPException(status_code=422, detail="Message trop court.")
+
+    prompt = (
+        f"Message reçu d'un élève ou parent sur WinPlus :\n\"{body.message_text[:1000]}\"\n\n"
+        "Propose exactement 3 réponses courtes et naturelles (une phrase chacune) qu'un professeur "
+        "pourrait envoyer directement. Réponds en JSON strict : "
+        '{"suggestions": ["réponse 1", "réponse 2", "réponse 3"]}'
+    )
+    system = (
+        "Tu es WinAI, assistant de messagerie pour professeurs sur WinPlus. Reste bref, naturel, "
+        "et pertinent au message reçu. Réponds uniquement en JSON valide."
+    )
+    raw = _deepseek_json(prompt, system, max_tokens=300)
+    if raw and isinstance(raw, dict) and raw.get("suggestions"):
+        return QuickRepliesResponse(suggestions=[str(s) for s in raw["suggestions"]][:3])
+    raise HTTPException(status_code=500, detail="Génération des suggestions impossible pour le moment.")
+
+
+class GenerateReplyRequest(BaseModel):
+    message_text: str
+    context: Optional[str] = None
+
+
+class GenerateReplyResponse(BaseModel):
+    reply_text: str
+
+
+@teacher_ai_router.post("/messaging/generate-reply", response_model=GenerateReplyResponse)
+async def generate_long_reply(
+    body: GenerateReplyRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    prompt = (
+        f"Message reçu :\n\"{body.message_text[:1500]}\"\n\n"
+        + (f"Contexte additionnel : {body.context[:500]}\n\n" if body.context else "")
+        + "Rédige une réponse complète, professionnelle et bienveillante à ce message, prête à être "
+        "envoyée telle quelle (2-5 phrases). Réponds uniquement avec le texte de la réponse, sans JSON ni guillemets."
+    )
+    system = "Tu es WinAI, assistant de messagerie pour professeurs sur WinPlus. Sois clair, chaleureux et concret."
+    reply = _deepseek_text(prompt, system, max_tokens=350)
+    if reply:
+        return GenerateReplyResponse(reply_text=reply.strip())
+    raise HTTPException(status_code=500, detail="Génération de la réponse impossible pour le moment.")
+
+
+class ParentReportRequest(BaseModel):
+    student_name: str
+    summary_text: str
+
+
+class ParentReportResponse(BaseModel):
+    report_text: str
+
+
+@teacher_ai_router.post("/messaging/parent-report", response_model=ParentReportResponse)
+async def generate_parent_report(
+    body: ParentReportRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    if len(body.summary_text.strip()) < 10:
+        raise HTTPException(status_code=422, detail="Résumé trop court pour générer un rapport.")
+
+    prompt = (
+        f"Élève : {body.student_name}\n"
+        f"Résumé donné par le professeur : {body.summary_text[:800]}\n\n"
+        "Rédige un message formel et bienveillant destiné aux parents de cet élève, incluant si "
+        "pertinent : la progression, des points positifs soulignés, des axes d'amélioration, et les "
+        "devoirs à faire. Reste fidèle au résumé fourni, n'invente aucun détail chiffré qui n'y figure "
+        "pas. Réponds uniquement avec le texte du message, sans JSON ni guillemets."
+    )
+    system = "Tu es WinAI, assistant de communication pédagogique pour professeurs sur WinPlus."
+    report = _deepseek_text(prompt, system, max_tokens=400)
+    if report:
+        return ParentReportResponse(report_text=report.strip())
+    raise HTTPException(status_code=500, detail="Génération du rapport impossible pour le moment.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Module 9  Formations structurées : relance élève inactif (US-FOR-07)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class InactivityRelaunchRequest(BaseModel):
+    course_title: str
+
+
+class InactivityRelaunchResponse(BaseModel):
+    message_text: str
+
+
+@teacher_ai_router.post("/teacher/inactivity-relaunch-message", response_model=InactivityRelaunchResponse)
+async def generate_inactivity_relaunch_message(
+    body: InactivityRelaunchRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    prompt = (
+        f"Un élève n'a pas repris sa formation « {body.course_title} » depuis plusieurs jours. "
+        "Rédige un message court, bienveillant et motivant (2-3 phrases) du professeur pour "
+        "l'encourager à reprendre, sans culpabiliser. Réponds uniquement avec le texte du message, "
+        "sans JSON ni guillemets."
+    )
+    system = "Tu es WinAI, assistant pédagogique pour professeurs sur WinPlus. Reste chaleureux et concis."
+    message = _deepseek_text(prompt, system, max_tokens=200)
+    if message:
+        return InactivityRelaunchResponse(message_text=message.strip())
+    raise HTTPException(status_code=500, detail="Génération du message de relance impossible pour le moment.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Module 8  Détection de décrochage (scoring). Appelé quotidiennement par
+# CourseInactivityAlertService (C#, appel interne service-à-service — pas de
+# jeton utilisateur disponible en tâche de fond, comme WeeklyParentReportService
+# pour /api/chatbot/chat) avec les métriques déjà calculées côté C# (inactivité,
+# scores de quiz récents). Endpoint purement calculatoire, aucun accès DB.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DecrochageEleveInput(BaseModel):
+    user_id: int
+    name: str
+    days_inactive: int
+    recent_quiz_scores: List[float] = []  # ordonnés du plus ancien au plus récent, 0-100
+
+
+class DetectionDecrochageRequest(BaseModel):
+    course_title: str
+    students: List[DecrochageEleveInput]
+
+
+class DecrochageAlert(BaseModel):
+    user_id: int
+    name: str
+    niveau: str  # "faible" | "eleve"
+    signaux: List[str]
+
+
+class DetectionDecrochageResponse(BaseModel):
+    alerts: List[DecrochageAlert]
+
+
+def _score_en_baisse(scores: List[float]) -> bool:
+    """Compare la moyenne de la 1re moitié des tentatives à la 2e moitié. Baisse significative = -10 points."""
+    if len(scores) < 2:
+        return False
+    mid = len(scores) // 2
+    prev_avg = sum(scores[:mid]) / mid
+    recent_avg = sum(scores[mid:]) / (len(scores) - mid)
+    return recent_avg <= prev_avg - 10
+
+
+@teacher_ai_router.post("/winai/detection-decrochage", response_model=DetectionDecrochageResponse)
+async def detection_decrochage(body: DetectionDecrochageRequest):
+    alerts: List[DecrochageAlert] = []
+    for eleve in body.students:
+        declining = _score_en_baisse(eleve.recent_quiz_scores)
+        signaux: List[str] = []
+        if eleve.days_inactive >= 7:
+            signaux.append(f"inactif depuis {eleve.days_inactive} jours")
+        if declining:
+            signaux.append("scores de quiz en baisse")
+
+        if eleve.days_inactive >= 14 or (eleve.days_inactive >= 7 and declining):
+            niveau = "eleve"
+        elif eleve.days_inactive >= 7:
+            niveau = "faible"
+        else:
+            continue  # pas de signal suffisant, élève non à risque
+
+        alerts.append(DecrochageAlert(user_id=eleve.user_id, name=eleve.name, niveau=niveau, signaux=signaux))
+    return DetectionDecrochageResponse(alerts=alerts)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Module 9  Formations structurées : génération de syllabus WinAI (US-FOR-09)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class GenerateSyllabusRequest(BaseModel):
+    subject: str
+    level: str
+    duration_weeks: int
+    objectives: List[str] = []
+    target_exams: List[str] = []
+
+
+class SyllabusWeek(BaseModel):
+    week: int
+    title: str
+    concepts: List[str]
+    activities: List[str]
+    duration_minutes: int
+    suggested_resources: List[str]
+
+
+class GenerateSyllabusResponse(BaseModel):
+    weeks: List[SyllabusWeek]
+
+
+@teacher_ai_router.post("/teacher/generate-syllabus", response_model=GenerateSyllabusResponse)
+async def generate_syllabus(
+    body: GenerateSyllabusRequest,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    weeks = max(1, min(body.duration_weeks, 24))
+    prompt = (
+        f"Matière : {body.subject}\nNiveau : {body.level}\nDurée : {weeks} semaines\n"
+        f"Objectifs généraux : {', '.join(body.objectives) or 'non précisés'}\n"
+        f"Examens visés : {', '.join(body.target_exams) or 'non précisés'}\n\n"
+        f"Génère un plan de cours structuré sur {weeks} semaines. Réponds en JSON strict : "
+        '{"weeks": [{"week": 1, "title": "...", "concepts": ["..."], "activities": ["..."], '
+        '"duration_minutes": 60, "suggested_resources": ["..."]}]}. '
+        f"Le tableau \"weeks\" doit contenir exactement {weeks} éléments, un par semaine, "
+        "progressifs et cohérents avec le niveau et les objectifs indiqués."
+    )
+    system = (
+        "Tu es WinAI, assistant pédagogique pour professeurs sur WinPlus. Construis un plan de "
+        "cours réaliste et actionnable. Réponds uniquement en JSON valide."
+    )
+    raw = _deepseek_json(prompt, system, max_tokens=2200)
+    if raw and isinstance(raw, dict) and raw.get("weeks"):
+        parsed_weeks = []
+        for w in raw["weeks"][:weeks]:
+            if not isinstance(w, dict):
+                continue
+            parsed_weeks.append(SyllabusWeek(
+                week=int(w.get("week", len(parsed_weeks) + 1)),
+                title=str(w.get("title", "")).strip(),
+                concepts=[str(c) for c in w.get("concepts", [])],
+                activities=[str(a) for a in w.get("activities", [])],
+                duration_minutes=int(w.get("duration_minutes", 60) or 60),
+                suggested_resources=[str(r) for r in w.get("suggested_resources", [])],
+            ))
+        if parsed_weeks:
+            return GenerateSyllabusResponse(weeks=parsed_weeks)
+    raise HTTPException(status_code=500, detail="Génération du syllabus impossible pour le moment.")

@@ -54,7 +54,7 @@ public class NotchPayTransaction
 
 public interface INotchPayService
 {
-    Task<NotchPayInitiateResponse> InitiatePaymentAsync(string phone, decimal amount, int orderId, string description, string customerEmail, string customerName, string channel);
+    Task<NotchPayInitiateResponse> InitiatePaymentAsync(string phone, decimal amount, int orderId, string description, string customerEmail, string customerName, string channel, string referencePrefix = "WP");
     Task<NotchPayTransaction> GetTransactionStatusAsync(string reference);
     bool VerifyWebhookSignature(string payload, string signature);
 }
@@ -79,9 +79,9 @@ public class NotchPayService : INotchPayService
         _logger = logger;
     }
 
-    public async Task<NotchPayInitiateResponse> InitiatePaymentAsync(string phone, decimal amount, int orderId, string description, string customerEmail, string customerName, string channel)
+    public async Task<NotchPayInitiateResponse> InitiatePaymentAsync(string phone, decimal amount, int orderId, string description, string customerEmail, string customerName, string channel, string referencePrefix = "WP")
     {
-        var reference = $"WP-{orderId}-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+        var reference = $"{referencePrefix}-{orderId}-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
 
         // NotchPay requires E.164 phone format (+237XXXXXXXXX)
         var e164Phone = phone.StartsWith('+') ? phone : $"+{phone}";

@@ -36,6 +36,13 @@ public class ConcoursEvent
     [MaxLength(1000)]
     public string? Notes { get; set; }
 
+    /// <summary>Conseils de réussite affichés sur la page du concours (Module 2, US-CAT-09).</summary>
+    [MaxLength(2000)]
+    public string? Tips { get; set; }
+
+    /// <summary>FAQ du concours, JSON : [{"question":"...","answer":"..."}].</summary>
+    public string? FaqJson { get; set; }
+
     public bool IsPublished { get; set; } = true;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

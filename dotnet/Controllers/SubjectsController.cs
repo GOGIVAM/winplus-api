@@ -65,7 +65,7 @@ public class SubjectsController : ControllerBase
             .ToDictionary(e => e.SubjectId!.Value);
     }
 
-    private static object ProjectSubject(Subject s, Exam? exam) => new
+    private static object ProjectSubject(Subject s, Exam? exam, bool isAuthorVerified = false) => new
     {
         id = s.Id,
         title = s.Title,
@@ -82,6 +82,10 @@ public class SubjectsController : ControllerBase
         createdAt = s.CreatedAt,
         updatedAt = s.UpdatedAt,
         isDeleted = s.IsDeleted,
+        // Module 2, US-CAT-01/US-CAT-02 : filtre "Auteur Vérifié" côté
+        // professeur-acheteur, basé sur le badge "Vérifié Diplôme" (Module 1).
+        authorUserId = s.AuthorUserId,
+        isAuthorVerified = isAuthorVerified,
         // Nécessaire pour le "mode évaluation" (POST /quizzes/exam/{examId}) :
         // sans cet id, le frontend n'a aucun moyen de savoir quelle épreuve
         // précise évaluer derrière ce Subject.
@@ -106,6 +110,7 @@ public class SubjectsController : ControllerBase
         [FromQuery] string? q = null,
         [FromQuery] string? category = null,
         [FromQuery] string? difficulty = null,
+        [FromQuery] bool verifiedAuthorOnly = false,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] string sortBy = "createdAt",
@@ -119,6 +124,10 @@ public class SubjectsController : ControllerBase
             var query = _context.Subjects
                 .Where(s => !s.IsDeleted)
                 .AsQueryable();
+
+            if (verifiedAuthorOnly)
+                query = query.Where(s => s.AuthorUserId != null &&
+                    _context.TutorProfiles.Any(tp => tp.UserId == s.AuthorUserId && tp.IsDiplomaVerified));
 
             if (!string.IsNullOrWhiteSpace(q))
             {
@@ -154,7 +163,9 @@ public class SubjectsController : ControllerBase
 
             var subjects = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
             var examMap = await GetPrimaryExamsAsync(subjects.Select(s => s.Id));
-            var projected = subjects.Select(s => ProjectSubject(s, examMap.GetValueOrDefault(s.Id))).ToList();
+            var verifiedAuthorIds = await GetVerifiedAuthorIdsAsync(subjects.Select(s => s.AuthorUserId));
+            var projected = subjects.Select(s => ProjectSubject(s, examMap.GetValueOrDefault(s.Id),
+                s.AuthorUserId.HasValue && verifiedAuthorIds.Contains(s.AuthorUserId.Value))).ToList();
             var response = new PaginationResponse<object>(projected, totalCount, page, pageSize);
             return Ok(response);
         }
@@ -163,6 +174,17 @@ public class SubjectsController : ControllerBase
             _logger.LogError(ex, "Erreur lors de la récupération des cours");
             return StatusCode(500, "Erreur serveur");
         }
+    }
+
+    private async Task<HashSet<int>> GetVerifiedAuthorIdsAsync(IEnumerable<int?> authorUserIds)
+    {
+        var ids = authorUserIds.Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToList();
+        if (ids.Count == 0) return new HashSet<int>();
+        var verified = await _context.TutorProfiles
+            .Where(tp => ids.Contains(tp.UserId) && tp.IsDiplomaVerified)
+            .Select(tp => tp.UserId)
+            .ToListAsync();
+        return verified.ToHashSet();
     }
 
     /// <summary>
@@ -198,7 +220,40 @@ public class SubjectsController : ControllerBase
             if (subject == null)
                 return NotFound();
             var examMap = await GetPrimaryExamsAsync(new[] { id });
-            return Ok(ProjectSubject(subject, examMap.GetValueOrDefault(id)));
+            var isAuthorVerified = subject.AuthorUserId.HasValue &&
+                await _context.TutorProfiles.AnyAsync(tp => tp.UserId == subject.AuthorUserId && tp.IsDiplomaVerified);
+
+            // "X enseignants ont utilisé ce contenu dans leurs formations" (US-CAT-02) :
+            // nombre de professeurs distincts (autres que l'auteur) l'ayant
+            // ajouté à une leçon via "Ajouter à une formation".
+            var usedByTeachersCount = await (
+                from l in _context.CourseLessons
+                join c in _context.Courses on l.CourseId equals c.Id
+                where l.SourceSubjectId == id
+                select c.InstructorId
+            ).Distinct().CountAsync();
+
+            var projected = System.Text.Json.Nodes.JsonNode.Parse(
+                System.Text.Json.JsonSerializer.Serialize(ProjectSubject(subject, examMap.GetValueOrDefault(id), isAuthorVerified)))!.AsObject();
+            projected["usedByTeachersCount"] = usedByTeachersCount;
+
+            // "Assigné par [Nom]" (US-CLA-04) : affiché uniquement si l'élève
+            // connecté y accède via une assignation de classe (pas un achat).
+            try
+            {
+                var userId = User.GetUserId();
+                var assignerName = await (
+                    from tcc in _context.TeacherClassContents
+                    join cs in _context.TeacherClassStudents on tcc.TeacherClassId equals cs.TeacherClassId
+                    join teacher in _context.Users on tcc.AssignedByUserId equals teacher.Id
+                    where tcc.SubjectId == id && cs.StudentId == userId
+                    select teacher.FirstName + " " + teacher.LastName
+                ).FirstOrDefaultAsync();
+                if (assignerName != null) projected["assignedByTeacherName"] = assignerName;
+            }
+            catch (UnauthorizedAccessException) { /* utilisateur anonyme : pas d'assignation à afficher */ }
+
+            return Ok(projected);
         }
         catch (Exception ex)
         {
@@ -544,7 +599,15 @@ public class SubjectsController : ControllerBase
                     .AnyAsync(oi => oi.SubjectId == id
                                  && oi.Order.UserId == userId
                                  && oi.Order.Status == "completed");
-                if (!hasPurchased)
+
+                // Contenu assigné par un professeur à une classe dont l'élève
+                // est membre (Module 2, US-CAT-04) : WinPlus a déjà débité le
+                // professeur une seule fois, l'élève n'a rien à payer.
+                bool assignedViaClass = !hasPurchased && await _context.TeacherClassContents
+                    .AnyAsync(tcc => tcc.SubjectId == id &&
+                        _context.TeacherClassStudents.Any(cs => cs.TeacherClassId == tcc.TeacherClassId && cs.StudentId == userId));
+
+                if (!hasPurchased && !assignedViaClass)
                     return (subject, null, StatusCode(403, new { error = "Veuillez acheter cette épreuve pour pouvoir y accéder." }));
             }
         }

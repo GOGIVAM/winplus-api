@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using System.Net.Http.Json;
 using Backend.Data;
 using Backend.Services;
 using Backend.Extensions;
@@ -17,13 +18,15 @@ namespace Backend.Controllers;
 public class TeacherController : ControllerBase
 {
     private readonly ITeacherService _teacherService;
+    private readonly IAssignmentService _assignmentService;
     private readonly ILogger<TeacherController> _logger;
     private readonly ApplicationDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
 
-    public TeacherController(ITeacherService teacherService, ILogger<TeacherController> logger, ApplicationDbContext db, IHttpClientFactory httpClientFactory)
+    public TeacherController(ITeacherService teacherService, IAssignmentService assignmentService, ILogger<TeacherController> logger, ApplicationDbContext db, IHttpClientFactory httpClientFactory)
     {
         _teacherService = teacherService;
+        _assignmentService = assignmentService;
         _logger = logger;
         _db = db;
         _httpClientFactory = httpClientFactory;
@@ -60,6 +63,30 @@ public class TeacherController : ControllerBase
     public async Task<IActionResult> GetContentImpact([FromRoute] int contentId, CancellationToken ct)
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, $"/api/teacher/content-impact/{contentId}");
+        ForwardAuth(req);
+        var res = await PyClient().SendAsync(req, ct);
+        return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+    }
+
+    // ── Module 2, US-CAT-07  GET /api/teacher/recommended-purchases ────────
+
+    /// <summary>WinAI — contenus recommandés à l'achat pour ce professeur</summary>
+    [HttpGet("recommended-purchases")]
+    public async Task<IActionResult> GetRecommendedPurchases(CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/teacher/recommended-purchases");
+        ForwardAuth(req);
+        var res = await PyClient().SendAsync(req, ct);
+        return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+    }
+
+    // ── Module 2, US-CAT-09  GET /api/teacher/editorial-watch ───────────────
+
+    /// <summary>WinAI — veille éditoriale : matières en demande peu couvertes</summary>
+    [HttpGet("editorial-watch")]
+    public async Task<IActionResult> GetEditorialWatch(CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/teacher/editorial-watch");
         ForwardAuth(req);
         var res = await PyClient().SendAsync(req, ct);
         return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
@@ -146,15 +173,16 @@ public class TeacherController : ControllerBase
         }
     }
 
+    /// <summary>File de correction (US-COR-01) — filter: pending (défaut) | corrected | all.</summary>
     [HttpGet("corrections/pending")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetPendingCorrections()
+    public async Task<IActionResult> GetPendingCorrections([FromQuery] string filter = "pending")
     {
         try
         {
             var teacherId = User.GetUserId();
-            var corrections = await _teacherService.GetPendingCorrectionsAsync(teacherId);
+            var corrections = await _assignmentService.GetPendingCorrectionsAsync(teacherId, filter);
             return Ok(new { data = corrections, success = true });
         }
         catch (Exception ex)
@@ -299,6 +327,126 @@ public class TeacherController : ControllerBase
             _logger.LogError(ex, "Error getting teacher revenues");
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
+    }
+
+    /// <summary>Historique journalier des revenus (Catalogue + Cours particuliers, US-REP-10).</summary>
+    [HttpGet("revenue/history")]
+    public async Task<IActionResult> GetRevenueHistory([FromQuery] int period = 30)
+    {
+        var teacherId = User.GetUserId();
+        return Ok(await _teacherService.GetRevenueHistoryAsync(teacherId, period));
+    }
+
+    /// <summary>Ventilation des revenus catalogue par contenu.</summary>
+    [HttpGet("revenue/by-content")]
+    public async Task<IActionResult> GetRevenueByContent([FromQuery] string sort = "revenue", [FromQuery] string dir = "desc")
+    {
+        var teacherId = User.GetUserId();
+        return Ok(await _teacherService.GetRevenueByContentAsync(teacherId, sort, dir));
+    }
+
+    /// <summary>Détail des transactions "cours particuliers" (US-REP-10).</summary>
+    [HttpGet("revenue/tutoring-transactions")]
+    public async Task<IActionResult> GetTutoringTransactions()
+    {
+        var teacherId = User.GetUserId();
+        return Ok(await _teacherService.GetTutoringTransactionsAsync(teacherId));
+    }
+
+    /// <summary>Historique unifié filtrable par source — catalogue / cours_particulier / achat (Module 7, 7B).</summary>
+    [HttpGet("revenue/transactions")]
+    public async Task<IActionResult> GetTransactions([FromQuery] string? source = null)
+    {
+        var teacherId = User.GetUserId();
+        return Ok(await _teacherService.GetTransactionsAsync(teacherId, source));
+    }
+
+    /// <summary>Solde réellement disponible au retrait (revenus - dépenses - déjà retiré), utilisé par le dashboard Revenus et par le flux de retrait (Module 7).</summary>
+    [HttpGet("revenue/balance")]
+    public async Task<IActionResult> GetRevenueBalance()
+    {
+        var teacherId = User.GetUserId();
+        var balance = await _teacherService.GetSpendableBalanceAsync(teacherId);
+        return Ok(new { balance });
+    }
+
+    // ── Module 8, 8A — Détection de décrochage ──────────────────────────────
+    // Vue transversale toutes formations : CourseInactivityAlertService détecte et
+    // persiste les alertes quotidiennement ; ces endpoints les consultent/traitent.
+
+    /// <summary>Alertes de décrochage non traitées, toutes formations du professeur confondues.</summary>
+    [HttpGet("alertes-decrochage")]
+    public async Task<IActionResult> GetAlertesDecrochage()
+    {
+        var teacherId = User.GetUserId();
+        var raw = await _db.AlertesDecrochage.AsNoTracking()
+            .Where(a => !a.Traitee && a.Course.InstructorId == teacherId)
+            .Include(a => a.Course)
+            .Include(a => a.Student)
+            .OrderByDescending(a => a.DateDetection)
+            .Select(a => new
+            {
+                id = a.Id,
+                courseId = a.CourseId,
+                courseTitle = a.Course.Title,
+                studentUserId = a.StudentUserId,
+                studentName = (a.Student.FirstName + " " + a.Student.LastName).Trim(),
+                studentAvatarUrl = a.Student.AvatarUrl,
+                niveau = a.Niveau,
+                signauxJson = a.SignauxJson,
+                dateDetection = a.DateDetection,
+            })
+            .ToListAsync();
+
+        // Désérialisation JSON en mémoire — non traduisible en SQL par EF Core.
+        var alerts = raw.Select(a => new
+        {
+            a.id,
+            a.courseId,
+            a.courseTitle,
+            a.studentUserId,
+            a.studentName,
+            a.studentAvatarUrl,
+            a.niveau,
+            signaux = System.Text.Json.JsonSerializer.Deserialize<List<string>>(a.signauxJson) ?? new List<string>(),
+            a.dateDetection,
+        });
+        return Ok(alerts);
+    }
+
+    /// <summary>Marque l'alerte comme traitée et envoie un message de relance WinAI à l'élève concerné.</summary>
+    [HttpPost("alertes/{id:int}/relancer")]
+    public async Task<IActionResult> RelancerAlerteDecrochage(int id)
+    {
+        var teacherId = User.GetUserId();
+        var alert = await _db.AlertesDecrochage.Include(a => a.Course)
+            .FirstOrDefaultAsync(a => a.Id == id && a.Course.InstructorId == teacherId);
+        if (alert == null) return NotFound(new { error = "Alerte introuvable" });
+        if (alert.Traitee) return Ok(new { alreadyTreated = true });
+
+        string messageText;
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/inactivity-relaunch-message")
+            {
+                Content = System.Net.Http.Json.JsonContent.Create(new { course_title = alert.Course.Title }),
+            };
+            ForwardAuth(req);
+            var res = await PyClient().SendAsync(req);
+            var json = await res.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+            messageText = json.TryGetProperty("message_text", out var m) ? m.GetString() ?? "" : "";
+        }
+        catch { messageText = ""; }
+        if (string.IsNullOrWhiteSpace(messageText))
+            messageText = $"On continue « {alert.Course.Title} » ? Reprends où tu t'es arrêté(e), je suis là si tu as des questions !";
+
+        _db.DirectMessages.Add(new Backend.Models.Entities.DirectMessage { FromUserId = teacherId, ToUserId = alert.StudentUserId, Content = messageText });
+        _db.CourseInactivityRelaunches.Add(new Backend.Models.Entities.CourseInactivityRelaunch { CourseId = alert.CourseId, UserId = alert.StudentUserId });
+        alert.Traitee = true;
+        alert.TraiteeAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        return Ok(new { sent = true, message = messageText });
     }
 
     /// <summary>

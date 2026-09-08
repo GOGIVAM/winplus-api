@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Services;
 using Backend.Extensions;
+using Backend.Models.DTOs;
 using Microsoft.AspNetCore.Http;
 
 namespace Backend.Controllers;
@@ -20,12 +21,37 @@ public class StudentController : ControllerBase
     private readonly ILogger<StudentController> _logger;
     private readonly ApplicationDbContext _db;
     private readonly IDailyScoreService _dailyScore;
+    private readonly IAssignmentService _assignmentService;
 
-    public StudentController(ILogger<StudentController> logger, ApplicationDbContext db, IDailyScoreService dailyScore)
+    public StudentController(ILogger<StudentController> logger, ApplicationDbContext db, IDailyScoreService dailyScore, IAssignmentService assignmentService)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _db = db;
         _dailyScore = dailyScore;
+        _assignmentService = assignmentService;
+    }
+
+    /// <summary>Devoirs des classes où l'élève est inscrit (Module 4).</summary>
+    [HttpGet("assignments")]
+    public async Task<IActionResult> GetAssignments()
+    {
+        var studentId = User.GetUserId();
+        var assignments = await _assignmentService.GetStudentAssignmentsAsync(studentId);
+        return Ok(new { data = assignments, success = true });
+    }
+
+    /// <summary>Soumet une copie pour un devoir (texte et/ou fichier déjà uploadé).</summary>
+    [HttpPost("assignments/{id:int}/submit")]
+    public async Task<IActionResult> SubmitAssignment(int id, [FromBody] StudentSubmitRequestDto request)
+    {
+        try
+        {
+            var studentId = User.GetUserId();
+            var submission = await _assignmentService.StudentSubmitAsync(studentId, id, request);
+            return Ok(new { data = submission, success = true });
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new { success = false, error = ex.Message }); }
+        catch (InvalidOperationException ex) { return BadRequest(new { success = false, error = ex.Message }); }
     }
 
     /// <summary>

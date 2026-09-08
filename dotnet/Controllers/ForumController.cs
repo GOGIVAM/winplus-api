@@ -196,16 +196,23 @@ public class ForumController : ControllerBase
 
             _ = TriggerModerationAsync((post as dynamic)?.Id ?? 0, id, request.Content ?? "", userId);
 
+            // Notifie l'auteur du thread ET tous les abonnés (US-FOR-COM-01) —
+            // avant cette correction, seul l'auteur était notifié.
             var threadAuthorId = await _forumService.GetThreadAuthorIdAsync(id);
-            if (threadAuthorId.HasValue && threadAuthorId.Value != userId)
+            var followerIds = await _forumService.GetThreadFollowerIdsAsync(id);
+            var notifyIds = new HashSet<int>(followerIds);
+            if (threadAuthorId.HasValue) notifyIds.Add(threadAuthorId.Value);
+            notifyIds.Remove(userId);
+
+            foreach (var recipientId in notifyIds)
             {
                 _ = _ntfyService.PublishAsync(
-                    topic: $"winplus-user-{threadAuthorId.Value}",
-                    title: "Nouvelle réponse sur votre thread",
-                    message: "Une nouvelle réponse a été ajoutée à votre thread.",
+                    topic: $"winplus-user-{recipientId}",
+                    title: "Nouvelle réponse sur un fil suivi",
+                    message: "Une nouvelle réponse a été ajoutée à un fil que vous suivez.",
                     priority: "default",
                     tags: new[] { "speech_balloon" },
-                    userId: threadAuthorId.Value,
+                    userId: recipientId,
                     type: "forum");
             }
 

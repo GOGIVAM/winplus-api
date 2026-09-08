@@ -39,7 +39,8 @@ class Subject(Base):
     UpdatedAt = Column(DateTime(timezone=True))
     IsDeleted = Column(Boolean, nullable=False, default=False)
     IsFeatured = Column(Boolean, nullable=False, default=False)
-    
+    AuthorUserId = Column(Integer, ForeignKey('Users.Id'))
+
     # Relation avec les contenus
     contents = relationship("CourseContent", back_populates="subject", foreign_keys="CourseContent.SubjectId")
 
@@ -84,9 +85,10 @@ class CourseContent(Base):
     OrderIndex = Column(Integer, nullable=False, default=0)
     DurationMinutes = Column(Integer, nullable=False, default=0)
     IsLocked = Column(Boolean, nullable=False, default=True)
+    CreatedByUserId = Column(Integer, ForeignKey('Users.Id'))
     CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     UpdatedAt = Column(DateTime(timezone=True))
-    
+
     # Relation inverse avec Subject
     subject = relationship("Subject", back_populates="contents", foreign_keys=[SubjectId])
 
@@ -299,6 +301,57 @@ class StudySession(Base):
     KeyPoints = Column(Text)  # JSON array
     CompletedAt = Column(DateTime(timezone=True))
     CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
+class Order(Base):
+    """Modèle FastApi mappé sur la table Orders (ASP.NET)."""
+    __tablename__ = 'Orders'
+
+    Id = Column(Integer, primary_key=True)
+    UserId = Column(Integer, ForeignKey('Users.Id'))
+    Status = Column(String(50))
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
+class OrderItem(Base):
+    """Modèle FastApi mappé sur la table OrderItems (ASP.NET)."""
+    __tablename__ = 'OrderItems'
+
+    Id = Column(Integer, primary_key=True)
+    OrderId = Column(Integer, ForeignKey('Orders.Id'), nullable=False)
+    SubjectId = Column(Integer, ForeignKey('Subjects.Id'), nullable=False)
+
+
+class TutorProfile(Base):
+    """Profil Mode Répétiteur  mappé sur TutorProfiles (.NET, Module 1)."""
+    __tablename__ = 'TutorProfiles'
+
+    Id = Column(Integer, primary_key=True)
+    UserId = Column(Integer, ForeignKey('Users.Id'), nullable=False, index=True)
+    Title = Column(String(150))
+    TutorBio = Column(String(300))
+    HourlyRateXaf = Column(Numeric(10, 2))
+    IsDiplomaVerified = Column(Boolean, nullable=False, default=False)
+    IsActive = Column(Boolean, nullable=False, default=False)
+    OnboardingStep = Column(Integer, nullable=False, default=0)
+
+
+class TutorSubject(Base):
+    """Matière enseignée en cours particulier  mappé sur TutorSubjects (.NET)."""
+    __tablename__ = 'TutorSubjects'
+
+    Id = Column(Integer, primary_key=True)
+    TutorProfileId = Column(Integer, ForeignKey('TutorProfiles.Id'), nullable=False, index=True)
+    Subject = Column(String(100), nullable=False)
+
+
+class TutorLevel(Base):
+    """Niveau couvert par le répétiteur  mappé sur TutorLevels (.NET)."""
+    __tablename__ = 'TutorLevels'
+
+    Id = Column(Integer, primary_key=True)
+    TutorProfileId = Column(Integer, ForeignKey('TutorProfiles.Id'), nullable=False, index=True)
+    Level = Column(String(100), nullable=False)
 
 
 # ================== INITIALISATION DB ==================
