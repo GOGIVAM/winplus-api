@@ -152,6 +152,7 @@ _MEMORY_TYPE_LABELS = {
     "struggling_topics": "Difficultés identifiées",
     "exam_context": "Contexte d'examen",
     "motivation_style": "Profil de motivation",
+    "unfinished_topic": "Conversation en cours",
 }
 
 

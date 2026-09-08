@@ -109,23 +109,48 @@ public class TutorProfileService : ITutorProfileService
         }
 
         if (request.AvailabilitySlots != null)
-        {
-            _context.TutorAvailabilitySlots.RemoveRange(profile.AvailabilitySlots);
-            profile.AvailabilitySlots = request.AvailabilitySlots
-                .Select(s => new TutorAvailabilitySlot
-                {
-                    TutorProfileId = profile.Id,
-                    DayOfWeek = s.DayOfWeek,
-                    StartTime = TimeSpan.Parse(s.StartTime),
-                    EndTime = TimeSpan.Parse(s.EndTime),
-                    IsActive = s.IsActive,
-                })
-                .ToList();
-        }
+            ReplaceAvailabilitySlots(profile, request.AvailabilitySlots);
 
         profile.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
         return await MapToDtoAsync(profile);
+    }
+
+    /// <summary>
+    /// Sauvegarde instantanée de la grille de disponibilités (US-PRO-08),
+    /// hors du flux d'onboarding par étape. Tant que le module Sessions
+    /// (réservations réelles) n'existe pas, le plafond "séances max/semaine"
+    /// est appliqué au nombre de créneaux actifs déclarés : au-delà, la
+    /// grille refuse le créneau en trop plutôt que de le sauvegarder
+    /// silencieusement.
+    /// </summary>
+    public async Task<TutorProfileDto> UpdateAvailabilityAsync(int userId, List<TutorAvailabilitySlotDto> slots)
+    {
+        var profile = await GetOrCreateEntityAsync(userId);
+
+        var activeCount = slots.Count(s => s.IsActive);
+        if (profile.MaxSessionsPerWeek is int max && activeCount > max)
+            throw new InvalidOperationException($"Tu as atteint ta limite de {max} séance(s) par semaine : désactive un créneau avant d'en ajouter un autre, ou augmente ta limite dans tes paramètres.");
+
+        ReplaceAvailabilitySlots(profile, slots);
+        profile.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+        return await MapToDtoAsync(profile);
+    }
+
+    private void ReplaceAvailabilitySlots(TutorProfile profile, List<TutorAvailabilitySlotDto> slots)
+    {
+        _context.TutorAvailabilitySlots.RemoveRange(profile.AvailabilitySlots);
+        profile.AvailabilitySlots = slots
+            .Select(s => new TutorAvailabilitySlot
+            {
+                TutorProfileId = profile.Id,
+                DayOfWeek = s.DayOfWeek,
+                StartTime = TimeSpan.Parse(s.StartTime),
+                EndTime = TimeSpan.Parse(s.EndTime),
+                IsActive = s.IsActive,
+            })
+            .ToList();
     }
 
     public async Task<TutorProfileDto> ActivateAsync(int userId)
@@ -197,13 +222,14 @@ public class TutorProfileService : ITutorProfileService
         return profile == null ? null : await MapToDtoAsync(profile);
     }
 
-    public async Task<List<TutorSearchResultDto>> SearchAsync(string? subject, string? level, decimal? maxHourlyRateXaf, bool verifiedOnly, int page, int pageSize)
+    public async Task<List<TutorSearchResultDto>> SearchAsync(string? subject, string? level, decimal? maxHourlyRateXaf, bool verifiedOnly, int page, int pageSize, string? mode = null, string? city = null, bool availableSoon = false)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 50);
 
         var query = _context.TutorProfiles
             .Include(p => p.Subjects).Include(p => p.Levels)
+            .Include(p => p.InterventionZones).Include(p => p.AvailabilitySlots)
             .Include(p => p.User)
             .Where(p => p.IsActive && !p.IsOnVacation)
             .AsQueryable();
@@ -216,16 +242,83 @@ public class TutorProfileService : ITutorProfileService
             query = query.Where(p => p.HourlyRateXaf != null && p.HourlyRateXaf <= maxHourlyRateXaf.Value);
         if (verifiedOnly)
             query = query.Where(p => p.IsDiplomaVerified);
+        query = mode switch
+        {
+            "online" => query.Where(p => p.OffersOnline),
+            "student_home" => query.Where(p => p.OffersAtStudentHome),
+            "tutor_home" => query.Where(p => p.OffersAtTutorHome),
+            "neutral_place" => query.Where(p => p.OffersNeutralPlace),
+            _ => query,
+        };
+        if (!string.IsNullOrWhiteSpace(city))
+            query = query.Where(p => p.InterventionZones.Any(z => z.City.ToLower() == city.ToLower()));
 
-        var results = await query
-            .OrderByDescending(p => p.IsDiplomaVerified)
+        var candidates = await query.ToListAsync();
+
+        // "Disponibilité immédiate" (US-REP-01) : approximation par les créneaux
+        // hebdo déclarés sur les 48h à venir, en respectant le préavis minimum.
+        // Ne vérifie pas les réservations déjà prises sur ce créneau précis
+        // (ça exigerait de croiser TutorBookings pour toute la page) — un
+        // répétiteur peut donc apparaître "disponible" alors que ce créneau
+        // exact est déjà pris ; la fermeture réelle a lieu au moment de réserver
+        // (TutorBookingService).
+        if (availableSoon)
+        {
+            var now = DateTime.UtcNow;
+            candidates = candidates.Where(p =>
+            {
+                for (var d = 0; d < 2; d++)
+                {
+                    var date = DateOnly.FromDateTime(now).AddDays(d);
+                    var dow = (int)date.DayOfWeek;
+                    if (p.AvailabilitySlots.Any(s => s.IsActive && s.DayOfWeek == dow &&
+                        date.ToDateTime(TimeOnly.FromTimeSpan(s.StartTime), DateTimeKind.Utc) >= now.AddHours(p.NoticeHours)))
+                        return true;
+                }
+                return false;
+            }).ToList();
+        }
+
+        // Tri par pertinence (note × volume de séances × réactivité, US-REP-01) —
+        // calculé en batch pour éviter le N+1 sur la page de résultats.
+        var candidateIds = candidates.Select(p => p.Id).ToList();
+        var completedCounts = await _context.TutorBookings
+            .Where(b => candidateIds.Contains(b.TutorProfileId) && b.Status == "completed")
+            .GroupBy(b => b.TutorProfileId).Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Count);
+        var respondedCounts = await _context.TutorBookings
+            .Where(b => candidateIds.Contains(b.TutorProfileId) && RespondedStatuses.Contains(b.Status))
+            .GroupBy(b => b.TutorProfileId).Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Count);
+        var expiredCounts = await _context.TutorBookings
+            .Where(b => candidateIds.Contains(b.TutorProfileId) && b.Status == "expired")
+            .GroupBy(b => b.TutorProfileId).Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Count);
+        var ratingStats = await _context.TutorReviews
+            .Where(r => candidateIds.Contains(r.TutorProfileId))
+            .GroupBy(r => r.TutorProfileId)
+            .Select(g => new { g.Key, Avg = g.Average(r => (double)r.Rating), Count = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => (x.Avg, x.Count));
+
+        double RelevanceScore(TutorProfile p)
+        {
+            var completed = completedCounts.GetValueOrDefault(p.Id);
+            var responded = respondedCounts.GetValueOrDefault(p.Id);
+            var expired = expiredCounts.GetValueOrDefault(p.Id);
+            var sample = responded + expired;
+            var reactivity = sample > 0 ? (double)responded / sample : 1.0; // neutre pour un profil sans historique
+            var avgRating = ratingStats.TryGetValue(p.Id, out var rs) ? rs.Avg : 3.0; // neutre tant qu'il n'a pas d'avis
+            return avgRating * (1 + completed) * reactivity;
+        }
+
+        var ordered = candidates
+            .OrderByDescending(RelevanceScore)
+            .ThenByDescending(p => p.IsDiplomaVerified)
             .ThenBy(p => p.HourlyRateXaf)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .ToListAsync();
+            .ToList();
 
-        // Note/avis : dépend du Module 6 (séances confirmées) qui n'existe pas
-        // encore — on renvoie null/0 plutôt qu'une valeur fabriquée.
+        var results = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+
         return results.Select(p => new TutorSearchResultDto
         {
             UserId = p.UserId,
@@ -234,8 +327,8 @@ public class TutorProfileService : ITutorProfileService
             Title = p.Title,
             HourlyRateXaf = p.HourlyRateXaf,
             IsDiplomaVerified = p.IsDiplomaVerified,
-            AverageRating = null,
-            ReviewCount = 0,
+            AverageRating = ratingStats.TryGetValue(p.Id, out var pr) ? pr.Avg : null,
+            ReviewCount = ratingStats.TryGetValue(p.Id, out var prc) ? prc.Count : 0,
             Subjects = p.Subjects.Select(s => s.Subject).ToList(),
             Levels = p.Levels.Select(l => l.Level).ToList(),
         }).ToList();
@@ -252,12 +345,48 @@ public class TutorProfileService : ITutorProfileService
 
     private static string Truncate(string value, int maxLength) => value.Length <= maxLength ? value : value[..maxLength];
 
+    private const int ExperiencedSessionThreshold = 10;
+    private const int MinRespondedSampleForReactivity = 5;
+    private const double HighlyResponsiveThreshold = 0.8;
+    private static readonly string[] RespondedStatuses = { "confirmed", "rejected", "completed", "disputed" };
+
+    /// <summary>
+    /// Réputation réelle (Module 6/US-REP-08) : "Expérimenté" et "Très réactif"
+    /// sont désormais calculés à partir des vraies réservations plutôt que
+    /// hardcodés à false ; la note vient du module Avis (TutorReview).
+    /// </summary>
+    private async Task<(bool IsExperienced, bool IsHighlyResponsive, double? AverageRating, int ReviewCount)> ComputeReputationAsync(int tutorProfileId)
+    {
+        var completedCount = await _context.TutorBookings
+            .CountAsync(b => b.TutorProfileId == tutorProfileId && b.Status == "completed");
+
+        var respondedCount = await _context.TutorBookings
+            .CountAsync(b => b.TutorProfileId == tutorProfileId && RespondedStatuses.Contains(b.Status));
+        var expiredCount = await _context.TutorBookings
+            .CountAsync(b => b.TutorProfileId == tutorProfileId && b.Status == "expired");
+        var sample = respondedCount + expiredCount;
+        var isHighlyResponsive = sample >= MinRespondedSampleForReactivity && (double)respondedCount / sample >= HighlyResponsiveThreshold;
+
+        var ratings = await _context.TutorReviews
+            .Where(r => r.TutorProfileId == tutorProfileId)
+            .Select(r => r.Rating)
+            .ToListAsync();
+
+        return (
+            completedCount >= ExperiencedSessionThreshold,
+            isHighlyResponsive,
+            ratings.Count == 0 ? null : ratings.Average(),
+            ratings.Count
+        );
+    }
+
     private async Task<TutorProfileDto> MapToDtoAsync(TutorProfile profile)
     {
         var user = profile.User ?? await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == profile.UserId);
         var latestDoc = profile.VerificationDocuments
             .OrderByDescending(d => d.SubmittedAt)
             .FirstOrDefault();
+        var reputation = await ComputeReputationAsync(profile.Id);
 
         return new TutorProfileDto
         {
@@ -281,11 +410,10 @@ public class TutorProfileService : ITutorProfileService
             MaxSessionsPerWeek = profile.MaxSessionsPerWeek,
             IsOnVacation = profile.IsOnVacation,
             IsDiplomaVerified = profile.IsDiplomaVerified,
-            // Badges "Expérimenté" / "Très réactif" : dépendent du nombre de
-            // séances effectuées et du taux de réponse, deux métriques qui
-            // n'existent qu'une fois le Module 6 (réservations) en place.
-            IsExperienced = false,
-            IsHighlyResponsive = false,
+            IsExperienced = reputation.IsExperienced,
+            IsHighlyResponsive = reputation.IsHighlyResponsive,
+            AverageRating = reputation.AverageRating,
+            ReviewCount = reputation.ReviewCount,
             IsActive = profile.IsActive,
             OnboardingStep = profile.OnboardingStep,
             CompletionScore = ComputeCompletion(profile, !string.IsNullOrWhiteSpace(user?.AvatarUrl) || !string.IsNullOrWhiteSpace(user?.ProfileImageUrl)).Score,

@@ -15,17 +15,20 @@ namespace Backend.Controllers;
 public class PaymentsController : ControllerBase
 {
     private readonly IPaymentService _paymentService;
+    private readonly ITutorBookingService _tutorBookingService;
     private readonly INotchPayService _notchPay;
     private readonly ILogger<PaymentsController> _logger;
     private readonly IMemoryCache _cache;
 
     public PaymentsController(
         IPaymentService paymentService,
+        ITutorBookingService tutorBookingService,
         INotchPayService notchPay,
         ILogger<PaymentsController> logger,
         IMemoryCache cache)
     {
         _paymentService = paymentService;
+        _tutorBookingService = tutorBookingService;
         _notchPay = notchPay;
         _logger = logger;
         _cache = cache;
@@ -166,8 +169,16 @@ public class PaymentsController : ControllerBase
 
         try
         {
-            await _paymentService.HandleNotchPayWebhookAsync(
+            // Les réservations Répétiteur (Module 6) portent leur propre paiement,
+            // hors du module Order/Payment : référence préfixée "TBK-", distincte
+            // du "WP-" utilisé par le checkout catalogue.
+            var handledAsBooking = await _tutorBookingService.TryHandleNotchPayWebhookAsync(
                 eventId, webhookData.Event ?? "unknown", webhookData.Transaction);
+            if (!handledAsBooking)
+            {
+                await _paymentService.HandleNotchPayWebhookAsync(
+                    eventId, webhookData.Event ?? "unknown", webhookData.Transaction);
+            }
             return Ok(new { received = true });
         }
         catch (Exception ex)

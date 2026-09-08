@@ -53,16 +53,20 @@ public class HomeService : IHomeService
                 : 0;
 
             // Statistiques des utilisateurs par rôle
+            // ⚠ Corrigé : Role est stocké en minuscules ("student"/"teacher"/
+            // "parent") partout ailleurs dans l'app  ces comparaisons en
+            // Capitalized ne matchaient jamais rien, les compteurs de la page
+            // d'accueil affichaient toujours 0.
             var studentCount = await _context.Users
-                .Where(u => u.Role == "Student" && u.IsActive && !u.IsDeleted)
+                .Where(u => u.Role == "student" && u.IsActive && !u.IsDeleted)
                 .CountAsync();
 
             var teacherCount = await _context.Users
-                .Where(u => u.Role == "Teacher" && u.IsActive && !u.IsDeleted)
+                .Where(u => u.Role == "teacher" && u.IsActive && !u.IsDeleted)
                 .CountAsync();
 
             var parentCount = await _context.Users
-                .Where(u => u.Role == "Parent" && u.IsActive && !u.IsDeleted)
+                .Where(u => u.Role == "parent" && u.IsActive && !u.IsDeleted)
                 .CountAsync();
 
             return new HomeStatsDto

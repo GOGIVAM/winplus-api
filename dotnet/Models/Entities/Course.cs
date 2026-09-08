@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations.Schema;
+
 namespace Backend.Models.Entities;
 
 public class Course
@@ -31,6 +33,16 @@ public class Course
     public List<string> Objectives { get; set; } = new();
     public bool CertificateEnabled { get; set; } = true;
 
+    /// <summary>Canal de discussion par formation avec Q&amp;A automatique WinAI (Module 7, 3C).</summary>
+    public bool CanalMessagerie { get; set; } = false;
+
+    /// <summary>
+    /// Nombre de jours d'inactivité avant qu'un élève soit signalé comme
+    /// décrocheur potentiel (US-FOR-07, Module 9). Configurable par le
+    /// professeur, 7 par défaut.
+    /// </summary>
+    public int InactivityThresholdDays { get; set; } = 7;
+
     /// <summary>
     /// Date de publication, renseignee par AdminCourseController.Approve.
     ///
@@ -61,6 +73,24 @@ public class CourseSection
     public int Position { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// Règle de déblocage (drip content, prompt_prof.md Module 5B) :
+    /// "immediate" | "delay_days" | "min_score". "immediate" = toujours
+    /// disponible dès l'inscription, indépendamment des autres sections.
+    /// </summary>
+    public string UnlockRule { get; set; } = "immediate";
+
+    /// <summary>Nombre de jours après l'inscription avant déblocage (règle "delay_days").</summary>
+    public int? DelayDays { get; set; }
+
+    /// <summary>
+    /// Score minimum (0-100) requis sur le quiz de la section précédente pour
+    /// débloquer celle-ci (règle "min_score"). Sans quiz sur la section
+    /// précédente, la règle ne peut pas s'appliquer et la section reste
+    /// débloquée par défaut — voir CoursePlayerController.ComputeSectionAccess.
+    /// </summary>
+    public int? MinScore { get; set; }
+
     public ICollection<CourseLesson> Lessons { get; set; } = new List<CourseLesson>();
 }
 
@@ -84,6 +114,23 @@ public class CourseLesson
     public bool IsPublished { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Épreuve/correction du catalogue ajoutée comme ressource dans cette
+    /// leçon (Module 2, US-CAT-03 "Ajouter à une formation"). Sert aussi à
+    /// calculer "X enseignants ont utilisé ce contenu" (COUNT DISTINCT
+    /// Course.InstructorId sur les leçons référençant ce Subject).
+    /// </summary>
+    public int? SourceSubjectId { get; set; }
+
+    /// <summary>
+    /// Checkpoints vidéo (prompt_prof.md Module 5B) : JSON d'une liste de
+    /// { timestampMs, question, options[], bonneReponseIndex }. Sérialisé/
+    /// désérialisé côté contrôleur (pas de colonne JSON typée EF ici, cohérent
+    /// avec Tags/Requirements sur Course qui restent des List&lt;string&gt; côté
+    /// C# mappées en JSON par ailleurs) — voir CheckpointDto.
+    /// </summary>
+    public string? CheckpointsJson { get; set; }
 }
 
 public class CourseEnrollment
@@ -115,6 +162,57 @@ public class LessonProgress
     public int LastPositionSec { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// Trace qu'une notification "section débloquée" a déjà été envoyée pour un
+/// couple (élève, section) — évite les doublons puisque SectionUnlockNotificationService
+/// tourne périodiquement et réévalue l'accès à chaque passage.
+/// </summary>
+public class SectionUnlockNotification
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public int SectionId { get; set; }
+    public DateTime NotifiedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// Trace l'envoi d'une relance WinAI à un élève inactif (US-FOR-07). Sert à
+/// mesurer le taux de réactivation (l'élève a-t-il repris une leçon après la
+/// relance ?) et à éviter de relancer deux fois le même jour.
+/// </summary>
+public class CourseInactivityRelaunch
+{
+    public int Id { get; set; }
+    public int CourseId { get; set; }
+    public int UserId { get; set; }
+    public DateTime SentAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// Alerte de décrochage persistée (Module 8, 8A) : détectée quotidiennement par
+/// CourseInactivityAlertService (inactivité + baisse de score de quiz, scorée par
+/// FastAPI /api/winai/detection-decrochage), consultable en un seul endroit pour
+/// toutes les formations du professeur (contrairement à ComputeInactiveStudentsAsync
+/// qui recalcule à la volée, formation par formation, sans mémoriser un traitement).
+/// </summary>
+public class AlerteDecrochage
+{
+    public int Id { get; set; }
+    public int CourseId { get; set; }
+    [ForeignKey(nameof(CourseId))]
+    public Course Course { get; set; } = null!;
+    public int StudentUserId { get; set; }
+    [ForeignKey(nameof(StudentUserId))]
+    public User Student { get; set; } = null!;
+    /// <summary>"faible" ou "eleve".</summary>
+    public string Niveau { get; set; } = "faible";
+    /// <summary>Liste de signaux (ex: "inactif depuis 14 jours", "scores de quiz en baisse"), sérialisée en JSON.</summary>
+    public string SignauxJson { get; set; } = "[]";
+    public DateTime DateDetection { get; set; } = DateTime.UtcNow;
+    public bool Traitee { get; set; }
+    public DateTime? TraiteeAt { get; set; }
 }
 
 public class CourseReview

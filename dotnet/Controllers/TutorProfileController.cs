@@ -67,6 +67,24 @@ public class TutorProfileController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Grille de disponibilités : sauvegarde instantanée à chaque toggle,
+    /// indépendante du reste du profil (US-PRO-08). Renvoie 400 si le
+    /// nombre de créneaux actifs dépasse le max séances/semaine configuré.
+    /// </summary>
+    [HttpPut("me/availability")]
+    public async Task<ActionResult<TutorProfileDto>> UpdateAvailability([FromBody] UpdateTutorAvailabilityRequestDto request)
+    {
+        try
+        {
+            return Ok(await _service.UpdateAvailabilityAsync(User.GetUserId(), request.Slots));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     /// <summary>Score de complétude + éléments manquants (US-PRO-01, US-PRO-04).</summary>
     [HttpGet("me/completion")]
     public async Task<ActionResult<TutorProfileCompletionDto>> GetCompletion()
@@ -132,6 +150,9 @@ public class TutorProfileController : ControllerBase
         [FromQuery] decimal? maxHourlyRateXaf,
         [FromQuery] bool verifiedOnly = false,
         [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 20)
-        => Ok(await _service.SearchAsync(subject, level, maxHourlyRateXaf, verifiedOnly, page, pageSize));
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? mode = null,
+        [FromQuery] string? city = null,
+        [FromQuery] bool availableSoon = false)
+        => Ok(await _service.SearchAsync(subject, level, maxHourlyRateXaf, verifiedOnly, page, pageSize, mode, city, availableSoon));
 }

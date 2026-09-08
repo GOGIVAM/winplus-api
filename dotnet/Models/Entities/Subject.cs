@@ -42,8 +42,16 @@ public class Subject
     public DateTime? UpdatedAt { get; set; }
 
     public bool IsDeleted { get; set; } = false;
-    
+
+    /// <summary>
+    /// Professeur auteur du contenu (Module 2, US-CAT-01/US-CAT-02 : filtre
+    /// "Auteur Vérifié" et compteur "X enseignants ont utilisé ce contenu").
+    /// Null pour le contenu historique/administratif sans auteur attribué.
+    /// </summary>
+    public int? AuthorUserId { get; set; }
+
     // Navigation properties
+    public User? Author { get; set; }
     public ICollection<CourseContent> Contents { get; set; } = new List<CourseContent>();
     
     // ✅ Mark as [JsonIgnore] to prevent circular reference in JSON serialization

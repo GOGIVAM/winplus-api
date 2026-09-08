@@ -65,6 +65,7 @@ public partial class ApplicationDbContext : DbContext
     public DbSet<Announcement> Announcements => Set<Announcement>();
     public DbSet<Event> Events => Set<Event>();
     public DbSet<Session> Sessions => Set<Session>();
+    public DbSet<SessionEnrollment> SessionEnrollments => Set<SessionEnrollment>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
 
     // Forum
@@ -100,8 +101,31 @@ public partial class ApplicationDbContext : DbContext
     public DbSet<TutorPackage> TutorPackages => Set<TutorPackage>();
     public DbSet<TutorAvailabilitySlot> TutorAvailabilitySlots => Set<TutorAvailabilitySlot>();
     public DbSet<TutorVerificationDocument> TutorVerificationDocuments => Set<TutorVerificationDocument>();
+
+    // Mode Répétiteur (Module 6 — réservation de séances)
+    public DbSet<TutorBooking> TutorBookings => Set<TutorBooking>();
+    public DbSet<TutorReview> TutorReviews => Set<TutorReview>();
+    public DbSet<TutorRevisionSheet> TutorRevisionSheets => Set<TutorRevisionSheet>();
+    public DbSet<TutorCoachingReport> TutorCoachingReports => Set<TutorCoachingReport>();
+    public DbSet<MessageTemplate> MessageTemplates => Set<MessageTemplate>();
+    public DbSet<ChatGroup> ChatGroups => Set<ChatGroup>();
+    public DbSet<ChatGroupMember> ChatGroupMembers => Set<ChatGroupMember>();
+    public DbSet<ChatGroupMessage> ChatGroupMessages => Set<ChatGroupMessage>();
+    public DbSet<SectionUnlockNotification> SectionUnlockNotifications => Set<SectionUnlockNotification>();
+    public DbSet<Withdrawal> Withdrawals => Set<Withdrawal>();
+    public DbSet<CourseInactivityRelaunch> CourseInactivityRelaunches => Set<CourseInactivityRelaunch>();
+    public DbSet<AlerteDecrochage> AlertesDecrochage => Set<AlerteDecrochage>();
+
+    // Catalogue et achat de contenu (Module 2)
+    public DbSet<TeacherClassContent> TeacherClassContents => Set<TeacherClassContent>();
+
+    // Devoirs et corrections (Module 4)
+    public DbSet<Assignment> Assignments => Set<Assignment>();
+    public DbSet<Submission> Submissions => Set<Submission>();
+    public DbSet<SubmissionSimilarityDismissal> SubmissionSimilarityDismissals => Set<SubmissionSimilarityDismissal>();
     public DbSet<TeacherClass> TeacherClasses => Set<TeacherClass>();
     public DbSet<DirectMessage> DirectMessages => Set<DirectMessage>();
+    public DbSet<DirectMessageReaction> DirectMessageReactions => Set<DirectMessageReaction>();
 
     // Exam Coach
     public DbSet<ExamCoachPlan> ExamCoachPlans => Set<ExamCoachPlan>();
@@ -134,6 +158,12 @@ public partial class ApplicationDbContext : DbContext
 
     // ── Module Formations ──
     public DbSet<Course> Courses => Set<Course>();
+    public DbSet<CourseChannelMessage> CourseChannelMessages => Set<CourseChannelMessage>();
+    public DbSet<WinAIInteractionLog> WinAIInteractionLogs => Set<WinAIInteractionLog>();
+    public DbSet<CourseGamificationSettings> CourseGamificationSettings => Set<CourseGamificationSettings>();
+    public DbSet<StudentCoursePoints> StudentCoursePoints => Set<StudentCoursePoints>();
+    public DbSet<StudentCourseBadge> StudentCourseBadges => Set<StudentCourseBadge>();
+    public DbSet<CourseCertificate> CourseCertificates => Set<CourseCertificate>();
     public DbSet<CourseSection> CourseSections => Set<CourseSection>();
     public DbSet<CourseLesson> CourseLessons => Set<CourseLesson>();
     public DbSet<CourseEnrollment> CourseEnrollments => Set<CourseEnrollment>();
@@ -232,6 +262,85 @@ public partial class ApplicationDbContext : DbContext
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<TutorBooking>(entity =>
+        {
+            entity.Property(e => e.PriceXaf).HasColumnType("numeric(10,2)");
+            entity.HasIndex(e => e.NotchpayReference).IsUnique();
+            entity.HasIndex(e => new { e.TutorProfileId, e.SessionDate });
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany()
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Student)
+                  .WithMany()
+                  .HasForeignKey(e => e.StudentUserId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<TutorReview>(entity =>
+        {
+            entity.HasIndex(e => e.TutorBookingId).IsUnique();
+            entity.HasIndex(e => e.TutorProfileId);
+            entity.HasOne(e => e.TutorBooking)
+                  .WithMany()
+                  .HasForeignKey(e => e.TutorBookingId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany()
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Student)
+                  .WithMany()
+                  .HasForeignKey(e => e.StudentUserId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<CourseChannelMessage>(entity =>
+        {
+            entity.HasIndex(e => e.CourseId);
+            entity.HasOne(e => e.Course)
+                  .WithMany()
+                  .HasForeignKey(e => e.CourseId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Sender)
+                  .WithMany()
+                  .HasForeignKey(e => e.SenderUserId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<WinAIInteractionLog>(entity =>
+        {
+            entity.HasIndex(e => e.CourseId);
+            entity.HasOne(e => e.Course)
+                  .WithMany()
+                  .HasForeignKey(e => e.CourseId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CourseGamificationSettings>(entity =>
+        {
+            entity.HasIndex(e => e.CourseId).IsUnique();
+            entity.HasOne(e => e.Course).WithMany().HasForeignKey(e => e.CourseId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<StudentCoursePoints>(entity =>
+        {
+            entity.HasIndex(e => new { e.CourseId, e.UserId }).IsUnique();
+        });
+
+        modelBuilder.Entity<StudentCourseBadge>(entity =>
+        {
+            entity.HasIndex(e => new { e.CourseId, e.UserId, e.BadgeType }).IsUnique();
+        });
+
+        modelBuilder.Entity<CourseCertificate>(entity =>
+        {
+            entity.HasIndex(e => e.VerificationCode).IsUnique();
+            entity.HasIndex(e => new { e.CourseId, e.UserId }).IsUnique();
+            entity.HasOne(e => e.Course).WithMany().HasForeignKey(e => e.CourseId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.User).WithMany().HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.Restrict);
+        });
+
         modelBuilder.Entity<TutorVerificationDocument>(entity =>
         {
             entity.HasIndex(e => new { e.Status, e.SubmittedAt });
@@ -242,6 +351,78 @@ public partial class ApplicationDbContext : DbContext
             entity.HasOne<User>()
                   .WithMany()
                   .HasForeignKey(e => e.ReviewedByUserId)
+                  .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ── TeacherClassContent (Module 2, US-CAT-04) ─────────────────────
+        modelBuilder.Entity<TeacherClassContent>(entity =>
+        {
+            entity.HasIndex(e => new { e.TeacherClassId, e.SubjectId }).IsUnique();
+            entity.HasOne(e => e.TeacherClass)
+                  .WithMany()
+                  .HasForeignKey(e => e.TeacherClassId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Subject)
+                  .WithMany()
+                  .HasForeignKey(e => e.SubjectId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── Assignment / Submission (Module 4 — Corrections) ───────────────
+        modelBuilder.Entity<Assignment>(entity =>
+        {
+            entity.Property(e => e.MaxScore).HasColumnType("numeric(5,2)");
+            entity.HasOne(e => e.Teacher)
+                  .WithMany()
+                  .HasForeignKey(e => e.TeacherId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.TeacherClass)
+                  .WithMany()
+                  .HasForeignKey(e => e.TeacherClassId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Submission>(entity =>
+        {
+            entity.Property(e => e.Score).HasColumnType("numeric(5,2)");
+            entity.HasIndex(e => new { e.AssignmentId, e.StudentId }).IsUnique();
+            entity.HasIndex(e => e.Status);
+            entity.HasOne(e => e.Assignment)
+                  .WithMany(a => a.Submissions)
+                  .HasForeignKey(e => e.AssignmentId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Student)
+                  .WithMany()
+                  .HasForeignKey(e => e.StudentId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SubmissionSimilarityDismissal>(entity =>
+        {
+            entity.HasIndex(e => new { e.SubmissionAId, e.SubmissionBId }).IsUnique();
+        });
+
+        // ── SessionEnrollment (Module 5) ────────────────────────────────────
+        modelBuilder.Entity<SessionEnrollment>(entity =>
+        {
+            entity.Property(e => e.PriceChargedXaf).HasColumnType("numeric(10,2)");
+            entity.HasIndex(e => new { e.SessionId, e.StudentId }).IsUnique();
+            entity.HasOne(e => e.Session)
+                  .WithMany(s => s.Enrollments)
+                  .HasForeignKey(e => e.SessionId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Student)
+                  .WithMany()
+                  .HasForeignKey(e => e.StudentId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── Subject.AuthorUserId (Module 2, US-CAT-01/02) ─────────────────
+        modelBuilder.Entity<Subject>(entity =>
+        {
+            entity.HasOne(e => e.Author)
+                  .WithMany()
+                  .HasForeignKey(e => e.AuthorUserId)
                   .OnDelete(DeleteBehavior.SetNull);
         });
 
@@ -925,6 +1106,7 @@ modelBuilder.Entity<Exam>(entity =>
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Title).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.PriceXaf).HasColumnType("numeric(10,2)");
         });
 
         // Configure Subscription entity
@@ -1059,7 +1241,7 @@ modelBuilder.Entity<Exam>(entity =>
         modelBuilder.Entity<DirectMessage>(entity =>
         {
             entity.HasKey(e => e.Id);
-            entity.Property(e => e.Content).IsRequired().HasMaxLength(2000);
+            entity.Property(e => e.Content).HasMaxLength(2000);
             entity.HasIndex(e => e.ToUserId);
             entity.HasIndex(e => e.FromUserId);
             entity.HasOne(e => e.From)
@@ -1069,6 +1251,23 @@ modelBuilder.Entity<Exam>(entity =>
             entity.HasOne(e => e.To)
                 .WithMany()
                 .HasForeignKey(e => e.ToUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.ReplyToMessage)
+                .WithMany()
+                .HasForeignKey(e => e.ReplyToMessageId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<DirectMessageReaction>(entity =>
+        {
+            entity.HasIndex(e => new { e.DirectMessageId, e.UserId }).IsUnique();
+            entity.HasOne(e => e.DirectMessage)
+                .WithMany(m => m.Reactions)
+                .HasForeignKey(e => e.DirectMessageId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -1189,6 +1388,10 @@ modelBuilder.Entity<Exam>(entity =>
                 .WithMany(s => s.Lessons)
                 .HasForeignKey(e => e.SectionId)
                 .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<Subject>()
+                .WithMany()
+                .HasForeignKey(e => e.SourceSubjectId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<CourseEnrollment>(entity =>

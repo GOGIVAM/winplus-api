@@ -27,6 +27,8 @@ public class ForumThreadResponse
     public string? AuthorName { get; set; }
     public string? AuthorRole { get; set; }
     public bool IsVerifiedInstitution { get; set; }
+    /// <summary>Professeur avec diplôme vérifié (TutorProfile.IsDiplomaVerified) — US-FOR-COM-01, distinct d'un simple compte "teacher".</summary>
+    public bool IsVerifiedTeacher { get; set; }
     public string Title { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
@@ -57,6 +59,8 @@ public class ForumPostResponse
     public string? AuthorName { get; set; }
     public string? AuthorRole { get; set; }
     public bool IsVerifiedInstitution { get; set; }
+    /// <summary>Professeur avec diplôme vérifié (TutorProfile.IsDiplomaVerified) — US-FOR-COM-01, distinct d'un simple compte "teacher".</summary>
+    public bool IsVerifiedTeacher { get; set; }
     public bool IsHidden { get; set; }
     public string Content { get; set; } = string.Empty;
     public int Upvotes { get; set; }

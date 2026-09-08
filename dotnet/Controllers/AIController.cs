@@ -647,7 +647,7 @@ namespace Backend.Controllers;
                 try { userId = GetCurrentUserId(); }
                 catch (UnauthorizedAccessException ex) { return Unauthorized(new { message = ex.Message }); }
 
-                var validTypes = new[] { "learning_preference", "understood_topics", "struggling_topics", "exam_context", "motivation_style" };
+                var validTypes = new[] { "learning_preference", "understood_topics", "struggling_topics", "exam_context", "motivation_style", "unfinished_topic" };
                 if (!validTypes.Contains(request.MemoryType))
                     return BadRequest(new { message = "Invalid memory type" });
 

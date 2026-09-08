@@ -27,10 +27,12 @@ public class TutorProfileDto
     public bool IsOnVacation { get; set; }
 
     public bool IsDiplomaVerified { get; set; }
-    /// <summary>Calculé (pas encore alimenté tant que le Module 6 — séances — n'existe pas).</summary>
+    /// <summary>≥10 séances marquées "Effectuée".</summary>
     public bool IsExperienced { get; set; }
-    /// <summary>Calculé (idem, dépend du taux de réponse aux demandes).</summary>
+    /// <summary>≥80% des demandes reçues acceptées/refusées avant expiration (sur au moins 5 demandes).</summary>
     public bool IsHighlyResponsive { get; set; }
+    public double? AverageRating { get; set; }
+    public int ReviewCount { get; set; }
 
     public bool IsActive { get; set; }
     public int OnboardingStep { get; set; }
@@ -118,6 +120,16 @@ public class UpdateTutorProfileRequestDto
 
     /// <summary>Étape atteinte (1-5), pour reprendre l'onboarding où l'utilisateur s'était arrêté.</summary>
     public int? OnboardingStep { get; set; }
+}
+
+/// <summary>
+/// Corps dédié à la grille de disponibilités (US-PRO-08) : sauvegarde
+/// instantanée à chaque toggle de créneau, indépendante du reste du profil
+/// (pas de bouton "Enregistrer" séparé côté front).
+/// </summary>
+public class UpdateTutorAvailabilityRequestDto
+{
+    public List<TutorAvailabilitySlotDto> Slots { get; set; } = new();
 }
 
 public class UploadTutorVerificationDocumentRequestDto

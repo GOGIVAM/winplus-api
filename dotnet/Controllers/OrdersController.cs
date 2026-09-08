@@ -24,17 +24,80 @@ public class OrdersController : ControllerBase
     private readonly ILogger<OrdersController> _logger;
     private readonly ApplicationDbContext _db;
     private readonly IPdfService _pdfService;
+    private readonly ITeacherService _teacherService;
 
     public OrdersController(
         IOrderService orderService,
         ILogger<OrdersController> logger,
         ApplicationDbContext db,
-        IPdfService pdfService)
+        IPdfService pdfService,
+        ITeacherService teacherService)
     {
         _orderService = orderService;
         _logger = logger;
         _db = db;
         _pdfService = pdfService;
+        _teacherService = teacherService;
+    }
+
+    /// <summary>
+    /// "Payer avec mon solde WinPlus" (Module 2, US-CAT-06) : le professeur
+    /// règle son panier avec ses revenus de vente catalogue au lieu d'un
+    /// paiement Mobile Money. Complété immédiatement (débit interne, pas
+    /// d'attente de webhook) — contrairement au flux Mobile Money classique
+    /// qui crée la commande "pending" en attendant confirmation.
+    ///
+    /// ⚠ Pas de split "solde partiel + Mobile Money pour le différentiel" :
+    /// si le solde ne couvre pas tout le panier, on refuse plutôt que de
+    /// facturer partiellement sans intégration de paiement complémentaire.
+    /// </summary>
+    [HttpPost("pay-with-balance")]
+    [Authorize]
+    public async Task<IActionResult> PayWithBalance()
+    {
+        try
+        {
+            var userId = User.GetUserId();
+            var role = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
+            if (!string.Equals(role, "teacher", StringComparison.OrdinalIgnoreCase))
+                return StatusCode(403, new { success = false, error = "Seul un compte professeur dispose d'un solde WinPlus." });
+
+            var cartTotal = await _db.CartItems.AsNoTracking()
+                .Where(c => c.UserId == userId)
+                .SumAsync(c => (decimal?)c.Price) ?? 0m;
+            if (cartTotal <= 0)
+                return BadRequest(new { success = false, error = "Panier vide." });
+
+            var balance = await _teacherService.GetSpendableBalanceAsync(userId);
+            if (balance < cartTotal)
+                return StatusCode(402, new
+                {
+                    success = false,
+                    error = $"Solde insuffisant : {balance:0} XAF disponibles, {cartTotal:0} XAF requis.",
+                    balanceXaf = balance,
+                    requiredXaf = cartTotal,
+                });
+
+            var order = await _orderService.CreateOrderAsync(userId, "balance");
+
+            var entity = await _db.Orders.FirstOrDefaultAsync(o => o.Id == order.Id);
+            if (entity != null)
+            {
+                entity.Status = "completed";
+                entity.CompletedDate = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+            }
+
+            _logger.LogInformation("Professeur {UserId} a payé sa commande {OrderId} avec son solde WinPlus ({Amount} XAF)",
+                userId, order.Id, cartTotal);
+
+            return Ok(new { data = order, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur lors du paiement par solde");
+            return StatusCode(500, new { success = false, error = "Erreur serveur" });
+        }
     }
 
     [HttpPost]

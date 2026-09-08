@@ -37,4 +37,10 @@ ALTER TABLE "Revisions"
 
 CREATE INDEX IF NOT EXISTS "IX_QuizAttempts_UserId_QuizId" ON "QuizAttempts" ("UserId", "QuizId");
 
+-- Enregistrement dans l'historique EF (convention du repo : les scripts SQL
+-- manuels s'auto-enregistrent pour rendre dotnet ef database update idempotent).
+INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+VALUES ('20251206180000_AddQuizRevisionEnhancements', '7.0.5')
+ON CONFLICT DO NOTHING;
+
 COMMIT;

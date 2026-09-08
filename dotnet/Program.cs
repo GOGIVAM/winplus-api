@@ -8,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using System.Text.Json;
 using Backend.Data;
 using Backend.Repositories;
@@ -144,6 +145,7 @@ builder.Services.AddCors(options =>
 
 // Configure Entity Framework Core with PostgreSQL
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
+{
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
         pgOptions =>
         {
@@ -152,7 +154,14 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
             // SingleQuery, PostgreSQL renvoie un produit cartésien (lenteur du
             // dashboard admin). SplitQuery = une requête par collection.
             pgOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-        }));
+        });
+    // Les entités avec soft-delete (HasQueryFilter !IsDeleted) sont l'extrémité
+    // required de nombreuses relations — comportement voulu et maîtrisé : les
+    // requêtes admin utilisent .IgnoreQueryFilters() quand elles ont besoin des
+    // enregistrements supprimés. Supprimer les 49 avertissements parasites.
+    options.ConfigureWarnings(w =>
+        w.Ignore(CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning));
+});
 
 // Configure Authentication - Custom Auth
 var jwtSecretKey = builder.Configuration["JWT:SecretKey"] 
@@ -363,6 +372,14 @@ builder.Services.AddScoped<ICategoryService, CategoryService>();
 builder.Services.AddScoped<IExamService, ExamService>();
 builder.Services.AddScoped<IQuizService, QuizService>();
 builder.Services.AddScoped<ITutorProfileService, TutorProfileService>();
+builder.Services.AddScoped<IAssignmentService, AssignmentService>();
+builder.Services.AddScoped<ITeachingSessionService, TeachingSessionService>();
+builder.Services.AddScoped<ITutorBookingService, TutorBookingService>();
+builder.Services.AddScoped<ITutorReviewService, TutorReviewService>();
+builder.Services.AddScoped<ITutorInsightsService, TutorInsightsService>();
+builder.Services.AddScoped<ICourseAccessService, CourseAccessService>();
+builder.Services.AddScoped<ICourseGamificationService, CourseGamificationService>();
+builder.Services.AddScoped<ICourseCertificateService, CourseCertificateService>();
 builder.Services.AddScoped<IDailyScoreService, DailyScoreService>();
 builder.Services.AddScoped<IRevisionService, RevisionService>();
 
@@ -449,6 +466,8 @@ builder.Services.AddScoped<ISmartNotificationService, SmartNotificationService>(
 // Background services for payment lifecycle
 builder.Services.AddHostedService<PaymentReconciliationService>();
 builder.Services.AddHostedService<PaymentExpirationService>();
+builder.Services.AddHostedService<TutorBookingLifecycleService>();
+builder.Services.AddHostedService<ScheduledMessageDeliveryService>();
 
 // Background services for subscriptions
 builder.Services.AddHostedService<SubscriptionExpirationService>();
@@ -459,6 +478,13 @@ builder.Services.AddHostedService<WeeklyParentReportService>();
 
 // Background services for institution features
 builder.Services.AddHostedService<MonthlyInstitutionReportService>();
+
+// Background services for tutor (Répétiteur) features
+builder.Services.AddHostedService<TutorCoachingReportService>();
+
+// Background services for Formations (drip content)
+builder.Services.AddHostedService<SectionUnlockNotificationService>();
+builder.Services.AddHostedService<CourseInactivityAlertService>();
 
 // Add health checks
 builder.Services.AddHealthChecks();

@@ -149,7 +149,7 @@ public class CourseCatalogController : ControllerBase
                 course.Category, course.Tags, course.Price, course.IsFree, course.IsIncludedInSub,
                 course.TotalDurationMin, course.LessonsCount, course.EnrolledCount,
                 course.AvgRating, course.ReviewsCount, course.Requirements, course.Objectives,
-                course.CertificateEnabled, course.CreatedAt,
+                course.CertificateEnabled, course.CanalMessagerie, course.CreatedAt,
                 instructor = new
                 {
                     id = course.Instructor.Id,

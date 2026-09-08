@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Extensions;
+using Backend.Services;
 
 namespace Backend.Controllers;
 
@@ -35,11 +36,22 @@ public class TeacherContentController : ControllerBase
 
     private readonly ApplicationDbContext _db;
     private readonly ILogger<TeacherContentController> _logger;
+    private readonly ITeacherService _teacherService;
 
-    public TeacherContentController(ApplicationDbContext db, ILogger<TeacherContentController> logger)
+    public TeacherContentController(ApplicationDbContext db, ILogger<TeacherContentController> logger, ITeacherService teacherService)
     {
         _db = db;
         _logger = logger;
+        _teacherService = teacherService;
+    }
+
+    /// <summary>Solde WinPlus dépensable (Module 2, US-CAT-06).</summary>
+    [HttpGet("balance")]
+    public async Task<IActionResult> GetBalance()
+    {
+        var teacherId = User.GetUserId();
+        var balance = await _teacherService.GetSpendableBalanceAsync(teacherId);
+        return Ok(new { data = new { balanceXaf = balance }, success = true });
     }
 
     /// <summary>Publications de l'enseignant connecté, filtrables par statut.</summary>
@@ -154,6 +166,15 @@ public class TeacherContentController : ControllerBase
                 .FirstOrDefaultAsync(c => c.Id == id && c.CreatedByUserId == teacherId);
             if (content == null)
                 return NotFound(new { success = false, error = "Publication introuvable ou non autorisée." });
+
+            // "Modification possible pour tous les statuts sauf En révision" (US-PUB-05) :
+            // le contenu est déjà en cours de validation admin, le modifier
+            // sous le nez du validateur créerait un décalage entre ce qui a
+            // été relu et ce qui est publié. Le changement de statut lui-même
+            // (ex: retirer la publication de la file) reste autorisé.
+            var editsContent = request.Title != null || request.Description != null || request.DurationMinutes.HasValue;
+            if (editsContent && content.Status == "review")
+                return StatusCode(409, new { success = false, error = "Ce contenu est en cours de révision : impossible de le modifier tant qu'il n'a pas été validé ou renvoyé." });
 
             if (request.Title != null)
             {

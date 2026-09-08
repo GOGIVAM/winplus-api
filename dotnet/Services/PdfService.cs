@@ -9,6 +9,9 @@ public interface IPdfService
 {
     byte[] GenerateInvoice(Order order, IEnumerable<OrderItem> items, User? user);
     byte[] GenerateCertificate(Certificate cert, User user, Subject subject);
+
+    /// <summary>Certificat de formation (Course), avec QR code vers la page de vérification publique (US-3C).</summary>
+    byte[] GenerateCourseCertificate(CourseCertificate cert, User user, Course course, byte[] qrCodePng);
 }
 
 public class PdfService : IPdfService
@@ -210,6 +213,70 @@ public class PdfService : IPdfService
                                 c.Item().Text(cert.VerificationCode)
                                         .Bold().FontSize(13).FontColor(Colors.Teal.Medium);
                             });
+                        });
+                    });
+            });
+        }).GeneratePdf();
+    }
+
+    public byte[] GenerateCourseCertificate(CourseCertificate cert, User user, Course course, byte[] qrCodePng)
+    {
+        var studentName = $"{user.FirstName} {user.LastName}".Trim();
+
+        return Document.Create(container =>
+        {
+            container.Page(page =>
+            {
+                page.Size(PageSizes.A4.Landscape());
+                page.Margin(2, Unit.Centimetre);
+                page.DefaultTextStyle(x => x.FontFamily(Fonts.Arial));
+
+                page.Content().Border(4).BorderColor(Colors.Teal.Medium)
+                    .Padding(24).Column(col =>
+                    {
+                        col.Item().AlignCenter().Text("WinPlus")
+                           .Bold().FontSize(13).FontColor(Colors.Teal.Medium);
+
+                        col.Item().PaddingTop(4).AlignCenter()
+                           .Text(" Plateforme éducative camerounaise ")
+                           .Italic().FontSize(9).FontColor(Colors.Grey.Medium);
+
+                        col.Item().PaddingTop(20).AlignCenter()
+                           .Text("CERTIFICAT DE COMPLÉTION")
+                           .Bold().FontSize(28).FontColor(Colors.Grey.Darken3);
+
+                        col.Item().PaddingTop(4).AlignCenter()
+                           .LineHorizontal(1).LineColor(Colors.Teal.Lighten2);
+
+                        col.Item().PaddingTop(20).AlignCenter()
+                           .Text("Décerné à").Italic().FontSize(13).FontColor(Colors.Grey.Medium);
+
+                        col.Item().PaddingTop(6).AlignCenter()
+                           .Text(studentName).Bold().FontSize(34).FontColor(Colors.Teal.Darken2);
+
+                        col.Item().PaddingTop(14).AlignCenter()
+                           .Text("pour avoir complété avec succès la formation")
+                           .FontSize(13).FontColor(Colors.Grey.Medium);
+
+                        col.Item().PaddingTop(6).AlignCenter()
+                           .Text(course.Title).Bold().FontSize(20).FontColor(Colors.Grey.Darken3);
+
+                        if (cert.Grade.HasValue)
+                        {
+                            col.Item().PaddingTop(8).AlignCenter()
+                               .Text($"Note finale : {cert.Grade:N1} / 100")
+                               .FontSize(13).FontColor(Colors.Grey.Medium);
+                        }
+
+                        col.Item().PaddingTop(28).Row(row =>
+                        {
+                            row.RelativeItem().Column(c =>
+                            {
+                                c.Item().Text($"Délivré le {cert.IssuedAt:dd MMMM yyyy}").FontSize(11);
+                                c.Item().Text($"Code : {cert.VerificationCode}")
+                                        .FontSize(9).FontColor(Colors.Grey.Medium);
+                            });
+                            row.ConstantItem(90).Height(90).Image(qrCodePng);
                         });
                     });
             });

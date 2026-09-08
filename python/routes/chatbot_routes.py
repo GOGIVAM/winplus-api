@@ -146,11 +146,18 @@ Types autorisés :
 - exam_context : examen ou objectif mentionné (ex: "Prépare le BAC C 2027")
 - learning_preference : préférence d'apprentissage détectée
 - motivation_style : style de motivation observé
+- unfinished_topic : la conversation semble s'arrêter en plein milieu d'un sujet
+  ou d'une tâche non résolue (exercice commencé sans conclusion, question posée
+  sans réponse claire de l'étudiant, plan annoncé mais pas terminé). Contenu =
+  description courte du sujet interrompu (ex: "Résolution d'équations du 2nd degré").
+  Ne pas extraire ce type si la conversation se termine normalement (remerciement,
+  question résolue, salutation de fin).
 
 Règles :
 - Extrait uniquement ce qui est FACTUEL et DURABLE (pas les salutations, questions génériques)
 - Maximum 3 mémoires par réponse
 - Contenu concis (max 80 caractères)
+- Au plus une mémoire "unfinished_topic" par réponse
 - Si rien de mémorisable, retourne []
 
 Réponse WinAI à analyser :
@@ -181,7 +188,7 @@ def _extract_and_save_memories(user_id: int, assistant_content: str, session) ->
         if not isinstance(memories, list):
             return
         valid_types = {"struggling_topics", "understood_topics", "exam_context",
-                       "learning_preference", "motivation_style"}
+                       "learning_preference", "motivation_style", "unfinished_topic"}
         now = __import__("datetime").datetime.utcnow()
         for m in memories[:3]:
             if not isinstance(m, dict):
@@ -189,6 +196,19 @@ def _extract_and_save_memories(user_id: int, assistant_content: str, session) ->
             mtype = m.get("type", "")
             content = (m.get("content") or "").strip()
             if mtype not in valid_types or not content:
+                continue
+            if mtype == "unfinished_topic":
+                # Un seul sujet interrompu "actif" à la fois : la reprise de
+                # conversation (US Module 6, 6C) doit toujours suggérer le
+                # dernier sujet en date, pas s'empiler indéfiniment.
+                session.query(UserAIMemory).filter(
+                    UserAIMemory.UserId == user_id,
+                    UserAIMemory.MemoryType == "unfinished_topic",
+                ).delete()
+                session.add(UserAIMemory(
+                    UserId=user_id, MemoryType=mtype, Content=content,
+                    CreatedAt=now, UpdatedAt=now,
+                ))
                 continue
             # Upsert : met à jour si même type + contenu similaire existe déjà
             existing = session.query(UserAIMemory).filter(

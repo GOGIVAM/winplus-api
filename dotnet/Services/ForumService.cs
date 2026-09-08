@@ -26,6 +26,7 @@ public interface IForumService
     Task AcceptPostAsync(int postId, int requestingUserId);
     Task DeleteThreadAsync(int threadId, int requestingUserId, string userRole);
     Task<int?> GetThreadAuthorIdAsync(int threadId);
+    Task<List<int>> GetThreadFollowerIdsAsync(int threadId);
 }
 
 public class ForumService : IForumService
@@ -67,6 +68,8 @@ public class ForumService : IForumService
                     : null,
                 AuthorRole = t.User != null ? t.User.Role : null,
                 IsVerifiedInstitution = t.User != null && t.User.Role == "institution" && t.User.IsEmailVerified,
+                IsVerifiedTeacher = t.User != null && t.User.Role == "teacher"
+                    && _db.TutorProfiles.Any(tp => tp.UserId == t.UserId && tp.IsDiplomaVerified),
                 Title = t.Title,
                 Content = t.Content,
                 Category = t.Category,
@@ -103,6 +106,8 @@ public class ForumService : IForumService
                 AuthorName = t.User != null ? (t.User.FirstName + " " + t.User.LastName).Trim() : null,
                 AuthorRole = t.User != null ? t.User.Role : null,
                 IsVerifiedInstitution = t.User != null && t.User.Role == "institution" && t.User.IsEmailVerified,
+                IsVerifiedTeacher = t.User != null && t.User.Role == "teacher"
+                    && _db.TutorProfiles.Any(tp => tp.UserId == t.UserId && tp.IsDiplomaVerified),
                 Title = t.Title,
                 Content = t.Content,
                 Category = t.Category,
@@ -183,6 +188,8 @@ public class ForumService : IForumService
                     : null,
                 AuthorRole = p.User != null ? p.User.Role : null,
                 IsVerifiedInstitution = p.User != null && p.User.Role == "institution" && p.User.IsEmailVerified,
+                IsVerifiedTeacher = p.User != null && p.User.Role == "teacher"
+                    && _db.TutorProfiles.Any(tp => tp.UserId == p.UserId && tp.IsDiplomaVerified),
                 IsHidden = p.IsHidden,
                 Content = p.Content,
                 Upvotes = p.Upvotes,
@@ -292,6 +299,15 @@ public class ForumService : IForumService
         {
             post.Thread.IsSolved = true;
             post.Thread.UpdatedAt = DateTime.UtcNow;
+
+            // US-FOR-COM-01 : la réponse d'un professeur vérifié (diplôme)
+            // marquée "Meilleure réponse" met automatiquement le fil en avant.
+            var isVerifiedTeacher = await _db.Users.AsNoTracking()
+                .Where(u => u.Id == post.UserId && u.Role == "teacher")
+                .Select(u => _db.TutorProfiles.Any(tp => tp.UserId == u.Id && tp.IsDiplomaVerified))
+                .FirstOrDefaultAsync();
+            if (isVerifiedTeacher)
+                post.Thread.IsPinned = true;
         }
 
         await _db.SaveChangesAsync();
@@ -319,4 +335,11 @@ public class ForumService : IForumService
             .FirstOrDefaultAsync();
         return thread;
     }
+
+    /// <summary>Abonnés à un fil (US-FOR-COM-01 : notifiés à chaque nouvelle réponse, pas seulement l'auteur).</summary>
+    public async Task<List<int>> GetThreadFollowerIdsAsync(int threadId) =>
+        await _db.ForumThreadFollows
+            .Where(f => f.ThreadId == threadId)
+            .Select(f => f.UserId)
+            .ToListAsync();
 }
