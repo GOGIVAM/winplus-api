@@ -388,7 +388,7 @@ Agrégation quotidienne (dashboards).
 | `active_users` | INT | Utilisateurs actifs ce jour |
 | `total_revenue` | NUMERIC(12,2) | Revenus du jour |
 
-#### `cohort_analytics` 👥
+#### `cohort_analytics` 
 Analyse par cohorte (utilisateurs par date inscription).
 
 | Colonne | Type | Remarques |

@@ -161,6 +161,7 @@ public class UserDto
     public string? FirstName { get; set; }
     public string? LastName { get; set; }
     public string Role { get; set; } = "student";
+    public string Locale { get; set; } = "fr";
     public bool IsEmailVerified { get; set; }
     public DateTime? VerifiedAt { get; set; }
 }

@@ -192,7 +192,7 @@ public class CustomAuthService : ICustomAuthService
             await _dbContext.SaveChangesAsync();
 
             // Send verification email
-            await _emailService.SendEmailVerificationAsync(email, firstName ?? "", verificationCode);
+            await _emailService.SendEmailVerificationAsync(email, firstName ?? "", verificationCode, user.Locale);
 
             _logger.LogInformation("User created successfully: {Email}", email);
 
@@ -205,6 +205,8 @@ public class CustomAuthService : ICustomAuthService
                     Email = email,
                     FirstName = firstName,
                     LastName = lastName,
+                    Role = normalizedRole,
+                    Locale = user.Locale,
                     IsEmailVerified = false
                 }
             };
@@ -371,6 +373,7 @@ public class CustomAuthService : ICustomAuthService
                     FirstName = user.FirstName,
                     LastName = user.LastName,
                     Role = user.Role,
+                    Locale = user.Locale,
                     IsEmailVerified = true,
                     VerifiedAt = user.VerifiedAt
                 }
@@ -500,6 +503,7 @@ public class CustomAuthService : ICustomAuthService
                     FirstName = user.FirstName,
                     LastName = user.LastName,
                     Role = user.Role,
+                    Locale = user.Locale,
                     IsEmailVerified = true
                 }
             };
@@ -557,7 +561,7 @@ public class CustomAuthService : ICustomAuthService
             await _dbContext.SaveChangesAsync();
 
             // Send email
-            await _emailService.SendEmailVerificationAsync(email, user.FirstName ?? "", verificationCode);
+            await _emailService.SendEmailVerificationAsync(email, user.FirstName ?? "", verificationCode, user.Locale);
 
             _logger.LogInformation("Verification code resent for email: {Email}", email);
 
@@ -621,7 +625,7 @@ public class CustomAuthService : ICustomAuthService
             await _dbContext.SaveChangesAsync();
 
             // Send email
-            await _emailService.SendPasswordResetAsync(email, user.FirstName ?? "", resetToken);
+            await _emailService.SendPasswordResetAsync(email, user.FirstName ?? "", resetToken, user.Locale);
 
             _logger.LogInformation("Password reset email sent for user: {Email}", email);
 
@@ -1052,7 +1056,8 @@ public class CustomAuthService : ICustomAuthService
                 AccessToken = accessToken,
                 RefreshToken = refreshToken,
                 ExpiresIn = 86400,
-                User = new UserDto { Id = user.Id, Email = user.Email, Role = user.Role, IsEmailVerified = user.IsEmailVerified }
+                User = new UserDto { Id = user.Id, Email = user.Email, Role = user.Role,
+                    Locale = user.Locale, IsEmailVerified = user.IsEmailVerified }
             };
         }
         catch (Exception ex)

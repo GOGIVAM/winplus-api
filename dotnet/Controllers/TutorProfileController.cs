@@ -22,11 +22,84 @@ public class TutorProfileController : ControllerBase
 {
     private readonly ITutorProfileService _service;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IStorageService _storage;
+    private readonly ILogger<TutorProfileController> _logger;
 
-    public TutorProfileController(ITutorProfileService service, IHttpClientFactory httpClientFactory)
+    private static readonly string[] DocumentExtensions = { ".pdf", ".jpg", ".jpeg", ".png", ".webp" };
+    private static readonly string[] VideoExtensions = { ".mp4", ".webm", ".mov", ".m4v" };
+    private const long MaxDocumentBytes = 10 * 1024 * 1024;
+    private const long MaxVideoBytes = 25 * 1024 * 1024;
+
+    public TutorProfileController(
+        ITutorProfileService service,
+        IHttpClientFactory httpClientFactory,
+        IStorageService storage,
+        ILogger<TutorProfileController> logger)
     {
         _service = service;
         _httpClientFactory = httpClientFactory;
+        _storage = storage;
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Téléversement direct du diplôme/relevé (PDF ou photo scannée). Avant ceci,
+    /// le champ "diplôme" du step 5 exigeait de coller l'URL d'un document déjà
+    /// hébergé ailleurs — inutilisable en pratique (TC-PRO-06/07/08).
+    /// </summary>
+    [HttpPost("uploads/document")]
+    [RequestSizeLimit(MaxDocumentBytes + 1024)]
+    public async Task<IActionResult> UploadDocument([FromForm] IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new { message = "Fichier manquant." });
+        if (file.Length > MaxDocumentBytes)
+            return BadRequest(new { message = "Fichier trop volumineux (10 Mo maximum)." });
+
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (!DocumentExtensions.Contains(ext))
+            return BadRequest(new { message = "Format non supporté (PDF, JPG, PNG ou WEBP)." });
+
+        try
+        {
+            var key = $"tutor-documents/{User.GetUserId()}/{DateTime.UtcNow:yyyy/MM}/{Guid.NewGuid():N}{ext}";
+            await using var stream = file.OpenReadStream();
+            var url = await _storage.PutAsync(stream, key, file.ContentType, HttpContext.RequestAborted);
+            return Ok(new { url });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Tutor document upload failed for user {UserId}", User.GetUserId());
+            return StatusCode(500, new { message = "Téléversement impossible pour l'instant." });
+        }
+    }
+
+    /// <summary>Téléversement direct d'une courte vidéo de présentation (alternative au lien YouTube/Vimeo).</summary>
+    [HttpPost("uploads/video")]
+    [RequestSizeLimit(MaxVideoBytes + 1024)]
+    public async Task<IActionResult> UploadVideo([FromForm] IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new { message = "Fichier manquant." });
+        if (file.Length > MaxVideoBytes)
+            return BadRequest(new { message = "Vidéo trop volumineuse (25 Mo maximum  environ 1 minute en bonne qualité)." });
+
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (!VideoExtensions.Contains(ext))
+            return BadRequest(new { message = "Format non supporté (MP4, WEBM ou MOV)." });
+
+        try
+        {
+            var key = $"tutor-videos/{User.GetUserId()}/{DateTime.UtcNow:yyyy/MM}/{Guid.NewGuid():N}{ext}";
+            await using var stream = file.OpenReadStream();
+            var url = await _storage.PutAsync(stream, key, file.ContentType, HttpContext.RequestAborted);
+            return Ok(new { url });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Tutor video upload failed for user {UserId}", User.GetUserId());
+            return StatusCode(500, new { message = "Téléversement impossible pour l'instant." });
+        }
     }
 
     private async Task<IActionResult> ProxyToWinAI(string pythonPath, object body, CancellationToken ct)

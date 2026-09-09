@@ -6,12 +6,12 @@ namespace Backend.Services;
 
 public interface IEmailService
 {
-    Task<bool> SendEmailVerificationAsync(string email, string firstName, string verificationCode);
-    Task<bool> SendPasswordResetAsync(string email, string firstName, string resetToken);
+    Task<bool> SendEmailVerificationAsync(string email, string firstName, string verificationCode, string locale = "fr");
+    Task<bool> SendPasswordResetAsync(string email, string firstName, string resetToken, string locale = "fr");
     Task<bool> SendPasswordChangedAsync(string email, string firstName);
     Task<bool> SendNewDeviceLoginAsync(string email, string firstName, string deviceName, string ipAddress);
     Task<bool> SendTwoFactorCodeAsync(string email, string firstName, string code);
-    Task<bool> SendEmailChangeVerificationAsync(string email, string firstName, string verificationCode);
+    Task<bool> SendEmailChangeVerificationAsync(string email, string firstName, string verificationCode, string locale = "fr");
     Task<bool> SendPaymentConfirmationAsync(string email, string firstName, decimal amount, string reference, DateTime completedAt, IEnumerable<(string Title, int SubjectId)>? items = null);
     Task<bool> SendSubscriptionExpiryReminderAsync(string email, string firstName, DateTime expiryDate);
     Task<bool> SendPeriodicConfirmationAsync(string email, string firstName, string code);
@@ -50,9 +50,31 @@ public class EmailService : IEmailService
     // ─────────────────────────────────────────────────────────────────────────
     //  EMAIL : Vérification du compte (code à 6 chiffres)
     // ─────────────────────────────────────────────────────────────────────────
-    public async Task<bool> SendEmailVerificationAsync(string email, string firstName, string verificationCode)
+    public async Task<bool> SendEmailVerificationAsync(string email, string firstName, string verificationCode, string locale = "fr")
     {
-        var body = $@"
+        var isEn = locale == "en";
+        var body = isEn ? $@"
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 8px 32px;"">
+          <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
+            Hi <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, here is your 6-digit code to activate your WinPlus account. Enter it in the app to continue.
+          </p>
+        </td></tr>
+      </table>
+
+      {OtpBlock(verificationCode)}
+
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 0 32px;"">
+          <span style=""font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">
+            This code expires in <span style=""font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-weight:600;color:#1F4A5A;"">24 hours</span>.
+          </span>
+        </td></tr>
+      </table>
+
+      {Divider()}
+
+      {InfoBox("Didn't create a WinPlus account? You can safely ignore this email.")}" : $@"
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 8px 32px;"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
@@ -75,19 +97,47 @@ public class EmailService : IEmailService
 
       {InfoBox("Tu n'as pas créé de compte WinPlus&nbsp;? Tu peux ignorer cet e-mail en toute sécurité.")}";
 
-        var html = Wrapper("Vérification d'email", "Vérifie ton adresse email", body, _logoUrl);
-        return await SendGenericEmailAsync(email, "Ton code de vérification WinPlus", html);
+        var html = Wrapper(
+            isEn ? "Email verification" : "Vérification d'email",
+            isEn ? "Verify your email address" : "Vérifie ton adresse email",
+            body, _logoUrl);
+        return await SendGenericEmailAsync(email, isEn ? "Your WinPlus verification code" : "Ton code de vérification WinPlus", html);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     //  EMAIL : Réinitialisation du mot de passe
     // ─────────────────────────────────────────────────────────────────────────
-    public async Task<bool> SendPasswordResetAsync(string email, string firstName, string resetToken)
+    public async Task<bool> SendPasswordResetAsync(string email, string firstName, string resetToken, string locale = "fr")
     {
+        var isEn = locale == "en";
         // Jeton en segment de chemin, pas en query string : il ne fuite ainsi ni
         // dans les journaux d'accès ni dans l'en-tête Referer des pages tierces.
         var resetUrl = $"{_frontendUrl}/reset-password/{Uri.EscapeDataString(resetToken)}";
-        var body = $@"
+        var body = isEn ? $@"
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 4px 32px;"">
+          <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
+            Hello <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, you requested to reset your WinPlus password. The link below is valid for <strong style=""color:#1F4A5A;"">1&nbsp;hour</strong>.
+          </p>
+        </td></tr>
+      </table>
+
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 0 18px;"">
+          {Button("Reset my password", resetUrl)}
+        </td></tr>
+      </table>
+
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 0 32px;"">
+          <p style=""margin:0 0 6px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:12px;color:#97AAB2;text-align:center;"">Or copy this link into your browser:</p>
+          <p style=""margin:0;font-size:12px;text-align:center;word-break:break-all;""><a href=""{resetUrl}"" style=""color:#3471A0;"">{resetUrl}</a></p>
+        </td></tr>
+      </table>
+
+      {Divider()}
+
+      {WarningBox("Didn't request this?", "Your account remains secure  just ignore this email.")}" : $@"
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 4px 32px;"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
@@ -113,8 +163,11 @@ public class EmailService : IEmailService
 
       {WarningBox("Vous n'avez pas fait cette demande&nbsp;?", "Votre compte reste en sécurité  ignorez simplement cet e-mail.")}";
 
-        var html = Wrapper("Sécurité du compte", "Réinitialise ton mot de passe", body, _logoUrl);
-        return await SendGenericEmailAsync(email, "Réinitialisation de votre mot de passe WinPlus", html);
+        var html = Wrapper(
+            isEn ? "Account security" : "Sécurité du compte",
+            isEn ? "Reset your password" : "Réinitialise ton mot de passe",
+            body, _logoUrl);
+        return await SendGenericEmailAsync(email, isEn ? "Reset your WinPlus password" : "Réinitialisation de votre mot de passe WinPlus", html);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -225,9 +278,31 @@ public class EmailService : IEmailService
     // ─────────────────────────────────────────────────────────────────────────
     //  EMAIL : Vérification changement d'e-mail (code à 6 chiffres)
     // ─────────────────────────────────────────────────────────────────────────
-    public async Task<bool> SendEmailChangeVerificationAsync(string email, string firstName, string verificationCode)
+    public async Task<bool> SendEmailChangeVerificationAsync(string email, string firstName, string verificationCode, string locale = "fr")
     {
-        var body = $@"
+        var isEn = locale == "en";
+        var body = isEn ? $@"
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 8px 32px;"">
+          <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
+            Hi <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, you requested to change your email address. Here is your code to confirm this new address.
+          </p>
+        </td></tr>
+      </table>
+
+      {OtpBlock(verificationCode)}
+
+      <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+        <tr><td align=""center"" style=""padding:0 0 32px;"">
+          <span style=""font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">
+            This code expires in <span style=""font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-weight:600;color:#1F4A5A;"">24 hours</span>.
+          </span>
+        </td></tr>
+      </table>
+
+      {Divider()}
+
+      {InfoBox("Didn't request this? Ignore this email  your current address stays unchanged.")}" : $@"
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 8px 32px;"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
@@ -250,8 +325,11 @@ public class EmailService : IEmailService
 
       {InfoBox("Tu n'as pas fait cette demande&nbsp;? Ignore cet e-mail  ton adresse actuelle reste inchangée.")}";
 
-        var html = Wrapper("Changement d'email", "Confirme ta nouvelle adresse", body, _logoUrl);
-        return await SendGenericEmailAsync(email, "Vérification de votre nouvel e-mail WinPlus", html);
+        var html = Wrapper(
+            isEn ? "Email change" : "Changement d'email",
+            isEn ? "Confirm your new address" : "Confirme ta nouvelle adresse",
+            body, _logoUrl);
+        return await SendGenericEmailAsync(email, isEn ? "Verify your new WinPlus email" : "Vérification de votre nouvel e-mail WinPlus", html);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

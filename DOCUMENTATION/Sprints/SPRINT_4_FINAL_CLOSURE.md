@@ -196,7 +196,7 @@ Sprint 4 End:    7/7 modules complete ✅
 
 ---
 
-## 👥 TEAM SUMMARY
+##  TEAM SUMMARY
 
 ### Effort
 - **Total Time**: ~45 minutes

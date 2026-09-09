@@ -50,6 +50,10 @@ public class User
     [MaxLength(100)]
     public string? City { get; set; }
 
+    /// <summary>Langue préférée : "fr" ou "en". Pilote l'UI (web/mobile) et les emails transactionnels.</summary>
+    [MaxLength(5)]
+    public string Locale { get; set; } = "fr";
+
     /// <summary>Filière/série déclarée par un élève à la complétion de profil (US onboarding élève).</summary>
     [MaxLength(150)]
     public string? Specialization { get; set; }

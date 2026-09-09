@@ -190,7 +190,7 @@ def main():
     print("\n" + "="*60)
     print("✅ EXPORT LOCAL RÉUSSI")
     print("="*60)
-    print(f"👥 Utilisateurs : {len(users_df)}")
+    print(f" Utilisateurs : {len(users_df)}")
     print(f"📚 Contenus : {len(contents_df)}")
     print(f"🔗 Interactions : {len(interactions_df)}")
     taux_reussite = (interactions_df['reussite'].sum() / len(interactions_df)) * 100

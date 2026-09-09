@@ -1092,7 +1092,7 @@ public class AdminUsersController : ControllerBase
             await _db.SaveChangesAsync();
             try
             {
-                await _email.SendPasswordResetAsync(user.Email, user.FirstName ?? "", token);
+                await _email.SendPasswordResetAsync(user.Email, user.FirstName ?? "", token, user.Locale);
             }
             catch (Exception ex)
             {
@@ -1310,7 +1310,7 @@ public class AdminUsersController : ControllerBase
 
         try
         {
-            await _email.SendPasswordResetAsync(user.Email, user.FirstName ?? "", token);
+            await _email.SendPasswordResetAsync(user.Email, user.FirstName ?? "", token, user.Locale);
         }
         catch (Exception ex)
         {

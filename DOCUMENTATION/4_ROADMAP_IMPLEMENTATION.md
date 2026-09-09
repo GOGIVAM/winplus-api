@@ -278,7 +278,7 @@ Bundle Size
 
 ---
 
-## 👥 RESSOURCES REQUISES
+##  RESSOURCES REQUISES
 
 ### Équipe
 ```

@@ -11,6 +11,8 @@ public class UpdateProfileRequest
     [MaxLength(100)] public string? Level { get; set; }
     [MaxLength(100)] public string? City { get; set; }
     [MaxLength(50)]  public string? LearningStyle { get; set; }
+    /// <summary>"fr" ou "en" — langue préférée (UI + emails transactionnels).</summary>
+    [MaxLength(5)]   public string? Locale { get; set; }
 
     /// <summary>Onboarding élève — filière/série (US CompleteProfile).</summary>
     [MaxLength(150)] public string? Specialization { get; set; }
@@ -33,6 +35,7 @@ public class ProfileResponse
     public string? Bio { get; set; }
     public string? Level { get; set; }
     public string? City { get; set; }
+    public string? Locale { get; set; }
     public string? Specialization { get; set; }
     public string? TargetExam { get; set; }
     public List<string> TeachingSubjects { get; set; } = new();

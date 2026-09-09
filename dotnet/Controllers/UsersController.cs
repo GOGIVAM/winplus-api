@@ -71,6 +71,7 @@ public class UsersController : ControllerBase
                 Bio = user.Bio,
                 Level = user.Level,
                 City = user.City,
+                Locale = user.Locale,
                 Specialization = user.Specialization,
                 TargetExam = user.TargetExam,
                 TeachingSubjects = user.TeachingSubjects,
@@ -141,6 +142,7 @@ public class UsersController : ControllerBase
             if (request.Bio != null) user.Bio = request.Bio;
             if (request.Level != null) user.Level = request.Level;
             if (request.City != null) user.City = request.City;
+            if (request.Locale is "fr" or "en") user.Locale = request.Locale;
             if (request.Specialization != null) user.Specialization = request.Specialization;
             if (request.TargetExam != null) user.TargetExam = request.TargetExam;
             if (request.TeachingSubjects != null) user.TeachingSubjects = request.TeachingSubjects;
@@ -174,6 +176,7 @@ public class UsersController : ControllerBase
                 Bio = updated.Bio,
                 Level = updated.Level,
                 City = updated.City,
+                Locale = updated.Locale,
                 Specialization = updated.Specialization,
                 TargetExam = updated.TargetExam,
                 TeachingSubjects = updated.TeachingSubjects,
