@@ -729,7 +729,7 @@ public class AdminUsersController : ControllerBase
                 .ToListAsync();
 
             var parentLinks = await _db.ParentStudentLinks
-                .Where(l => ids.Contains(l.StudentId))
+                .Where(l => ids.Contains(l.StudentId) && l.Status == "accepted")
                 .Include(l => l.Parent)
                 .ToListAsync();
 
@@ -833,7 +833,7 @@ public class AdminUsersController : ControllerBase
             var ordersMap   = await OrdersMapAsync(ids);
 
             var childLinks = await _db.ParentStudentLinks
-                .Where(l => ids.Contains(l.ParentId))
+                .Where(l => ids.Contains(l.ParentId) && l.Status == "accepted")
                 .Include(l => l.Student)
                 .ToListAsync();
 

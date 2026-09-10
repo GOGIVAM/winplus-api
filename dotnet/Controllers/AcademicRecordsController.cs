@@ -39,7 +39,7 @@ public class AcademicRecordsController : ControllerBase
     };
 
     private async Task<bool> IsParentOf(int parentId, int studentId) =>
-        await _db.ParentStudentLinks.AnyAsync(l => l.ParentId == parentId && l.StudentId == studentId);
+        await _db.ParentStudentLinks.AnyAsync(l => l.ParentId == parentId && l.StudentId == studentId && l.Status == "accepted");
 
     private static bool IsValidGrade(decimal grade) => grade is >= 0 and <= 20;
 

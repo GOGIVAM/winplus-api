@@ -547,7 +547,7 @@ public class StudentController : ControllerBase
 
             var parents = await _db.ParentStudentLinks
                 .AsNoTracking()
-                .Where(l => l.StudentId == me)
+                .Where(l => l.StudentId == me && l.Status == "accepted")
                 .Include(l => l.Parent)
                 .Select(l => new
                 {
@@ -621,6 +621,63 @@ public class StudentController : ControllerBase
             _logger.LogError(ex, "Error getting student links");
             return StatusCode(500, new { error = "Internal server error" });
         }
+    }
+
+    /// <summary>
+    /// Demandes de liaison parentale en attente de ma réponse (US consentement,
+    /// symétrique à GET /api/teacher-links/pending). Un parent ne voit jamais
+    /// les notes/messages/activité de son enfant tant que celui-ci n'a pas
+    /// accepté ici — avant ce correctif, ParentController.AddChild liait
+    /// instantanément sans qu'aucun flux de consentement n'existe.
+    /// </summary>
+    [HttpGet("parent-link-requests")]
+    [Authorize(Roles = "student")]
+    public async Task<IActionResult> GetPendingParentLinkRequests()
+    {
+        var me = User.GetUserId();
+        var pending = await _db.ParentStudentLinks
+            .AsNoTracking()
+            .Where(l => l.StudentId == me && l.Status == "pending")
+            .Include(l => l.Parent)
+            .Select(l => new
+            {
+                l.Id,
+                l.CreatedAt,
+                Parent = new { l.Parent!.Id, l.Parent.FirstName, l.Parent.LastName, l.Parent.AvatarUrl, l.Parent.Email },
+            })
+            .ToListAsync();
+
+        return Ok(pending);
+    }
+
+    /// <summary>Accepte une demande de liaison parentale.</summary>
+    [HttpPut("parent-link-requests/{id:int}/accept")]
+    [Authorize(Roles = "student")]
+    public async Task<IActionResult> AcceptParentLinkRequest(int id)
+    {
+        var me = User.GetUserId();
+        var link = await _db.ParentStudentLinks.FindAsync(id);
+        if (link == null || link.StudentId != me) return NotFound();
+
+        link.Status = "accepted";
+        link.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return Ok(new { success = true });
+    }
+
+    /// <summary>Refuse une demande de liaison parentale.</summary>
+    [HttpPut("parent-link-requests/{id:int}/reject")]
+    [Authorize(Roles = "student")]
+    public async Task<IActionResult> RejectParentLinkRequest(int id)
+    {
+        var me = User.GetUserId();
+        var link = await _db.ParentStudentLinks.FindAsync(id);
+        if (link == null || link.StudentId != me) return NotFound();
+
+        link.Status = "rejected";
+        link.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return Ok(new { success = true });
     }
 
     /// <summary>

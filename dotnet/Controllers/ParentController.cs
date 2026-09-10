@@ -50,7 +50,7 @@ public class ParentController : ControllerBase
         try
         {
             var parentId = User.GetUserId();
-            var linked = await _db.ParentStudentLinks.AnyAsync(l => l.ParentId == parentId && l.StudentId == childId);
+            var linked = await _db.ParentStudentLinks.AnyAsync(l => l.ParentId == parentId && l.StudentId == childId && l.Status == "accepted");
             if (!linked) return Forbid();
 
             var now = DateTime.UtcNow;
@@ -98,7 +98,7 @@ public class ParentController : ControllerBase
             var parentId = User.GetUserId();
             // If no childId specified, pick the first linked child
             var resolvedChildId = childId ?? await _db.ParentStudentLinks
-                .Where(l => l.ParentId == parentId)
+                .Where(l => l.ParentId == parentId && l.Status == "accepted")
                 .Select(l => (int?)l.StudentId)
                 .FirstOrDefaultAsync() ?? 0;
             var activities = await _parentService.GetChildActivitiesAsync(parentId, resolvedChildId, limit);
@@ -174,7 +174,7 @@ public class ParentController : ControllerBase
         {
             var parentId = User.GetUserId();
             var resolvedChildId = childId ?? await _db.ParentStudentLinks
-                .Where(l => l.ParentId == parentId)
+                .Where(l => l.ParentId == parentId && l.Status == "accepted")
                 .Select(l => (int?)l.StudentId)
                 .FirstOrDefaultAsync() ?? 0;
             var quizzes = await _parentService.GetChildQuizzesAsync(parentId, resolvedChildId, limit);
@@ -203,7 +203,7 @@ public class ParentController : ControllerBase
         {
             var parentId = User.GetUserId();
             var resolvedChildId = childId ?? await _db.ParentStudentLinks
-                .Where(l => l.ParentId == parentId)
+                .Where(l => l.ParentId == parentId && l.Status == "accepted")
                 .Select(l => (int?)l.StudentId)
                 .FirstOrDefaultAsync() ?? 0;
             var revisions = await _parentService.GetChildRevisionsAsync(parentId, resolvedChildId, limit);
@@ -270,7 +270,7 @@ public class ParentController : ControllerBase
         {
             var parentId = User.GetUserId();
             var children = await _db.ParentStudentLinks
-                .Where(l => l.ParentId == parentId)
+                .Where(l => l.ParentId == parentId && l.Status == "accepted")
                 .Include(l => l.Student)
                 .Select(l => new
                 {
@@ -308,7 +308,7 @@ public class ParentController : ControllerBase
             var parentId = User.GetUserId();
 
             var linked = await _db.ParentStudentLinks
-                .AnyAsync(l => l.ParentId == parentId && l.StudentId == childId);
+                .AnyAsync(l => l.ParentId == parentId && l.StudentId == childId && l.Status == "accepted");
 
             if (!linked)
                 return StatusCode(403, new { success = false, error = "Accès refusé : cet enfant n'est pas lié à votre compte" });
@@ -465,12 +465,40 @@ public class ParentController : ControllerBase
             var student = await _db.Users.FirstOrDefaultAsync(u => u.Email == req.Email && u.Role == "student");
             if (student == null) return NotFound(new { error = "Aucun élève trouvé avec cet email" });
 
-            var already = await _db.ParentStudentLinks.AnyAsync(l => l.ParentId == parentId && l.StudentId == student.Id);
-            if (already) return Conflict(new { error = "Cet enfant est déjà lié à votre compte" });
+            // Le champ InitiatedBy est obligatoire (FK vers Users) — jamais
+            // renseigné auparavant, ce qui plantait sur la contrainte de clé
+            // étrangère dès qu'elle a été ajoutée (InitiatedBy valait 0 par
+            // défaut). Corrigé ici, et on demande maintenant le consentement
+            // de l'élève avant d'accorder l'accès au parent (symétrique au
+            // lien prof-élève de TeacherStudentLinksController, qui a déjà ce
+            // flux) plutôt que de lier instantanément sans qu'il le sache.
+            var existing = await _db.ParentStudentLinks
+                .FirstOrDefaultAsync(l => l.ParentId == parentId && l.StudentId == student.Id);
 
-            _db.ParentStudentLinks.Add(new ParentStudentLink { ParentId = parentId, StudentId = student.Id });
+            if (existing != null)
+            {
+                if (existing.Status == "accepted")
+                    return Conflict(new { error = "Cet enfant est déjà lié à votre compte" });
+                if (existing.Status == "pending")
+                    return Conflict(new { error = "Demande déjà envoyée, en attente de réponse de l'élève" });
+                // Rejected : on relance une nouvelle demande.
+                existing.Status = "pending";
+                existing.InitiatedBy = parentId;
+                existing.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                _db.ParentStudentLinks.Add(new ParentStudentLink
+                {
+                    ParentId = parentId,
+                    StudentId = student.Id,
+                    Status = "pending",
+                    InitiatedBy = parentId,
+                });
+            }
+
             await _db.SaveChangesAsync();
-            return Ok(new { success = true, studentId = student.Id });
+            return Ok(new { success = true, studentId = student.Id, status = "pending" });
         }
         catch (Exception ex)
         {
@@ -507,7 +535,7 @@ public class ParentController : ControllerBase
         try
         {
             var parentId = User.GetUserId();
-            var linked = await _db.ParentStudentLinks.AnyAsync(l => l.ParentId == parentId && l.StudentId == childId);
+            var linked = await _db.ParentStudentLinks.AnyAsync(l => l.ParentId == parentId && l.StudentId == childId && l.Status == "accepted");
             if (!linked) return Forbid();
 
             if (pageSize > 50) pageSize = 50;
@@ -565,7 +593,7 @@ public class ParentController : ControllerBase
         {
             var parentId = User.GetUserId();
             var childIds = await _db.ParentStudentLinks
-                .Where(l => l.ParentId == parentId)
+                .Where(l => l.ParentId == parentId && l.Status == "accepted")
                 .Select(l => l.StudentId)
                 .ToListAsync();
 

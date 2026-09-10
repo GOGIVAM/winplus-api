@@ -130,7 +130,7 @@ public sealed class WeeklyParentReportService : BackgroundService
         if (parentUser == null) return;
 
         var children = await db.ParentStudentLinks
-            .Where(l => l.ParentId == parentUser.Id)
+            .Where(l => l.ParentId == parentUser.Id && l.Status == "accepted")
             .Include(l => l.Student)
             .Select(l => l.Student)
             .Where(s => s != null && !s.IsDeleted)

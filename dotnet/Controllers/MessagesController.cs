@@ -86,10 +86,12 @@ public class MessagesController : ControllerBase
 
     private async Task<bool> AreLinkedAsync(int userId1, int userId2)
     {
-        // 1. Parent-élève (dans les deux sens)
+        // 1. Parent-élève (dans les deux sens) — seulement une fois le lien
+        // accepté par l'élève, pas dès l'envoi de la demande par le parent.
         if (await _db.ParentStudentLinks.AnyAsync(l =>
-            (l.ParentId == userId1 && l.StudentId == userId2) ||
-            (l.ParentId == userId2 && l.StudentId == userId1)))
+            l.Status == "accepted" &&
+            ((l.ParentId == userId1 && l.StudentId == userId2) ||
+             (l.ParentId == userId2 && l.StudentId == userId1))))
             return true;
 
         // 2. Même classe via TeacherClassStudent (prof-élève)
@@ -167,9 +169,9 @@ public class MessagesController : ControllerBase
 
             // 1. Enfants (si parent) / parents (si élève)
             var childIds = await _db.ParentStudentLinks
-                .Where(l => l.ParentId == me).Select(l => l.StudentId).ToListAsync();
+                .Where(l => l.ParentId == me && l.Status == "accepted").Select(l => l.StudentId).ToListAsync();
             var parentIds = await _db.ParentStudentLinks
-                .Where(l => l.StudentId == me).Select(l => l.ParentId).ToListAsync();
+                .Where(l => l.StudentId == me && l.Status == "accepted").Select(l => l.ParentId).ToListAsync();
             contactIds.UnionWith(childIds);
             contactIds.UnionWith(parentIds);
 

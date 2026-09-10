@@ -100,7 +100,7 @@ public class ParentCreditsController : ControllerBase
             var consumed  = entries.Where(e => e.EntryType == "consumption").Sum(e => e.Amount);
             var refunded  = entries.Where(e => e.EntryType == "refund").Sum(e => e.Amount);
 
-            var childrenCount = await _db.ParentStudentLinks.CountAsync(l => l.ParentId == parentId);
+            var childrenCount = await _db.ParentStudentLinks.CountAsync(l => l.ParentId == parentId && l.Status == "accepted");
 
             var daysToRenewal = subscription.EndDate.HasValue
                 ? (int?)Math.Max(0, (subscription.EndDate.Value.Date - DateTime.UtcNow.Date).Days)
@@ -172,7 +172,7 @@ public class ParentCreditsController : ControllerBase
             var parentId = User.GetUserId();
 
             var linked = await _db.ParentStudentLinks
-                .AnyAsync(l => l.ParentId == parentId && l.StudentId == request.ChildId);
+                .AnyAsync(l => l.ParentId == parentId && l.StudentId == request.ChildId && l.Status == "accepted");
             if (!linked)
                 return StatusCode(403, new { success = false, error = "Cet enfant n'est pas lié à votre compte." });
 

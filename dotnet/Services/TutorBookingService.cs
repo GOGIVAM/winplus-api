@@ -151,7 +151,17 @@ public class TutorBookingService : ITutorBookingService
             booking.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
             _logger.LogError(ex, "Échec initiation NotchPay pour réservation répétiteur {BookingId}", booking.Id);
-            throw new InvalidOperationException("Impossible d'initier le paiement pour cette réservation.");
+
+            // NotchPayService distingue déjà un rejet 4xx (numéro invalide,
+            // opérateur non supporté…) d'une panne d'infra (5xx/réseau) via
+            // le type d'exception. Auparavant les deux remontaient le même
+            // message générique côté élève — impossible de savoir s'il fallait
+            // corriger son numéro ou juste réessayer plus tard.
+            if (ex is InvalidOperationException notchPayRejection)
+                throw new InvalidOperationException(
+                    $"Le paiement a été refusé par l'opérateur mobile money. Vérifie ton numéro et l'opérateur choisi. ({notchPayRejection.Message})");
+
+            throw new InvalidOperationException("Le service de paiement est momentanément indisponible. Réessaie dans quelques minutes.");
         }
     }
 
