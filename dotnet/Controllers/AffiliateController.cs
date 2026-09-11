@@ -26,6 +26,20 @@ public class AffiliateController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>
+    /// Fenêtre d'attribution courante (jours), publique : le frontend en a
+    /// besoin dès la capture d'un ?ref=CODE, avant toute connexion — voir
+    /// affiliateTracking.ts. Seule cette valeur est exposée, pas le reste des
+    /// réglages admin (plafond de commission, etc.).
+    /// </summary>
+    [HttpGet("attribution-window")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetAttributionWindow()
+    {
+        var settings = await _affiliate.GetSettingsAsync();
+        return Ok(new { attributionWindowDays = settings.AttributionWindowDays });
+    }
+
     [HttpGet("me")]
     [Authorize]
     public async Task<IActionResult> GetMyAccount()
