@@ -262,10 +262,16 @@ public class CertificateService : ICertificateService
                 CompletionDate = request.CompletionDate ?? enrollment.CompletedAt ?? DateTime.UtcNow,
                 Grade = request.Grade,
                 VerificationCode = verCode,
-                FileUrl = $"/certificates/{certNumber}.pdf"
             };
 
             _context.Certificates.Add(cert);
+            await _context.SaveChangesAsync();
+
+            // Le chemin élève (ligne ~91) génère et héberge un vrai PDF sur S3 ;
+            // l'émission admin se contentait jusqu'ici d'un chemin inventé
+            // (`/certificates/*.pdf`, servi par aucune route) — lien mort
+            // systématique. Même génération ici.
+            cert.FileUrl = await GenerateAndUploadPdfAsync(cert, enrollment.User!, enrollment.Subject!, certNumber);
             await _context.SaveChangesAsync();
 
             _logger.LogInformation("Admin issued certificate {CertNumber} for user {UserId}", certNumber, request.UserId);
@@ -287,7 +293,15 @@ public class CertificateService : ICertificateService
         return avg.HasValue ? (decimal?)Math.Round(avg.Value, 2) : null;
     }
 
-    private async Task<string> GenerateAndUploadPdfAsync(
+    /// <summary>
+    /// Null en cas d'échec plutôt qu'un chemin local inventé : aucune route ne
+    /// sert `/certificates/*.pdf`, ce faux chemin ne menait donc nulle part —
+    /// un lien mort est pire qu'une absence de lien (le frontend doit pouvoir
+    /// afficher "PDF en cours de génération" au lieu d'un 404 silencieux).
+    /// `requireS3: true` : un certificat doit vivre sur S3, jamais sur le
+    /// disque éphémère de l'instance API ni sous un autre domaine.
+    /// </summary>
+    private async Task<string?> GenerateAndUploadPdfAsync(
         Certificate cert, User user, Subject subject, string certNumber)
     {
         try
@@ -296,14 +310,14 @@ public class CertificateService : ICertificateService
             var key = $"certificates/{certNumber}.pdf";
 
             using var stream = new MemoryStream(pdfBytes);
-            var url = await _storage.PutAsync(stream, key, "application/pdf");
+            var url = await _storage.PutAsync(stream, key, "application/pdf", requireS3: true);
             _logger.LogInformation("Certificate PDF uploaded: {Url}", url);
             return url;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to upload certificate PDF for {CertNumber}", certNumber);
-            return $"/certificates/{certNumber}.pdf"; // fallback local path
+            return null;
         }
     }
 

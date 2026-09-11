@@ -1,6 +1,6 @@
 """
 Orchestration de l'ingestion côté api — PDF (natif ou scanné via Mistral
-OCR), images embarquées (vision GPT-4o-mini), et vidéos de formation
+OCR), images embarquées (vision Gemini 2.5 Flash), et vidéos de formation
 (transcription Groq Whisper) : c'est ce dernier point qui répond à la
 demande initiale d'ingérer le contenu des vidéos de cours.
 """
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from typing import List
 
 import fitz
@@ -56,7 +57,7 @@ def _process_pdf(request: IngestRequest) -> tuple[List[Chunk], SourceType, List[
                 caption = caption_image(image_bytes)
                 chunks.append(
                     Chunk(
-                        chunk_id=f"{request.doc_id}_img_{len(chunks)}",
+                        chunk_id=str(uuid.uuid4()),
                         text=caption,
                         metadata=_metadata(request, None, ChunkType.IMAGE_CAPTION),
                     )
@@ -105,7 +106,7 @@ def _process_video(request: IngestRequest) -> tuple[List[Chunk], SourceType, Lis
         if len(buffer_text.split()) >= 90:
             chunks.append(
                 Chunk(
-                    chunk_id=f"{request.doc_id}_seg_{len(chunks)}",
+                    chunk_id=str(uuid.uuid4()),
                     text=buffer_text.strip(),
                     metadata=_metadata(
                         request, None, ChunkType.VIDEO_SEGMENT,
@@ -118,7 +119,7 @@ def _process_video(request: IngestRequest) -> tuple[List[Chunk], SourceType, Lis
     if buffer_text.strip():
         chunks.append(
             Chunk(
-                chunk_id=f"{request.doc_id}_seg_{len(chunks)}",
+                chunk_id=str(uuid.uuid4()),
                 text=buffer_text.strip(),
                 metadata=_metadata(
                     request, None, ChunkType.VIDEO_SEGMENT,

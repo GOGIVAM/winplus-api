@@ -81,7 +81,7 @@ public class CourseCertificateService : ICourseCertificateService
             var pdfBytes = _pdf.GenerateCourseCertificate(cert, user, course, qrPng);
             var key = $"course-certificates/{code}.pdf";
             using var stream = new MemoryStream(pdfBytes);
-            cert.FileUrl = await _storage.PutAsync(stream, key, "application/pdf");
+            cert.FileUrl = await _storage.PutAsync(stream, key, "application/pdf", requireS3: true);
             await _db.SaveChangesAsync();
         }
         catch (Exception ex)

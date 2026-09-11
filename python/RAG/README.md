@@ -81,15 +81,18 @@ concurrent comme Ollama/vLLM/llama.cpp (qui, eux, sont explicitement exclus).
 
 | Rôle | Modèle | VRAM (Q4, indicatif) |
 |---|---|---|
-| Embedding | Qwen3-Embedding-8B | ~6-8 Go |
-| Reranker | Qwen3-Reranker-8B | ~6-8 Go |
+| Embedding | Qwen3-Embedding-8B | ~5-6 Go |
+| Reranker | Qwen3-Reranker-8B | ~5-6 Go |
 | LLM simple | Qwen3-14B | 10-12 Go |
 | LLM complexe | Qwen3-30B-A3B (MoE) | 16-20 Go |
 | Vérificateur critique | DeepSeek-R1-Distill-Qwen-14B | 10-12 Go |
-| OCR/Vision | GLM-OCR | ~2-3 Go |
+| OCR/Vision | GLM-OCR (0,9 Md paramètres) | ~1-2 Go |
 
-Tout ne tient pas simultanément sur un seul GPU 24 Go — voir DEPLOYMENT.md
-pour la stratégie de chargement/déchargement.
+Les quatre premiers modèles sont quantizés en 4-bit (`bitsandbytes`) dès que
+`RAG_SH_DEVICE=cuda` — embedding + reranker + LLM simple + OCR tiennent
+ensemble dans ~24 Go (≈21-26 Go selon le modèle exact). Le LLM complexe
+(Qwen3-30B-A3B) ne tient pas en plus sur le même GPU : voir DEPLOYMENT.md
+§2.2 pour la stratégie (chargement à la demande ou second GPU).
 
 ## Module `api` — stack vérifié en ligne
 

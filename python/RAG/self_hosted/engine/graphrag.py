@@ -13,10 +13,17 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 import networkx as nx
+
+# Espace de noms fixe pour dériver des UUID5 déterministes à partir des
+# identifiants logiques de communauté — un point Qdrant n'accepte qu'un
+# entier ou un UUID valide, mais l'upsert doit rester idempotent (même
+# communauté ré-indexée = même point écrasé, pas un doublon).
+_GRAPHRAG_NAMESPACE = uuid.UUID("5b3f6f1a-3b8e-4b7b-9c8e-2b7b7b3f6f1a")
 
 from RAG.self_hosted.engine.llm_utils import generate
 from RAG.self_hosted.models.loader import get_llm_simple
@@ -131,7 +138,7 @@ def build_and_index_community_summaries(collection: str, graph: nx.DiGraph) -> i
             continue
         chunks.append(
             Chunk(
-                chunk_id=f"graphrag_community_{collection}_{community_id}",
+                chunk_id=str(uuid.uuid5(_GRAPHRAG_NAMESPACE, f"{collection}_{community_id}")),
                 text=summary,
                 metadata=ChunkMetadata(
                     doc_id=f"graphrag_community_{community_id}",

@@ -20,7 +20,6 @@ import torch
 from transformers import (
     AutoModel,
     AutoModelForCausalLM,
-    AutoModelForImageTextToText,
     AutoProcessor,
     AutoTokenizer,
     BitsAndBytesConfig,
@@ -100,14 +99,22 @@ def get_verifier_llm():
 
 
 def get_embedding_model():
+    """Qwen3-Embedding-8B en 4-bit sur GPU (voir README.md — le budget VRAM
+    ≤24 Go annoncé pour l'ensemble embedding+reranker+LLM+OCR suppose que
+    les huit milliards de paramètres de ce modèle ET du reranker sont
+    quantizés, pas seulement le LLM de génération)."""
     with _lock:
         if "embedding" not in _registry:
             logger.info(f"[RAG/self_hosted] Chargement embedding {config.EMBEDDING_MODEL_ID}...")
             tokenizer = AutoTokenizer.from_pretrained(config.EMBEDDING_MODEL_ID)
-            model = AutoModel.from_pretrained(
-                config.EMBEDDING_MODEL_ID,
-                torch_dtype=torch.bfloat16 if config.IS_GPU else torch.float32,
-            ).to(config.DEVICE)
+            kwargs = {"torch_dtype": torch.bfloat16 if config.IS_GPU else torch.float32}
+            quant = _quant_config()
+            if quant is not None:
+                kwargs["quantization_config"] = quant
+                kwargs["device_map"] = "auto"
+            model = AutoModel.from_pretrained(config.EMBEDDING_MODEL_ID, **kwargs)
+            if quant is None:
+                model = model.to(config.DEVICE)
             model.eval()
             _registry["embedding"] = (tokenizer, model)
         return _registry["embedding"]
@@ -118,10 +125,14 @@ def get_reranker_model():
         if "reranker" not in _registry:
             logger.info(f"[RAG/self_hosted] Chargement reranker {config.RERANKER_MODEL_ID}...")
             tokenizer = AutoTokenizer.from_pretrained(config.RERANKER_MODEL_ID)
-            model = AutoModelForCausalLM.from_pretrained(
-                config.RERANKER_MODEL_ID,
-                torch_dtype=torch.bfloat16 if config.IS_GPU else torch.float32,
-            ).to(config.DEVICE)
+            kwargs = {"torch_dtype": torch.bfloat16 if config.IS_GPU else torch.float32}
+            quant = _quant_config()
+            if quant is not None:
+                kwargs["quantization_config"] = quant
+                kwargs["device_map"] = "auto"
+            model = AutoModelForCausalLM.from_pretrained(config.RERANKER_MODEL_ID, **kwargs)
+            if quant is None:
+                model = model.to(config.DEVICE)
             model.eval()
             _registry["reranker"] = (tokenizer, model)
         return _registry["reranker"]
@@ -130,12 +141,26 @@ def get_reranker_model():
 def get_ocr_vlm():
     """GLM-OCR — moteur unique pour scans, tampons et images embarquées
     (remplace PaddleOCR-VL + GLM-OCR du référentiel original : premier sur
-    OmniDocBench et nativement PyTorch/Transformers, cf. topo validé)."""
+    OmniDocBench et nativement PyTorch/Transformers, cf. topo validé).
+
+    Classe dédiée `GlmOcrForConditionalGeneration` (fiche modèle officielle)
+    plutôt que la classe Auto générique : GLM-OCR est une architecture
+    récente, pas garantie enregistrée dans AutoModelForImageTextToText selon
+    la version de `transformers` installée. Import différé + message clair
+    si la classe n'existe pas encore (transformers trop ancien)."""
     with _lock:
         if "ocr" not in _registry:
+            try:
+                from transformers import GlmOcrForConditionalGeneration
+            except ImportError as e:
+                raise ImportError(
+                    "GlmOcrForConditionalGeneration introuvable dans cette version de "
+                    "transformers — mettre à jour `transformers` (voir requirements-self-hosted.txt)."
+                ) from e
+
             logger.info(f"[RAG/self_hosted] Chargement OCR-VLM {config.OCR_VLM_MODEL_ID}...")
             processor = AutoProcessor.from_pretrained(config.OCR_VLM_MODEL_ID)
-            model = AutoModelForImageTextToText.from_pretrained(
+            model = GlmOcrForConditionalGeneration.from_pretrained(
                 config.OCR_VLM_MODEL_ID,
                 torch_dtype=torch.bfloat16 if config.IS_GPU else torch.float32,
             ).to(config.DEVICE)

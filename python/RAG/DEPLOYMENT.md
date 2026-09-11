@@ -93,6 +93,16 @@ Sur CPU, ne chargez pas Qwen3-30B-A3B ni le vérificateur DeepSeek-R1-Distill
 pour ce premier test : forcez le modèle simple uniquement en modifiant
 temporairement `get_llm_complex()` pour qu'il retourne `get_llm_simple()`.
 
+⚠️ GLM-OCR (`get_ocr_vlm()`) nécessite `transformers>=5.1.0` (version qui a
+introduit `GlmOcrForConditionalGeneration`). Vérifié : l'environnement de
+développement actuel tourne en 4.56.0 — le reste du module (Qwen3, Table
+Transformer, Whisper) fonctionne déjà avec cette version, seul le chargement
+de l'OCR échouera tant que `transformers` n'est pas mis à jour :
+
+```bash
+pip install --upgrade "transformers>=5.1.0"
+```
+
 ```bash
 export RAG_SH_DEVICE=cpu
 export RAG_BACKEND=self_hosted

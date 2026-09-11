@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from typing import List
 
 import fitz
@@ -76,7 +77,7 @@ def _process_video(request: IngestRequest) -> tuple[List[Chunk], List[str]]:
         if len(buffer_text.split()) >= 90:
             chunks.append(
                 Chunk(
-                    chunk_id=f"{request.doc_id}_seg_{len(chunks)}",
+                    chunk_id=str(uuid.uuid4()),
                     text=buffer_text.strip(),
                     metadata=_metadata(
                         request, None, ChunkType.VIDEO_SEGMENT,
@@ -89,7 +90,7 @@ def _process_video(request: IngestRequest) -> tuple[List[Chunk], List[str]]:
     if buffer_text.strip():
         chunks.append(
             Chunk(
-                chunk_id=f"{request.doc_id}_seg_{len(chunks)}",
+                chunk_id=str(uuid.uuid4()),
                 text=buffer_text.strip(),
                 metadata=_metadata(
                     request, None, ChunkType.VIDEO_SEGMENT,
@@ -134,7 +135,7 @@ def _process_pdf(request: IngestRequest) -> tuple[List[Chunk], SourceType, List[
                     caption = caption_embedded_image(image_bytes)
                     chunks.append(
                         Chunk(
-                            chunk_id=f"{request.doc_id}_p{page.page_number}_img_{len(chunks)}",
+                            chunk_id=str(uuid.uuid4()),
                             text=caption,
                             metadata=_metadata(request, page.page_number, ChunkType.IMAGE_CAPTION),
                         )
@@ -151,7 +152,7 @@ def _process_pdf(request: IngestRequest) -> tuple[List[Chunk], SourceType, List[
                     table = table_extractor.extract_table_structure(image_bytes, table_box)
                     chunks.append(
                         Chunk(
-                            chunk_id=f"{request.doc_id}_p{page_number}_table_{len(chunks)}",
+                            chunk_id=str(uuid.uuid4()),
                             text=table.to_text(),
                             metadata=_metadata(
                                 request, page_number, ChunkType.CELL, extra={"table_json": table.to_json()}

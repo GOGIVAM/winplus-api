@@ -791,16 +791,27 @@ public class TeacherCourseController : ControllerBase
     [HttpPost("generate-syllabus")]
     public async Task<IActionResult> GenerateSyllabus([FromBody] object body, CancellationToken ct)
     {
-        var client = _httpClientFactory.CreateClient("FastApiClient");
-        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/generate-syllabus")
+        try
         {
-            Content = System.Net.Http.Json.JsonContent.Create(body)
-        };
-        var auth = HttpContext.Request.Headers["Authorization"].ToString();
-        if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
-        var res = await client.SendAsync(req, ct);
-        Response.StatusCode = (int)res.StatusCode;
-        return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+            var client = _httpClientFactory.CreateClient("FastApiClient");
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/generate-syllabus")
+            {
+                Content = System.Net.Http.Json.JsonContent.Create(body)
+            };
+            var auth = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+            var res = await client.SendAsync(req, ct);
+            Response.StatusCode = (int)res.StatusCode;
+            return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            // Sans ce filtre, une panne/timeout du service IA remontait comme
+            // une 500 générique ("Une erreur serveur interne s'est produite")
+            // indiscernable d'un vrai bug applicatif côté client.
+            _logger.LogError(ex, "Service IA injoignable pour generate-syllabus");
+            return StatusCode(503, new { success = false, error = "Le service de génération WinAI est temporairement indisponible. Réessaie dans quelques instants." });
+        }
     }
 
     /// <summary>

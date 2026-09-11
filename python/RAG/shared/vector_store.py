@@ -90,14 +90,18 @@ def search_dense(
     top_k: int = 10,
     filters: Optional[Dict[str, Any]] = None,
 ) -> List[qm.ScoredPoint]:
+    # `query_points` plutôt que `search` (déprécié dans qdrant-client — les
+    # méthodes search/search_batch/recommend* seront retirées côté serveur
+    # à partir de Qdrant v1.18).
     client = get_client()
-    return client.search(
+    result = client.query_points(
         collection_name=collection,
-        query_vector=vector,
+        query=vector,
         limit=top_k,
         query_filter=build_filter(filters or {}),
         with_payload=True,
     )
+    return result.points
 
 
 def scroll_by_filter(collection: str, filters: Dict[str, Any], limit: int = 20) -> List[qm.Record]:

@@ -5,7 +5,12 @@
 
 # ── Deep learning (PyTorch uniquement) ──────────────────────────────────────
 torch>=2.3.0
-transformers>=4.46.0
+# >=5.1.0 requis : version qui a introduit le support GLM-OCR
+# (GlmOcrForConditionalGeneration) — voir RAG/README.md. L'environnement de
+# développement actuel a transformers 4.56.0 : à mettre à jour avant de
+# charger l'OCR (le reste du module — Qwen3, TATR, Whisper — fonctionne déjà
+# avec 4.56.0).
+transformers>=5.1.0
 accelerate>=0.34.0
 bitsandbytes>=0.43.0
 sentencepiece>=0.2.0
