@@ -26,7 +26,7 @@ def embed_texts(texts: List[str], input_type: str = "search_document") -> List[L
         input_type=input_type,
         embedding_types=["float"],
     )
-    return response.embeddings.float_
+    return response.embeddings.float
 
 
 def embed_query(query: str) -> List[float]:

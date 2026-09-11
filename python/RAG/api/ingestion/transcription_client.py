@@ -64,7 +64,17 @@ def transcribe_video(video_path: str) -> List[TranscriptSegment]:
 
     segments = getattr(response, "segments", None) or []
     return [
-        TranscriptSegment(text=seg["text"].strip(), start=seg["start"], end=seg["end"])
+        TranscriptSegment(text=text.strip(), start=_field(seg, "start"), end=_field(seg, "end"))
         for seg in segments
-        if seg.get("text", "").strip()
+        for text in [_field(seg, "text") or ""]
+        if text.strip()
     ]
+
+
+def _field(obj, name: str):
+    """Le SDK Groq peut renvoyer les segments verbose_json comme dicts bruts
+    ou comme attributs d'un modèle Pydantic selon la version — non vérifiable
+    sans appel réel à l'API, donc on gère les deux plutôt que de parier."""
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)

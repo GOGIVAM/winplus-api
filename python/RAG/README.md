@@ -24,7 +24,7 @@ validés indépendamment.
   fonctionnement même sans connexion Internet. Contrepartie : nécessite une
   instance GPU pour tourner à une latence raisonnable (voir DEPLOYMENT.md),
   et plus de code à maintenir soi-même.
-- **`api`** : opérationnel immédiatement, aucune infrastructure GPU à gérer,étudiant 
+- **`api`** : opérationnel immédiatement, aucune infrastructure GPU à gérer,
   coût proportionnel à l'usage réel. Contrepartie : dépendance à des
   fournisseurs tiers et un coût par requête.
 
@@ -139,6 +139,29 @@ que Postgres/Adminer) — `docker compose up -d qdrant` suffit pour avoir la
 base vectorielle disponible en local sans étape manuelle. Les variables
 `RAG_*`, `QDRANT_*` et les clés des fournisseurs `api` sont documentées dans
 `.env.example`.
+
+## Vérifications faites sur les intégrations tierces
+
+Chaque appel à une API/librairie externe a été comparé à sa documentation
+officielle actuelle (pas seulement écrit de mémoire), ce qui a corrigé
+plusieurs erreurs réelles avant tout premier test en conditions réelles :
+
+| Intégration | Erreur trouvée | Correction |
+|---|---|---|
+| Qdrant (les deux moteurs) | `chunk_id` des images/tableaux/segments vidéo n'étaient pas des identifiants Qdrant valides (ni entier, ni UUID) — l'upsert aurait échoué | UUID4 partout, UUID5 déterministe pour les résumés GraphRAG (upsert idempotent) |
+| Qdrant (les deux moteurs) | `client.search()` déprécié, retrait prévu côté serveur à partir de Qdrant v1.18 | Remplacé par `client.query_points(...).points` |
+| Qwen3-Reranker (self_hosted) | Gabarit de prompt approximatif (via `apply_chat_template` générique) au lieu du gabarit exact de la fiche modèle | Préfixe système + suffixe `<think>\n\n</think>\n\n` copiés de la doc officielle |
+| GLM-OCR (self_hosted) | Classe `AutoModelForImageTextToText` générique (non garantie enregistrée) + version `transformers` minimale sous-évaluée (4.46.0) | Classe dédiée `GlmOcrForConditionalGeneration` + `transformers>=5.1.0` (version qui l'introduit) |
+| Embedding/Reranker (self_hosted) | Jamais quantizés malgré des chiffres VRAM "Q4" annoncés dans ce README | `bitsandbytes` appliqué aux deux, chiffres VRAM recalculés |
+| Mistral OCR (api) | Mauvais chemin d'import (`from mistralai import Mistral`) | `from mistralai.client import Mistral`, version plancher relevée à 2.0.0 |
+| Cohere embed (api) | Mauvais nom d'attribut sur la réponse (`response.embeddings.float_`) | `response.embeddings.float` (pas un mot réservé Python, pas besoin de suffixe) |
+| Groq Whisper (api) | `timestamp_granularities` non demandé — les segments horodatés ne sont pas garantis sans ce paramètre | Ajouté `timestamp_granularities=["segment"]` + accès aux champs rendu robuste (dict ou objet selon la version du SDK, non vérifiable sans appel réel) |
+| Gemini vision (api) | GPT-4o-mini initialement retenu | Remplacé par Gemini 2.5 Flash, ~3-4× moins cher par image (vérifié en ligne) |
+
+Ce qui reste **non vérifiable sans identifiants réels** (donc à confirmer au
+premier test avec de vraies clés API / un vrai GPU, pas un défaut de
+vigilance) : le comportement exact de chaque service au runtime, les quotas,
+et les éventuels changements d'API publiés après la dernière vérification.
 
 ## Contrôle d'accès — volontairement hors périmètre
 

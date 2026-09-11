@@ -6,6 +6,22 @@ Les deux modules sont **autonomes et non branchés** à `app.py`. Ce guide
 couvre : (1) les faire tourner isolément pour validation, (2) leur
 infrastructure cible, (3) le branchement final quand vous serez prêts.
 
+### 0.1 Ce qui a été vérifié, et ce qui ne peut l'être qu'en conditions réelles
+
+Chaque appel aux API tierces (Mistral, Cohere, Groq, Gemini) et aux modèles
+HuggingFace (GLM-OCR, Qwen3-Reranker) a été comparé à sa documentation
+officielle actuelle — le détail des erreurs trouvées et corrigées est dans
+[README.md, §Vérifications faites sur les intégrations tierces](./README.md#vérifications-faites-sur-les-intégrations-tierces).
+Ce qu'aucune vérification documentaire ne remplace : un premier appel réel
+avec de vraies clés API et, côté `self_hosted`, un vrai GPU. Avant de
+considérer un des deux modules "prêt", exécutez au moins une fois le test
+isolé (§1.3 / §2.4) avec :
+- un vrai PDF natif, un PDF scanné, et si possible une courte vidéo ;
+- une clé API valide pour chaque fournisseur utilisé ;
+- une lecture des `warnings` retournés par `/ingest` (le pipeline avale les
+  erreurs par étape plutôt que d'interrompre tout l'import — un fournisseur
+  mal configuré se voit dans les warnings, pas dans une exception).
+
 ---
 
 ## 1. Module `api` — mise en route (le plus rapide)
@@ -27,7 +43,7 @@ RAG_BACKEND=api
 COHERE_API_KEY=...
 MISTRAL_API_KEY=...
 GROQ_API_KEY=...
-OPENAI_API_KEY=...
+GEMINI_API_KEY=...
 
 # Qdrant auto-hébergé (voir §3)
 QDRANT_URL=http://<ip-instance-qdrant>:6333
