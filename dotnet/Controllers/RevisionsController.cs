@@ -342,6 +342,10 @@ public class RevisionsController : ControllerBase
             var revision = await _revisionService.GenerateAIRevisionAsync(userId, request?.Subject, request?.Topic, request?.Difficulty);
             return Ok(revision);
         }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
         catch (InvalidOperationException ex)
         {
             return StatusCode(503, new { message = ex.Message });

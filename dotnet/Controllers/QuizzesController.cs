@@ -123,6 +123,7 @@ public class QuizzesController : ControllerBase
     /// </summary>
     [HttpPost("me/generate")]
     [ProducesResponseType(typeof(QuizDto), 200)]
+    [ProducesResponseType(400)]
     [ProducesResponseType(503)]
     public async Task<ActionResult<QuizDto>> GenerateQuizForMe([FromBody] GenerateQuizRequestDto? request)
     {
@@ -135,8 +136,15 @@ public class QuizzesController : ControllerBase
             var quiz = await _quizService.GenerateAIQuizAsync(userId, request?.Subject, request?.Topic, request?.Difficulty);
             return Ok(quiz);
         }
+        catch (ArgumentException ex)
+        {
+            // Pas assez de données pour choisir une matière (nouvel utilisateur) :
+            // cas normal côté client, pas une panne  400, pas 503.
+            return BadRequest(new { message = ex.Message });
+        }
         catch (InvalidOperationException ex)
         {
+            // Échec réel de la génération IA (DeepSeek indisponible/vide) : vraie panne.
             return StatusCode(503, new { message = ex.Message });
         }
     }

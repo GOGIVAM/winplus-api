@@ -530,8 +530,11 @@ public class RevisionService : IRevisionService
                 .Select(r => new { r.SchoolYear, r.AverageGrade })
                 .FirstOrDefaultAsync();
 
+            // Distinct de l'échec de génération IA plus bas (InvalidOperationException,
+            // vraie panne → 503) : ici rien n'a échoué, il manque juste de quoi choisir
+            // une matière  400, pas 503 (voir QuizService.GenerateAIQuizAsync).
             if (string.IsNullOrWhiteSpace(level) && goals.Count == 0 && latestGrade == null)
-                throw new InvalidOperationException("Passe un quiz, télécharge une épreuve ou définis un objectif pour qu'on sache sur quelle matière te faire une fiche personnalisée.");
+                throw new ArgumentException("Passe un quiz, télécharge une épreuve ou définis un objectif pour qu'on sache sur quelle matière te faire une fiche personnalisée.");
 
             var hints = new List<string>(goals);
             if (latestGrade != null)

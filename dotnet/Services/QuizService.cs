@@ -625,8 +625,13 @@ public class QuizService : IQuizService
                 .Select(r => new { r.SchoolYear, r.AverageGrade })
                 .FirstOrDefaultAsync();
 
+            // Distinct de l'échec de génération IA plus bas (InvalidOperationException,
+            // vraie panne de service → 503) : ici, rien n'a échoué, il manque juste de
+            // quoi choisir une matière. Type d'exception différent pour que le
+            // contrôleur puisse renvoyer 400 au lieu de 503 (qui déclenchait à tort le
+            // log/monitoring "panne serveur" pour un cas normal de nouvel utilisateur).
             if (goals.Count == 0 && latestGrade == null)
-                throw new InvalidOperationException("Passe un quiz, télécharge une épreuve ou définis un objectif pour qu'on sache sur quelle matière t'entraîner.");
+                throw new ArgumentException("Passe un quiz, télécharge une épreuve ou définis un objectif pour qu'on sache sur quelle matière t'entraîner.");
 
             var hints = new List<string>(goals);
             if (latestGrade != null)
