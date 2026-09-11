@@ -6,6 +6,7 @@ using Backend.Data;
 using Backend.Extensions;
 using Backend.Models.Entities;
 using Backend.Services;
+using Backend.Utils;
 
 namespace Backend.Controllers;
 
@@ -368,7 +369,7 @@ public class MessagesController : ControllerBase
             {
                 FromUserId = me,
                 ToUserId = req.ParticipantId,
-                Content = req.FirstMessage,
+                Content = ContentSanitizer.CensorPhoneNumbers(req.FirstMessage),
             };
             _db.DirectMessages.Add(msg);
             await _db.SaveChangesAsync();
@@ -514,7 +515,7 @@ public class MessagesController : ControllerBase
             {
                 FromUserId = me,
                 ToUserId = participantId,
-                Content = req.Content,
+                Content = ContentSanitizer.CensorPhoneNumbers(req.Content),
                 Type = type,
                 FileUrl = req.FileUrl,
                 FileName = req.FileName,

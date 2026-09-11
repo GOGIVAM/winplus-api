@@ -400,6 +400,11 @@ public class TutorBookingService : ITutorBookingService
         }
     }
 
+    /// <summary>Durées de séance proposées, en minutes — "une heure ou deux" (US-ELV-01).</summary>
+    private static readonly int[] BookableDurationsMinutes = { 60, 120 };
+    /// <summary>Pas entre deux points de départ réservables dans une fenêtre de disponibilité.</summary>
+    private static readonly TimeSpan OccurrenceStep = TimeSpan.FromMinutes(30);
+
     public async Task<List<TutorAvailabilityOccurrenceDto>> GetAvailabilityCalendarAsync(int tutorUserId, DateOnly weekStart)
     {
         weekStart = GetWeekStart(weekStart);
@@ -420,19 +425,37 @@ public class TutorBookingService : ITutorBookingService
         {
             var date = weekStart.AddDays(i);
             var dayOfWeek = (int)date.DayOfWeek;
+            var dayBookings = weekBookings.Where(b => b.SessionDate == date).ToList();
+
             foreach (var slot in tutorProfile.AvailabilitySlots.Where(s => s.IsActive && s.DayOfWeek == dayOfWeek))
             {
-                var alreadyBooked = weekBookings.Any(b => b.SessionDate == date && b.StartTime < slot.EndTime && b.EndTime > slot.StartTime);
-                var sessionStartUtc = date.ToDateTime(TimeOnly.FromTimeSpan(slot.StartTime), DateTimeKind.Utc);
-                var respectsNotice = sessionStartUtc >= DateTime.UtcNow.AddHours(tutorProfile.NoticeHours);
-
-                result.Add(new TutorAvailabilityOccurrenceDto
+                // Plusieurs points de départ par fenêtre (pas de 30 min) : une
+                // réservation de 13h-14h dans une fenêtre 12h-16h ne doit
+                // plus rendre 14h-16h invisible pour les autres élèves.
+                for (var start = slot.StartTime; start < slot.EndTime; start += OccurrenceStep)
                 {
-                    Date = date,
-                    StartTime = slot.StartTime.ToString(@"hh\:mm"),
-                    EndTime = slot.EndTime.ToString(@"hh\:mm"),
-                    IsBookable = !weekClosed && !alreadyBooked && respectsNotice && !tutorProfile.IsOnVacation,
-                });
+                    var availableDurations = BookableDurationsMinutes
+                        .Where(d =>
+                        {
+                            var end = start + TimeSpan.FromMinutes(d);
+                            if (end > slot.EndTime) return false;
+                            return !dayBookings.Any(b => b.StartTime < end && b.EndTime > start);
+                        })
+                        .ToList();
+
+                    if (availableDurations.Count == 0) continue;
+
+                    var sessionStartUtc = date.ToDateTime(TimeOnly.FromTimeSpan(start), DateTimeKind.Utc);
+                    var respectsNotice = sessionStartUtc >= DateTime.UtcNow.AddHours(tutorProfile.NoticeHours);
+
+                    result.Add(new TutorAvailabilityOccurrenceDto
+                    {
+                        Date = date,
+                        StartTime = start.ToString(@"hh\:mm"),
+                        AvailableDurationsMinutes = availableDurations,
+                        IsBookable = !weekClosed && respectsNotice && !tutorProfile.IsOnVacation,
+                    });
+                }
             }
         }
 

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Models.DTOs;
 using Backend.Models.Entities;
+using Backend.Utils;
 
 namespace Backend.Services;
 
@@ -132,7 +133,7 @@ public class ForumService : IForumService
         {
             UserId = userId,
             Title = request.Title,
-            Content = request.Content,
+            Content = ContentSanitizer.CensorPhoneNumbers(request.Content),
             Category = request.Category,
             Tag = request.Tag,
             CreatedAt = DateTime.UtcNow,
@@ -212,7 +213,7 @@ public class ForumService : IForumService
         {
             ThreadId = threadId,
             UserId = userId,
-            Content = request.Content,
+            Content = ContentSanitizer.CensorPhoneNumbers(request.Content),
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };

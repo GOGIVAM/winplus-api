@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Extensions;
 using Backend.Models.Entities;
+using Backend.Utils;
 
 namespace Backend.Controllers;
 
@@ -164,7 +165,7 @@ public class GroupsController : ControllerBase
         {
             ChatGroupId = id,
             SenderId = me,
-            Content = req.Content,
+            Content = ContentSanitizer.CensorPhoneNumbers(req.Content),
             Type = string.IsNullOrWhiteSpace(req.Type) ? "text" : req.Type,
             FileUrl = req.FileUrl,
             FileName = req.FileName,

@@ -44,18 +44,27 @@ public class InstitutionNetworkController : ControllerBase
 
     // ───────────────────────── Recherche ─────────────────────────
 
-    /// <summary>Un prof cherche une institution à rejoindre.</summary>
+    /// <summary>
+    /// Institutions disponibles pour affiliation. Sans texte de recherche,
+    /// renvoie la liste (l'utilisateur doit pouvoir parcourir les institutions
+    /// disponibles pour envoyer une demande, pas seulement taper un nom exact
+    /// qu'il ne connaît pas encore).
+    /// </summary>
     [HttpGet("search-institutions")]
-    public async Task<IActionResult> SearchInstitutions([FromQuery] string q)
+    public async Task<IActionResult> SearchInstitutions([FromQuery] string? q)
     {
-        if (string.IsNullOrWhiteSpace(q) || q.Length < 2)
-            return BadRequest(new { error = "Requête trop courte" });
+        var query = _db.Institutions.AsNoTracking().Where(i => !i.IsDeleted && i.IsActive);
 
-        var lq = q.ToLower();
-        var results = await _db.Institutions.AsNoTracking()
-            .Where(i => !i.IsDeleted && i.IsActive && i.Name.ToLower().Contains(lq))
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var lq = q.ToLower();
+            query = query.Where(i => i.Name.ToLower().Contains(lq));
+        }
+
+        var results = await query
+            .OrderBy(i => i.Name)
             .Select(i => new { i.Id, i.Name, i.City, i.Country, i.Type })
-            .Take(10)
+            .Take(30)
             .ToListAsync();
 
         return Ok(results);

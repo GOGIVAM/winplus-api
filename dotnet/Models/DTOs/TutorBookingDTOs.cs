@@ -96,12 +96,20 @@ public class CancelTutorBookingRequestDto
     public string? Reason { get; set; }
 }
 
-/// <summary>Occurrence datée d'un créneau récurrent, pour la vue calendrier côté élève (Module 6).</summary>
+/// <summary>
+/// Point de départ réservable dans une fenêtre de disponibilité récurrente,
+/// pour la vue calendrier côté élève (Module 6). Une fenêtre de 4h génère
+/// plusieurs occurrences (un pas de 30 min) plutôt qu'un seul bloc couvrant
+/// toute la fenêtre : plusieurs élèves peuvent réserver des séances de durée
+/// différente (1h/2h) à des horaires différents dans la même fenêtre du
+/// répétiteur, au lieu qu'une seule réservation bloque toute la plage.
+/// </summary>
 public class TutorAvailabilityOccurrenceDto
 {
     public DateOnly Date { get; set; }
     public string StartTime { get; set; } = null!;
-    public string EndTime { get; set; } = null!;
-    /// <summary>false si déjà réservé, si le préavis minimum n'est pas respecté, ou si le plafond hebdo du répétiteur est atteint pour la semaine de cette date.</summary>
+    /// <summary>Durées (en minutes) réservables depuis ce point de départ sans dépasser la fenêtre ni chevaucher une réservation existante. Vide = occurrence non affichée par GetAvailabilityCalendarAsync (jamais vide dans la réponse).</summary>
+    public List<int> AvailableDurationsMinutes { get; set; } = new();
+    /// <summary>false si le préavis minimum n'est pas respecté, ou si le plafond hebdo du répétiteur est atteint — l'occurrence reste listée mais non cliquable.</summary>
     public bool IsBookable { get; set; }
 }

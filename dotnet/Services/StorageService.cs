@@ -36,8 +36,14 @@ public interface IStorageService
     /// <summary>Client S3 configuré (pour le multipart / les URL signées).</summary>
     IAmazonS3 CreateS3Client();
 
-    /// <summary>Envoie le contenu et renvoie l'URL publique.</summary>
-    Task<string> PutAsync(Stream content, string key, string? contentType, CancellationToken ct = default);
+    /// <summary>
+    /// Envoie le contenu et renvoie l'URL publique. `requireS3` : refuse le
+    /// repli local même si Storage:FallbackToLocal est actif — pour les
+    /// documents qui doivent obligatoirement vivre sur S3 (certificats :
+    /// domaine attendu par l'élève, durabilité au-delà du disque éphémère
+    /// de l'instance API).
+    /// </summary>
+    Task<string> PutAsync(Stream content, string key, string? contentType, CancellationToken ct = default, bool requireS3 = false);
 
     Task<bool> DeleteAsync(string urlOrKey, CancellationToken ct = default);
 
@@ -173,9 +179,10 @@ public class StorageService : IStorageService
 
     // ── Envoi ──────────────────────────────────────────────────────────────
 
-    public async Task<string> PutAsync(Stream content, string key, string? contentType, CancellationToken ct = default)
+    public async Task<string> PutAsync(Stream content, string key, string? contentType, CancellationToken ct = default, bool requireS3 = false)
     {
         key = key.TrimStart('/');
+        var fallbackToLocal = FallbackToLocal && !requireS3;
 
         // Bufferisé : la retentative sans ACL doit pouvoir relire le flux, et un
         // IFormFile.OpenReadStream() n'est pas toujours rejouable.
@@ -210,17 +217,18 @@ public class StorageService : IStorageService
             {
                 _s3Ready = false;
                 _logger.LogError(ex, "Stockage : bucket {Bucket} absent au moment de l'envoi.", Bucket);
-                if (!FallbackToLocal) throw;
+                if (!fallbackToLocal) throw;
             }
-            catch (Exception ex) when (FallbackToLocal)
+            catch (Exception ex) when (fallbackToLocal)
             {
                 _logger.LogError(ex, "Stockage : envoi S3 échoué pour {Key}, repli local.", key);
             }
         }
-        else if (!FallbackToLocal)
+        else if (!fallbackToLocal)
         {
             throw new InvalidOperationException(
-                $"Stockage indisponible : le bucket « {Bucket} » n'existe pas dans {Region}.");
+                $"Stockage indisponible : le bucket « {Bucket} » n'existe pas dans {Region}" +
+                (requireS3 ? " (ce document doit obligatoirement être stocké sur S3)." : "."));
         }
 
         return await PutLocalAsync(buffer, key, ct);
