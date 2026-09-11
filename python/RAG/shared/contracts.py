@@ -81,6 +81,30 @@ class IngestResult(BaseModel):
     warnings: List[str] = Field(default_factory=list)
 
 
+class IngestJobStatus(str, Enum):
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    DONE = "done"
+    FAILED = "failed"
+
+
+class IngestQueuedResponse(BaseModel):
+    """Réponse immédiate de POST /rag/ingest — le traitement réel (OCR,
+    transcription, embedding, indexation) tourne en tâche d'arrière-plan
+    après l'envoi de cette réponse, pour ne pas faire attendre l'appelant
+    (upload d'une vidéo d'une heure, PDF scanné volumineux, etc.)."""
+
+    doc_id: str
+    status: IngestJobStatus = IngestJobStatus.QUEUED
+
+
+class IngestJobRecord(BaseModel):
+    doc_id: str
+    status: IngestJobStatus
+    result: Optional[IngestResult] = None
+    error: Optional[str] = None
+
+
 class Citation(BaseModel):
     doc_id: str
     title: str

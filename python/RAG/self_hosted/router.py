@@ -1,7 +1,9 @@
 """
-Points d'entrée FastAPI du moteur self_hosted — NON montés dans app.py pour
-l'instant (module autonome, testable indépendamment). Le jour du branchement,
-`RAG/router.py` les expose déjà derrière l'endpoint unique /rag/query.
+Points d'entrée FastAPI du moteur self_hosted — router de test direct,
+synchrone (pratique pour observer l'IngestResult complet immédiatement sur
+un petit fichier). Le point d'entrée réel, monté dans app.py et utilisé par
+l'appelant, est RAG/router.py — lui traite l'ingestion en arrière-plan pour
+ne jamais bloquer sur un gros fichier (voir RAG/router.py, RAG/README.md).
 """
 
 from __future__ import annotations

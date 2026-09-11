@@ -5,18 +5,28 @@ toujours sur /rag/query et /rag/ingest, quel que soit le moteur actif. Le
 choix se fait via la variable d'environnement RAG_BACKEND ("self_hosted" |
 "api"), sans changement de code côté appelant.
 
-NON monté dans app.py pour l'instant (voir RAG/README.md, §Statut).
+/rag/ingest répond immédiatement (statut "queued") et lance le traitement
+réel (OCR, transcription, embedding, indexation) en tâche d'arrière-plan —
+un upload de vidéo ou de PDF volumineux ne doit jamais faire attendre
+l'appelant. Utiliser GET /rag/ingest/{doc_id}/status pour suivre l'avancement.
 """
 
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from auth import UserTokenData, verify_token
 from RAG.shared.config import RAG_BACKEND
-from RAG.shared.contracts import IngestRequest, IngestResult, RAGAnswer, RAGQueryRequest
+from RAG.shared.contracts import (
+    IngestJobStatus,
+    IngestQueuedResponse,
+    IngestRequest,
+    RAGAnswer,
+    RAGQueryRequest,
+)
+from RAG.shared.ingest_jobs import IngestJobRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -38,16 +48,44 @@ def _active_backend():
     return process_document, index_chunks, run_query
 
 
-@rag_router.post("/ingest", response_model=IngestResult)
-async def ingest(request: IngestRequest, current_user: UserTokenData = Depends(verify_token)):
+def _run_ingestion_job(request: IngestRequest) -> None:
+    """Exécutée en tâche d'arrière-plan par BackgroundTasks — tout ce qui
+    peut prendre du temps (OCR, transcription vidéo, appels d'embedding)
+    tourne ici, après que la réponse HTTP a déjà été envoyée à l'appelant."""
     process_document, index_chunks, _ = _active_backend()
+    IngestJobRegistry.set_processing(request.doc_id)
     try:
         chunks, source_type, warnings = process_document(request)
         index_chunks(chunks)
-        return IngestResult(doc_id=request.doc_id, chunks_indexed=len(chunks), source_type=source_type, warnings=warnings)
+        from RAG.shared.contracts import IngestResult
+
+        IngestJobRegistry.set_done(
+            request.doc_id,
+            IngestResult(doc_id=request.doc_id, chunks_indexed=len(chunks), source_type=source_type, warnings=warnings),
+        )
+        logger.info(f"[RAG] Ingestion terminée doc_id={request.doc_id} chunks={len(chunks)} backend={RAG_BACKEND}")
     except Exception as e:
-        logger.exception(f"[RAG] Échec d'ingestion (backend={RAG_BACKEND})")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"[RAG] Échec d'ingestion en arrière-plan doc_id={request.doc_id} (backend={RAG_BACKEND})")
+        IngestJobRegistry.set_failed(request.doc_id, str(e))
+
+
+@rag_router.post("/ingest", response_model=IngestQueuedResponse, status_code=202)
+async def ingest(
+    request: IngestRequest,
+    background_tasks: BackgroundTasks,
+    current_user: UserTokenData = Depends(verify_token),
+):
+    IngestJobRegistry.set_queued(request.doc_id)
+    background_tasks.add_task(_run_ingestion_job, request)
+    return IngestQueuedResponse(doc_id=request.doc_id, status=IngestJobStatus.QUEUED)
+
+
+@rag_router.get("/ingest/{doc_id}/status")
+async def ingest_status(doc_id: str, current_user: UserTokenData = Depends(verify_token)):
+    job = IngestJobRegistry.get(doc_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Aucune ingestion connue pour ce doc_id")
+    return job
 
 
 @rag_router.post("/query", response_model=RAGAnswer)
