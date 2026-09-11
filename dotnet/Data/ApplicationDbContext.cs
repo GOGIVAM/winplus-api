@@ -1472,5 +1472,8 @@ modelBuilder.Entity<Exam>(entity =>
 
         // ── Entités des sprints S1→S7 (voir ApplicationDbContext.Sprints.cs) ──
         OnModelCreatingSprints(modelBuilder);
+
+        // ── Programme d'affiliation (voir ApplicationDbContext.Affiliate.cs) ──
+        OnModelCreatingAffiliate(modelBuilder);
     }
 }

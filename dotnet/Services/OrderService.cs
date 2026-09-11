@@ -7,8 +7,8 @@ public record GuestOrderItem(int SubjectId, decimal Price);
 
 public interface IOrderService
 {
-    Task<Order> CreateOrderAsync(int userId, string paymentMethod);
-    Task<Order> CreateGuestOrderAsync(string? guestEmail, string? guestName, string paymentMethod, List<GuestOrderItem> items);
+    Task<Order> CreateOrderAsync(int userId, string paymentMethod, string? referralCode = null);
+    Task<Order> CreateGuestOrderAsync(string? guestEmail, string? guestName, string paymentMethod, List<GuestOrderItem> items, string? referralCode = null);
     Task<IEnumerable<Order>> GetUserOrdersAsync(int userId);
     Task<IEnumerable<Order>> GetUserOrdersAsync(int userId, int page, int limit);
     Task<Order?> GetOrderByIdAsync(int orderId);
@@ -36,7 +36,7 @@ public class OrderService : IOrderService
         _logger = logger;
     }
 
-    public async Task<Order> CreateOrderAsync(int userId, string paymentMethod)
+    public async Task<Order> CreateOrderAsync(int userId, string paymentMethod, string? referralCode = null)
     {
         try
         {
@@ -60,6 +60,7 @@ public class OrderService : IOrderService
                 Status = "pending",
                 PaymentMethod = paymentMethod,
                 OrderDate = DateTime.UtcNow,
+                ReferralCode = string.IsNullOrWhiteSpace(referralCode) ? null : referralCode.Trim().ToUpperInvariant(),
                 Items = new List<OrderItem>()
             };
 
@@ -91,7 +92,7 @@ public class OrderService : IOrderService
         }
     }
 
-    public async Task<Order> CreateGuestOrderAsync(string? guestEmail, string? guestName, string paymentMethod, List<GuestOrderItem> items)
+    public async Task<Order> CreateGuestOrderAsync(string? guestEmail, string? guestName, string paymentMethod, List<GuestOrderItem> items, string? referralCode = null)
     {
         try
         {
@@ -113,6 +114,7 @@ public class OrderService : IOrderService
                 Status       = "pending",
                 PaymentMethod = paymentMethod,
                 OrderDate    = DateTime.UtcNow,
+                ReferralCode = string.IsNullOrWhiteSpace(referralCode) ? null : referralCode.Trim().ToUpperInvariant(),
                 Items        = new List<OrderItem>()
             };
 

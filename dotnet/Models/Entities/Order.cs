@@ -46,11 +46,20 @@ public class Order
     public decimal DiscountAmount { get; set; } = 0;
 
     public bool IsDeleted { get; set; } = false;
-    
+
+    /// <summary>
+    /// Code d'affiliation capturé côté frontend (?ref=CODE, localStorage) au
+    /// moment de la commande — la fenêtre d'attribution ne peut plus être
+    /// vérifiée une fois le paiement confirmé (webhook async, sans contexte
+    /// requête d'origine), donc le code doit être figé ici dès la création.
+    /// Voir AffiliateService.RecordCommissionForOrderAsync.
+    /// </summary>
+    public string? ReferralCode { get; set; }
+
     // Navigation properties
     public User? User { get; set; }
-    
+
     public ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
-    
+
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
 }

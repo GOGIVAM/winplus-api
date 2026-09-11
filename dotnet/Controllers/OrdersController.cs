@@ -13,7 +13,8 @@ public record CreateOrderRequest(
     string PaymentMethod,
     string? GuestEmail,
     string? GuestName,
-    List<GuestOrderItem>? Items
+    List<GuestOrderItem>? Items,
+    string? ReferralCode = null
 );
 
 [ApiController]
@@ -25,19 +26,22 @@ public class OrdersController : ControllerBase
     private readonly ApplicationDbContext _db;
     private readonly IPdfService _pdfService;
     private readonly ITeacherService _teacherService;
+    private readonly IAffiliateService _affiliate;
 
     public OrdersController(
         IOrderService orderService,
         ILogger<OrdersController> logger,
         ApplicationDbContext db,
         IPdfService pdfService,
-        ITeacherService teacherService)
+        ITeacherService teacherService,
+        IAffiliateService affiliate)
     {
         _orderService = orderService;
         _logger = logger;
         _db = db;
         _pdfService = pdfService;
         _teacherService = teacherService;
+        _affiliate = affiliate;
     }
 
     /// <summary>
@@ -86,6 +90,7 @@ public class OrdersController : ControllerBase
                 entity.Status = "completed";
                 entity.CompletedDate = DateTime.UtcNow;
                 await _db.SaveChangesAsync();
+                await _affiliate.RecordCommissionForOrderAsync(entity.Id);
             }
 
             _logger.LogInformation("Professeur {UserId} a payé sa commande {OrderId} avec son solde WinPlus ({Amount} XAF)",
@@ -110,7 +115,7 @@ public class OrdersController : ControllerBase
             if (isAuth)
             {
                 var userId = User.GetUserId();
-                var order = await _orderService.CreateOrderAsync(userId, request.PaymentMethod);
+                var order = await _orderService.CreateOrderAsync(userId, request.PaymentMethod, request.ReferralCode);
                 return Ok(order);
             }
             else
@@ -122,7 +127,8 @@ public class OrdersController : ControllerBase
                     request.GuestEmail,
                     request.GuestName,
                     request.PaymentMethod,
-                    request.Items
+                    request.Items,
+                    request.ReferralCode
                 );
                 return Ok(order);
             }

@@ -371,6 +371,7 @@ builder.Services.AddScoped<IPricingService, PricingService>();
 builder.Services.AddScoped<IInstitutionService, InstitutionService>();
 builder.Services.AddScoped<IAnnouncementService, AnnouncementService>();
 builder.Services.AddScoped<ITeacherService, TeacherService>();
+builder.Services.AddScoped<IAffiliateService, AffiliateService>();
 builder.Services.AddScoped<IParentService, ParentService>();
 builder.Services.AddScoped<IStudentService, StudentService>();
 builder.Services.AddScoped<IHomeService, HomeService>();
@@ -489,6 +490,10 @@ builder.Services.AddHostedService<MonthlyInstitutionReportService>();
 
 // Background services for tutor (Répétiteur) features
 builder.Services.AddHostedService<TutorCoachingReportService>();
+
+// Background services for the affiliate program
+builder.Services.AddHostedService<AffiliateCommissionMaturityService>();
+builder.Services.AddHostedService<AffiliateRateRecalculationService>();
 
 // Background services for Formations (drip content)
 builder.Services.AddHostedService<SectionUnlockNotificationService>();

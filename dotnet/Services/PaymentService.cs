@@ -38,6 +38,7 @@ public class PaymentService : IPaymentService
     private readonly IUserService _userService;
     private readonly INtfyService _ntfy;
     private readonly IEmailService _email;
+    private readonly IAffiliateService _affiliate;
     private readonly ApplicationDbContext _db;
     private readonly ILogger<PaymentService> _logger;
 
@@ -48,6 +49,7 @@ public class PaymentService : IPaymentService
         IUserService userService,
         INtfyService ntfy,
         IEmailService email,
+        IAffiliateService affiliate,
         ApplicationDbContext db,
         ILogger<PaymentService> logger)
     {
@@ -57,6 +59,7 @@ public class PaymentService : IPaymentService
         _userService = userService;
         _ntfy = ntfy;
         _email = email;
+        _affiliate = affiliate;
         _db = db;
         _logger = logger;
     }
@@ -175,6 +178,12 @@ public class PaymentService : IPaymentService
             // Mettre à jour le statut de la commande
             try { await _orderService.UpdateOrderStatusAsync(payment.OrderId, "completed"); }
             catch (Exception ex) { _logger.LogError(ex, "Impossible de mettre à jour le statut de la commande {OrderId}", payment.OrderId); }
+
+            // Programme d'affiliation : attribue une commission si la commande
+            // porte un code de parrainage (voir Order.ReferralCode). Ne doit
+            // jamais faire échouer la confirmation de paiement elle-même —
+            // erreurs déjà avalées à l'intérieur de RecordCommissionForOrderAsync.
+            await _affiliate.RecordCommissionForOrderAsync(payment.OrderId);
 
             // Notification push
             _ = _ntfy.PublishAsync(

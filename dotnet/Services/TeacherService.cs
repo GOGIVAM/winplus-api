@@ -296,6 +296,15 @@ public class TeacherService : ITeacherService
             .Where(b => b.EscrowReleasedAt != null && b.TutorProfile!.UserId == teacherId)
             .SumAsync(b => (decimal?)b.PriceXaf) ?? 0m;
 
+        // Programme d'affiliation (2026-09-11) : seules les commissions déjà
+        // "confirmed" (délai de rétractation commande écoulé, voir
+        // AffiliateCommissionMaturityService) alimentent le solde retirable —
+        // les "pending" ne sont pas encore acquises.
+        var affiliateEarnings = await _context.AffiliateCommissions
+            .AsNoTracking()
+            .Where(c => c.AffiliateAccount!.UserId == teacherId && c.Status == "confirmed")
+            .SumAsync(c => (decimal?)c.CommissionAmount) ?? 0m;
+
         // Retraits déjà effectués ou en cours (Module 7) : réservés dès la
         // demande pour empêcher un double retrait pendant le traitement
         // manuel Mobile Money — voir Withdrawal.cs.
@@ -304,7 +313,7 @@ public class TeacherService : ITeacherService
             .Where(w => w.UserId == teacherId && (w.Status == "pending" || w.Status == "completed"))
             .SumAsync(w => (decimal?)w.AmountXaf) ?? 0m;
 
-        return Math.Max(0, totalRevenue - spentOnClassAssignments - spentOnBalancePurchases + tutoringRevenue * revenueShare - withdrawn);
+        return Math.Max(0, totalRevenue - spentOnClassAssignments - spentOnBalancePurchases + tutoringRevenue * revenueShare + affiliateEarnings - withdrawn);
     }
 
     /// <summary>Part enseignant lue sur le plan actif (dupliqué de TeacherContentController — même formule, contexte différent).</summary>
