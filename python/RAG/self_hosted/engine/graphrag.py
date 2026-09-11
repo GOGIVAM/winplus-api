@@ -99,6 +99,59 @@ def summarize_community(graph: nx.DiGraph, nodes: List[str]) -> str:
     return generate(tokenizer, model, system, "\n".join(facts), max_new_tokens=200)
 
 
+def build_and_index_community_summaries(collection: str, graph: nx.DiGraph) -> int:
+    """Détecte les communautés du graphe et indexe leur résumé comme chunks
+    `graph_summary` dans Qdrant (Phase 3, §3.7) — complète l'extraction de
+    triples faite à l'ingestion. Recalcule et ré-indexe l'ensemble des
+    résumés de communautés à chaque appel (les anciens `graph_summary` du
+    même identifiant sont écrasés par upsert) : suffisant pour un corpus de
+    taille modeste ; à déclencher en tâche périodique plutôt qu'à chaque
+    ingestion si le graphe grandit significativement (voir DEPLOYMENT.md)."""
+    # Imports différés : évite un cycle (indexing importe déjà des éléments
+    # d'engine ailleurs dans le module) et garde graphrag.py utilisable sans
+    # Qdrant/embedding chargés pour les usages qui n'en ont pas besoin.
+    from RAG.self_hosted.indexing.embedding import embed_texts
+    from RAG.shared.contracts import Chunk, ChunkMetadata, ChunkType, DocStatus
+    from RAG.shared.vector_store import upsert_chunks
+
+    communities = detect_communities(graph)
+    if not communities:
+        return 0
+
+    grouped: Dict[int, List[str]] = {}
+    for node, community_id in communities.items():
+        grouped.setdefault(community_id, []).append(node)
+
+    chunks: List[Chunk] = []
+    for community_id, nodes in grouped.items():
+        if len(nodes) < 2:
+            continue
+        summary = summarize_community(graph, nodes)
+        if not summary.strip():
+            continue
+        chunks.append(
+            Chunk(
+                chunk_id=f"graphrag_community_{collection}_{community_id}",
+                text=summary,
+                metadata=ChunkMetadata(
+                    doc_id=f"graphrag_community_{community_id}",
+                    title=f"Communauté GraphRAG #{community_id}",
+                    chunk_type=ChunkType.GRAPH_SUMMARY,
+                    status=DocStatus.ACTIVE,
+                    extra={"entities": nodes},
+                ),
+            )
+        )
+
+    if not chunks:
+        return 0
+
+    vectors = embed_texts([c.text for c in chunks])
+    upsert_chunks(collection, chunks, vectors)
+    logger.info(f"[RAG/self_hosted/graphrag] {len(chunks)} résumés de communautés indexés.")
+    return len(chunks)
+
+
 def bfs_related_docs(graph: nx.DiGraph, entities: List[str], max_hops: int = 2) -> List[Tuple[str, str]]:
     """Retourne les paires (relation, doc_id) atteintes par parcours BFS
     borné depuis les entités de la requête — contexte structuré fourni au

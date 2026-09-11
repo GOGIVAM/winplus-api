@@ -100,6 +100,20 @@ def search_dense(
     )
 
 
+def scroll_by_filter(collection: str, filters: Dict[str, Any], limit: int = 20) -> List[qm.Record]:
+    """Récupération sans vecteur de requête, filtrée sur les métadonnées —
+    utilisé par GraphRAG pour remonter les chunks des documents connectés
+    par le graphe (Phase 3, §3.7), en dehors de toute similarité cosinus."""
+    client = get_client()
+    records, _ = client.scroll(
+        collection_name=collection,
+        scroll_filter=build_filter(filters),
+        limit=limit,
+        with_payload=True,
+    )
+    return records
+
+
 def get_by_ids(collection: str, ids: List[str]) -> List[qm.Record]:
     if not ids:
         return []

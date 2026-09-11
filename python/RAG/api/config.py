@@ -18,8 +18,11 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_WHISPER_MODEL = os.getenv("RAG_API_WHISPER_MODEL", "whisper-large-v3-turbo")
 
 # ── Vision (description d'images/schémas embarqués) ─────────────────────────
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-VISION_MODEL = os.getenv("RAG_API_VISION_MODEL", "gpt-4o-mini")
+# Gemini retenu plutôt que GPT-4o-mini : ~3-4x moins cher par image (moins
+# de tokens consommés par image à tarif par token comparable), vérifié en
+# ligne (voir RAG/README.md).
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+VISION_MODEL = os.getenv("RAG_API_VISION_MODEL", "gemini-2.5-flash")
 
 # ── DeepSeek (génération — réutilise services/deepseek_client.py) ──────────
 # Pas de config séparée : le client existant est réutilisé tel quel.

@@ -11,6 +11,7 @@ import time
 from typing import Dict, List
 
 from RAG.self_hosted import config
+from RAG.self_hosted.engine import graphrag
 from RAG.self_hosted.engine.complexity_router import classify_complexity
 from RAG.self_hosted.engine.generator import generate_answer, reformulate_query
 from RAG.self_hosted.engine.hyde import generate_hypothetical_document
@@ -19,8 +20,15 @@ from RAG.self_hosted.indexing.embedding import embed_query
 from RAG.self_hosted.validation.faithfulness import validate_answer
 from RAG.shared.bm25_index import BM25Registry
 from RAG.shared.contracts import Citation, RAGAnswer, RAGQueryRequest
+from RAG.shared.graph_registry import GraphRegistry
 from RAG.shared.rrf import reciprocal_rank_fusion
-from RAG.shared.vector_store import get_by_ids, search_dense
+from RAG.shared.vector_store import get_by_ids, scroll_by_filter, search_dense
+
+# Approximation d'entités normatives dans la requête — même heuristique que
+# le routeur de complexité (suites de mots capitalisés ou sigles).
+import re as _re
+
+_ENTITY_RE = _re.compile(r"\b([A-ZÀ-Ý][a-zà-ÿ]+(?:\s+[A-ZÀ-Ý][a-zà-ÿ]+)*|[A-Z]{2,})\b")
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +52,29 @@ def _hybrid_retrieve(query_vector: List[float], query_text: str, filters: Dict, 
     ]
 
 
+def _graphrag_augment(question: str, filters: Dict, max_docs: int = 3) -> List[dict]:
+    """Complément de contexte structuré pour les requêtes COMPLEXE (Phase 3,
+    §3.7) — parcours BFS borné à 2 sauts depuis les entités de la requête,
+    puis récupération des chunks des documents connectés."""
+    graph = GraphRegistry.get(config.QDRANT_COLLECTION)
+    entities = list(set(_ENTITY_RE.findall(question)))
+    if not entities or graph.number_of_nodes() == 0:
+        return []
+
+    related = graphrag.bfs_related_docs(graph, entities, max_hops=2)
+    doc_ids = list({doc_id for _, doc_id in related})[:max_docs]
+    if not doc_ids:
+        return []
+
+    graph_filters = {**filters, "doc_id": doc_ids}
+    records = scroll_by_filter(config.QDRANT_COLLECTION, graph_filters, limit=max_docs * 3)
+    return [
+        {"id": str(r.id), "payload": r.payload}
+        for r in records
+        if r.payload.get("status", "active") == "active"
+    ]
+
+
 def run_query(request: RAGQueryRequest) -> RAGAnswer:
     start = time.time()
     complexity = classify_complexity(request.question)
@@ -61,6 +92,9 @@ def run_query(request: RAGQueryRequest) -> RAGAnswer:
             hypothetical = generate_hypothetical_document(request.question)
             hyde_vector = embed_query(hypothetical)
             candidates = _hybrid_retrieve(hyde_vector, request.question, request.filters, request.top_k)
+
+    if complexity == "complex":
+        candidates = candidates + _graphrag_augment(request.question, request.filters)
 
     iterations = 0
     reranked: List[tuple] = []

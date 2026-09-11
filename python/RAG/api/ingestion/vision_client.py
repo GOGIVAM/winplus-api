@@ -1,14 +1,18 @@
-"""Description textuelle indexable des images/schémas embarqués (GPT-4o-mini vision)."""
+"""
+Description textuelle indexable des images/schémas embarqués — Gemini 2.5
+Flash, retenu plutôt que GPT-4o-mini : environ 3-4x moins cher par image
+(moins de tokens consommés par image, à tarif par token comparable),
+vérifié en ligne (voir RAG/README.md).
+"""
 
 from __future__ import annotations
 
-import base64
-
-from openai import OpenAI
+from google import genai
+from google.genai import types
 
 from RAG.api import config
 
-_client: OpenAI | None = None
+_client: genai.Client | None = None
 
 _PROMPT = (
     "Décris ce schéma ou diagramme technique de façon structurée et "
@@ -17,27 +21,20 @@ _PROMPT = (
 )
 
 
-def _get_client() -> OpenAI:
+def _get_client() -> genai.Client:
     global _client
     if _client is None:
-        _client = OpenAI(api_key=config.OPENAI_API_KEY)
+        _client = genai.Client(api_key=config.GEMINI_API_KEY)
     return _client
 
 
 def caption_image(image_bytes: bytes) -> str:
-    encoded = base64.b64encode(image_bytes).decode("utf-8")
     client = _get_client()
-    response = client.chat.completions.create(
+    response = client.models.generate_content(
         model=config.VISION_MODEL,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": _PROMPT},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}},
-                ],
-            }
+        contents=[
+            types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+            _PROMPT,
         ],
-        max_tokens=400,
     )
-    return response.choices[0].message.content.strip()
+    return (response.text or "").strip()

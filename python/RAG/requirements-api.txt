@@ -5,7 +5,7 @@
 cohere>=5.11.0
 mistralai>=1.2.0
 groq>=0.11.0
-openai>=1.51.0
+google-genai>=0.7.0
 qdrant-client>=1.11.0
 rank_bm25>=0.2.2
 tiktoken>=0.8.0
