@@ -15,9 +15,12 @@ ALTER TABLE "Sessions" ADD COLUMN IF NOT EXISTS "CancelledByUserId" INTEGER;
 ALTER TABLE "Sessions" ADD COLUMN IF NOT EXISTS "CancellationReason" VARCHAR(500);
 ALTER TABLE "Sessions" ADD COLUMN IF NOT EXISTS "TranscriptText" TEXT;
 ALTER TABLE "Sessions" ADD COLUMN IF NOT EXISTS "SummaryText" TEXT;
+ALTER TABLE "Sessions" ADD COLUMN IF NOT EXISTS "UpdatedAt" TIMESTAMP WITH TIME ZONE;
+ALTER TABLE "Sessions" ADD COLUMN IF NOT EXISTS "IsDeleted" BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS "IX_Sessions_CreatedBy" ON "Sessions"("CreatedBy");
 CREATE INDEX IF NOT EXISTS "IX_Sessions_StartDate" ON "Sessions"("StartDate");
+CREATE INDEX IF NOT EXISTS "IX_Sessions_IsDeleted" ON "Sessions"("IsDeleted");
 
 -- ── SessionEnrollments : inscriptions élèves à une session ──────────────────
 CREATE TABLE IF NOT EXISTS "SessionEnrollments" (

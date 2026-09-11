@@ -1,0 +1,118 @@
+"""
+Contrats partagés entre RAG/self_hosted et RAG/api.
+
+Les deux moteurs implémentent la même interface d'entrée/sortie — c'est ce
+qui permet au routeur unique (RAG/router.py) de les faire cohabiter derrière
+UN SEUL endpoint, le choix du moteur n'étant qu'une variable d'environnement
+(RAG_BACKEND) plutôt qu'un branchement différent côté appelant.
+"""
+
+from __future__ import annotations
+
+from enum import Enum
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
+
+
+class ChunkType(str, Enum):
+    SHORT = "short"
+    LONG = "long"
+    CELL = "cell"
+    IMAGE_CAPTION = "image_caption"
+    GRAPH_SUMMARY = "graph_summary"
+    VIDEO_SEGMENT = "video_segment"
+
+
+class DocStatus(str, Enum):
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+
+
+class SourceType(str, Enum):
+    PDF_NATIVE = "pdf_native"
+    PDF_SCANNED = "pdf_scanned"
+    IMAGE = "image"
+    VIDEO = "video"
+
+
+class ChunkMetadata(BaseModel):
+    """Payload attaché à chaque chunk indexé dans Qdrant (Phase 1, §2.7 du
+    référentiel KALATI-RAG, adapté au modèle de contenu WinPlus)."""
+
+    doc_id: str
+    title: str
+    category: Optional[str] = None  # epreuve, correction, cours, formation_video...
+    subject_id: Optional[int] = None
+    course_id: Optional[int] = None
+    lesson_id: Optional[int] = None
+    page: Optional[int] = None
+    section: Optional[str] = None
+    chunk_type: ChunkType = ChunkType.SHORT
+    status: DocStatus = DocStatus.ACTIVE
+    superseded_by: Optional[str] = None
+    # Uniquement pour chunk_type=video_segment (transcription horodatée).
+    timestamp_start: Optional[float] = None
+    timestamp_end: Optional[float] = None
+    extra: Dict[str, Any] = Field(default_factory=dict)
+
+
+class Chunk(BaseModel):
+    chunk_id: str
+    text: str
+    parent_text: Optional[str] = None  # chunk long correspondant (parent-child chunking)
+    metadata: ChunkMetadata
+
+
+class IngestRequest(BaseModel):
+    doc_id: str
+    title: str
+    file_path: str
+    category: Optional[str] = None
+    subject_id: Optional[int] = None
+    course_id: Optional[int] = None
+    lesson_id: Optional[int] = None
+
+
+class IngestResult(BaseModel):
+    doc_id: str
+    chunks_indexed: int
+    source_type: SourceType
+    warnings: List[str] = Field(default_factory=list)
+
+
+class Citation(BaseModel):
+    doc_id: str
+    title: str
+    page: Optional[int] = None
+    section: Optional[str] = None
+    chunk_id: str
+    score: float
+
+
+class RAGQueryRequest(BaseModel):
+    question: str
+    filters: Dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Filtre de métadonnées appliqué à la recherche (subject_id, "
+            "course_id, status='active', etc.). Le contrôle d'accès réel "
+            "(qui a le droit de voir quoi) reste de la responsabilité de "
+            "l'appelant — ce module reste agnostique du modèle de "
+            "permissions WinPlus, il applique juste le filtre reçu."
+        ),
+    )
+    top_k: int = 5
+
+
+class RAGAnswer(BaseModel):
+    answer: str
+    citations: List[Citation] = Field(default_factory=list)
+    refused: bool = False
+    faithfulness: Optional[float] = None
+    answer_relevancy: Optional[float] = None
+    context_precision: Optional[float] = None
+    context_recall: Optional[float] = None
+    backend: str = ""
+    complexity: Optional[str] = None  # "simple" | "complex"
+    latency_ms: int = 0
