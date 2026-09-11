@@ -46,11 +46,20 @@ class BM25Index:
             self._bm25 = BM25Okapi(self.corpus_tokens) if self.corpus_tokens else None
 
     def search(self, query: str, top_k: int = 20) -> List[str]:
-        if not self._bm25:
+        """Retourne les chunk_id triés par score BM25 décroissant. Pas de
+        filtre `score > 0` : la formule BM25 classique produit un IDF
+        négatif pour un terme présent dans la totalité des documents du
+        corpus (pathologie connue sur les petits corpus), ce qui ne veut
+        pas dire que le classement relatif entre documents est faux — la
+        fusion RRF en aval ne consomme que le RANG, jamais le score brut."""
+        if self._bm25 is None:
             return []
-        scores = self._bm25.get_scores(_tokenize(query))
+        query_tokens = _tokenize(query)
+        if not query_tokens:
+            return []
+        scores = self._bm25.get_scores(query_tokens)
         ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
-        return [self.chunk_ids[i] for i in ranked[:top_k] if scores[i] > 0]
+        return [self.chunk_ids[i] for i in ranked[:top_k]]
 
     def save(self, path: str) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)

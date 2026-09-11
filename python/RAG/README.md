@@ -11,12 +11,20 @@ production, voir [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 ## Statut actuel
 
-**Aucun des deux moteurs n'est branché à l'application WinPlus.** Ils vivent
-comme des packages Python autonomes, testables via leurs propres routeurs
-FastAPI (`self_hosted/router.py`, `api/router.py`, ou le point d'entrée
-unifié `RAG/router.py`), mais **aucun n'est monté dans `app.py`**. Le
-branchement viendra dans une étape ultérieure, une fois les deux modules
-validés indépendamment.
+**`RAG/router.py` est monté dans `app.py`** (`/api/rag/ingest`,
+`/api/rag/ingest/{doc_id}/status`, `/api/rag/query`, `/api/rag/health`) —
+branché pour test en conditions réelles, backend actif piloté par
+`RAG_BACKEND` (actuellement `api` en `.env.production`). Les routeurs de
+test directs par moteur (`self_hosted/router.py`, `api/router.py`) restent
+disponibles séparément pour déboguer un moteur en isolation. Voir
+DEPLOYMENT.md §0.2 pour l'état constaté au premier branchement réel (ce qui
+marche, ce qui reste à corriger côté infrastructure : clé Groq manquante,
+Qdrant à démarrer réellement sur l'hôte configuré).
+
+`self_hosted`, lui, ne peut **pas** tourner dans le même environnement
+Python que l'app principale (conflit de version `transformers` réel et
+vérifié — voir DEPLOYMENT.md §2.0) : il reste à déployer comme service
+séparé le jour où vous basculez `RAG_BACKEND=self_hosted`.
 
 ## Pourquoi deux moteurs
 
@@ -157,6 +165,7 @@ plusieurs erreurs réelles avant tout premier test en conditions réelles :
 | Cohere embed (api) | Mauvais nom d'attribut sur la réponse (`response.embeddings.float_`) | `response.embeddings.float` (pas un mot réservé Python, pas besoin de suffixe) |
 | Groq Whisper (api) | `timestamp_granularities` non demandé — les segments horodatés ne sont pas garantis sans ce paramètre | Ajouté `timestamp_granularities=["segment"]` + accès aux champs rendu robuste (dict ou objet selon la version du SDK, non vérifiable sans appel réel) |
 | Gemini vision (api) | GPT-4o-mini initialement retenu | Remplacé par Gemini 2.5 Flash, ~3-4× moins cher par image (vérifié en ligne) |
+| BM25 (les deux moteurs) | `search()` filtrait `score > 0` — trouvé en installant réellement `rank_bm25` et en relançant les tests, pas en le devinant | Filtre retiré : la fusion RRF en aval ne consomme que le rang, pas le signe du score (l'IDF négatif est une pathologie normale de BM25 sur petit corpus, pas une absence de pertinence) |
 
 Ce qui reste **non vérifiable sans identifiants réels** (donc à confirmer au
 premier test avec de vraies clés API / un vrai GPU, pas un défaut de

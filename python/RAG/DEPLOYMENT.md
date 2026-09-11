@@ -22,6 +22,29 @@ isolé (§1.3 / §2.4) avec :
   erreurs par étape plutôt que d'interrompre tout l'import — un fournisseur
   mal configuré se voit dans les warnings, pas dans une exception).
 
+### 0.2 État constaté au premier branchement réel (`app.py` + `.env.production`)
+
+- ✅ `app.py` démarre avec le router RAG monté : `POST /api/rag/ingest`,
+  `GET /api/rag/ingest/{doc_id}/status`, `POST /api/rag/query`,
+  `GET /api/rag/health` sont bien exposés.
+- ✅ Un bug réel a été trouvé et corrigé en installant pour de vrai
+  `RAG/requirements-api.txt` et en relançant les tests : `BM25Index.search`
+  filtrait `score > 0`, ce qui pouvait renvoyer une liste vide alors que le
+  classement relatif entre documents restait valide (IDF négatif = terme
+  présent dans 100 % du corpus, pathologie connue de BM25 sur petit corpus).
+  Corrigé dans `RAG/shared/bm25_index.py`.
+- ⚠️ `GROQ_API_KEY` n'est pas présente dans `.env.production` — la
+  transcription vidéo du module `api` échouera tant qu'elle n'est pas
+  ajoutée.
+- ⚠️ `QDRANT_URL` pointe vers `172.31.8.182:6333` : le port répond au niveau
+  TCP mais **réinitialise la connexion** dès qu'une vraie requête HTTP est
+  envoyée (`ConnectionResetError`) — signe typique qu'aucun serveur Qdrant
+  n'écoute réellement à cette adresse (le port est ouvert au firewall, mais
+  le conteneur Qdrant n'a probablement jamais été démarré sur cet hôte,
+  voir §3.2). Tant que ce n'est pas corrigé, `/ingest` acceptera la requête
+  (statut "queued") mais la tâche d'arrière-plan échouera à l'étape
+  d'indexation — vérifiable via `GET /rag/ingest/{doc_id}/status`.
+
 ---
 
 ## 1. Module `api` — mise en route (le plus rapide)
@@ -88,6 +111,24 @@ sudo apt-get install -y ffmpeg
 ---
 
 ## 2. Module `self_hosted` — mise en route progressive
+
+### 2.0 Isolation obligatoire : `self_hosted` ne peut pas partager le venv de l'app principale
+
+Vérifié en installant réellement les deux jeux de dépendances côte à côte :
+le `requirements.txt` principal fixe `transformers==4.35.2` (utilisé par
+`models/nlp_analyzer.py`), alors que GLM-OCR exige `transformers>=5.1.0`
+(§2.1 ci-dessous) — un saut de version majeure, pas un simple correctif.
+Installer `RAG/requirements-self-hosted.txt` dans le même environnement que
+l'app principale **downgrade ou casse l'un des deux**. `self_hosted` doit
+tourner dans son propre virtualenv (et, en pratique, sur sa propre instance
+GPU — voir §2.2) : ce n'est pas qu'une préférence d'infrastructure, c'est
+une incompatibilité de dépendances réelle et vérifiée.
+
+`RAG/requirements-api.txt`, en revanche, cohabite désormais sans conflit
+avec le `requirements.txt` principal — vérifié par un import complet de
+`app.py` avec les deux installés ensemble (nécessite `httpx>=0.28.1`, relevé
+dans `requirements.txt` pour cette raison ; aucun appelant direct de httpx
+trouvé ailleurs dans le code, risque faible).
 
 ### 2.1 Étape 1 : valider la logique sur l'EC2 actuel (CPU)
 
