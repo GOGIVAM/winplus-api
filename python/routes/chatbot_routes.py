@@ -12,6 +12,7 @@ from typing import Dict, Any, List, Optional
 
 from services.deepseek_client import get_deepseek_client
 from services.prompt_builder import build_system_prompt, UserContext, detect_language
+from services.rag_chat_bridge import build_rag_context_block
 from auth import verify_token, UserTokenData
 from schemas import ChatRequest, ChatResponse, ChatbotHealthResponse, ChatMessage, ChatbotContextRequest
 from database import Database, Conversation, ChatMessage as ChatMessageDB, UserAIMemory, User, QuizAttempt, DailyScore, QuizMistake
@@ -387,6 +388,14 @@ async def chat(
         # Formater les messages
         formatted_messages = format_messages_for_deepseek(chat_request.messages)
 
+        # RAG (voir services/rag_chat_bridge.py) : n'ajoute du contexte que si
+        # la question porte sur une formation identifiable (page consultée ou
+        # mention explicite) — dégradation silencieuse en cas d'échec/timeout,
+        # ne casse jamais le comportement WinAI existant.
+        rag_block = await build_rag_context_block(chat_request.user_context, formatted_messages)
+        if rag_block:
+            system_prompt += rag_block
+
         logger.info(
             f"Processing chat request from user {current_user.user_id} "
             f"winai_role={winai_role} messages={len(chat_request.messages)}"
@@ -464,6 +473,10 @@ async def stream_chat(
                 detected = detect_language(raw or "")
                 body.user_context.force_language = detected  # type: ignore[assignment]
         system_prompt, winai_role = _build_prompt_from_request(body.user_context, current_user)
+
+    rag_block = await build_rag_context_block(body.user_context, messages)
+    if rag_block:
+        system_prompt += rag_block
 
     logger.info(f"Stream request from user {current_user.user_id}, winai_role={winai_role}, conv_id={conv_id}")
 

@@ -25,8 +25,9 @@ public class AdminController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IStorageService _storage;
     private readonly IEmailService _email;
+    private readonly IFastApiClient _fastApi;
 
-    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ApplicationDbContext db, IConfiguration configuration, IHttpClientFactory httpClientFactory, IStorageService storage, IEmailService email)
+    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ApplicationDbContext db, IConfiguration configuration, IHttpClientFactory httpClientFactory, IStorageService storage, IEmailService email, IFastApiClient fastApi)
     {
         _adminService = adminService;
         _logger = logger;
@@ -35,6 +36,7 @@ public class AdminController : ControllerBase
         _httpClientFactory = httpClientFactory;
         _storage = storage;
         _email = email;
+        _fastApi = fastApi;
     }
 
     private HttpClient PyClient() => _httpClientFactory.CreateClient("FastApiClient");
@@ -1394,6 +1396,14 @@ public class AdminController : ControllerBase
 
             exam.DocumentUrl = url;
             await _db.SaveChangesAsync();
+
+            _fastApi.QueueRagIngestion(
+                docId: $"examdoc_{exam.Id}",
+                title: exam.Title,
+                fileUrl: url,
+                authorizationHeader: Request.Headers["Authorization"].ToString(),
+                category: exam.Category,
+                subjectId: exam.SubjectId);
 
             _logger.LogInformation("PDF uploaded for subject {SubjectId}: {Url}", id, url);
             return Ok(new { data = new { examId = exam.Id, documentUrl = url }, success = true });

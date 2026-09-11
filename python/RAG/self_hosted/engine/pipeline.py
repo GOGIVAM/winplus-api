@@ -19,7 +19,7 @@ from RAG.self_hosted.engine.reranker import rerank
 from RAG.self_hosted.indexing.embedding import embed_query
 from RAG.self_hosted.validation.faithfulness import validate_answer
 from RAG.shared.bm25_index import BM25Registry
-from RAG.shared.contracts import Citation, RAGAnswer, RAGQueryRequest
+from RAG.shared.contracts import Citation, RAGAnswer, RAGQueryRequest, RetrievedContext
 from RAG.shared.graph_registry import GraphRegistry
 from RAG.shared.rrf import reciprocal_rank_fusion
 from RAG.shared.vector_store import get_by_ids, scroll_by_filter, search_dense
@@ -75,8 +75,11 @@ def _graphrag_augment(question: str, filters: Dict, max_docs: int = 3) -> List[d
     ]
 
 
-def run_query(request: RAGQueryRequest) -> RAGAnswer:
-    start = time.time()
+def _retrieve_and_rerank(request: RAGQueryRequest) -> tuple[List[dict], List[tuple], str]:
+    """Routage de complexité + HyDE + GraphRAG + recherche hybride + boucle
+    Self-RAG, sans génération ni validation — factorisé pour être partagé
+    entre run_query() (réponse autonome de ce module) et retrieve_passages()
+    (utilisé par l'intégration chatbot WinAI)."""
     complexity = classify_complexity(request.question)
 
     query_vector = embed_query(request.question)
@@ -118,6 +121,53 @@ def run_query(request: RAGQueryRequest) -> RAGAnswer:
         candidates = _hybrid_retrieve(new_vector, question_for_retrieval, request.filters, request.top_k)
         iterations += 1
 
+    return candidates, reranked, complexity
+
+
+def _to_citations(candidates: List[dict], reranked: List[tuple]) -> tuple[List[dict], List[str], List[Citation]]:
+    selected = [candidates[i] for i, _ in reranked]
+    passages = [c["payload"]["text"] for c in selected]
+    citations = [
+        Citation(
+            doc_id=c["payload"]["doc_id"],
+            title=c["payload"]["title"],
+            page=c["payload"].get("page"),
+            section=c["payload"].get("section"),
+            chunk_id=c["id"],
+            score=score,
+            subject_id=c["payload"].get("subject_id"),
+            course_id=c["payload"].get("course_id"),
+        )
+        for c, (_, score) in zip(selected, reranked)
+    ]
+    return selected, passages, citations
+
+
+def retrieve_passages(request: RAGQueryRequest) -> RetrievedContext:
+    """Point d'entrée dédié à l'intégration chatbot WinAI (voir
+    services/rag_chat_bridge.py) : ne fait QUE récupérer et reranker les
+    passages, sans appeler generate_answer() ni validate_answer() — la
+    génération finale reste celle du prompt WinAI existant (persona,
+    pédagogie, mémoire élève), RAG ne fait qu'apporter du contexte."""
+    start = time.time()
+    candidates, reranked, complexity = _retrieve_and_rerank(request)
+    if not reranked:
+        return RetrievedContext(refused=True, complexity=complexity, latency_ms=int((time.time() - start) * 1000))
+    _, passages, citations = _to_citations(candidates, reranked)
+    return RetrievedContext(
+        passages=passages,
+        citations=citations,
+        refused=False,
+        complexity=complexity,
+        latency_ms=int((time.time() - start) * 1000),
+    )
+
+
+def run_query(request: RAGQueryRequest) -> RAGAnswer:
+    start = time.time()
+
+    candidates, reranked, complexity = _retrieve_and_rerank(request)
+
     if not reranked:
         return RAGAnswer(
             answer=config.REFUSAL_MESSAGE,
@@ -127,24 +177,11 @@ def run_query(request: RAGQueryRequest) -> RAGAnswer:
             latency_ms=int((time.time() - start) * 1000),
         )
 
-    selected = [candidates[i] for i, _ in reranked]
-    passages = [c["payload"]["text"] for c in selected]
+    selected, passages, citations = _to_citations(candidates, reranked)
 
     answer_text = generate_answer(request.question, passages, complexity)
 
     validation = validate_answer(request.question, answer_text, passages, critical=(complexity == "complex"))
-
-    citations = [
-        Citation(
-            doc_id=c["payload"]["doc_id"],
-            title=c["payload"]["title"],
-            page=c["payload"].get("page"),
-            section=c["payload"].get("section"),
-            chunk_id=c["id"],
-            score=score,
-        )
-        for c, (_, score) in zip(selected, reranked)
-    ]
 
     if not validation.passed:
         return RAGAnswer(

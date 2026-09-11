@@ -34,9 +34,11 @@ public class TeacherCourseController : ControllerBase
     private readonly ICourseGamificationService _gamification;
     private readonly INtfyService _ntfy;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IFastApiClient _fastApi;
 
-    public TeacherCourseController(ApplicationDbContext db, ILogger<TeacherCourseController> logger, ICourseGamificationService gamification, INtfyService ntfy, IHttpClientFactory httpClientFactory)
+    public TeacherCourseController(ApplicationDbContext db, ILogger<TeacherCourseController> logger, ICourseGamificationService gamification, INtfyService ntfy, IHttpClientFactory httpClientFactory, IFastApiClient fastApi)
     {
+        _fastApi = fastApi;
         _db = db;
         _logger = logger;
         _gamification = gamification;
@@ -418,6 +420,19 @@ public class TeacherCourseController : ControllerBase
             };
             _db.CourseLessons.Add(lesson);
             await _db.SaveChangesAsync();
+
+            var lessonFileUrl = lesson.VideoUrl ?? lesson.FileUrl;
+            if (!string.IsNullOrWhiteSpace(lessonFileUrl))
+            {
+                _fastApi.QueueRagIngestion(
+                    docId: $"lesson_{lesson.Id}",
+                    title: lesson.Title,
+                    fileUrl: lessonFileUrl,
+                    authorizationHeader: Request.Headers["Authorization"].ToString(),
+                    courseId: id,
+                    lessonId: lesson.Id);
+            }
+
             return Ok(new { lesson.Id, lesson.Title, lesson.Position });
         }
         catch (Exception ex)
@@ -492,6 +507,7 @@ public class TeacherCourseController : ControllerBase
                 .FirstOrDefaultAsync(l => l.Id == lId && l.SectionId == sId && l.CourseId == id);
             if (lesson == null) return NotFound(new { error = "Leçon introuvable" });
 
+            var previousFileUrl = lesson.VideoUrl ?? lesson.FileUrl;
             if (req.Title           != null) lesson.Title           = req.Title;
             if (req.Description     != null) lesson.Description     = req.Description;
             if (req.LessonType      != null) lesson.LessonType      = req.LessonType;
@@ -506,6 +522,19 @@ public class TeacherCourseController : ControllerBase
             lesson.UpdatedAt = DateTime.UtcNow;
 
             await _db.SaveChangesAsync();
+
+            var newFileUrl = lesson.VideoUrl ?? lesson.FileUrl;
+            if (!string.IsNullOrWhiteSpace(newFileUrl) && newFileUrl != previousFileUrl)
+            {
+                _fastApi.QueueRagIngestion(
+                    docId: $"lesson_{lesson.Id}",
+                    title: lesson.Title,
+                    fileUrl: newFileUrl,
+                    authorizationHeader: Request.Headers["Authorization"].ToString(),
+                    courseId: id,
+                    lessonId: lesson.Id);
+            }
+
             return Ok(new { message = "Leçon mise à jour" });
         }
         catch (Exception ex)

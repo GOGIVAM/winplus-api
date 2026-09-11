@@ -80,6 +80,14 @@ builder.Services.AddControllers()
             System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
         // ❌ RETIRÉ: ReferenceHandler.Preserve crée des structures circulaires que le frontend ne peut pas parser
         // options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.Preserve;
+        // ✅ IgnoreCycles (différent de Preserve : ne change pas la forme du JSON,
+        // n'ajoute pas de $id/$ref) — filet de sécurité pour tout endpoint qui
+        // renvoie encore une entité EF brute avec ses navigations peuplées dans
+        // les deux sens (ex. FavoritesController → Favorite.User.Favorites...
+        // "A possible object cycle was detected", 500 systématique). Le vrai
+        // correctif reste de projeter vers un DTO ; ceci évite un crash total si
+        // un futur endpoint oublie de le faire.
+        options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
     });
 // ❌ NE PAS ajouter AddNewtonsoftJson() - causes duplication
 

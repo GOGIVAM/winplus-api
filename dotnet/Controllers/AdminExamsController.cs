@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Models.Entities;
+using Backend.Services;
 
 namespace Backend.Controllers;
 
@@ -37,11 +38,13 @@ public class AdminExamsController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
     private readonly ILogger<AdminExamsController> _logger;
+    private readonly IFastApiClient _fastApi;
 
-    public AdminExamsController(ApplicationDbContext db, ILogger<AdminExamsController> logger)
+    public AdminExamsController(ApplicationDbContext db, ILogger<AdminExamsController> logger, IFastApiClient fastApi)
     {
         _db = db;
         _logger = logger;
+        _fastApi = fastApi;
     }
 
     // ── DTOs ────────────────────────────────────────────────────────────────
@@ -225,6 +228,17 @@ public class AdminExamsController : ControllerBase
             _db.Exams.Add(exam);
             await _db.SaveChangesAsync();
 
+            if (!string.IsNullOrWhiteSpace(exam.DocumentUrl))
+            {
+                _fastApi.QueueRagIngestion(
+                    docId: $"examdoc_{exam.Id}",
+                    title: exam.Title,
+                    fileUrl: exam.DocumentUrl,
+                    authorizationHeader: Request.Headers["Authorization"].ToString(),
+                    category: exam.Category,
+                    subjectId: exam.SubjectId);
+            }
+
             _logger.LogInformation("Épreuve créée #{Id}  {Title}", exam.Id, exam.Title);
             return CreatedAtAction(nameof(GetOne), new { id = exam.Id }, new { success = true, data = Shape(exam) });
         }
@@ -255,6 +269,7 @@ public class AdminExamsController : ControllerBase
             if (dto.Session     != null) exam.Session     = dto.Session.Trim();
             if (dto.Level       != null) exam.Level       = dto.Level.Trim();
             if (dto.Difficulty  != null) exam.Difficulty  = dto.Difficulty.Trim();
+            var previousDocumentUrl = exam.DocumentUrl;
             if (dto.DurationMinutes != null) exam.DurationMinutes = dto.DurationMinutes;
             if (dto.DocumentUrl   != null) exam.DocumentUrl   = Blank(dto.DocumentUrl);
             if (dto.CorrectionUrl != null) exam.CorrectionUrl = Blank(dto.CorrectionUrl);
@@ -270,6 +285,21 @@ public class AdminExamsController : ControllerBase
 
             exam.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
+
+            // Nouveau document posé sur une épreuve existante : ré-indexer
+            // (voir RAG/README.md « Limites connues » pour la ré-ingestion,
+            // qui s'ajoute au corpus plutôt que remplacer la version précédente).
+            if (!string.IsNullOrWhiteSpace(exam.DocumentUrl) && exam.DocumentUrl != previousDocumentUrl)
+            {
+                _fastApi.QueueRagIngestion(
+                    docId: $"examdoc_{exam.Id}",
+                    title: exam.Title,
+                    fileUrl: exam.DocumentUrl,
+                    authorizationHeader: Request.Headers["Authorization"].ToString(),
+                    category: exam.Category,
+                    subjectId: exam.SubjectId);
+            }
+
             return Ok(new { success = true, data = Shape(exam) });
         }
         catch (Exception ex)

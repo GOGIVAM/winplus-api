@@ -112,6 +112,11 @@ class Citation(BaseModel):
     section: Optional[str] = None
     chunk_id: str
     score: float
+    # Utilisé par l'intégration chatbot WinAI pour décider si la source
+    # peut être citée nommément (l'utilisateur a accès à cette formation)
+    # ou seulement utilisée en arrière-plan (voir services/rag_chat_bridge.py).
+    subject_id: Optional[int] = None
+    course_id: Optional[int] = None
 
 
 class RAGQueryRequest(BaseModel):
@@ -127,6 +132,19 @@ class RAGQueryRequest(BaseModel):
         ),
     )
     top_k: int = 5
+
+
+class RetrievedContext(BaseModel):
+    """Résultat de récupération + rerank SANS génération ni validation —
+    utilisé par l'intégration chatbot (RAG/query_service.py), qui délègue
+    la génération finale au prompt WinAI existant plutôt qu'au prompt
+    générique de run_query(). `passages[i]` correspond à `citations[i]`."""
+
+    passages: List[str] = Field(default_factory=list)
+    citations: List[Citation] = Field(default_factory=list)
+    refused: bool = False
+    complexity: Optional[str] = None
+    latency_ms: int = 0
 
 
 class RAGAnswer(BaseModel):

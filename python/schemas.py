@@ -3,7 +3,7 @@
 Schémas Pydantic pour validation des requêtes/réponses FastAPI
 """
 
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, AliasChoices
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -203,12 +203,47 @@ class ChatMessage(BaseModel):
     attachments: Optional[List[AttachmentBase]] = []
 
 
+class EnrolledSubjectRef(BaseModel):
+    """Référence légère à une formation inscrite, telle qu'envoyée par
+    ASP.NET Core (ChatbotService.BuildFastApiRequestAsync ->
+    EnrolledSubjectDto, sérialisé en snake_case explicite via
+    JsonNamingPolicy.SnakeCaseLower côté .NET, vérifié empiriquement).
+    Volontairement minimal (id + titre) plutôt que le SubjectResponse
+    complet (qui exige des champs jamais fournis par .NET ici comme
+    enrollment_count/average_rating et aurait fait échouer la validation
+    Pydantic dès qu'une vraie liste non vide était envoyée). AliasChoices
+    garde une tolérance PascalCase en filet de sécurité si un futur
+    appelant .NET oublie d'appliquer cette policy."""
+
+    id: int = Field(validation_alias=AliasChoices("id", "SubjectId", "subject_id"))
+    title: str = Field(validation_alias=AliasChoices("title", "Title"))
+
+    class Config:
+        populate_by_name = True
+
+
+class EnrolledCourseRef(BaseModel):
+    """Équivalent de EnrolledSubjectRef pour les formations créées par des
+    enseignants (entité Course/CourseEnrollment côté .NET, distincte de
+    Subject) — nécessaire pour que le filtrage d'accès aux citations
+    (topo, point 5) fonctionne aussi pour les chunks indexés avec
+    seulement `course_id` (leçons de TeacherCourseController), pas
+    seulement `subject_id`."""
+
+    id: int = Field(validation_alias=AliasChoices("id", "CourseId", "course_id"))
+    title: str = Field(validation_alias=AliasChoices("title", "Title"))
+
+    class Config:
+        populate_by_name = True
+
+
 class ChatbotContextRequest(BaseModel):
     role: Optional[str] = "student"                             # student | teacher | parent | admin | organization
     first_name: Optional[str] = None
     education_level: Optional[str] = None
     grade: Optional[str] = None
-    enrolled_subjects: Optional[List[SubjectResponse]] = []
+    enrolled_subjects: Optional[List[EnrolledSubjectRef]] = []
+    enrolled_courses: Optional[List[EnrolledCourseRef]] = []    # Formations enseignant (Course), distinctes de Subject
     objectives: Optional[List[str]] = []
     learning_style: Optional[str] = None
     performance_history: Optional[Dict[str, float]] = {}       # {"Maths": 14.5, "Physique": 11.0}

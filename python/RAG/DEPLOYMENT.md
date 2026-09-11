@@ -286,25 +286,22 @@ sauvegardes régulières (snapshot EBS ou `qdrant` snapshot API native).
 
 ---
 
-## 4. Branchement final à l'application (étape future, pas maintenant)
-
-Quand les deux modules sont validés indépendamment :
+## 4. Branchement à l'application — FAIT
 
 ```python
 # backend/python/app.py
 from RAG.router import rag_router
-# ...
-app.include_router(rag_router)
+app.include_router(rag_router, prefix="/api", tags=["rag"])
 ```
 
-Une seule ligne. Le choix du moteur actif reste piloté par `RAG_BACKEND`
-sans toucher au code appelant (ASP.NET Core via `FastApiClient.cs`, ou
-directement depuis le frontend si l'endpoint est exposé publiquement).
+`/api/rag/ingest`, `/api/rag/ingest/{doc_id}/status`, `/api/rag/query`,
+`/api/rag/health` sont live. Le choix du moteur actif reste piloté par
+`RAG_BACKEND` sans toucher au code appelant.
 
-Le contrôle d'accès (qui a le droit de voir quel contenu) reste à
-construire côté appelant à ce moment-là : traduire les droits réels de
-l'utilisateur authentifié en `RAGQueryRequest.filters` (ex.
-`{"subject_id": [...], "status": "active"}`).
+Le contrôle d'accès à la RECHERCHE reste volontairement hors périmètre de
+ce module (voir README.md) — mais le branchement au chat WinAI (§7)
+implémente le filtrage d'accès aux CITATIONS, qui est la forme retenue
+après discussion avec l'équipe produit (topo validé, point 5).
 
 ---
 
@@ -331,8 +328,127 @@ qu'un volume de contenu WinPlus réel a été ingéré dans l'un des deux moteur
 | Cohere embed-v4 | $0,12/M tokens |
 | Cohere Rerank v3.5 | $2/1000 requêtes |
 | Mistral OCR 4 | $4/1000 pages ($2 en batch) |
-| Groq Whisper turbo | ≈ $0,0007/minute audio |
+| Groq Whisper large-v3-turbo | ≈ $0,0007/minute audio |
+| Gemini 2.5 Flash (vision) | facturation par image, voir console Google AI |
 | Qdrant auto-hébergé | Coût EC2 uniquement (pas de frais par requête) |
 
 Pas de coût de licence logicielle côté `self_hosted` — uniquement
 l'infrastructure GPU (§2.2) et la maintenance humaine.
+
+---
+
+## 7. Intégration au chat WinAI — déploiement et vérification
+
+Cette section couvre la partie qui résout le problème d'origine (contenu
+uploadé mais jamais utilisable par WinAI) — voir README.md, §"Intégration
+au chat WinAI" pour l'architecture.
+
+### 7.1 Pré-requis avant d'activer réellement le RAG dans le chat
+
+1. `RAG_BACKEND` correctement configuré et `/api/rag/health` répond `ok`.
+2. Au moins un document/vidéo déjà indexé dans Qdrant pour la formation que
+   vous allez utiliser pour le test (voir §7.3 pour le backfill, ou faites
+   simplement un nouvel upload de test via l'admin).
+3. **Vérifié en lisant le code réel (pas supposé)** : le chemin de chat
+   effectivement utilisé par le frontend (`useChatbot.ts` →
+   `chatbotService.sendMessage` → .NET `POST /api/chatbot/message` →
+   `ChatbotService.SendMessageAsync`) n'envoyait `enrolled_subjects` que si
+   un `ChatbotContext` avait été synchronisé au préalable via
+   `POST /chatbot/context/sync` — or **rien dans le frontend n'appelle
+   jamais cette route** (`chatbotService.syncContext` existe mais n'est
+   invoqué nulle part). En clair : `enrolled_subjects` arrivait vide dans
+   99% des cas, ce qui aurait rendu le filtrage d'accès aux citations
+   (point 5) inopérant. **Corrigé** dans `ChatbotService.cs` :
+   `BuildFastApiRequestAsync` recalcule maintenant `EnrolledSubjects`
+   directement depuis la table `Enrollments` à chaque message, sans
+   dépendre de la synchronisation frontend.
+   - `navigation_history`, lui, n'était alimenté par rien : `chatbotService
+     .syncContext()` existait côté frontend mais n'était appelé nulle part.
+     **Corrigé** : `hooks/useWinAIContext.ts` (monté globalement via
+     `GlobalAIAssistant` dans `App.tsx`, donc actif sur toutes les pages)
+     appelle maintenant `syncContext({ navigationHistory: [...] })` à
+     chaque changement de route (`useLocation().pathname`), un seul élément
+     par appel — le backend fusionne les champs (`CreateOrUpdateContextAsync`,
+     `?? existing...`) donc ça ne peut pas écraser le reste du contexte
+     déjà synchronisé, et `rag_chat_bridge.py` ne lit de toute façon que la
+     dernière entrée. Le déclenchement RAG "page consultée" (topo, point
+     3a) est donc maintenant réellement alimenté en conditions réelles, pas
+     seulement le repli "mention explicite" (3b).
+   - **Bug de casse JSON réel, trouvé et corrigé (vérifié empiriquement,
+     pas supposé)** : `ChatbotService.CallFastApiServiceAsync` envoyait
+     `FastApiChatRequest` via `PostAsJsonAsync` SANS options explicites.
+     Test isolé avec un petit programme .NET consommant les mêmes types :
+     ce chemin sérialise en **camelCase** (`JsonSerializerDefaults.Web`,
+     PAS `JsonSerializerOptions.Default`/PascalCase comme on pourrait le
+     supposer) — `UserContext` devenait `"userContext"`, `EnrolledSubjects`
+     devenait `"enrolledSubjects"`. Comme les schémas Pydantic
+     (`ChatRequest.user_context`, etc.) attendent du snake_case strict et
+     que ces champs ont une valeur par défaut, la requête ne plantait PAS
+     (pas de 422) — elle perdait juste **tout le contexte WinAI
+     silencieusement** (formations inscrites, page consultée, lacunes,
+     mémoire...) sur chaque message envoyé via `/api/chatbot/message`.
+     **Corrigé** : `CallFastApiServiceAsync` utilise maintenant
+     `JsonNamingPolicy.SnakeCaseLower` (disponible net8.0+, la cible de ce
+     projet) explicitement, dans les deux sens (envoi de la requête ET
+     lecture de la réponse — `TokensUsed`/`GenerationTimeMs` avaient le
+     même problème en sens inverse). Revérifié par un test Python direct :
+     le JSON désormais produit (`user_context`, `enrolled_subjects` avec
+     `subject_id`/`title`, `navigation_history`) est correctement parsé par
+     `ChatRequest`. Les DTO partagés avec le frontend
+     (`ChatbotContextResponse` retourné par `GET /chatbot/context`) n'ont
+     PAS été touchés : ils restent camelCase, ce qui est le format attendu
+     côté React — seul l'appel .NET → Python a été isolé avec sa propre
+     policy.
+
+### 7.2 Test manuel du branchement chat ↔ RAG
+
+1. Naviguez sur `/subjects/{id}` ou `/formations/{id}` d'une formation qui
+   a du contenu déjà indexé.
+2. Ouvrez WinAI et posez une question dont la réponse se trouve dans ce
+   contenu (ex: une notion précise traitée dans le document).
+3. Vérifiez dans les logs FastAPI (`services/rag_chat_bridge.py`) que RAG a
+   bien été déclenché (pas de warning "Timeout" ni "Récupération de
+   contexte échouée").
+4. Si la réponse de WinAI intègre l'information sans jamais la déclencher
+   sur une question hors-sujet (ex: "motive-moi"), le déclenchement hybride
+   fonctionne comme prévu (topo, point 3).
+5. Testez le filtrage de citation (topo, point 5) : posez une question dont
+   la réponse vient d'une formation à laquelle l'utilisateur de test n'est
+   **pas** inscrit (`enrolled_subjects` ne la contient pas) — WinAI doit
+   utiliser l'information sans jamais nommer la formation/le document.
+
+### 7.3 Backfill du contenu déjà existant (topo, point 2)
+
+Script one-shot, à lancer manuellement UNE fois après avoir validé le §7.2 :
+
+```bash
+cd backend/python
+
+# 1. Dry-run d'abord : liste et compte ce qui serait ingéré, sans appeler
+#    aucune API tierce — sert à estimer le coût (§6) avant de lancer.
+python -m RAG.scripts.backfill_existing_content --dry-run
+
+# 2. Test sur un petit échantillon
+python -m RAG.scripts.backfill_existing_content --limit 20
+
+# 3. Ingestion complète
+python -m RAG.scripts.backfill_existing_content
+```
+
+Le script tourne en série (pas de parallélisme) pour rester dans les
+limites de rate-limiting des API tierces — un catalogue volumineux peut
+prendre plusieurs heures, c'est attendu (voir README.md pour le détail de
+ce qui est couvert : `Exams`, `CourseContents`, `CourseLessons`). Un échec
+sur un document n'interrompt pas le reste : la liste des échecs est
+affichée en fin d'exécution pour un ré-essai ciblé.
+
+### 7.4 Ce qui N'EST PAS fait automatiquement
+
+- **Backfill automatique périodique** : le script est one-shot et manuel
+  par choix explicite (topo, point 2). S'il faut le refaire (ex: après une
+  restauration de sauvegarde Qdrant), relancez-le à la main.
+
+La supersession des anciens chunks à la mise à jour d'un document et le
+filtrage d'accès aux citations `course_id` sont, eux, désormais gérés
+automatiquement — voir README.md, "Limites connues de cette intégration —
+toutes corrigées et vérifiées".

@@ -26,6 +26,12 @@ Python que l'app principale (conflit de version `transformers` réel et
 vérifié — voir DEPLOYMENT.md §2.0) : il reste à déployer comme service
 séparé le jour où vous basculez `RAG_BACKEND=self_hosted`.
 
+**RAG est maintenant branché à WinAI (le chat)** — c'est la partie qui
+résout le problème d'origine (documents/vidéos uploadés mais jamais
+utilisables par le chat). Voir `RAG/query_service.py` et
+`services/rag_chat_bridge.py`, §"Intégration au chat WinAI" ci-dessous, et
+DEPLOYMENT.md §7 pour le déploiement de cette partie.
+
 ## Pourquoi deux moteurs
 
 - **`self_hosted`** : zéro flux sortant, zéro coût récurrent de tokens,
@@ -171,6 +177,78 @@ Ce qui reste **non vérifiable sans identifiants réels** (donc à confirmer au
 premier test avec de vraies clés API / un vrai GPU, pas un défaut de
 vigilance) : le comportement exact de chaque service au runtime, les quotas,
 et les éventuels changements d'API publiés après la dernière vérification.
+
+## Intégration au chat WinAI
+
+Topo validé avec l'utilisateur avant cette implémentation : le problème
+n'était pas RAG lui-même mais le fait que (1) rien n'indexait le contenu
+uploadé, et (2) `routes/chatbot_routes.py` n'avait aucune notion de RAG.
+Les deux sont maintenant résolus :
+
+- **`RAG/query_service.py`** — point d'accès interne (pas HTTP) utilisé par
+  `services/rag_chat_bridge.py` : `retrieve_context()` fait la récupération
+  + rerank SEULS (pas de génération), pour laisser DeepSeek/WinAI composer
+  la réponse finale avec son prompt existant (persona, pédagogie, mémoire
+  élève) plutôt que celui, générique, de `run_query()`. Les fonctions
+  `run_query`/`retrieve_passages` des deux moteurs sont synchrones et
+  bloquantes (appels réseau ou inférence locale) : `query_service` les
+  exécute via `run_in_threadpool` pour ne jamais geler l'event loop FastAPI.
+- **`services/rag_chat_bridge.py`** — déclenchement hybride (topo validé,
+  point 3) : RAG n'est interrogé que si (a) la dernière page visitée par
+  l'utilisateur (`navigation_history`, envoyé par le frontend) est une
+  formation/un cours identifiable (`/subjects/{id}`, `/formations/{id}`),
+  ou (b) l'utilisateur nomme explicitement une de ses formations inscrites
+  dans son message. Sinon, RAG n'est pas appelé — pas de coût ni de
+  latence ajoutés aux messages qui ne portent pas sur un contenu du
+  catalogue. Timeout de 8s et dégradation silencieuse (log + poursuite sans
+  RAG) en cas d'échec : un souci RAG ne doit jamais empêcher WinAI de
+  répondre.
+- **Citations et droits d'accès (topo validé, point 5)** — la recherche
+  n'est PAS filtrée par les droits de l'utilisateur (un abonnement peut
+  donner accès à de l'information sans donner accès au document source).
+  Seul l'AFFICHAGE de la source est conditionné : `Citation.subject_id` est
+  comparé à `enrolled_subjects` (envoyé par le frontend) pour décider si
+  DeepSeek peut nommer la formation/le document, ou doit se contenter
+  d'utiliser l'information sans la sourcer (voir le bloc de consigne
+  injecté par `_format_context_block`).
+- **Déclenchement de l'ingestion à l'upload (topo validé, point 1)** — côté
+  ASP.NET Core, `IFastApiClient.QueueRagIngestion()` (`FastApiClient.cs`)
+  appelle `POST /api/rag/ingest` en fire-and-forget dès qu'un document/vidéo
+  est rattaché à une fiche : `AdminExamsController` (épreuves),
+  `AdminLibraryController` (livres/vidéos du catalogue),
+  `TeacherCourseController` (leçons vidéo). Le jeton JWT est capturé sur le
+  thread de la requête d'origine (pas relu depuis `IHttpContextAccessor`
+  après coup, qui n'est plus fiable une fois la réponse HTTP envoyée).
+- **Contenu déjà existant (topo validé, point 2)** —
+  `RAG/scripts/backfill_existing_content.py`, script one-shot à lancer
+  manuellement : `python -m RAG.scripts.backfill_existing_content
+  --dry-run` pour lister/compter (estimer le coût) avant de lancer pour de
+  vrai. Couvre `Exams`, `CourseContents` et `CourseLessons` (ces deux
+  derniers via `database.py` / requête SQL brute, `CourseLessons` n'ayant
+  pas de modèle SQLAlchemy Python).
+
+### Limites connues de cette intégration — toutes corrigées et vérifiées
+
+- ~~Déclenchement par page consultée pas alimenté~~ — **corrigé** :
+  `useWinAIContext.ts` synchronise `navigationHistory` à chaque changement
+  de route, et `enrolled_subjects` est recalculé depuis `Enrollments` à
+  chaque message (`ChatbotService.cs::GetRealEnrolledSubjectsAsync`). Un
+  bug de casse JSON .NET→Python qui aurait fait perdre tout ce contexte
+  silencieusement a aussi été trouvé et corrigé (voir DEPLOYMENT.md §0.2)
+  — vérifié par un test isolé + un test de parsing Python, pas supposé.
+- ~~Citations de cours (`course_id`) non filtrées par accès~~ — **corrigé** :
+  `enrolled_courses` (nouveau champ `ChatbotContextRequest`, recalculé côté
+  .NET depuis `CourseEnrollments` à chaque message,
+  `ChatbotService.cs::GetRealEnrolledCoursesAsync`) est maintenant comparé
+  au `course_id` de chaque citation, symétriquement à `subject_id`/
+  `enrolled_subjects`. Vérifié par un test direct (citation `subject_id`
+  non inscrit → masquée, citation `course_id` inscrit → citable).
+- ~~Pas de supersession automatique~~ — **corrigé** :
+  `RAG/router.py::_supersede_previous_version` (et l'équivalent dans le
+  script de backfill) marque `superseded` les chunks existants d'un
+  `doc_id` juste avant d'indexer sa nouvelle version, donc un document
+  remplacé ne laisse plus l'ancien contenu retrouvable indéfiniment aux
+  côtés du nouveau.
 
 ## Contrôle d'accès — volontairement hors périmètre
 

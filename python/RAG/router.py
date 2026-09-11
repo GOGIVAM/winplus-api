@@ -48,6 +48,28 @@ def _active_backend():
     return process_document, index_chunks, run_query
 
 
+def _supersede_previous_version(doc_id: str) -> None:
+    """Marque `superseded` tout chunk déjà indexé sous ce doc_id, AVANT
+    d'indexer la nouvelle version (les nouveaux chunks n'existent pas
+    encore à cet instant, donc le filtre par doc_id ne peut matcher que
+    l'ancienne version) — évite qu'un document remplacé (nouvel upload sur
+    une fiche existante côté .NET, même doc_id réutilisé) laisse l'ancien
+    contenu retrouvable indéfiniment aux côtés du nouveau. Best-effort :
+    échoue silencieusement (log) sur une toute première ingestion, la
+    collection Qdrant n'existant pas encore."""
+    from RAG.shared.vector_store import mark_superseded
+
+    if RAG_BACKEND == "self_hosted":
+        from RAG.self_hosted.config import QDRANT_COLLECTION
+    else:
+        from RAG.api.config import QDRANT_COLLECTION
+
+    try:
+        mark_superseded(QDRANT_COLLECTION, doc_id, superseded_by=doc_id)
+    except Exception as e:
+        logger.debug(f"[RAG] Pas de version précédente à superseder pour doc_id={doc_id} ({e})")
+
+
 def _run_ingestion_job(request: IngestRequest) -> None:
     """Exécutée en tâche d'arrière-plan par BackgroundTasks — tout ce qui
     peut prendre du temps (OCR, transcription vidéo, appels d'embedding)
@@ -55,6 +77,7 @@ def _run_ingestion_job(request: IngestRequest) -> None:
     process_document, index_chunks, _ = _active_backend()
     IngestJobRegistry.set_processing(request.doc_id)
     try:
+        _supersede_previous_version(request.doc_id)
         chunks, source_type, warnings = process_document(request)
         index_chunks(chunks)
         from RAG.shared.contracts import IngestResult
@@ -90,9 +113,10 @@ async def ingest_status(doc_id: str, current_user: UserTokenData = Depends(verif
 
 @rag_router.post("/query", response_model=RAGAnswer)
 async def query(request: RAGQueryRequest, current_user: UserTokenData = Depends(verify_token)):
-    _, _, run_query = _active_backend()
+    from RAG.query_service import query_rag
+
     try:
-        return run_query(request)
+        return await query_rag(request)
     except Exception as e:
         logger.exception(f"[RAG] Échec de requête (backend={RAG_BACKEND})")
         raise HTTPException(status_code=500, detail=str(e))

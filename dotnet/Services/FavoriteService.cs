@@ -64,6 +64,12 @@ public class FavoriteService : IFavoriteService
             if (user == null)
                 throw new InvalidOperationException($"User {userId} not found");
 
+            // `User` est un required member de Favorite  impossible de l'omettre.
+            // Le graphe complet (avec Favorites du User) reste donc attaché et
+            // remonte tel quel jusqu'au contrôleur ; le cycle infini que ça
+            // provoquait à la sérialisation ("A possible object cycle was
+            // detected") est maintenant absorbé par ReferenceHandler.IgnoreCycles
+            // (Program.cs) plutôt que de faire planter la requête.
             var favorite = new Favorite
             {
                 UserId = userId,

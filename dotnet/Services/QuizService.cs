@@ -615,6 +615,7 @@ public class QuizService : IQuizService
         {
             var goals = await _context.Goals
                 .Where(g => g.UserId == userId && g.Status == "active")
+                .OrderByDescending(g => g.CreatedAt)
                 .Select(g => (g.Title ?? "") + (g.Description != null ? " : " + g.Description : ""))
                 .Take(3)
                 .ToListAsync();

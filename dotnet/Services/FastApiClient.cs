@@ -58,6 +58,29 @@ public interface IFastApiClient
     /// quiz récentes, épreuves téléchargées, objectifs actifs de l'élève).
     /// </summary>
     Task<GeneratedRevisionContentDto?> GenerateRevisionContentAsync(int userId, string? subject, string? topic, string? level = null, string? contextHint = null, string? difficulty = null);
+
+    /// <summary>
+    /// Déclenche l'ingestion RAG d'un document/vidéo fraîchement rattaché à
+    /// une fiche (épreuve, contenu de cours, leçon). Fire-and-forget : ne
+    /// doit jamais ralentir ni faire échouer l'enregistrement de la fiche
+    /// elle-même. POST /api/rag/ingest répond "queued" immédiatement côté
+    /// Python, le traitement réel (OCR, transcription, embedding) tourne
+    /// en tâche de fond là-bas — voir RAG/router.py.
+    /// `authorizationHeader` est capturé sur le thread de la requête
+    /// d'origine (ex: Request.Headers["Authorization"]) : le HttpContext
+    /// n'est plus fiable une fois la réponse HTTP renvoyée au client, donc
+    /// le jeton doit être extrait AVANT d'appeler cette méthode, pas relu
+    /// depuis IHttpContextAccessor pendant la tâche de fond.
+    /// </summary>
+    void QueueRagIngestion(
+        string docId,
+        string title,
+        string fileUrl,
+        string? authorizationHeader,
+        string? category = null,
+        int? subjectId = null,
+        int? courseId = null,
+        int? lessonId = null);
 }
 
 public class FastApiClient : IFastApiClient
@@ -626,6 +649,63 @@ public class FastApiClient : IFastApiClient
             _logger.LogError(ex, "Erreur lors de la génération du parcours");
             return GetDefaultLearningPath(userId, goalSubject, weeks);
         }
+    }
+
+    /// <summary>Voir IFastApiClient.QueueRagIngestion.</summary>
+    public void QueueRagIngestion(
+        string docId,
+        string title,
+        string fileUrl,
+        string? authorizationHeader,
+        string? category = null,
+        int? subjectId = null,
+        int? courseId = null,
+        int? lessonId = null)
+    {
+        var payload = new
+        {
+            doc_id = docId,
+            title,
+            file_path = fileUrl,
+            category,
+            subject_id = subjectId,
+            course_id = courseId,
+            lesson_id = lessonId,
+        };
+        var json = JsonSerializer.Serialize(payload);
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, "/api/rag/ingest")
+                {
+                    Content = new StringContent(json, Encoding.UTF8, "application/json"),
+                };
+                if (!string.IsNullOrWhiteSpace(authorizationHeader))
+                    request.Headers.TryAddWithoutValidation("Authorization", authorizationHeader);
+
+                var response = await _httpClient.SendAsync(request);
+                if (response.IsSuccessStatusCode)
+                {
+                    _logger.LogInformation("Ingestion RAG mise en file pour {DocId}", docId);
+                }
+                else
+                {
+                    var body = await response.Content.ReadAsStringAsync();
+                    _logger.LogWarning(
+                        "Ingestion RAG refusée pour {DocId} : HTTP {Status}  {Body}",
+                        docId, (int)response.StatusCode, body);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Ingestion RAG non déclenchée pour {DocId} (non bloquant, le contenu reste utilisable normalement)",
+                    docId);
+            }
+        });
     }
 
     #endregion

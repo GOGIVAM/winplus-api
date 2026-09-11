@@ -1,6 +1,8 @@
+using Backend.Data;
 using Backend.Models.DTOs;
 using Backend.Models.Entities;
 using Backend.Repositories;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -32,17 +34,61 @@ public class ChatbotService : IChatbotService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ChatbotService> _logger;
     private readonly IConfiguration _configuration;
+    private readonly ApplicationDbContext _db;
 
     public ChatbotService(
         IChatbotRepository repository,
         IHttpClientFactory httpClientFactory,
         ILogger<ChatbotService> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ApplicationDbContext db)
     {
         _repository = repository;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _configuration = configuration;
+        _db = db;
+    }
+
+    /// <summary>
+    /// Formations réellement inscrites, lues en direct dans Enrollments —
+    /// utilisé pour RAG (voir services/rag_chat_bridge.py côté Python,
+    /// contrôle d'accès aux citations) plutôt que le ChatbotContext
+    /// synchronisé, qui reste vide tant que le frontend n'appelle jamais
+    /// POST /chatbot/context/sync en pratique.
+    /// </summary>
+    private async Task<List<EnrolledSubjectDto>> GetRealEnrolledSubjectsAsync(int userId)
+    {
+        return await _db.Enrollments
+            .Where(e => e.UserId == userId)
+            .Join(_db.Subjects.Where(s => !s.IsDeleted), e => e.SubjectId, s => s.Id, (e, s) => new EnrolledSubjectDto
+            {
+                SubjectId = s.Id,
+                Title = s.Title,
+                Progress = e.ProgressPercentage,
+                LastAccessedAt = e.CompletedAt,
+            })
+            .ToListAsync();
+    }
+
+    /// <summary>
+    /// Équivalent de GetRealEnrolledSubjectsAsync pour les formations
+    /// enseignant (entité Course, distincte de Subject) — nécessaire pour
+    /// que RAG filtre correctement l'accès aux citations de leçons
+    /// (course_id), pas seulement aux citations de formations (subject_id).
+    /// </summary>
+    private async Task<List<EnrolledCourseDto>> GetRealEnrolledCoursesAsync(int userId)
+    {
+        return await _db.CourseEnrollments
+            .Where(e => e.UserId == userId && e.IsActive)
+            .Join(_db.Courses, e => e.CourseId, c => c.Id, (e, c) => new EnrolledCourseDto
+            {
+                CourseId = c.Id,
+                Title = c.Title,
+                Progress = e.ProgressPercent,
+                LastAccessedAt = e.LastAccessedAt,
+            })
+            .ToListAsync();
     }
 
     /// <summary>
@@ -294,27 +340,56 @@ public class ChatbotService : IChatbotService
         if (includeContext)
         {
             var context = await _repository.GetContextForUserAsync(userId);
-            if (context != null)
-            {
-                request.UserContext = MapToChatbotContextResponse(context);
-                // SystemPrompt délibérément null : FastAPI/prompt_builder.py construit le prompt
-                // différencié par rôle avec VARK, lacunes, mémoires, performances, etc.
-            }
+            request.UserContext = context != null
+                ? MapToChatbotContextResponse(context)
+                : new ChatbotContextResponse { Id = 0, UserId = userId };
+            // SystemPrompt délibérément null : FastAPI/prompt_builder.py construit le prompt
+            // différencié par rôle avec VARK, lacunes, mémoires, performances, etc.
+
+            // EnrolledSubjects toujours recalculé depuis Enrollments (donnée
+            // réelle et à jour), plutôt que la valeur potentiellement absente/
+            // périmée du ChatbotContext synchronisé — voir
+            // GetRealEnrolledSubjectsAsync. Nécessaire pour que RAG (côté
+            // Python) sache quelles formations l'utilisateur a le droit de
+            // voir citées (voir RAG/README.md, "Intégration au chat WinAI").
+            request.UserContext.EnrolledSubjects = await GetRealEnrolledSubjectsAsync(userId);
+            request.UserContext.EnrolledCourses = await GetRealEnrolledCoursesAsync(userId);
         }
 
         return request;
     }
+
+    /// <summary>
+    /// FastAPI/Pydantic (schemas.py::ChatRequest, ChatResponse) attend du
+    /// snake_case strict, sans alias ni insensibilité à la casse. Les
+    /// méthodes PostAsJsonAsync/ReadFromJsonAsync par défaut sérialisent en
+    /// camelCase (JsonSerializerDefaults.Web) — vérifié empiriquement
+    /// (json Content.Create sur ces mêmes DTO produit "userContext",
+    /// "enrolledSubjects", etc.), pas en PascalCase comme on pourrait le
+    /// supposer de JsonSerializerOptions.Default. Sans cette policy,
+    /// `UserContext` (donc tout le contexte WinAI : formations inscrites,
+    /// page consultée, lacunes...) atterrissait sous la clé "userContext",
+    /// que `ChatRequest.user_context` (Pydantic) ignore silencieusement
+    /// (le champ a une valeur par défaut, donc pas d'erreur 422 — juste une
+    /// perte de contexte totale et silencieuse). Idem en sens inverse pour
+    /// `tokens_used`/`generation_time_ms` à la désérialisation de la
+    /// réponse. SnakeCaseLower (net8.0+) corrige les deux sens.
+    /// </summary>
+    private static readonly JsonSerializerOptions _fastApiJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+    };
 
     private async Task<FastApiChatResponse> CallFastApiServiceAsync(FastApiChatRequest request)
     {
         try
         {
             var client = _httpClientFactory.CreateClient("FastApiClient");
-            var response = await client.PostAsJsonAsync("/api/chatbot/chat", request);
+            var response = await client.PostAsJsonAsync("/api/chatbot/chat", request, _fastApiJsonOptions);
 
             if (response.IsSuccessStatusCode)
             {
-                var result = await response.Content.ReadFromJsonAsync<FastApiChatResponse>();
+                var result = await response.Content.ReadFromJsonAsync<FastApiChatResponse>(_fastApiJsonOptions);
                 return result ?? new FastApiChatResponse
                 {
                     Success = false,

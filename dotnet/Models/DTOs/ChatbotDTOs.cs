@@ -225,6 +225,20 @@ public class EnrolledSubjectDto
 }
 
 /// <summary>
+/// Équivalent de EnrolledSubjectDto pour les formations enseignant (entité
+/// Course/CourseEnrollment, distincte de Subject) — nécessaire pour que
+/// RAG (côté Python) puisse filtrer l'accès aux citations dont le chunk ne
+/// porte qu'un course_id (leçons de TeacherCourseController).
+/// </summary>
+public class EnrolledCourseDto
+{
+    public int CourseId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public decimal Progress { get; set; }
+    public DateTime? LastAccessedAt { get; set; }
+}
+
+/// <summary>
 /// DTO pour une activité récente
 /// </summary>
 public class RecentActivityDto
@@ -347,6 +361,7 @@ public class ChatbotContextResponse
     public string? Grade { get; set; }
     public List<string>? Objectives { get; set; }
     public List<EnrolledSubjectDto>? EnrolledSubjects { get; set; }
+    public List<EnrolledCourseDto>? EnrolledCourses { get; set; }
     public List<RecentActivityDto>? RecentActivity { get; set; }
     public List<NavigationItemDto>? NavigationHistory { get; set; }
     public Dictionary<string, object>? Preferences { get; set; }

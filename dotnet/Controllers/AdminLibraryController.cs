@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Models.Entities;
+using Backend.Services;
 
 namespace Backend.Controllers;
 
@@ -30,11 +31,13 @@ public class AdminLibraryController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
     private readonly ILogger<AdminLibraryController> _logger;
+    private readonly IFastApiClient _fastApi;
 
-    public AdminLibraryController(ApplicationDbContext db, ILogger<AdminLibraryController> logger)
+    public AdminLibraryController(ApplicationDbContext db, ILogger<AdminLibraryController> logger, IFastApiClient fastApi)
     {
         _db = db;
         _logger = logger;
+        _fastApi = fastApi;
     }
 
     public class LibraryWriteDto
@@ -96,6 +99,18 @@ public class AdminLibraryController : ControllerBase
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
 
+            // RAG (voir topo validé) : indexe le contenu pour que WinAI puisse
+            // s'appuyer dessus dans le chat. Fire-and-forget, ne bloque jamais
+            // la réponse de cette route (contrainte "pas de latence à l'upload").
+            _fastApi.QueueRagIngestion(
+                docId: $"coursecontent_{content.Id}",
+                title: subject.Title,
+                fileUrl: fileUrl!.Trim(),
+                authorizationHeader: Request.Headers["Authorization"].ToString(),
+                category: dto.Category,
+                subjectId: subject.Id,
+                courseId: content.Id);
+
             _logger.LogInformation("{Type} mis en ligne : subject #{SubjectId}", dto.ContentType, subject.Id);
             return Ok(new
             {
@@ -130,16 +145,37 @@ public class AdminLibraryController : ControllerBase
             .OrderBy(c => c.OrderIndex)
             .FirstOrDefaultAsync();
 
+        var fileChanged = false;
         if (content != null)
         {
-            if (dto.DocumentUrl     != null) content.DocumentUrl     = dto.DocumentUrl.Trim();
-            if (dto.VideoUrl        != null) content.VideoUrl        = dto.VideoUrl.Trim();
+            if (dto.DocumentUrl != null && dto.DocumentUrl.Trim() != content.DocumentUrl) { content.DocumentUrl = dto.DocumentUrl.Trim(); fileChanged = true; }
+            if (dto.VideoUrl    != null && dto.VideoUrl.Trim()    != content.VideoUrl)    { content.VideoUrl    = dto.VideoUrl.Trim();    fileChanged = true; }
             if (dto.DurationMinutes != null) content.DurationMinutes = dto.DurationMinutes.Value;
             if (dto.IsPublished     != null) content.Status          = dto.IsPublished.Value ? "published" : "draft";
             content.UpdatedAt = DateTime.UtcNow;
         }
 
         await _db.SaveChangesAsync();
+
+        // Nouveau fichier posé sur une fiche existante : ré-indexer. NOTE
+        // (voir RAG/README.md « Limites connues ») : les anciens chunks ne
+        // sont pas encore marqués "superseded" automatiquement depuis cette
+        // route — la ré-ingestion s'ajoute au corpus plutôt que remplacer.
+        if (content != null && fileChanged)
+        {
+            var newFileUrl = content.VideoUrl ?? content.DocumentUrl;
+            if (!string.IsNullOrWhiteSpace(newFileUrl))
+            {
+                _fastApi.QueueRagIngestion(
+                    docId: $"coursecontent_{content.Id}",
+                    title: subject.Title,
+                    fileUrl: newFileUrl,
+                    authorizationHeader: Request.Headers["Authorization"].ToString(),
+                    category: subject.Category,
+                    subjectId: subject.Id,
+                    courseId: content.Id);
+            }
+        }
         return Ok(new { success = true, data = new { subjectId = subject.Id } });
     }
 
