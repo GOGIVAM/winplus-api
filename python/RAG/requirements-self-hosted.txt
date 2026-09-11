@@ -1,0 +1,33 @@
+# RAG/self_hosted — inférence 100% locale, PyTorch/HuggingFace Transformers
+# exclusivement pour la partie deep learning. Qdrant, rank_bm25, igraph/
+# leidenalg et rapidfuzz sont de l'infra/algorithmique classique, pas des
+# frameworks ML concurrents (voir RAG/README.md, §Arbitrage PyTorch).
+
+# ── Deep learning (PyTorch uniquement) ──────────────────────────────────────
+torch>=2.3.0
+transformers>=4.46.0
+accelerate>=0.34.0
+bitsandbytes>=0.43.0
+sentencepiece>=0.2.0
+
+# ── OCR / Vision (GLM-OCR tourne via transformers ci-dessus) ────────────────
+Pillow>=10.4.0
+
+# ── ASR (Whisper — implémentation PyTorch native, pas faster-whisper/CTranslate2)
+openai-whisper>=20240930
+
+# ── PDF natif ────────────────────────────────────────────────────────────
+PyMuPDF>=1.24.0
+
+# ── Traitement d'image classique (détection de tampons) ─────────────────────
+opencv-python-headless>=4.10.0
+
+# ── Base vectorielle (auto-hébergée, voir DEPLOYMENT.md) ────────────────────
+qdrant-client>=1.11.0
+
+# ── Recherche lexicale + fusion + graphe (algorithmique, pas du ML) ─────────
+rank_bm25>=0.2.2
+networkx>=3.3
+python-igraph>=0.11.6
+leidenalg>=0.10.2
+rapidfuzz>=3.9.0

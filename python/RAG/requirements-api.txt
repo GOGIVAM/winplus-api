@@ -1,0 +1,12 @@
+# RAG/api — aucune inférence locale, uniquement des clients HTTP vers les
+# fournisseurs retenus (voir RAG/README.md, §Stack api pour le comparatif
+# de prix vérifié).
+
+cohere>=5.11.0
+mistralai>=1.2.0
+groq>=0.11.0
+openai>=1.51.0
+qdrant-client>=1.11.0
+rank_bm25>=0.2.2
+tiktoken>=0.8.0
+PyMuPDF>=1.24.0

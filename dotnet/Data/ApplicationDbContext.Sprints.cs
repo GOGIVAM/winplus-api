@@ -21,6 +21,8 @@ public partial class ApplicationDbContext
     public DbSet<TeacherClassStudent> TeacherClassStudents => Set<TeacherClassStudent>();
     public DbSet<ParentCreditLedger> ParentCreditLedgers => Set<ParentCreditLedger>();
     public DbSet<InstitutionStudent> InstitutionStudents => Set<InstitutionStudent>();
+    public DbSet<InstitutionTeacherLink> InstitutionTeacherLinks => Set<InstitutionTeacherLink>();
+    public DbSet<TeacherStudentAccessRequest> TeacherStudentAccessRequests => Set<TeacherStudentAccessRequest>();
 
     private void OnModelCreatingSprints(ModelBuilder modelBuilder)
     {
@@ -140,6 +142,44 @@ public partial class ApplicationDbContext
         {
             entity.HasIndex(e => e.CreatedByUserId);
             entity.HasIndex(e => e.Status);
+        });
+
+        modelBuilder.Entity<InstitutionTeacherLink>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.InstitutionId, e.TeacherId }).IsUnique();
+            entity.HasIndex(e => e.TeacherId);
+            entity.HasOne(e => e.Institution)
+                  .WithMany()
+                  .HasForeignKey(e => e.InstitutionId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Teacher)
+                  .WithMany()
+                  .HasForeignKey(e => e.TeacherId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Initiator)
+                  .WithMany()
+                  .HasForeignKey(e => e.InitiatedBy)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<TeacherStudentAccessRequest>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.TeacherId, e.StudentId, e.Status });
+            entity.HasIndex(e => e.StudentId);
+            entity.HasOne(e => e.Teacher)
+                  .WithMany()
+                  .HasForeignKey(e => e.TeacherId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Student)
+                  .WithMany()
+                  .HasForeignKey(e => e.StudentId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Institution)
+                  .WithMany()
+                  .HasForeignKey(e => e.InstitutionId)
+                  .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }
