@@ -55,6 +55,10 @@ def transcribe_video(video_path: str) -> List[TranscriptSegment]:
             file=f,
             model=config.GROQ_WHISPER_MODEL,
             response_format="verbose_json",
+            # Sans timestamp_granularities, l'API ne garantit pas de renvoyer
+            # les segments horodatés (vérifié sur la doc officielle Groq) —
+            # or c'est précisément ce dont on a besoin pour citer "à 12:34".
+            timestamp_granularities=["segment"],
             language="fr",
         )
 

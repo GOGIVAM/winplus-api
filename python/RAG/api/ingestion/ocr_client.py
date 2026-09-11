@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import logging
 
-from mistralai import Mistral
+from mistralai.client import Mistral
 
 from RAG.api import config
 
