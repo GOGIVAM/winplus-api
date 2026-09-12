@@ -406,7 +406,28 @@ public class ChatbotController : ControllerBase
     ///     var text = string.Join("\n", pdf.GetPages().Select(p => p.Text));
     /// Même principe pour .docx avec DocumentFormat.OpenXml.
     /// </summary>
-    private static string DescribeDocument(StreamAttachment att)
+    private class ChatAttachmentResult
+    {
+        public string? TextForPrompt { get; set; }
+    }
+
+    private static readonly JsonSerializerOptions _snakeCaseJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+    };
+
+    /// <summary>
+    /// Décrit une pièce jointe non textuelle (PDF, docx...) pour l'injecter
+    /// dans le message envoyé à DeepSeek. RAG (voir topo validé : "tout
+    /// document uploadé doit servir dans la base de connaissance") :
+    /// délègue l'extraction réelle à Python (PyMuPDF/OCR, .NET n'a pas
+    /// d'équivalent) via POST /api/rag/chat-attachment, qui renvoie un
+    /// aperçu texte immédiat ET planifie l'ingestion complète en tâche de
+    /// fond dans la base de connaissance PERSONNELLE de l'utilisateur.
+    /// Avant : un PDF, même natif et parfaitement lisible, recevait
+    /// toujours "contenu non extrait" — jamais lu.
+    /// </summary>
+    private async Task<string> DescribeDocumentAsync(StreamAttachment att)
     {
         const int MaxChars = 20_000; // garde-fou sur la fenêtre de contexte
         var name = string.IsNullOrWhiteSpace(att.FileName) ? "document" : att.FileName;
@@ -416,7 +437,35 @@ public class ChatbotController : ControllerBase
             || mime is "application/json" or "application/csv" or "text/csv";
 
         if (!textual)
-            return $"[Pièce jointe : {name} ({mime}). Le contenu binaire n'est pas encore extrait côté serveur  demande à l'élève de recopier le passage utile, ou de joindre une photo de la page.]";
+        {
+            try
+            {
+                var client = _httpClientFactory.CreateClient("FastApiClient");
+                using var req = new HttpRequestMessage(HttpMethod.Post, "/api/rag/chat-attachment")
+                {
+                    Content = JsonContent.Create(
+                        new { data_url_or_base64 = att.Data, file_name = att.FileName },
+                        options: _snakeCaseJsonOptions),
+                };
+                var authHeader = Request.Headers["Authorization"].ToString();
+                if (!string.IsNullOrEmpty(authHeader))
+                    req.Headers.TryAddWithoutValidation("Authorization", authHeader);
+
+                var response = await client.SendAsync(req);
+                if (response.IsSuccessStatusCode)
+                {
+                    var result = await response.Content.ReadFromJsonAsync<ChatAttachmentResult>(_snakeCaseJsonOptions);
+                    if (!string.IsNullOrEmpty(result?.TextForPrompt))
+                        return result.TextForPrompt;
+                }
+                _logger.LogWarning("Extraction de pièce jointe échouée : HTTP {Status}", (int)response.StatusCode);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Extraction de pièce jointe échouée (non bloquant, réponse dégradée)");
+            }
+            return $"[Pièce jointe : {name} ({mime}). Extraction indisponible pour le moment  demande à l'élève de recopier le passage utile, ou de joindre une photo de la page.]";
+        }
 
         try
         {
@@ -529,6 +578,13 @@ public class ChatbotController : ControllerBase
         var documents = request.Attachments?.Where(a => a.Type != "image").ToList()    ?? new();
         var hasAny    = images.Count > 0 || documents.Count > 0;
 
+        // Pré-calculé hors de la lambda .Select (synchrone, ne peut pas
+        // await) : une seule pièce jointe document appelle RAG, pas une
+        // par message d'historique.
+        var documentDescriptions = new List<string>();
+        foreach (var att in documents)
+            documentDescriptions.Add(await DescribeDocumentAsync(att));
+
         var history = historyRaw.Select<dynamic, object>(h =>
         {
             if ((int)h.Id != savedMsgId || !hasAny)
@@ -541,8 +597,8 @@ public class ChatbotController : ControllerBase
             foreach (var att in images)
                 parts.Add(new { type = "image_url", image_url = new { url = att.Data } });
 
-            foreach (var att in documents)
-                parts.Add(new { type = "text", text = DescribeDocument(att) });
+            foreach (var description in documentDescriptions)
+                parts.Add(new { type = "text", text = description });
 
             return new { role = (string)h.role, content = (object)parts };
         }).ToList();

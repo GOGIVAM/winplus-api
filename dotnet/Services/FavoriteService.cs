@@ -55,6 +55,13 @@ public class FavoriteService : IFavoriteService
     {
         try
         {
+            // Idempotent : un double-clic ou un appel réseau rejoué envoie deux
+            // fois la même requête, ce qui violait IX_Favorites_UserId_SubjectId
+            // et remontait en 500 côté client. On renvoie le favori existant.
+            var existing = await _favoriteRepository.GetByUserAndSubjectAsync(userId, subjectId);
+            if (existing != null)
+                return existing;
+
             var subject = await _subjectRepository.GetByIdAsync(subjectId);
             if (subject == null)
                 throw new InvalidOperationException($"Cours {subjectId} introuvable");

@@ -1,22 +1,32 @@
 """
 Pont entre WinAI (routes/chatbot_routes.py) et la base de connaissance RAG.
 
-Déclenchement hybride (topo validé avec l'utilisateur) :
+Déclenchement hybride PUBLIC (topo validé avec l'utilisateur) :
   1. Formation actuellement consultée, déduite de `navigation_history`
      (dernière entrée envoyée par le frontend à chaque changement de page).
   2. À défaut, mention explicite d'une formation inscrite dans le message
      de l'utilisateur (correspondance sur le titre).
-  3. Sinon, RAG n'est PAS interrogé — pas de coût ni de latence ajoutée
+  3. Sinon, pas de recherche PUBLIQUE — pas de coût ni de latence ajoutée
      sur les messages qui ne portent pas sur un contenu du catalogue.
 
+Base de connaissance PERSONNELLE (décision utilisateur : "tout document
+uploadé doit servir dans la base de connaissance") : en complément du
+scope public ci-dessus, TOUJOURS interroger aussi le corpus personnel de
+l'utilisateur (pièces jointes de chat qu'il a lui-même envoyées, indexées
+avec owner_user_id — voir RAG/router.py). Peu coûteux : ce corpus est
+petit par utilisateur, et beaucoup n'y auront jamais rien indexé (Qdrant
+répond alors vite, liste vide).
+
 Contrôle d'accès aux citations (topo validé, point 5) : RAG cherche dans
-TOUT le corpus indexé sans filtrage d'accès (un abonnement peut donner
-accès à de l'information sans donner accès au document source lui-même).
-Le filtrage se fait uniquement sur l'AFFICHAGE de la source : une citation
-n'est marquée « visible » que si son subject_id (resp. course_id) figure
-dans les formations (resp. cours) auxquels l'utilisateur est inscrit.
-WinAI reçoit une consigne explicite de ne jamais donner de lien/référence
-vers une source non visible.
+TOUT le corpus PUBLIC indexé sans filtrage d'accès (un abonnement peut
+donner accès à de l'information sans donner accès au document source
+lui-même). Le filtrage se fait uniquement sur l'AFFICHAGE de la source :
+une citation n'est marquée « visible » que si son subject_id (resp.
+course_id) figure dans les formations (resp. cours) auxquels l'utilisateur
+est inscrit. Les citations personnelles (owner_user_id) sont toujours
+visibles pour leur propriétaire — c'est son propre contenu. WinAI reçoit
+une consigne explicite de ne jamais donner de lien/référence vers une
+source non visible.
 """
 
 from __future__ import annotations
@@ -129,37 +139,57 @@ def _format_context_block(
     )
 
 
+async def _safe_retrieve(request: RAGQueryRequest, label: str) -> Optional[RetrievedContext]:
+    try:
+        return await asyncio.wait_for(retrieve_context(request), timeout=RAG_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        logger.warning(f"[RAG chat bridge] Timeout ({RAG_TIMEOUT_SECONDS}s) dépassé sur la recherche {label}")
+        return None
+    except Exception as e:
+        logger.warning(f"[RAG chat bridge] Recherche {label} échouée, poursuite sans : {e}")
+        return None
+
+
 async def build_rag_context_block(
     user_context: Optional[ChatbotContextRequest],
     messages: List[dict],
+    user_id: Optional[int] = None,
 ) -> str:
     """Retourne un bloc de texte à ajouter au prompt système WinAI, ou une
-    chaîne vide si RAG n'a pas été déclenché / n'a rien trouvé de
-    pertinent. Ne lève jamais d'exception : un souci RAG ne doit jamais
-    empêcher WinAI de répondre normalement (dégradation silencieuse)."""
-    try:
-        last_message = _extract_last_user_text(messages)
-        if not last_message:
-            return ""
-        scope = detect_scope(user_context, last_message)
-        if not scope:
-            return ""
+    chaîne vide si RAG n'a rien trouvé de pertinent (ni côté public, ni
+    côté personnel). Ne lève jamais d'exception : un souci RAG ne doit
+    jamais empêcher WinAI de répondre normalement (dégradation silencieuse
+    par source — un échec sur l'une n'empêche pas l'autre)."""
+    last_message = _extract_last_user_text(messages)
+    if not last_message:
+        return ""
 
-        request = RAGQueryRequest(
-            question=last_message,
-            filters={**scope, "status": "active"},
-            top_k=RAG_TOP_K,
+    passages: List[str] = []
+    citations = []
+
+    scope = detect_scope(user_context, last_message)
+    if scope:
+        public_request = RAGQueryRequest(
+            question=last_message, filters={**scope, "status": "active"}, top_k=RAG_TOP_K
         )
-        retrieved = await asyncio.wait_for(retrieve_context(request), timeout=RAG_TIMEOUT_SECONDS)
-        if retrieved.refused or not retrieved.passages:
-            return ""
+        public_result = await _safe_retrieve(public_request, "publique (catalogue)")
+        if public_result and not public_result.refused:
+            passages.extend(public_result.passages)
+            citations.extend(public_result.citations)
 
-        accessible_subject_ids = _accessible_subject_ids(user_context)
-        accessible_course_ids = _accessible_course_ids(user_context)
-        return _format_context_block(retrieved, accessible_subject_ids, accessible_course_ids)
-    except asyncio.TimeoutError:
-        logger.warning(f"[RAG chat bridge] Timeout ({RAG_TIMEOUT_SECONDS}s) dépassé, poursuite sans RAG")
+    if user_id is not None:
+        personal_request = RAGQueryRequest(
+            question=last_message, filters={"owner_user_id": user_id, "status": "active"}, top_k=RAG_TOP_K
+        )
+        personal_result = await _safe_retrieve(personal_request, "personnelle")
+        if personal_result and not personal_result.refused:
+            passages.extend(personal_result.passages)
+            citations.extend(personal_result.citations)
+
+    if not passages:
         return ""
-    except Exception as e:
-        logger.warning(f"[RAG chat bridge] Récupération de contexte échouée, poursuite sans RAG : {e}")
-        return ""
+
+    accessible_subject_ids = _accessible_subject_ids(user_context)
+    accessible_course_ids = _accessible_course_ids(user_context)
+    merged = RetrievedContext(passages=passages, citations=citations, refused=False)
+    return _format_context_block(merged, accessible_subject_ids, accessible_course_ids)

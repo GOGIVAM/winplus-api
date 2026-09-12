@@ -25,9 +25,13 @@ api_router = APIRouter(prefix="/rag/api", tags=["RAG - api"])
 
 @api_router.post("/ingest", response_model=IngestResult)
 async def ingest(request: IngestRequest, current_user: UserTokenData = Depends(verify_token)):
+    from RAG.shared.file_resolver import resolve_local_path
+
     try:
-        chunks, source_type, warnings = process_document(request)
-        index_chunks(chunks)
+        with resolve_local_path(request) as local_path:
+            resolved_request = request.model_copy(update={"file_path": local_path})
+            chunks, source_type, warnings = process_document(resolved_request)
+        warnings = warnings + index_chunks(chunks)
         return IngestResult(doc_id=request.doc_id, chunks_indexed=len(chunks), source_type=source_type, warnings=warnings)
     except Exception as e:
         logger.exception("[RAG/api] Échec d'ingestion")

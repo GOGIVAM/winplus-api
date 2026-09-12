@@ -75,6 +75,18 @@ def _graphrag_augment(question: str, filters: Dict, max_docs: int = 3) -> List[d
     ]
 
 
+def _apply_relevance_boost(candidates: List[dict], reranked: List[tuple]) -> List[tuple]:
+    """Voir RAG/api/engine/pipeline.py::_apply_relevance_boost — même
+    logique, dupliquée ici car les deux moteurs restent indépendants par
+    design (voir README.md)."""
+    boosted = []
+    for idx, score in reranked:
+        relevance = candidates[idx]["payload"].get("relevance_score")
+        factor = 0.5 + 0.5 * relevance if relevance is not None else 1.0
+        boosted.append((idx, score * factor))
+    return sorted(boosted, key=lambda pair: pair[1], reverse=True)
+
+
 def _retrieve_and_rerank(request: RAGQueryRequest) -> tuple[List[dict], List[tuple], str]:
     """Routage de complexité + HyDE + GraphRAG + recherche hybride + boucle
     Self-RAG, sans génération ni validation — factorisé pour être partagé
@@ -108,7 +120,7 @@ def _retrieve_and_rerank(request: RAGQueryRequest) -> tuple[List[dict], List[tup
         if not texts:
             break
 
-        reranked = rerank(request.question, texts, top_k=request.top_k)
+        reranked = _apply_relevance_boost(candidates, rerank(request.question, texts, top_k=request.top_k))
         avg_score = sum(s for _, s in reranked) / len(reranked) if reranked else 0.0
 
         if avg_score >= config.RERANK_CONFIDENCE_THRESHOLD or iterations == config.SELF_RAG_MAX_ITERATIONS - 1:

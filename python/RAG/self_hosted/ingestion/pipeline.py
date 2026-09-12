@@ -213,6 +213,7 @@ def _to_chunk(chunk_pair, request: IngestRequest, chunk_type: ChunkType) -> Chun
             page=chunk_pair.page,
             section=chunk_pair.section,
             chunk_type=chunk_type,
+            owner_user_id=request.owner_user_id,
         ),
     )
 
@@ -230,4 +231,5 @@ def _metadata(request: IngestRequest, page: int | None, chunk_type: ChunkType, e
         timestamp_start=(extra or {}).get("timestamp_start"),
         timestamp_end=(extra or {}).get("timestamp_end"),
         extra=extra or {},
+        owner_user_id=request.owner_user_id,
     )

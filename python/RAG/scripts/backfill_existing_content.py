@@ -33,6 +33,7 @@ from sqlalchemy import text
 from database import CourseContent, Database, Exam
 from RAG.shared.config import RAG_BACKEND
 from RAG.shared.contracts import IngestRequest
+from RAG.shared.file_resolver import resolve_local_path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("rag.backfill")
@@ -143,8 +144,12 @@ def main() -> int:
         logger.info(f"[{i}/{len(items)}] Ingestion {request.doc_id} ({request.title})...")
         try:
             _supersede_previous_version(collection, request.doc_id)
-            chunks, source_type, warnings = process_document(request)
-            index_chunks(chunks)
+            # resolve_local_path : les URL de ce script sont des URL S3
+            # publiques, que fitz/whisper ne savent pas ouvrir directement.
+            with resolve_local_path(request) as local_path:
+                resolved_request = request.model_copy(update={"file_path": local_path})
+                chunks, source_type, warnings = process_document(resolved_request)
+            warnings = warnings + index_chunks(chunks)
             succeeded += 1
             logger.info(f"  -> OK : {len(chunks)} chunks ({source_type.value}){' - ' + '; '.join(warnings) if warnings else ''}")
         except Exception as e:

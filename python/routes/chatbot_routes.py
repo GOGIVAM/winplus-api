@@ -5,6 +5,7 @@ Chatbot Routes - Router FastAPI pour le chatbot IA
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+import asyncio
 import json
 import time
 import logging
@@ -13,6 +14,7 @@ from typing import Dict, Any, List, Optional
 from services.deepseek_client import get_deepseek_client
 from services.prompt_builder import build_system_prompt, UserContext, detect_language
 from services.rag_chat_bridge import build_rag_context_block
+from services.attachment_processor import process_chat_attachment_async
 from auth import verify_token, UserTokenData
 from schemas import ChatRequest, ChatResponse, ChatbotHealthResponse, ChatMessage, ChatbotContextRequest
 from database import Database, Conversation, ChatMessage as ChatMessageDB, UserAIMemory, User, QuizAttempt, DailyScore, QuizMistake
@@ -237,6 +239,17 @@ def _extract_and_save_memories(user_id: int, assistant_content: str, session) ->
             pass
 
 
+def _extract_memories_background(user_id: int, assistant_content: str) -> None:
+    """Ouvre sa propre session DB — appelée en tâche de fond (voir chat()),
+    ne peut pas réutiliser une session déjà fermée après la réponse HTTP."""
+    db = Database()
+    session = db.SessionLocal()
+    try:
+        _extract_and_save_memories(user_id, assistant_content, session)
+    finally:
+        session.close()
+
+
 def _build_prompt_from_request(
     user_context: Optional[ChatbotContextRequest],
     token_data: UserTokenData,
@@ -285,22 +298,26 @@ def _build_prompt_from_request(
     return build_system_prompt(ctx), ctx.role
 
 
-def format_messages_for_deepseek(messages: List[ChatMessage]) -> List[Dict[str, str]]:
+async def format_messages_for_deepseek(messages: List[ChatMessage], user_id: Optional[int] = None) -> List[Dict[str, str]]:
     """
     Formate les messages pour l'API DeepSeek
-    
+
     Args:
         messages: Liste de messages avec role, content, attachments
-        
+        user_id: requis pour traiter les pièces jointes de type fichier —
+            voir services/attachment_processor.py (extraction + ingestion
+            RAG personnelle). Sans user_id, les fichiers sont juste nommés
+            comme avant (comportement de repli, jamais d'exception).
+
     Returns:
         Messages formatés pour DeepSeek
     """
     formatted = []
-    
+
     for msg in messages:
         content = msg.content
         attachments = msg.attachments or []
-        
+
         # Ajouter les descriptions des attachments au contenu
         if attachments:
             attachment_descriptions = []
@@ -309,17 +326,25 @@ def format_messages_for_deepseek(messages: List[ChatMessage]) -> List[Dict[str, 
                     attachment_descriptions.append("[Image attachée]")
                 elif att.type == 'equation':
                     attachment_descriptions.append(f"[Équation: {att.data}]")
+                elif att.data and user_id is not None:
+                    # Fichier binaire (PDF, etc.) : extraction immédiate +
+                    # ingestion RAG personnelle en tâche de fond — voir
+                    # services/attachment_processor.py. C'était auparavant
+                    # un simple "[Fichier: nom.pdf]" jamais lu.
+                    attachment_descriptions.append(
+                        await process_chat_attachment_async(att.data, att.file_name, user_id)
+                    )
                 else:
                     attachment_descriptions.append(f"[Fichier: {att.file_name or 'fichier'}]")
-            
+
             if attachment_descriptions:
                 content = f"{content}\n\n{' '.join(attachment_descriptions)}"
-        
+
         formatted.append({
             "role": msg.role,
             "content": content
         })
-    
+
     return formatted
 
 
@@ -386,13 +411,14 @@ async def chat(
             )
 
         # Formater les messages
-        formatted_messages = format_messages_for_deepseek(chat_request.messages)
+        formatted_messages = await format_messages_for_deepseek(chat_request.messages, current_user.user_id)
 
-        # RAG (voir services/rag_chat_bridge.py) : n'ajoute du contexte que si
+        # RAG (voir services/rag_chat_bridge.py) : ajoute du contexte public si
         # la question porte sur une formation identifiable (page consultée ou
-        # mention explicite) — dégradation silencieuse en cas d'échec/timeout,
-        # ne casse jamais le comportement WinAI existant.
-        rag_block = await build_rag_context_block(chat_request.user_context, formatted_messages)
+        # mention explicite), et TOUJOURS le contexte personnel de l'utilisateur
+        # (ses propres pièces jointes déjà indexées) — dégradation silencieuse
+        # en cas d'échec/timeout, ne casse jamais le comportement WinAI existant.
+        rag_block = await build_rag_context_block(chat_request.user_context, formatted_messages, current_user.user_id)
         if rag_block:
             system_prompt += rag_block
 
@@ -411,7 +437,17 @@ async def chat(
         )
         
         logger.info(f"Chat response: success={result.get('success')}, tokens={result.get('tokens_used')}")
-        
+
+        # Mémoire WinAI (voir _extract_and_save_memories) : n'était déclenchée
+        # que dans stream_chat() — jamais ici, alors que /chat est le chemin
+        # réellement utilisé par le frontend aujourd'hui (useChatbot.ts). En
+        # tâche de fond : ne retarde jamais la réponse HTTP pour un coût
+        # supplémentaire (appel DeepSeek dédié à l'extraction).
+        if winai_role == "student" and result.get("success") and result.get("content"):
+            asyncio.create_task(asyncio.to_thread(
+                _extract_memories_background, current_user.user_id, result["content"]
+            ))
+
         # Retourner la réponse au format attendu
         return {
             "content": result.get('content', ''),
@@ -474,7 +510,7 @@ async def stream_chat(
                 body.user_context.force_language = detected  # type: ignore[assignment]
         system_prompt, winai_role = _build_prompt_from_request(body.user_context, current_user)
 
-    rag_block = await build_rag_context_block(body.user_context, messages)
+    rag_block = await build_rag_context_block(body.user_context, messages, current_user.user_id)
     if rag_block:
         system_prompt += rag_block
 

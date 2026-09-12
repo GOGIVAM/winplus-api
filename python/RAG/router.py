@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel
 
 from auth import UserTokenData, verify_token
 from RAG.shared.config import RAG_BACKEND
@@ -74,12 +75,20 @@ def _run_ingestion_job(request: IngestRequest) -> None:
     """Exécutée en tâche d'arrière-plan par BackgroundTasks — tout ce qui
     peut prendre du temps (OCR, transcription vidéo, appels d'embedding)
     tourne ici, après que la réponse HTTP a déjà été envoyée à l'appelant."""
+    from RAG.shared.file_resolver import resolve_local_path
+
     process_document, index_chunks, _ = _active_backend()
     IngestJobRegistry.set_processing(request.doc_id)
     try:
         _supersede_previous_version(request.doc_id)
-        chunks, source_type, warnings = process_document(request)
-        index_chunks(chunks)
+        # resolve_local_path gère les trois cas (URL S3, chemin local,
+        # contenu inline base64 d'une pièce jointe de chat) — process_document
+        # (fitz/whisper) n'accepte qu'un chemin local, jamais une URL http(s).
+        with resolve_local_path(request) as local_path:
+            resolved_request = request.model_copy(update={"file_path": local_path})
+            chunks, source_type, warnings = process_document(resolved_request)
+        scoring_warnings = index_chunks(chunks)
+        warnings = warnings + scoring_warnings
         from RAG.shared.contracts import IngestResult
 
         IngestJobRegistry.set_done(
@@ -98,6 +107,15 @@ async def ingest(
     background_tasks: BackgroundTasks,
     current_user: UserTokenData = Depends(verify_token),
 ):
+    # Un document sans subject_id NI course_id est automatiquement traité
+    # comme personnel (topo validé) : posé depuis le JWT, jamais accepté
+    # tel quel du corps de la requête — un utilisateur ne doit pas pouvoir
+    # usurper owner_user_id pour un autre compte.
+    if request.subject_id is None and request.course_id is None:
+        request.owner_user_id = current_user.user_id
+    else:
+        request.owner_user_id = None
+
     IngestJobRegistry.set_queued(request.doc_id)
     background_tasks.add_task(_run_ingestion_job, request)
     return IngestQueuedResponse(doc_id=request.doc_id, status=IngestJobStatus.QUEUED)
@@ -120,6 +138,31 @@ async def query(request: RAGQueryRequest, current_user: UserTokenData = Depends(
     except Exception as e:
         logger.exception(f"[RAG] Échec de requête (backend={RAG_BACKEND})")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class ChatAttachmentRequest(BaseModel):
+    data_url_or_base64: str
+    file_name: str | None = None
+
+
+class ChatAttachmentResponse(BaseModel):
+    text_for_prompt: str
+
+
+@rag_router.post("/chat-attachment", response_model=ChatAttachmentResponse)
+async def chat_attachment(request: ChatAttachmentRequest, current_user: UserTokenData = Depends(verify_token)):
+    """Point d'entrée HTTP pour les pièces jointes de chat côté .NET
+    (ChatbotController.cs::DescribeDocument, chemin /stream) — .NET n'a pas
+    d'équivalent PyMuPDF pour extraire le texte lui-même. Même logique que
+    services/attachment_processor.py, utilisée directement en interne côté
+    Python par routes/chatbot_routes.py (chemin /chat, pas de HTTP self-call
+    nécessaire dans ce cas). Toujours personnel (owner_user_id=current_user),
+    jamais public : voir topo validé, "tout document uploadé doit servir
+    dans la base de connaissance"."""
+    from services.attachment_processor import process_chat_attachment_async
+
+    text = await process_chat_attachment_async(request.data_url_or_base64, request.file_name, current_user.user_id)
+    return ChatAttachmentResponse(text_for_prompt=text)
 
 
 @rag_router.get("/health")

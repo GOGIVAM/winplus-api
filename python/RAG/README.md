@@ -227,6 +227,74 @@ Les deux sont maintenant résolus :
   derniers via `database.py` / requête SQL brute, `CourseLessons` n'ayant
   pas de modèle SQLAlchemy Python).
 
+## Base de connaissance personnelle, score de pertinence, pièces jointes de chat
+
+Extension décidée après un test réel : un utilisateur a joint un PDF
+directement dans le chat, et WinAI a répondu qu'il ne pouvait pas lire son
+contenu — un chemin de code totalement séparé de RAG (`DescribeDocument`
+côté .NET, `format_messages_for_deepseek` côté Python), qui codait en dur
+"extraction non disponible" pour tout fichier non textuel, indépendamment
+de RAG. Décision utilisateur : **tout document uploadé, y compris une
+pièce jointe de chat, doit servir dans la base de connaissance**, avec un
+score de pertinence assigné à l'ingestion.
+
+- **Base de connaissance personnelle** — une pièce jointe de chat est
+  souvent personnelle (devoir, brouillon) : elle est donc TOUJOURS indexée
+  dans un périmètre personnel (`ChunkMetadata.owner_user_id`), jamais dans
+  le corpus public partagé entre utilisateurs. `POST /api/rag/ingest`
+  détermine ça automatiquement : sans `subject_id` ni `course_id` fournis,
+  `owner_user_id` est posé depuis le JWT (jamais accepté du corps de la
+  requête — un utilisateur ne peut pas usurper le corpus d'un autre).
+  `services/rag_chat_bridge.py` interroge maintenant TOUJOURS ce périmètre
+  personnel en plus du scope public hybride (voir plus haut) — un utilisateur
+  qui n'a jamais rien joint obtient juste une recherche vide, rapide.
+- **Score de pertinence composite** (`RAG/shared/relevance_scoring.py`) —
+  calculé une fois par document à l'ingestion, combine (décision
+  utilisateur : "on peut combiner les 3") :
+  - *nouveauté* : 1 − similarité cosinus avec le contenu le plus proche déjà
+    indexé dans le même périmètre (repère les quasi-doublons) ;
+  - *qualité pédagogique* : jugée par DeepSeek (repère les pages de garde,
+    sommaires vides, texte non substantiel) ;
+  - *adéquation au sujet déclaré* : similarité entre le contenu et le
+    sujet/catégorie renseigné à l'upload (repère un document mal classé,
+    logué en warning si très faible).
+  Composite : `topic_fit × (0.5×nouveauté + 0.5×qualité)` — l'adéquation
+  au sujet agit en filtre/multiplicateur plutôt qu'en simple moyenne, pour
+  qu'un document hors-sujet ne remonte pas haut même par ailleurs "bon".
+  Stocké dans `ChunkMetadata.relevance_score`, utilisé pour repondérer le
+  score de rerank au retrieval (`_apply_relevance_boost` dans les deux
+  `engine/pipeline.py`). Dégradation systématique par sous-score
+  indisponible (clé API absente, toute première ingestion d'un périmètre) :
+  neutralisé plutôt que de pénaliser le document pour un souci
+  d'infrastructure sans rapport avec son contenu.
+- **`RAG/shared/file_resolver.py`** — bug réel trouvé en vérifiant le code
+  (pas supposé) : `fitz.open(pdf_path)`, utilisé partout dans les pipelines
+  d'ingestion, n'accepte qu'un chemin local ou un flux d'octets, PAS une
+  URL http(s). Or TOUS les appelants (`.NET` via `QueueRagIngestion`, le
+  script de backfill) passent une URL S3 publique comme `file_path` —
+  l'ingestion aurait échoué dès le premier vrai appel avec de vraies
+  données. Corrigé : ce module télécharge l'URL vers un fichier temporaire
+  avant tout traitement (et décode un contenu inline en base64 pour les
+  pièces jointes de chat, qui ne passent jamais par S3), avec nettoyage
+  résilient (testé réellement : PyMuPDF garde parfois un verrou sur le
+  fichier sous Windows, le nettoyage ne doit jamais faire échouer une
+  ingestion par ailleurs réussie pour cette seule raison).
+- **`services/attachment_processor.py`** — le correctif concret du bug
+  observé : une pièce jointe non textuelle (PDF...) déclenche désormais
+  une extraction native immédiate (PyMuPDF, testé avec un vrai PDF généré
+  à la volée) injectée dans le message pour une réponse sans attendre,
+  ET planifie en parallèle l'ingestion RAG complète en tâche de fond (OCR
+  si le PDF est scanné, embeddings, indexation) pour que le contenu
+  redevienne cherchable sur les messages futurs. `doc_id` dérivé du hash du
+  contenu (pas un uuid) : renvoyer le même fichier deux fois réutilise le
+  même `doc_id` (supersession plutôt que doublon illimité).
+  - Côté Python (`routes/chatbot_routes.py`, chemin `/chat` non-stream,
+    confirmé être le chemin réellement utilisé par le frontend
+    aujourd'hui) : appel direct, en process, `process_chat_attachment_async`.
+  - Côté .NET (`ChatbotController.cs::DescribeDocumentAsync`, chemin
+    `/stream`) : `.NET` n'a pas d'équivalent PyMuPDF/OCR — nouvel endpoint
+    `POST /api/rag/chat-attachment` exposé pour cet usage précis.
+
 ### Limites connues de cette intégration — toutes corrigées et vérifiées
 
 - ~~Déclenchement par page consultée pas alimenté~~ — **corrigé** :

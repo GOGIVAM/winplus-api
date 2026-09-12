@@ -67,12 +67,23 @@ public class FavoriteRepository : IFavoriteRepository
         try
         {
             favorite.AddedAt = DateTime.UtcNow;
-            
+
             _context.Favorites.Add(favorite);
             await _context.SaveChangesAsync();
-            
+
             _logger.LogInformation("Favorite added for user {UserId}", favorite.UserId);
             return favorite;
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+        {
+            // Deux requêtes concurrentes (double-clic, retry réseau) peuvent
+            // toutes deux passer le check d'existence avant l'insert : la
+            // contrainte unique IX_Favorites_UserId_SubjectId l'attrape ici.
+            _context.Entry(favorite).State = EntityState.Detached;
+            var existing = await GetByUserAndSubjectAsync(favorite.UserId, favorite.SubjectId);
+            if (existing != null)
+                return existing;
+            throw;
         }
         catch (Exception ex)
         {

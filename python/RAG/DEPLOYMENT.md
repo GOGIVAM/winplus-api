@@ -452,3 +452,59 @@ La supersession des anciens chunks à la mise à jour d'un document et le
 filtrage d'accès aux citations `course_id` sont, eux, désormais gérés
 automatiquement — voir README.md, "Limites connues de cette intégration —
 toutes corrigées et vérifiées".
+
+---
+
+## 8. Base personnelle, score de pertinence, pièces jointes de chat
+
+Voir README.md, "Base de connaissance personnelle, score de pertinence,
+pièces jointes de chat" pour l'architecture complète. Ce qui suit couvre
+la vérification et le déploiement.
+
+### 8.1 Ce qui a été vérifié par test réel (pas supposé)
+
+- **`RAG/shared/file_resolver.py`** : testé avec un vrai PDF généré à la
+  volée (PyMuPDF) encodé en base64 — décodage vers fichier temporaire,
+  lecture par `fitz.open()`, nettoyage en sortie de contexte. Un bug réel a
+  été trouvé ET corrigé dans ce test même : sous Windows, PyMuPDF peut
+  garder un verrou sur le fichier après lecture, ce qui faisait échouer
+  `os.remove()` avec `PermissionError` — le nettoyage est maintenant
+  best-effort (log, ne fait jamais échouer une ingestion par ailleurs
+  réussie pour ce seul détail).
+- **`services/attachment_processor.py::_prepare`** : testé avec le même
+  PDF de test — extraction native immédiate confirmée fonctionnelle,
+  `IngestRequest` généré avec `owner_user_id`, `inline_content_base64`,
+  `file_extension_hint` corrects.
+- **`RAG/shared/relevance_scoring.py::compute_relevance_score`** : testé
+  avec un `embed_fn` factice, Qdrant et DeepSeek injoignables (environnement
+  de dev sans ces services démarrés) — confirmé que le score composite reste
+  dans [0, 1] et se calcule quand même (dégradation par sous-score neutre,
+  pas d'exception propagée qui ferait échouer l'ingestion).
+- **`dotnet build`** : 0 erreur après le passage de `DescribeDocument` en
+  `DescribeDocumentAsync` (appel HTTP vers le nouvel endpoint Python) et la
+  restructuration de `StreamChat` (pré-calcul des descriptions de pièces
+  jointes hors de la lambda LINQ synchrone, qui ne peut pas `await`).
+
+### 8.2 Ce qui reste à vérifier en conditions réelles (ne peut pas l'être ici)
+
+- Le comportement réel de `POST /api/rag/chat-attachment` avec un vrai
+  utilisateur, un vrai PDF scanné (déclenche l'OCR Mistral en tâche de
+  fond) et une vraie clé Qdrant/Cohere.
+- Le coût réel ajouté par l'interrogation systématique du périmètre
+  personnel à chaque message (`services/rag_chat_bridge.py`) — un appel
+  d'embedding Cohere par message, même quand le corpus personnel de
+  l'utilisateur est vide. Négligeable individuellement, à surveiller à
+  l'échelle de tout le trafic chat si le volume de messages est élevé.
+- Le jugement de qualité LLM (`_quality_score_llm`) ajoute un appel
+  DeepSeek par document ingéré — surveiller son impact sur le temps
+  d'ingestion total pour un gros backfill (§7.3), et sur le coût mensuel
+  DeepSeek (§6).
+
+### 8.3 Nouveau endpoint
+
+`POST /api/rag/chat-attachment` — utilisé par `ChatbotController.cs`
+(chemin `/stream`) pour extraire le texte d'une pièce jointe de chat non
+textuelle. Body : `{"data_url_or_base64": "...", "file_name": "..."}`.
+Réponse : `{"text_for_prompt": "..."}`. Authentifié (JWT) — `owner_user_id`
+de l'ingestion planifiée en tâche de fond est dérivé du token, jamais du
+corps de la requête.

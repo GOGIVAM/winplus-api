@@ -41,6 +41,21 @@ def _hybrid_retrieve(query_vector: List[float], query_text: str, filters: Dict, 
     ]
 
 
+def _apply_relevance_boost(candidates: List[dict], reranked: List[tuple]) -> List[tuple]:
+    """Repondère le score de rerank avec `relevance_score` (topo validé :
+    nouveauté + qualité + adéquation au sujet, calculés à l'ingestion —
+    voir RAG/shared/relevance_scoring.py). Un document sans score connu
+    (ingéré avant l'introduction de ce champ) n'est ni favorisé ni pénalisé
+    (facteur neutre 1.0). Ne fait que réordonner le top_k déjà sélectionné
+    par le rerank sémantique, pas une nouvelle recherche."""
+    boosted = []
+    for idx, score in reranked:
+        relevance = candidates[idx]["payload"].get("relevance_score")
+        factor = 0.5 + 0.5 * relevance if relevance is not None else 1.0
+        boosted.append((idx, score * factor))
+    return sorted(boosted, key=lambda pair: pair[1], reverse=True)
+
+
 def _retrieve_and_rerank(request: RAGQueryRequest) -> tuple[List[dict], List[tuple]]:
     """Recherche hybride + boucle Self-RAG (reformulation si le rerank est
     peu confiant), sans génération ni validation — factorisé pour être
@@ -57,7 +72,7 @@ def _retrieve_and_rerank(request: RAGQueryRequest) -> tuple[List[dict], List[tup
         if not texts:
             break
 
-        reranked = rerank(request.question, texts, top_k=request.top_k)
+        reranked = _apply_relevance_boost(candidates, rerank(request.question, texts, top_k=request.top_k))
         avg_score = sum(s for _, s in reranked) / len(reranked) if reranked else 0.0
 
         if avg_score >= RERANK_CONFIDENCE_THRESHOLD or iterations == SELF_RAG_MAX_ITERATIONS - 1:

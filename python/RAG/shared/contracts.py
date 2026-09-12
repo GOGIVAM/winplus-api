@@ -54,6 +54,14 @@ class ChunkMetadata(BaseModel):
     # Uniquement pour chunk_type=video_segment (transcription horodatée).
     timestamp_start: Optional[float] = None
     timestamp_end: Optional[float] = None
+    # Base de connaissance PERSONNELLE (topo validé) : un chunk avec
+    # owner_user_id posé n'est retrouvable QUE pour cet utilisateur — voir
+    # services/rag_chat_bridge.py. None = document public (catalogue).
+    owner_user_id: Optional[int] = None
+    # Score composite calculé à l'ingestion (voir RAG/shared/relevance_scoring.py) :
+    # nouveauté vs corpus existant, qualité pédagogique jugée par LLM,
+    # adéquation au sujet déclaré. Utilisé pour prioriser le retrieval.
+    relevance_score: Optional[float] = None
     extra: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -67,11 +75,23 @@ class Chunk(BaseModel):
 class IngestRequest(BaseModel):
     doc_id: str
     title: str
-    file_path: str
+    # URL (http/https, téléchargée), chemin local, ou vide si
+    # inline_content_base64 est fourni (pièce jointe de chat, jamais passée
+    # par S3) — voir RAG/shared/file_resolver.py qui résout ce champ vers un
+    # chemin local utilisable par fitz/whisper quel que soit le cas.
+    file_path: str = ""
+    inline_content_base64: Optional[str] = None
+    # Requis si file_path est vide (inline_content_base64 seul ne dit pas
+    # quel type de fichier décoder) : ".pdf", ".mp4", etc.
+    file_extension_hint: Optional[str] = None
     category: Optional[str] = None
     subject_id: Optional[int] = None
     course_id: Optional[int] = None
     lesson_id: Optional[int] = None
+    # Posé automatiquement par RAG/router.py à partir du JWT quand
+    # subject_id/course_id sont absents — jamais fourni directement par
+    # l'appelant (un utilisateur ne doit pas pouvoir usurper owner_user_id).
+    owner_user_id: Optional[int] = None
 
 
 class IngestResult(BaseModel):
