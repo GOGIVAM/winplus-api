@@ -6,7 +6,9 @@ from fastapi import APIRouter, HTTPException, status, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import asyncio
+import difflib
 import json
+import re
 import time
 import logging
 from typing import Dict, Any, List, Optional
@@ -79,16 +81,40 @@ def _load_quiz_mistakes(user_id: int, limit: int = 10) -> list:
         return []
 
 
-def _load_user_memories(user_id: int) -> list:
-    """Charge les mémoires WinAI persistantes pour un utilisateur."""
+_MEMORY_DEDUP_SIMILARITY_THRESHOLD = 0.6
+_KEYWORD_RE = re.compile(r"\w{4,}", re.UNICODE)
+
+
+def _text_similarity(a: str, b: str) -> float:
+    return difflib.SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio()
+
+
+def _load_user_memories(user_id: int, current_message: str = "") -> list:
+    """Charge les mémoires WinAI persistantes pour un utilisateur, en
+    priorisant celles liées au sujet de la conversation en cours plutôt
+    que la simple récence — sinon une lacune vieille de plusieurs mois
+    s'affiche même quand l'utilisateur parle d'une tout autre matière
+    aujourd'hui. Repli sur la récence si le message ne donne aucun signal
+    de recouvrement (comportement inchangé dans ce cas)."""
     try:
         db = Database()
         session = db.SessionLocal()
         try:
-            memories = session.query(UserAIMemory).filter(
+            pool = session.query(UserAIMemory).filter(
                 UserAIMemory.UserId == user_id
-            ).order_by(UserAIMemory.UpdatedAt.desc()).limit(10).all()
-            return [{"type": m.MemoryType, "content": m.Content} for m in memories]
+            ).order_by(UserAIMemory.UpdatedAt.desc()).limit(30).all()
+
+            message_words = set(w.lower() for w in _KEYWORD_RE.findall(current_message or ""))
+            if message_words:
+                def _overlap(m) -> int:
+                    return len(message_words & set(w.lower() for w in _KEYWORD_RE.findall(m.Content or "")))
+
+                # sorted() est stable : à recouvrement égal (souvent 0 pour
+                # la plupart), l'ordre par récence d'origine est préservé.
+                pool = sorted(pool, key=_overlap, reverse=True)
+
+            top = pool[:10]
+            return [{"type": m.MemoryType, "content": m.Content} for m in top]
         finally:
             session.close()
     except Exception as e:
@@ -213,14 +239,23 @@ def _extract_and_save_memories(user_id: int, assistant_content: str, session) ->
                     CreatedAt=now, UpdatedAt=now,
                 ))
                 continue
-            # Upsert : met à jour si même type + contenu similaire existe déjà
-            existing = session.query(UserAIMemory).filter(
+            # Upsert sémantique : une reformulation proche de la même lacune
+            # ("Difficulté avec les limites" vs "A du mal avec les limites")
+            # ne doit pas créer un doublon — comparaison par similarité de
+            # texte, pas par égalité stricte (trop fragile face aux
+            # reformulations naturelles de DeepSeek d'un appel à l'autre).
+            same_type = session.query(UserAIMemory).filter(
                 UserAIMemory.UserId == user_id,
                 UserAIMemory.MemoryType == mtype,
-                UserAIMemory.Content == content,
-            ).first()
+            ).all()
+            existing = next(
+                (c for c in same_type if _text_similarity(c.Content, content) >= _MEMORY_DEDUP_SIMILARITY_THRESHOLD),
+                None,
+            )
             if existing:
                 existing.UpdatedAt = now
+                if len(content) > len(existing.Content):
+                    existing.Content = content  # garder la formulation la plus complète
             else:
                 session.add(UserAIMemory(
                     UserId=user_id,
@@ -229,6 +264,19 @@ def _extract_and_save_memories(user_id: int, assistant_content: str, session) ->
                     CreatedAt=now,
                     UpdatedAt=now,
                 ))
+
+            # Péremption des lacunes résolues : une notion qui devient
+            # "comprise" n'est plus une difficulté actuelle — supprime les
+            # struggling_topics correspondants plutôt que de laisser
+            # cohabiter indéfiniment une lacune et sa version désormais acquise.
+            if mtype == "understood_topics":
+                stale = session.query(UserAIMemory).filter(
+                    UserAIMemory.UserId == user_id,
+                    UserAIMemory.MemoryType == "struggling_topics",
+                ).all()
+                for s in stale:
+                    if _text_similarity(s.Content, content) >= _MEMORY_DEDUP_SIMILARITY_THRESHOLD:
+                        session.delete(s)
         session.commit()
         logger.info(f"Saved {len(memories)} memories for user {user_id}")
     except Exception as e:
@@ -253,13 +301,18 @@ def _extract_memories_background(user_id: int, assistant_content: str) -> None:
 def _build_prompt_from_request(
     user_context: Optional[ChatbotContextRequest],
     token_data: UserTokenData,
+    current_message: str = "",
 ) -> tuple[str, str]:
     """
     Converts request context + JWT data into a WinAI system prompt.
     Returns (system_prompt, winai_role) for logging.
+
+    `current_message` : dernier message utilisateur, utilisé pour prioriser
+    les mémoires WinAI pertinentes au sujet du jour plutôt que les plus
+    récentes tout court (voir _load_user_memories).
     """
     role = getattr(user_context, "role", None) or token_data.role or "student"
-    memories = _load_user_memories(token_data.user_id) if token_data.user_id else []
+    memories = _load_user_memories(token_data.user_id, current_message) if token_data.user_id else []
     quiz_mistakes = _load_quiz_mistakes(token_data.user_id) if token_data.user_id and role == "student" else []
     # performance_history : priorité au front (déjà calculé), sinon on calcule depuis la DB
     perf_from_front = dict(getattr(user_context, "performance_history", None) or {})
@@ -406,8 +459,11 @@ async def chat(
             system_prompt = chat_request.system_prompt
             winai_role = getattr(chat_request.user_context, "role", None) or current_user.role or "student"
         else:
+            last_user_text = next(
+                (m.content for m in reversed(chat_request.messages) if m.role == "user"), ""
+            )
             system_prompt, winai_role = _build_prompt_from_request(
-                chat_request.user_context, current_user
+                chat_request.user_context, current_user, last_user_text
             )
 
         # Formater les messages
@@ -493,22 +549,26 @@ async def stream_chat(
         system_prompt = body.system_prompt
         winai_role = getattr(body.user_context, "role", None) or current_user.role or "student"
     else:
-        # Auto-détection de langue si non forcée : lit le dernier message utilisateur
-        if body.user_context and not getattr(body.user_context, "force_language", None):
-            last_user_msgs = [m for m in (body.messages or []) if isinstance(m, dict) and m.get("role") == "user"]
-            if last_user_msgs:
-                # Avec une pièce jointe, "content" est une LISTE de blocs
-                # ({type:"text"…}, {type:"image_url"…}) et non une chaîne :
-                # detect_language recevait une liste. On extrait le texte.
-                raw = last_user_msgs[-1].get("content", "")
-                if isinstance(raw, list):
-                    raw = " ".join(
-                        b.get("text", "") for b in raw
-                        if isinstance(b, dict) and b.get("type") == "text"
-                    )
-                detected = detect_language(raw or "")
+        # Dernier message utilisateur : sert à l'auto-détection de langue ET
+        # à prioriser les mémoires WinAI pertinentes au sujet du jour (voir
+        # _load_user_memories) plutôt que les plus récentes tout court.
+        last_user_msgs = [m for m in (body.messages or []) if isinstance(m, dict) and m.get("role") == "user"]
+        last_user_text = ""
+        if last_user_msgs:
+            # Avec une pièce jointe, "content" est une LISTE de blocs
+            # ({type:"text"…}, {type:"image_url"…}) et non une chaîne :
+            # detect_language recevait une liste. On extrait le texte.
+            raw = last_user_msgs[-1].get("content", "")
+            if isinstance(raw, list):
+                raw = " ".join(
+                    b.get("text", "") for b in raw
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+            last_user_text = raw or ""
+            if body.user_context and not getattr(body.user_context, "force_language", None):
+                detected = detect_language(last_user_text)
                 body.user_context.force_language = detected  # type: ignore[assignment]
-        system_prompt, winai_role = _build_prompt_from_request(body.user_context, current_user)
+        system_prompt, winai_role = _build_prompt_from_request(body.user_context, current_user, last_user_text)
 
     rag_block = await build_rag_context_block(body.user_context, messages, current_user.user_id)
     if rag_block:
