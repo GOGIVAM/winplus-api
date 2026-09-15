@@ -430,6 +430,32 @@ public class RevisionsController : ControllerBase
         }
     }
 
+    /// <summary>Supprime définitivement une fiche IA générée pour l'utilisateur courant.</summary>
+    [HttpDelete("{id}/me")]
+    [ProducesResponseType(204)]
+    [ProducesResponseType(403)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> DeleteMyRevision(int id)
+    {
+        var userId = GetUserId();
+        if (userId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        try
+        {
+            await _revisionService.DeleteMyRevisionAsync(userId, id);
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(403, new { message = ex.Message });
+        }
+    }
+
     /// <summary>Supprime définitivement les fiches déjà masquées de l'utilisateur courant.</summary>
     [HttpDelete("me/history")]
     [ProducesResponseType(204)]

@@ -117,6 +117,9 @@ public interface IRevisionService
     /// <summary>Supprime définitivement (IsDeleted) les fiches déjà masquées de cet utilisateur.</summary>
     Task ClearMyRevisionHistoryAsync(int userId);
 
+    /// <summary>Supprime définitivement (IsDeleted) une seule fiche IA générée pour cet utilisateur.</summary>
+    Task DeleteMyRevisionAsync(int userId, int id);
+
     /// <summary>Dates de complétion ascendantes  graphique "Fiches terminées dans le temps".</summary>
     Task<IEnumerable<DateTime>> GetCompletionTimelineAsync(int userId);
 }

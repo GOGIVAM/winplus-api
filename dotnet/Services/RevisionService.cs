@@ -653,6 +653,20 @@ public class RevisionService : IRevisionService
         await _context.SaveChangesAsync();
     }
 
+    public async Task DeleteMyRevisionAsync(int userId, int id)
+    {
+        var revision = await _context.Revisions.FirstOrDefaultAsync(r => r.Id == id);
+        if (revision == null)
+            throw new KeyNotFoundException($"Revision with id {id} not found");
+
+        if (!await OwnsGeneratedRevisionAsync(userId, revision))
+            throw new UnauthorizedAccessException("Tu ne peux supprimer que les fiches générées pour toi.");
+
+        revision.IsDeleted = true;
+        revision.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+    }
+
     public async Task ClearMyRevisionHistoryAsync(int userId)
     {
         var hidden = await _context.Revisions
