@@ -771,4 +771,18 @@ public class QuizService : IQuizService
 
         await _context.SaveChangesAsync();
     }
+
+    public async Task DeleteMyQuizAsync(int userId, int id)
+    {
+        var quiz = await _context.Quizzes.FirstOrDefaultAsync(q => q.Id == id);
+        if (quiz == null)
+            throw new KeyNotFoundException($"Quiz with id {id} not found");
+
+        if (!quiz.IsAIGenerated || quiz.CreatedByUserId != userId)
+            throw new UnauthorizedAccessException("Tu ne peux supprimer que les quiz que tu as toi-même générés.");
+
+        quiz.IsDeleted = true;
+        quiz.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+    }
 }

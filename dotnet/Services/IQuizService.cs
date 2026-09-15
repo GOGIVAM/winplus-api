@@ -123,4 +123,7 @@ public interface IQuizService
 
     /// <summary>Supprime définitivement (IsDeleted) les quiz déjà masqués de cet utilisateur.</summary>
     Task ClearMyQuizHistoryAsync(int userId);
+
+    /// <summary>Supprime définitivement (IsDeleted) un seul quiz IA généré par cet utilisateur.</summary>
+    Task DeleteMyQuizAsync(int userId, int id);
 }

@@ -465,6 +465,32 @@ public class QuizzesController : ControllerBase
         }
     }
 
+    /// <summary>Supprime définitivement un quiz IA généré par l'utilisateur courant.</summary>
+    [HttpDelete("{id}/me")]
+    [ProducesResponseType(204)]
+    [ProducesResponseType(403)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> DeleteMyQuiz(int id)
+    {
+        var userId = GetUserId();
+        if (userId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        try
+        {
+            await _quizService.DeleteMyQuizAsync(userId, id);
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(403, new { message = ex.Message });
+        }
+    }
+
     /// <summary>Supprime définitivement les quiz déjà masqués de l'utilisateur courant.</summary>
     [HttpDelete("me/history")]
     [ProducesResponseType(204)]
