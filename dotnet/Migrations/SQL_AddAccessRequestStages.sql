@@ -18,6 +18,13 @@ UPDATE "TeacherStudentAccessRequests"
 SET "Stage" = 'consent'
 WHERE "Status" IN ('accepted', 'rejected');
 
+-- Choix délibéré : les demandes encore "pending" au moment de la migration
+-- gardent le défaut "institution" (donc repartent par le nouveau filtre
+-- administratif) plutôt que d'être basculées directement en "consent". C'est
+-- plus strict que leur comportement d'origine, mais c'est le sens dans lequel
+-- cette correction va (durcir le contrôle, jamais l'affaiblir) ; à
+-- reconsidérer explicitement si ça génère une friction visible côté profs.
+
 CREATE INDEX IF NOT EXISTS "IX_TeacherStudentAccessRequests_Status_Stage"
     ON "TeacherStudentAccessRequests"("Status", "Stage");
 

@@ -485,21 +485,38 @@ public class InstitutionNetworkController : ControllerBase
             var myInstitutionId = await MyInstitutionIdAsync(me);
             if (myInstitutionId == null || myInstitutionId != request.InstitutionId) return Forbid();
 
-            request.InstitutionApprovedBy = me;
-            request.InstitutionRespondedAt = DateTime.UtcNow;
-            request.Stage = "consent";
+            // Transition atomique : si deux membres de l'institution valident au
+            // même instant, un seul UPDATE conditionné sur (Status=pending ET
+            // Stage=institution) peut réussir — la lecture Status/Stage faite plus
+            // haut ne suffirait pas seule à empêcher un double traitement.
+            var claimed = await _db.TeacherStudentAccessRequests
+                .Where(r => r.Id == id && r.Status == "pending" && r.Stage == "institution")
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(r => r.InstitutionApprovedBy, me)
+                    .SetProperty(r => r.InstitutionRespondedAt, DateTime.UtcNow)
+                    .SetProperty(r => r.Stage, "consent"));
+            if (claimed == 0) return Conflict(new { error = "Cette demande a déjà été traitée." });
+
             // Status reste "pending" : le filtre administratif est passé, mais
             // rien n'est encore acquis — seuls l'élève ou un parent lié
             // peuvent maintenant donner le consentement final.
             await NotifyConsentStageStartedAsync(request);
+            await _db.SaveChangesAsync();
         }
         else // Stage == "consent"
         {
             if (!await CanGiveConsentAsync(request, me)) return Forbid();
 
-            request.Status = "accepted";
-            request.RespondedBy = me;
-            request.RespondedAt = DateTime.UtcNow;
+            // Même garde atomique : élève et parent(s) liés sont tous deux
+            // éligibles à répondre, une course entre eux est un cas réel à
+            // couvrir, pas juste hypothétique.
+            var claimed = await _db.TeacherStudentAccessRequests
+                .Where(r => r.Id == id && r.Status == "pending" && r.Stage == "consent")
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(r => r.Status, "accepted")
+                    .SetProperty(r => r.RespondedBy, me)
+                    .SetProperty(r => r.RespondedAt, DateTime.UtcNow));
+            if (claimed == 0) return Conflict(new { error = "Cette demande a déjà été traitée." });
 
             var existingLink = await _db.TeacherStudentLinks.FirstOrDefaultAsync(l =>
                 l.TeacherId == request.TeacherId && l.StudentId == request.StudentId);
@@ -520,9 +537,9 @@ public class InstitutionNetworkController : ControllerBase
             }
 
             await NotifyFinalDecisionAsync(request, accepted: true, notifyStudentAndParents: true);
+            await _db.SaveChangesAsync();
         }
 
-        await _db.SaveChangesAsync();
         return Ok(new { success = true });
     }
 
@@ -548,9 +565,14 @@ public class InstitutionNetworkController : ControllerBase
             var myInstitutionId = await MyInstitutionIdAsync(me);
             if (myInstitutionId == null || myInstitutionId != request.InstitutionId) return Forbid();
 
-            request.Status = "rejected";
-            request.RespondedBy = me;
-            request.RespondedAt = DateTime.UtcNow;
+            var claimed = await _db.TeacherStudentAccessRequests
+                .Where(r => r.Id == id && r.Status == "pending" && r.Stage == "institution")
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(r => r.Status, "rejected")
+                    .SetProperty(r => r.RespondedBy, me)
+                    .SetProperty(r => r.RespondedAt, DateTime.UtcNow));
+            if (claimed == 0) return Conflict(new { error = "Cette demande a déjà été traitée." });
+
             // Filtre administratif non franchi : seul l'enseignant est informé.
             await NotifyFinalDecisionAsync(request, accepted: false, notifyStudentAndParents: false);
         }
@@ -558,9 +580,14 @@ public class InstitutionNetworkController : ControllerBase
         {
             if (!await CanGiveConsentAsync(request, me)) return Forbid();
 
-            request.Status = "rejected";
-            request.RespondedBy = me;
-            request.RespondedAt = DateTime.UtcNow;
+            var claimed = await _db.TeacherStudentAccessRequests
+                .Where(r => r.Id == id && r.Status == "pending" && r.Stage == "consent")
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(r => r.Status, "rejected")
+                    .SetProperty(r => r.RespondedBy, me)
+                    .SetProperty(r => r.RespondedAt, DateTime.UtcNow));
+            if (claimed == 0) return Conflict(new { error = "Cette demande a déjà été traitée." });
+
             await NotifyFinalDecisionAsync(request, accepted: false, notifyStudentAndParents: true);
         }
 
