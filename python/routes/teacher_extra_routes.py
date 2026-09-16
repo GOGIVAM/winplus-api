@@ -370,8 +370,11 @@ async def get_class_analysis(
         seen: set[int] = set()
         hard_questions: list[HardQuestion] = []
         for a in quiz_attempts:
-            if a.QuizId and a.TotalQuestions and a.TotalQuestions > 0 and a.QuizId not in seen:
-                wr = round(1.0 - float(a.CorrectAnswers or 0) / float(a.TotalQuestions), 2)
+            if a.QuizId and a.QuizId not in seen:
+                # Score est déjà un pourcentage (0-100) de bonnes réponses —
+                # équivalent à 1 - CorrectAnswers/TotalQuestions sans dépendre
+                # d'une colonne TotalQuestions qui n'existe pas réellement.
+                wr = round(1.0 - float(a.Score or 0) / 100.0, 2)
                 if wr >= 0.5:
                     hard_questions.append(HardQuestion(
                         question_id=int(a.QuizId),

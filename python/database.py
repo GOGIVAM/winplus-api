@@ -186,11 +186,15 @@ class QuizAttempt(Base):
     """Modèle FastApi mappé sur la table QuizAttempts (ASP.NET)"""
     __tablename__ = 'QuizAttempts'
 
+    # Pas de colonne "TotalQuestions" : elle n'existe pas sur la vraie table
+    # (voir Models/Entities/Quiz.cs côté .NET — seul QuestionCount existe, sur
+    # Quizzes, pas sur QuizAttempts). Un ancien modèle l'inventait, ce qui
+    # faisait échouer TOUTE requête sur QuizAttempt (UndefinedColumn), y
+    # compris celles qui n'utilisaient même pas ce champ.
     Id = Column(Integer, primary_key=True)
     UserId = Column(Integer, ForeignKey('Users.Id'), nullable=False)
     QuizId = Column(Integer)
     Score = Column(Numeric)
-    TotalQuestions = Column(Integer)
     CorrectAnswers = Column(Integer)
     CompletedAt = Column(DateTime(timezone=True))
     CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)

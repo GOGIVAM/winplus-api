@@ -23,7 +23,19 @@ public interface IChatbotService
     Task<MessageResponse?> AddFeedbackAsync(int userId, int messageId, MessageFeedbackRequest request);
     Task<ChatbotContextResponse?> GetContextAsync(int userId);
     Task<ChatbotContextResponse> SyncContextAsync(int userId, SyncContextRequest request);
+
+    /// <summary>
+    /// Profil réel de l'utilisateur pour injection dans le contexte WinAI,
+    /// lu en direct (User.Level, Enrollments, CourseEnrollments) plutôt que
+    /// depuis ChatbotContext — voir StreamLiveProfileContextAsync pour le
+    /// raisonnement complet. Utilisé aussi bien par le chemin REST
+    /// (BuildFastApiRequestAsync) que par le chemin streaming (StreamChat).
+    /// </summary>
+    Task<LiveProfileContext> GetLiveProfileContextAsync(int userId);
 }
+
+/// <summary>Profil élève recalculé en direct pour un message donné (jamais depuis une table de synchronisation périmée).</summary>
+public record LiveProfileContext(string? Grade, List<EnrolledSubjectDto> EnrolledSubjects, List<EnrolledCourseDto> EnrolledCourses);
 
 /// <summary>
 /// Service métier pour le chatbot
@@ -89,6 +101,23 @@ public class ChatbotService : IChatbotService
                 LastAccessedAt = e.LastAccessedAt,
             })
             .ToListAsync();
+    }
+
+    /// <summary>
+    /// Profil réel de l'utilisateur (niveau + inscriptions), lu en direct.
+    /// User.Level est la seule source de vérité pour le niveau scolaire —
+    /// ChatbotContext.EducationLevel/Grade (table de synchronisation) n'est
+    /// jamais alimenté par le frontend en pratique (POST /chatbot/context/sync
+    /// n'envoie que navigation_history), donc rester dépendant de cette table
+    /// pour le niveau laissait le profil vide même quand l'utilisateur l'avait
+    /// bien renseigné à l'inscription (CompleteProfile.tsx).
+    /// </summary>
+    public async Task<LiveProfileContext> GetLiveProfileContextAsync(int userId)
+    {
+        var level = await _db.Users.Where(u => u.Id == userId).Select(u => u.Level).FirstOrDefaultAsync();
+        var subjects = await GetRealEnrolledSubjectsAsync(userId);
+        var courses = await GetRealEnrolledCoursesAsync(userId);
+        return new LiveProfileContext(level, subjects, courses);
     }
 
     /// <summary>
@@ -346,14 +375,17 @@ public class ChatbotService : IChatbotService
             // SystemPrompt délibérément null : FastAPI/prompt_builder.py construit le prompt
             // différencié par rôle avec VARK, lacunes, mémoires, performances, etc.
 
-            // EnrolledSubjects toujours recalculé depuis Enrollments (donnée
+            // EnrolledSubjects/Grade toujours recalculés en direct (donnée
             // réelle et à jour), plutôt que la valeur potentiellement absente/
             // périmée du ChatbotContext synchronisé — voir
-            // GetRealEnrolledSubjectsAsync. Nécessaire pour que RAG (côté
+            // GetLiveProfileContextAsync. Nécessaire pour que RAG (côté
             // Python) sache quelles formations l'utilisateur a le droit de
-            // voir citées (voir RAG/README.md, "Intégration au chat WinAI").
-            request.UserContext.EnrolledSubjects = await GetRealEnrolledSubjectsAsync(userId);
-            request.UserContext.EnrolledCourses = await GetRealEnrolledCoursesAsync(userId);
+            // voir citées (voir RAG/README.md, "Intégration au chat WinAI"),
+            // et pour que le prompt système connaisse le vrai niveau scolaire.
+            var liveProfile = await GetLiveProfileContextAsync(userId);
+            request.UserContext.Grade = liveProfile.Grade;
+            request.UserContext.EnrolledSubjects = liveProfile.EnrolledSubjects;
+            request.UserContext.EnrolledCourses = liveProfile.EnrolledCourses;
         }
 
         return request;

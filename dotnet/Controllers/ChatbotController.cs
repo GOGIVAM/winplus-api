@@ -603,6 +603,14 @@ public class ChatbotController : ControllerBase
             return new { role = (string)h.role, content = (object)parts };
         }).ToList();
 
+        // Profil réel (niveau + inscriptions), recalculé en direct à chaque
+        // message — jamais depuis ChatbotContext (table de synchronisation
+        // jamais alimentée en pratique par le frontend, voir
+        // IChatbotService.GetLiveProfileContextAsync). Absent auparavant sur
+        // ce chemin streaming (seul force_language était transmis), ce qui
+        // faisait répondre WinAI comme si l'élève n'avait aucun profil.
+        var liveProfile = await _chatbotService.GetLiveProfileContextAsync(userId);
+
         // Forward request to FastAPI stream endpoint
         var fastApiBody = new
         {
@@ -610,9 +618,12 @@ public class ChatbotController : ControllerBase
             conversation_id = conversationId,
             max_tokens = 2000,
             temperature = 0.7,
-            user_context = string.IsNullOrEmpty(request.ForceLanguage) ? null : new
+            user_context = new
             {
-                force_language = request.ForceLanguage
+                grade = liveProfile.Grade,
+                enrolled_subjects = liveProfile.EnrolledSubjects.Select(s => new { id = s.SubjectId, title = s.Title }),
+                enrolled_courses = liveProfile.EnrolledCourses.Select(c => new { id = c.CourseId, title = c.Title }),
+                force_language = string.IsNullOrEmpty(request.ForceLanguage) ? null : request.ForceLanguage,
             }
         };
 
