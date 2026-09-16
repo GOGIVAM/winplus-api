@@ -194,4 +194,129 @@ public class CartRepository : ICartRepository
             return 0;
         }
     }
+
+    // ── Panier anonyme ──────────────────────────────────────────────────────
+
+    public async Task<IEnumerable<CartItem>> GetByDeviceIdAsync(string deviceId)
+    {
+        try
+        {
+            return await _context.CartItems
+                .Where(c => c.DeviceId == deviceId)
+                .Include(c => c.Subject)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting cart items for device {DeviceId}", deviceId);
+            return Enumerable.Empty<CartItem>();
+        }
+    }
+
+    public async Task<CartItem?> GetByDeviceAndSubjectAsync(string deviceId, int subjectId)
+    {
+        try
+        {
+            return await _context.CartItems
+                .Include(c => c.Subject)
+                .FirstOrDefaultAsync(c => c.DeviceId == deviceId && c.SubjectId == subjectId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting cart item for device {DeviceId} and subject {SubjectId}", deviceId, subjectId);
+            return null;
+        }
+    }
+
+    public async Task<bool> RemoveByDeviceAndSubjectAsync(string deviceId, int subjectId)
+    {
+        try
+        {
+            var item = await _context.CartItems
+                .FirstOrDefaultAsync(c => c.DeviceId == deviceId && c.SubjectId == subjectId);
+
+            if (item == null)
+                return false;
+
+            _context.CartItems.Remove(item);
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Cart item removed for device {DeviceId} and subject {SubjectId}", deviceId, subjectId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error removing cart item for device {DeviceId}", deviceId);
+            throw;
+        }
+    }
+
+    public async Task<bool> ClearDeviceCartAsync(string deviceId)
+    {
+        try
+        {
+            var items = await _context.CartItems
+                .Where(c => c.DeviceId == deviceId)
+                .ToListAsync();
+
+            if (items.Count == 0)
+                return true;
+
+            _context.CartItems.RemoveRange(items);
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Cart cleared for device {DeviceId}", deviceId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error clearing cart for device {DeviceId}", deviceId);
+            throw;
+        }
+    }
+
+    public async Task<int> ReassignDeviceCartToUserAsync(string deviceId, int userId)
+    {
+        try
+        {
+            var deviceItems = await _context.CartItems
+                .Where(c => c.DeviceId == deviceId)
+                .ToListAsync();
+
+            if (deviceItems.Count == 0)
+                return 0;
+
+            var existingSubjectIds = await _context.CartItems
+                .Where(c => c.UserId == userId)
+                .Select(c => c.SubjectId)
+                .ToListAsync();
+
+            var reassigned = 0;
+            foreach (var item in deviceItems)
+            {
+                if (existingSubjectIds.Contains(item.SubjectId))
+                {
+                    // Déjà dans le panier réel de l'utilisateur : le doublon
+                    // anonyme est superflu, pas une erreur à propager.
+                    _context.CartItems.Remove(item);
+                    continue;
+                }
+
+                item.UserId = userId;
+                item.DeviceId = null;
+                reassigned++;
+            }
+
+            await _context.SaveChangesAsync();
+            _logger.LogInformation(
+                "Reassigned {Count} anonymous cart item(s) from device {DeviceId} to user {UserId}",
+                reassigned, deviceId, userId);
+            return reassigned;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error reassigning cart from device {DeviceId} to user {UserId}", deviceId, userId);
+            throw;
+        }
+    }
 }

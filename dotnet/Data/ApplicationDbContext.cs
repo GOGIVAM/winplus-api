@@ -532,15 +532,22 @@ public partial class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Price).HasPrecision(10, 2);
+            entity.Property(e => e.DeviceId).HasMaxLength(200);
             entity.HasOne(e => e.User)
                 .WithMany(u => u.CartItems)
                 .HasForeignKey(e => e.UserId)
+                .IsRequired(false)
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(e => e.Subject)
                 .WithMany(s => s.CartItems)
                 .HasForeignKey(e => e.SubjectId)
                 .OnDelete(DeleteBehavior.Cascade);
-            entity.HasIndex(e => new { e.UserId, e.SubjectId }).IsUnique();
+            // UserId et DeviceId sont mutuellement exclusifs (voir CartItem.cs) : deux
+            // index uniques séparés plutôt qu'un seul, Postgres traitant NULL comme
+            // distinct dans un index unique (plusieurs lignes UserId=null coexistent
+            // sans le violer), donc le premier index ne protège pas le panier anonyme.
+            entity.HasIndex(e => new { e.UserId, e.SubjectId }).IsUnique().HasFilter("\"UserId\" IS NOT NULL");
+            entity.HasIndex(e => new { e.DeviceId, e.SubjectId }).IsUnique().HasFilter("\"DeviceId\" IS NOT NULL");
         });
 
         // Configure Order entity

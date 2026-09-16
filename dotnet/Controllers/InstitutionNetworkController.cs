@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Extensions;
 using Backend.Models.Entities;
+using Backend.Services;
 
 namespace Backend.Controllers;
 
@@ -35,11 +36,13 @@ public class InstitutionNetworkController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
     private readonly ILogger<InstitutionNetworkController> _logger;
+    private readonly INtfyService _ntfy;
 
-    public InstitutionNetworkController(ApplicationDbContext db, ILogger<InstitutionNetworkController> logger)
+    public InstitutionNetworkController(ApplicationDbContext db, ILogger<InstitutionNetworkController> logger, INtfyService ntfy)
     {
         _db = db;
         _logger = logger;
+        _ntfy = ntfy;
     }
 
     private async Task<int?> MyInstitutionIdAsync(int userId) =>
@@ -615,18 +618,20 @@ public class InstitutionNetworkController : ControllerBase
             .Select(l => l.ParentId)
             .ToListAsync());
 
+        // Passe par PublishAsync (ntfy + DB) plutôt qu'un Notifications.Add direct :
+        // sans ça, aucun événement SSE n'était jamais émis pour cette étape.
+        // En séquence (pas Task.WhenAll) : PublishAsync touche le DbContext scope
+        // requête à chaque appel, non thread-safe pour des accès concurrents.
         foreach (var userId in recipients.Distinct())
         {
-            _db.Notifications.Add(new Notification
-            {
-                UserId = userId,
-                Title = "Demande de contact enseignant",
-                Message = $"{teacherName} souhaite pouvoir vous contacter. Votre établissement a validé la demande, elle attend votre réponse.",
-                Type = "access_request",
-                RelatedEntityType = "TeacherStudentAccessRequest",
-                RelatedEntityId = request.Id,
-                User = null!,
-            });
+            await _ntfy.PublishAsync(
+                topic: $"winplus-user-{userId}",
+                title: "Demande de contact enseignant",
+                message: $"{teacherName} souhaite pouvoir vous contacter. Votre établissement a validé la demande, elle attend votre réponse.",
+                userId: userId,
+                type: "access_request",
+                relatedEntityType: "TeacherStudentAccessRequest",
+                relatedEntityId: request.Id);
         }
     }
 
@@ -665,16 +670,14 @@ public class InstitutionNetworkController : ControllerBase
 
         foreach (var userId in recipients.Distinct())
         {
-            _db.Notifications.Add(new Notification
-            {
-                UserId = userId,
-                Title = title,
-                Message = message,
-                Type = "access_request",
-                RelatedEntityType = "TeacherStudentAccessRequest",
-                RelatedEntityId = request.Id,
-                User = null!,
-            });
+            await _ntfy.PublishAsync(
+                topic: $"winplus-user-{userId}",
+                title: title,
+                message: message,
+                userId: userId,
+                type: "access_request",
+                relatedEntityType: "TeacherStudentAccessRequest",
+                relatedEntityId: request.Id);
         }
     }
 }

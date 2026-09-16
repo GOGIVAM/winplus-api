@@ -97,7 +97,10 @@ public class TeachingSessionService : ITeachingSessionService
         // les inscriptions payées — US-SES-03.
         foreach (var enrollment in session.Enrollments)
         {
-            _ = _ntfy.PublishAsync($"winplus-user-{enrollment.StudentId}", "Session annulée",
+            // Awaité : en fire-and-forget, le DbContext scope requête pouvait être
+            // détruit avant la fin de l'appel, faisant échouer PublishAsync
+            // silencieusement (perte de la notification d'annulation).
+            await _ntfy.PublishAsync($"winplus-user-{enrollment.StudentId}", "Session annulée",
                 $"La session « {session.Title} » du {session.StartDate:dd/MM/yyyy HH:mm} a été annulée par le professeur.",
                 userId: enrollment.StudentId, type: "SessionCancelled");
 

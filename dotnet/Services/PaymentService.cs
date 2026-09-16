@@ -185,8 +185,12 @@ public class PaymentService : IPaymentService
             // erreurs déjà avalées à l'intérieur de RecordCommissionForOrderAsync.
             await _affiliate.RecordCommissionForOrderAsync(payment.OrderId);
 
-            // Notification push
-            _ = _ntfy.PublishAsync(
+            // Notification push — awaité : en fire-and-forget, le DbContext (scope
+            // requête) peut être détruit avant la fin de l'appel HTTP vers ntfy,
+            // faisant échouer silencieusement PublishAsync (ObjectDisposedException
+            // avalée par son propre try/catch) et perdant la notification la plus
+            // critique commercialement, de façon intermittente et non reproductible.
+            await _ntfy.PublishAsync(
                 topic: $"winplus-user-{payment.UserId}",
                 title: "Paiement reçu ✓",
                 message: $"Votre paiement de {payment.Amount} XAF a été confirmé.",
@@ -200,7 +204,7 @@ public class PaymentService : IPaymentService
         }
         else if (payment.Status == "failed")
         {
-            _ = _ntfy.PublishAsync(
+            await _ntfy.PublishAsync(
                 topic: $"winplus-user-{payment.UserId}",
                 title: "Paiement échoué",
                 message: "Votre paiement n'a pas pu être traité. Veuillez réessayer.",

@@ -204,9 +204,14 @@ public class ForumController : ControllerBase
             if (threadAuthorId.HasValue) notifyIds.Add(threadAuthorId.Value);
             notifyIds.Remove(userId);
 
+            // Awaité en séquence (pas Task.WhenAll) : PublishAsync touche le même
+            // DbContext scope requête à chaque appel, et EF Core n'autorise pas les
+            // accès concurrents sur une même instance. En fire-and-forget, le
+            // DbContext pouvait en plus être détruit avant la fin de l'appel,
+            // faisant échouer PublishAsync silencieusement (perte de notification).
             foreach (var recipientId in notifyIds)
             {
-                _ = _ntfyService.PublishAsync(
+                await _ntfyService.PublishAsync(
                     topic: $"winplus-user-{recipientId}",
                     title: "Nouvelle réponse sur un fil suivi",
                     message: "Une nouvelle réponse a été ajoutée à un fil que vous suivez.",

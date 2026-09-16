@@ -9,7 +9,9 @@ public interface INtfyService
         string priority = "default",
         string[]? tags = null,
         int? userId = null,
-        string type = "General");
+        string type = "General",
+        string? relatedEntityType = null,
+        int? relatedEntityId = null);
 
     Task PublishAdminAsync(string title, string message,
         string priority = "urgent",
@@ -43,7 +45,9 @@ public class NtfyService : INtfyService
         string priority = "default",
         string[]? tags = null,
         int? userId = null,
-        string type = "General")
+        string type = "General",
+        string? relatedEntityType = null,
+        int? relatedEntityId = null)
     {
         await SendToNtfy(topic, title, message, priority, tags);
 
@@ -57,6 +61,8 @@ public class NtfyService : INtfyService
                     Title = title,
                     Message = message,
                     Type = type,
+                    RelatedEntityType = relatedEntityType,
+                    RelatedEntityId = relatedEntityId,
                     IsRead = false,
                     CreatedAt = DateTime.UtcNow,
                     User = null!

@@ -17,18 +17,15 @@ namespace Backend.Controllers;
 public class CartController : ControllerBase
 {
     private readonly ICartService _cartService;
-    private readonly IAnonymousCartService _anonymousCartService;
     private readonly ILogger<CartController> _logger;
     private readonly IPromoCodeService _promoCodeService;
 
     public CartController(
         ICartService cartService,
-        IAnonymousCartService anonymousCartService,
         ILogger<CartController> logger,
         IPromoCodeService promoCodeService)
     {
         _cartService = cartService;
-        _anonymousCartService = anonymousCartService;
         _logger = logger;
         _promoCodeService = promoCodeService;
     }
@@ -120,10 +117,11 @@ public class CartController : ControllerBase
             }
             else if (!string.IsNullOrEmpty(deviceId))
             {
-                // ✅ Panier anonyme: récupérer du service en mémoire par deviceId
-                items = _anonymousCartService.GetAnonymousCart(deviceId);
+                // ✅ Panier anonyme: persisté en base par deviceId (survit à un
+                // redémarrage du service, contrairement à l'ancien stockage en mémoire)
+                items = await _cartService.GetAnonymousCartAsync(deviceId);
                 _logger.LogInformation(
-                    "[GetCart] ✅ Panier anonyme récupéré depuis AnonymousCartService\n" +
+                    "[GetCart] ✅ Panier anonyme récupéré\n" +
                     "DeviceId: {DeviceId}\n" +
                     "ItemCount: {ItemCount}\n" +
                     "Timestamp: {Timestamp}",

@@ -13,8 +13,16 @@ public interface ICartService
     Task<decimal> GetCartTotalAsync(int userId);
     Task<int> GetCartCountAsync(int userId);
     Task<bool> IsItemInCartAsync(int userId, int subjectId);
-    // ✅ Fusion panier anonyme → utilisateur authentifié
-    Task<IEnumerable<CartItem>> MergeAnonymousCartAsync(int userId, List<CartItem> anonymousItems);
+
+    // ── Panier anonyme (avant connexion), persisté en base par DeviceId ──────
+    Task<IEnumerable<CartItem>> GetAnonymousCartAsync(string deviceId);
+    Task<CartItem> AddToAnonymousCartAsync(string deviceId, int subjectId, decimal price);
+    Task<bool> RemoveFromAnonymousCartAsync(string deviceId, int subjectId);
+    Task<bool> ClearAnonymousCartAsync(string deviceId);
+    Task<decimal> GetAnonymousCartTotalAsync(string deviceId);
+
+    /// <summary>Réassigne en base le panier anonyme d'un DeviceId à un UserId (connexion).</summary>
+    Task<IEnumerable<CartItem>> MergeAnonymousCartAsync(int userId, string deviceId);
 }
 
 public class CartService : ICartService
@@ -42,7 +50,7 @@ public class CartService : ICartService
         {
             // ✅ Récupérer les items avec les Subjects chargés
             var items = await _cartRepository.GetByUserIdAsync(userId);
-            
+
             // ✅ Vérifier si les Subjects manquent et les charger au besoin
             var itemsList = items.ToList();
             for (int i = 0; i < itemsList.Count; i++)
@@ -53,7 +61,7 @@ public class CartService : ICartService
                         "[GetUserCartAsync] ⚠️ Subject not loaded for CartItem {CartItemId}, loading manually",
                         itemsList[i].Id
                     );
-                    
+
                     // Charger le Subject directement
                     var subject = await _subjectRepository.GetByIdAsync(itemsList[i].SubjectId);
                     if (subject != null)
@@ -67,7 +75,7 @@ public class CartService : ICartService
                     }
                 }
             }
-            
+
             return itemsList;
         }
         catch (Exception ex)
@@ -196,66 +204,106 @@ public class CartService : ICartService
         }
     }
 
-    /// <summary>
-    /// ✅ Fusion du panier anonyme avec le panier de l'utilisateur authentifié
-    /// Ajoute tous les articles du panier anonyme au panier de l'utilisateur
-    /// en évitant les doublons
-    /// </summary>
-    public async Task<IEnumerable<CartItem>> MergeAnonymousCartAsync(int userId, List<CartItem> anonymousItems)
+    // ── Panier anonyme ──────────────────────────────────────────────────────
+
+    public async Task<IEnumerable<CartItem>> GetAnonymousCartAsync(string deviceId)
     {
         try
         {
-            if (!anonymousItems.Any())
+            return await _cartRepository.GetByDeviceIdAsync(deviceId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting anonymous cart for device {DeviceId}", deviceId);
+            return Enumerable.Empty<CartItem>();
+        }
+    }
+
+    public async Task<CartItem> AddToAnonymousCartAsync(string deviceId, int subjectId, decimal price)
+    {
+        try
+        {
+            var subject = await _subjectRepository.GetByIdAsync(subjectId);
+            if (subject == null)
+                throw new InvalidOperationException($"Subject {subjectId} not found");
+
+            var existing = await _cartRepository.GetByDeviceAndSubjectAsync(deviceId, subjectId);
+            if (existing != null)
             {
-                _logger.LogInformation("[MergeAnonymousCart] No items to merge for user {UserId}", userId);
-                return await GetUserCartAsync(userId);
+                _logger.LogInformation("Item already in anonymous cart for device {DeviceId}", deviceId);
+                return existing;
             }
 
-            var user = await _userRepository.GetByIdAsync(userId);
-            if (user == null)
-                throw new InvalidOperationException($"User {userId} not found");
-
-            int mergedCount = 0;
-            foreach (var anonItem in anonymousItems)
+            var cartItem = new CartItem
             {
-                // Vérifier si l'article existe déjà
-                var existing = await _cartRepository.GetByUserAndSubjectAsync(userId, anonItem.SubjectId);
-                
-                if (existing == null)
-                {
-                    // Article n'existe pas: l'ajouter
-                    var newItem = new CartItem
-                    {
-                        UserId = userId,
-                        SubjectId = anonItem.SubjectId,
-                        Price = anonItem.Price,
-                        User = user,
-                        Subject = anonItem.Subject,
-                        AddedAt = DateTime.UtcNow
-                    };
+                DeviceId = deviceId,
+                SubjectId = subjectId,
+                Price = price > 0 ? price : subject.Price,
+                Subject = subject
+            };
 
-                    await _cartRepository.AddAsync(newItem);
-                    mergedCount++;
-                    _logger.LogInformation("[MergeAnonymousCart] Added item {SubjectId} for user {UserId}", 
-                        anonItem.SubjectId, userId);
-                }
-                else
-                {
-                    _logger.LogInformation("[MergeAnonymousCart] Item {SubjectId} already in cart for user {UserId}, skipping", 
-                        anonItem.SubjectId, userId);
-                }
-            }
+            return await _cartRepository.AddAsync(cartItem);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error adding item to anonymous cart");
+            throw;
+        }
+    }
 
-            _logger.LogInformation("[MergeAnonymousCart] ✅ Panier anonyme fusionné avec succès\n" +
-                "UserId: {UserId}\n" +
-                "ItemsMerged: {MergedCount}\n" +
-                "TotalAnonymousItems: {TotalItems}\n" +
-                "Timestamp: {Timestamp}",
-                userId,
-                mergedCount,
-                anonymousItems.Count,
-                DateTime.UtcNow
-            );
+    public async Task<bool> RemoveFromAnonymousCartAsync(string deviceId, int subjectId)
+    {
+        try
+        {
+            return await _cartRepository.RemoveByDeviceAndSubjectAsync(deviceId, subjectId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error removing item from anonymous cart");
+            throw;
+        }
+    }
+
+    public async Task<bool> ClearAnonymousCartAsync(string deviceId)
+    {
+        try
+        {
+            return await _cartRepository.ClearDeviceCartAsync(deviceId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error clearing anonymous cart for device {DeviceId}", deviceId);
+            throw;
+        }
+    }
+
+    public async Task<decimal> GetAnonymousCartTotalAsync(string deviceId)
+    {
+        try
+        {
+            var items = await _cartRepository.GetByDeviceIdAsync(deviceId);
+            return items.Sum(c => c.Price);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error calculating anonymous cart total for device {DeviceId}", deviceId);
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Fusion du panier anonyme (persisté en base sous DeviceId) avec le compte
+    /// de l'utilisateur qui vient de se connecter — réassignation en base
+    /// (ReassignDeviceCartToUserAsync), plus de liste en mémoire à transporter.
+    /// </summary>
+    public async Task<IEnumerable<CartItem>> MergeAnonymousCartAsync(int userId, string deviceId)
+    {
+        try
+        {
+            var reassigned = await _cartRepository.ReassignDeviceCartToUserAsync(deviceId, userId);
+            _logger.LogInformation(
+                "[MergeAnonymousCart] ✅ {ReassignedCount} article(s) réassigné(s) du device {DeviceId} vers l'utilisateur {UserId}",
+                reassigned, deviceId, userId);
 
             return await GetUserCartAsync(userId);
         }

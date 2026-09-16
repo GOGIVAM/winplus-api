@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Extensions;
 using Backend.Models.Entities;
+using Backend.Services;
 
 namespace Backend.Controllers;
 
@@ -38,11 +39,13 @@ public class ParentCreditsController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
     private readonly ILogger<ParentCreditsController> _logger;
+    private readonly INtfyService _ntfy;
 
-    public ParentCreditsController(ApplicationDbContext db, ILogger<ParentCreditsController> logger)
+    public ParentCreditsController(ApplicationDbContext db, ILogger<ParentCreditsController> logger, INtfyService ntfy)
     {
         _db = db;
         _logger = logger;
+        _ntfy = ntfy;
     }
 
     private static DateTime CurrentPeriodStart()
@@ -263,16 +266,18 @@ public class ParentCreditsController : ControllerBase
                     SubjectId = subject.Id
                 });
 
-                _db.Notifications.Add(new Notification
-                {
-                    UserId  = request.ChildId,
-                    Title   = "Nouveau contenu disponible",
-                    Message = $"Un parent vient de vous offrir « {subject.Title} ».",
-                    Type    = "content",
-                    RelatedEntityType = "subject",
-                    RelatedEntityId   = subject.Id,
-                    User    = null!
-                });
+                // Passe par PublishAsync (ntfy + DB) plutôt qu'un Notifications.Add direct :
+                // sans ça, aucun événement SSE n'était jamais émis, donc l'enfant ne
+                // voyait jamais ce contenu offert avant de recharger la page manuellement.
+                await _ntfy.PublishAsync(
+                    topic: $"winplus-user-{request.ChildId}",
+                    title: "Nouveau contenu disponible",
+                    message: $"Un parent vient de vous offrir « {subject.Title} ».",
+                    tags: new[] { "gift" },
+                    userId: request.ChildId,
+                    type: "content",
+                    relatedEntityType: "subject",
+                    relatedEntityId: subject.Id);
             }
 
             await _db.SaveChangesAsync();
