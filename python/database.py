@@ -59,7 +59,11 @@ class Exam(Base):
     Year = Column(Integer, nullable=False)
     Session = Column(String(100))
     Level = Column(String(100))
-    DurationMinutes = Column(Integer)
+    # Colonne réelle "Duration" côté .NET ([Column("Duration")] sur Exam.cs) —
+    # le nom Python DurationMinutes est gardé pour la lisibilité du code, mais
+    # doit être mappé explicitement, sinon SQLAlchemy cherche une colonne
+    # "DurationMinutes" qui n'existe pas en base (UndefinedColumn).
+    DurationMinutes = Column('Duration', Integer)
     DocumentUrl = Column(Text)
     CorrectionUrl = Column(Text)
     ThumbnailUrl = Column(Text)
