@@ -19,6 +19,14 @@ public class PurchaseForChildRequest
 /// Le solde est la dotation du plan moins les consommations du mois : aucune
 /// valeur en dur, tout est en base.
 ///
+/// Règles figées (voir parent_decisions_session.md, correction 1) :
+/// 1 crédit = 1 FCFA, aucun taux de conversion — le montant en base EST le
+/// montant en FCFA, ne jamais introduire d'unité "crédit" distincte de la
+/// devise. Non reportables et non remboursables en fin de mois. Changement de
+/// plan en cours de mois : le cycle en cours garde son montant déjà alloué,
+/// le nouveau montant s'applique au cycle suivant, jamais de prorata.
+/// Déliaison d'un enfant après dépense : jamais de remboursement.
+///
 /// GET  /api/parent/credits
 /// GET  /api/parent/credits/history
 /// POST /api/parent/purchase-for-child
@@ -74,6 +82,15 @@ public class ParentCreditsController : ControllerBase
 
             if (subscription.monthly is > 0)
             {
+                // Une seule allocation par (parent, mois civil) : les crédits sont
+                // strictement scopés au mois en cours, jamais reportés d'un mois sur
+                // l'autre (pas de rollover) et jamais remboursés à la fin du mois (le
+                // solde du mois précédent est simplement hors du filtre PeriodStart
+                // ci-dessous, il n'existe nulle part une opération qui l'annule ou le
+                // transfère). Si le parent change de plan en cours de mois, le montant
+                // déjà alloué ce mois-ci n'est pas recalculé : le nouveau montant du
+                // plan ne s'appliquera qu'à la prochaine allocation, au mois suivant.
+                // Ne pas ajouter de logique de prorata ni de report ici.
                 var hasAllocation = await _db.ParentCreditLedgers.AnyAsync(
                     l => l.ParentId == parentId && l.PeriodStart == periodStart && l.EntryType == "allocation");
 

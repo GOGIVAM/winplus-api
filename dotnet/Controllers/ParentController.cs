@@ -372,39 +372,6 @@ public class ParentController : ControllerBase
     }
 
     /// <summary>
-    /// GET /api/parent/engagement/{parentId}
-    /// Proxy → Python /api/parent-engagement/{parentId}  Score de mobilisation parental
-    /// </summary>
-    [HttpGet("engagement/{parentId:int}")]
-    public async Task<IActionResult> GetEngagementScore([FromRoute] int parentId, CancellationToken ct)
-    {
-        var httpClient = _httpClientFactory.CreateClient("FastApiClient");
-        using var req = new HttpRequestMessage(HttpMethod.Get, $"/api/parent-engagement/{parentId}");
-        var auth = HttpContext.Request.Headers["Authorization"].ToString();
-        if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
-        var res = await httpClient.SendAsync(req, ct);
-        var content = await res.Content.ReadAsStringAsync(ct);
-        return Content(content, "application/json");
-    }
-
-    /// <summary>
-    /// POST /api/parent/educational-roi
-    /// Proxy → Python /api/parent/educational-roi  ROI éducatif
-    /// </summary>
-    [HttpPost("educational-roi")]
-    public async Task<IActionResult> GetEducationalROI([FromBody] object body, CancellationToken ct)
-    {
-        var httpClient = _httpClientFactory.CreateClient("FastApiClient");
-        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/parent/educational-roi");
-        req.Content = System.Net.Http.Json.JsonContent.Create(body);
-        var auth = HttpContext.Request.Headers["Authorization"].ToString();
-        if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
-        var res = await httpClient.SendAsync(req, ct);
-        var content = await res.Content.ReadAsStringAsync(ct);
-        return Content(content, "application/json");
-    }
-
-    /// <summary>
     /// GET /api/parent/children-insights
     /// Proxy → Python /api/parent/children-insights  Comparaison inter-enfants
     /// </summary>
@@ -516,6 +483,10 @@ public class ParentController : ControllerBase
             var parentId = User.GetUserId();
             var link = await _db.ParentStudentLinks.FirstOrDefaultAsync(l => l.ParentId == parentId && l.StudentId == childId);
             if (link == null) return NotFound(new { error = "Lien non trouvé" });
+            // Règle explicite : délier un enfant ne rembourse jamais les crédits déjà
+            // dépensés pour lui (ParentCreditLedger n'est pas touché ici), et le contenu
+            // déjà acheté reste acquis sur son compte (Enrollment n'est pas touché non
+            // plus). Ne pas ajouter de logique de remboursement ici.
             _db.ParentStudentLinks.Remove(link);
             await _db.SaveChangesAsync();
             return Ok(new { success = true });

@@ -19,9 +19,12 @@ public record RequestStudentAccessRequest(int StudentId, int InstitutionId);
 ///      l'institution (InstitutionStudents), sans pouvoir les contacter.
 ///   3. Passage visible → en contact par l'une des 3 portes :
 ///      a) l'institution assigne directement (AssignStudent)
-///      b) le prof demande l'accès, approuvable par l'élève, l'institution,
-///         OU le parent lié — le premier qui répond suffit (RequestStudentAccess
-///         + Accept/Reject sur TeacherStudentAccessRequests)
+///      b) le prof demande l'accès (RequestStudentAccess), validée par une
+///         hiérarchie à deux étapes sur TeacherStudentAccessRequests : d'abord
+///         un filtre administratif par l'institution (Stage="institution"),
+///         puis le consentement de l'élève OU d'un parent lié (Stage="consent",
+///         premier qui répond, refus définitif et non contournable par
+///         l'institution) — voir TeacherStudentAccessRequest.cs pour le détail
 ///      c) l'élève écrit en premier (déjà couvert par la messagerie existante,
 ///         rien à faire ici)
 /// </summary>
@@ -406,8 +409,11 @@ public class InstitutionNetworkController : ControllerBase
     }
 
     /// <summary>
-    /// Demandes d'accès en attente que JE peux approuver — l'élève lui-même,
-    /// l'institution concernée, ou un parent lié à cet élève.
+    /// Demandes d'accès en attente que JE peux traiter — selon la hiérarchie à
+    /// deux étapes : l'institution ne voit que les demandes encore à l'étape
+    /// "institution" (filtre administratif) ; l'élève et ses parents liés ne
+    /// voient que celles déjà passées à l'étape "consent" — jamais avant, pour
+    /// ne pas les notifier d'une demande qui pourrait être rejetée sans eux.
     /// </summary>
     [HttpGet("access-requests/pending")]
     public async Task<IActionResult> GetPendingAccessRequests()
@@ -420,12 +426,12 @@ public class InstitutionNetworkController : ControllerBase
 
         if (myRole == "student")
         {
-            query = query.Where(r => r.StudentId == me);
+            query = query.Where(r => r.StudentId == me && r.Stage == "consent");
         }
         else if (myRole == "institution")
         {
             var myInstitutionId = await MyInstitutionIdAsync(me);
-            query = query.Where(r => r.InstitutionId == myInstitutionId);
+            query = query.Where(r => r.InstitutionId == myInstitutionId && r.Stage == "institution");
         }
         else if (myRole == "parent")
         {
@@ -433,7 +439,7 @@ public class InstitutionNetworkController : ControllerBase
                 .Where(l => l.ParentId == me && l.Status == "accepted")
                 .Select(l => l.StudentId)
                 .ToListAsync();
-            query = query.Where(r => myChildrenIds.Contains(r.StudentId));
+            query = query.Where(r => myChildrenIds.Contains(r.StudentId) && r.Stage == "consent");
         }
         else
         {
@@ -448,6 +454,7 @@ public class InstitutionNetworkController : ControllerBase
             {
                 r.Id,
                 r.CreatedAt,
+                r.Stage,
                 Teacher = new { r.Teacher!.Id, r.Teacher.FirstName, r.Teacher.LastName, r.Teacher.AvatarUrl },
                 Student = new { r.Student!.Id, r.Student.FirstName, r.Student.LastName },
                 Institution = new { r.Institution!.Id, r.Institution.Name },
@@ -457,68 +464,190 @@ public class InstitutionNetworkController : ControllerBase
         return Ok(pending);
     }
 
-    /// <summary>Approuve une demande d'accès — crée le lien prof-élève en accepted.</summary>
+    /// <summary>
+    /// Approuve une demande d'accès. Étape "institution" : fait passer la
+    /// demande à l'étape "consent" (pas encore une acceptation finale) et
+    /// notifie l'élève + ses parents liés. Étape "consent" : acceptation
+    /// finale, crée le lien prof-élève et notifie toutes les parties.
+    /// </summary>
     [HttpPut("access-requests/{id:int}/accept")]
     public async Task<IActionResult> AcceptAccessRequest(int id)
     {
         var me = User.GetUserId();
-        var request = await _db.TeacherStudentAccessRequests.FindAsync(id);
+        var request = await _db.TeacherStudentAccessRequests
+            .Include(r => r.Teacher).Include(r => r.Student).Include(r => r.Institution)
+            .FirstOrDefaultAsync(r => r.Id == id);
         if (request == null) return NotFound();
         if (request.Status != "pending") return Conflict(new { error = "Cette demande a déjà été traitée." });
-        if (!await CanRespondToAccessRequestAsync(request, me)) return Forbid();
 
-        request.Status = "accepted";
-        request.RespondedBy = me;
-        request.RespondedAt = DateTime.UtcNow;
-
-        var existingLink = await _db.TeacherStudentLinks.FirstOrDefaultAsync(l =>
-            l.TeacherId == request.TeacherId && l.StudentId == request.StudentId);
-        if (existingLink != null)
+        if (request.Stage == "institution")
         {
-            existingLink.Status = "accepted";
-            existingLink.UpdatedAt = DateTime.UtcNow;
+            var myInstitutionId = await MyInstitutionIdAsync(me);
+            if (myInstitutionId == null || myInstitutionId != request.InstitutionId) return Forbid();
+
+            request.InstitutionApprovedBy = me;
+            request.InstitutionRespondedAt = DateTime.UtcNow;
+            request.Stage = "consent";
+            // Status reste "pending" : le filtre administratif est passé, mais
+            // rien n'est encore acquis — seuls l'élève ou un parent lié
+            // peuvent maintenant donner le consentement final.
+            await NotifyConsentStageStartedAsync(request);
         }
-        else
+        else // Stage == "consent"
         {
-            _db.TeacherStudentLinks.Add(new TeacherStudentLink
+            if (!await CanGiveConsentAsync(request, me)) return Forbid();
+
+            request.Status = "accepted";
+            request.RespondedBy = me;
+            request.RespondedAt = DateTime.UtcNow;
+
+            var existingLink = await _db.TeacherStudentLinks.FirstOrDefaultAsync(l =>
+                l.TeacherId == request.TeacherId && l.StudentId == request.StudentId);
+            if (existingLink != null)
             {
-                TeacherId = request.TeacherId,
-                StudentId = request.StudentId,
-                Status = "accepted",
-                InitiatedBy = request.TeacherId,
-            });
+                existingLink.Status = "accepted";
+                existingLink.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                _db.TeacherStudentLinks.Add(new TeacherStudentLink
+                {
+                    TeacherId = request.TeacherId,
+                    StudentId = request.StudentId,
+                    Status = "accepted",
+                    InitiatedBy = request.TeacherId,
+                });
+            }
+
+            await NotifyFinalDecisionAsync(request, accepted: true, notifyStudentAndParents: true);
         }
 
         await _db.SaveChangesAsync();
         return Ok(new { success = true });
     }
 
-    /// <summary>Rejette une demande d'accès.</summary>
+    /// <summary>
+    /// Rejette une demande d'accès. Étape "institution" : rejet immédiat et
+    /// définitif, l'élève et le parent ne sont jamais notifiés (ils n'ont
+    /// jamais su que la demande existait). Étape "consent" : le refus de
+    /// l'élève ou du parent est définitif — l'autre ne peut plus répondre et
+    /// l'institution ne peut pas passer outre.
+    /// </summary>
     [HttpPut("access-requests/{id:int}/reject")]
     public async Task<IActionResult> RejectAccessRequest(int id)
     {
         var me = User.GetUserId();
-        var request = await _db.TeacherStudentAccessRequests.FindAsync(id);
+        var request = await _db.TeacherStudentAccessRequests
+            .Include(r => r.Teacher).Include(r => r.Student).Include(r => r.Institution)
+            .FirstOrDefaultAsync(r => r.Id == id);
         if (request == null) return NotFound();
         if (request.Status != "pending") return Conflict(new { error = "Cette demande a déjà été traitée." });
-        if (!await CanRespondToAccessRequestAsync(request, me)) return Forbid();
 
-        request.Status = "rejected";
-        request.RespondedBy = me;
-        request.RespondedAt = DateTime.UtcNow;
+        if (request.Stage == "institution")
+        {
+            var myInstitutionId = await MyInstitutionIdAsync(me);
+            if (myInstitutionId == null || myInstitutionId != request.InstitutionId) return Forbid();
+
+            request.Status = "rejected";
+            request.RespondedBy = me;
+            request.RespondedAt = DateTime.UtcNow;
+            // Filtre administratif non franchi : seul l'enseignant est informé.
+            await NotifyFinalDecisionAsync(request, accepted: false, notifyStudentAndParents: false);
+        }
+        else // Stage == "consent"
+        {
+            if (!await CanGiveConsentAsync(request, me)) return Forbid();
+
+            request.Status = "rejected";
+            request.RespondedBy = me;
+            request.RespondedAt = DateTime.UtcNow;
+            await NotifyFinalDecisionAsync(request, accepted: false, notifyStudentAndParents: true);
+        }
+
         await _db.SaveChangesAsync();
         return Ok(new { success = true });
     }
 
-    private async Task<bool> CanRespondToAccessRequestAsync(TeacherStudentAccessRequest request, int userId)
+    /// <summary>Étape "consent" uniquement : l'élève lui-même, ou un parent lié accepted. Jamais l'institution.</summary>
+    private async Task<bool> CanGiveConsentAsync(TeacherStudentAccessRequest request, int userId)
     {
         if (request.StudentId == userId) return true;
-
-        var myInstitutionId = await MyInstitutionIdAsync(userId);
-        if (myInstitutionId != null && myInstitutionId == request.InstitutionId) return true;
 
         var isLinkedParent = await _db.ParentStudentLinks.AnyAsync(l =>
             l.ParentId == userId && l.StudentId == request.StudentId && l.Status == "accepted");
         return isLinkedParent;
+    }
+
+    /// <summary>Étape 2 qui démarre : prévenir l'élève et ses parents liés qu'une réponse leur revient.</summary>
+    private async Task NotifyConsentStageStartedAsync(TeacherStudentAccessRequest request)
+    {
+        var teacherName = $"{request.Teacher!.FirstName} {request.Teacher.LastName}".Trim();
+        var recipients = new List<int> { request.StudentId };
+        recipients.AddRange(await _db.ParentStudentLinks.AsNoTracking()
+            .Where(l => l.StudentId == request.StudentId && l.Status == "accepted")
+            .Select(l => l.ParentId)
+            .ToListAsync());
+
+        foreach (var userId in recipients.Distinct())
+        {
+            _db.Notifications.Add(new Notification
+            {
+                UserId = userId,
+                Title = "Demande de contact enseignant",
+                Message = $"{teacherName} souhaite pouvoir vous contacter. Votre établissement a validé la demande, elle attend votre réponse.",
+                Type = "access_request",
+                RelatedEntityType = "TeacherStudentAccessRequest",
+                RelatedEntityId = request.Id,
+                User = null!,
+            });
+        }
+    }
+
+    /// <summary>
+    /// Décision finale (acceptée ou rejetée) : notifie l'enseignant et
+    /// l'institution systématiquement ; l'élève et ses parents liés seulement
+    /// si <paramref name="notifyStudentAndParents"/> (jamais vrai pour un rejet
+    /// à l'étape institution, puisqu'ils n'ont jamais été mis au courant).
+    /// </summary>
+    private async Task NotifyFinalDecisionAsync(TeacherStudentAccessRequest request, bool accepted, bool notifyStudentAndParents)
+    {
+        var studentName = $"{request.Student!.FirstName} {request.Student.LastName}".Trim();
+        var institutionName = request.Institution?.Name ?? "l'établissement";
+
+        var recipients = new List<int> { request.TeacherId };
+
+        var institutionStaffIds = await _db.Users.AsNoTracking()
+            .Where(u => u.Role == "institution" && u.InstitutionId == request.InstitutionId && !u.IsDeleted)
+            .Select(u => u.Id)
+            .ToListAsync();
+        recipients.AddRange(institutionStaffIds);
+
+        if (notifyStudentAndParents)
+        {
+            recipients.Add(request.StudentId);
+            recipients.AddRange(await _db.ParentStudentLinks.AsNoTracking()
+                .Where(l => l.StudentId == request.StudentId && l.Status == "accepted")
+                .Select(l => l.ParentId)
+                .ToListAsync());
+        }
+
+        var title = accepted ? "Demande de contact acceptée" : "Demande de contact refusée";
+        var message = accepted
+            ? $"L'accès de contact entre l'enseignant et {studentName} ({institutionName}) a été accepté."
+            : $"La demande de contact concernant {studentName} ({institutionName}) a été refusée.";
+
+        foreach (var userId in recipients.Distinct())
+        {
+            _db.Notifications.Add(new Notification
+            {
+                UserId = userId,
+                Title = title,
+                Message = message,
+                Type = "access_request",
+                RelatedEntityType = "TeacherStudentAccessRequest",
+                RelatedEntityId = request.Id,
+                User = null!,
+            });
+        }
     }
 }

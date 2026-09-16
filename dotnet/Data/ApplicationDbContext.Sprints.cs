@@ -166,8 +166,10 @@ public partial class ApplicationDbContext
         modelBuilder.Entity<TeacherStudentAccessRequest>(entity =>
         {
             entity.HasKey(e => e.Id);
+            entity.Property(e => e.Stage).IsRequired().HasMaxLength(20).HasDefaultValue("institution");
             entity.HasIndex(e => new { e.TeacherId, e.StudentId, e.Status });
             entity.HasIndex(e => e.StudentId);
+            entity.HasIndex(e => new { e.Status, e.Stage });
             entity.HasOne(e => e.Teacher)
                   .WithMany()
                   .HasForeignKey(e => e.TeacherId)

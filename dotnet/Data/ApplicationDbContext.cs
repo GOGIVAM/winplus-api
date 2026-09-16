@@ -92,6 +92,10 @@ public partial class ApplicationDbContext : DbContext
     public DbSet<ParentStudentLink> ParentStudentLinks => Set<ParentStudentLink>();
     public DbSet<TeacherStudentLink> TeacherStudentLinks => Set<TeacherStudentLink>();
 
+    // Historique des alertes WinAI et des rapports destinés aux parents (distinct de DirectMessage/Notification)
+    public DbSet<ParentAlert> ParentAlerts => Set<ParentAlert>();
+    public DbSet<ParentReport> ParentReports => Set<ParentReport>();
+
     // Mode Répétiteur (Module 1 — profil et onboarding cours particuliers)
     public DbSet<TutorProfile> TutorProfiles => Set<TutorProfile>();
     public DbSet<TutorSubject> TutorSubjects => Set<TutorSubject>();
@@ -1233,6 +1237,52 @@ modelBuilder.Entity<Exam>(entity =>
             entity.HasOne(e => e.Student)
                 .WithMany()
                 .HasForeignKey(e => e.StudentId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Alertes WinAI destinées aux parents (historique — calcul à la volée jusqu'ici)
+        modelBuilder.Entity<ParentAlert>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Type).IsRequired().HasMaxLength(30);
+            entity.Property(e => e.Severity).IsRequired().HasMaxLength(10).HasDefaultValue("Low");
+            entity.Property(e => e.Content).IsRequired();
+            entity.Property(e => e.IsRead).HasDefaultValue(false);
+            entity.HasIndex(e => e.ParentId);
+            entity.HasIndex(e => e.ChildId);
+            entity.HasIndex(e => new { e.ParentId, e.ChildId, e.IsRead });
+            entity.HasOne(e => e.Parent)
+                .WithMany()
+                .HasForeignKey(e => e.ParentId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Child)
+                .WithMany()
+                .HasForeignKey(e => e.ChildId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Rapports destinés aux parents (hebdomadaire, à la demande, capsule, album annuel)
+        modelBuilder.Entity<ParentReport>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.ReportType).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.CapsuleText).HasMaxLength(500);
+            entity.Property(e => e.EmitterType).IsRequired().HasMaxLength(10).HasDefaultValue("System");
+            entity.Property(e => e.IsRead).HasDefaultValue(false);
+            entity.HasIndex(e => e.ParentId);
+            entity.HasIndex(e => e.ChildId);
+            entity.HasIndex(e => new { e.ParentId, e.ChildId, e.ReportType });
+            entity.HasOne(e => e.Parent)
+                .WithMany()
+                .HasForeignKey(e => e.ParentId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Child)
+                .WithMany()
+                .HasForeignKey(e => e.ChildId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Emitter)
+                .WithMany()
+                .HasForeignKey(e => e.EmitterId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
