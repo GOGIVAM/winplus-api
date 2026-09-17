@@ -1,4 +1,5 @@
 using Backend.Data;
+using Backend.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Services;
@@ -120,7 +121,7 @@ public class StudentService : IStudentService
             // 1. Objectifs avec deadline proche
             var urgentGoals = await _context.Goals
                 .AsNoTracking()
-                .Where(g => g.UserId == studentId && g.Status == "active" && g.TargetDate <= DateTime.UtcNow.AddDays(7))
+                .Where(g => g.UserId == studentId && g.Status == GoalStatus.Active && g.TargetDate <= DateTime.UtcNow.AddDays(7))
                 .OrderBy(g => g.TargetDate)
                 .Select(g => new
                 {
@@ -191,7 +192,7 @@ public class StudentService : IStudentService
         {
             var goals = await _context.Goals
                 .AsNoTracking()
-                .Where(g => g.UserId == studentId && g.Status == "active")
+                .Where(g => g.UserId == studentId && g.Status == GoalStatus.Active)
                 .Select(g => new
                 {
                     goalId = g.Id,

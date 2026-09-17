@@ -5,6 +5,7 @@ using Backend.Data;
 using Backend.Services;
 using Backend.Extensions;
 using Backend.Models.DTOs;
+using Backend.Models.Entities;
 using Microsoft.AspNetCore.Http;
 
 namespace Backend.Controllers;
@@ -129,7 +130,7 @@ public class StudentController : ControllerBase
             };
 
             var priorities = await _db.Goals
-                .Where(g => g.UserId == userId && g.Status == "in_progress")
+                .Where(g => g.UserId == userId && g.Status == GoalStatus.Active)
                 .OrderBy(g => g.TargetDate)
                 .Take(5)
                 .Select(g => new
@@ -156,6 +157,7 @@ public class StudentController : ControllerBase
                     g.Type,
                     g.Progress,
                     g.Status,
+                    g.ProposedByUserId,
                     g.TargetDate,
                     g.CreatedAt,
                     g.CompletedAt
@@ -310,7 +312,7 @@ public class StudentController : ControllerBase
 
             // Active goals nearing deadline
             var goals = await _db.Goals
-                .Where(g => g.UserId == userId && g.Status == "in_progress")
+                .Where(g => g.UserId == userId && g.Status == GoalStatus.Active)
                 .OrderBy(g => g.TargetDate)
                 .Take(3)
                 .Select(g => new
@@ -407,6 +409,7 @@ public class StudentController : ControllerBase
                     g.Type,
                     g.Progress,
                     g.Status,
+                    g.ProposedByUserId,
                     g.TargetDate,
                     g.CreatedAt,
                     g.CompletedAt

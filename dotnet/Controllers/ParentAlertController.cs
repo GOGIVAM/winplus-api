@@ -61,6 +61,46 @@ public class ParentAlertController : ControllerBase
         return Ok(alerts);
     }
 
+    /// <summary>
+    /// Baromètre de bien-être — vue consolidée des seuls signaux comportementaux
+    /// (BaissePerformance, Inactivite, Surmenage, AnxieteExamen), 30 derniers jours.
+    /// Ce n'est pas un nouveau moteur de détection : une lecture filtrée de
+    /// ParentAlerts, déjà alimentée par parent_alert_routes.py côté Python à
+    /// chaque calcul d'alerte (voir _persist_alerts). "Felicitations" est
+    /// volontairement exclu : ce n'est pas un signal à surveiller.
+    /// </summary>
+    private static readonly string[] BarometreTypes = { "BaissePerformance", "Inactivite", "Surmenage", "AnxieteExamen" };
+
+    [HttpGet("{childId:int}/barometre")]
+    public async Task<IActionResult> GetBarometre(int childId)
+    {
+        var parentId = User.GetUserId();
+
+        var linked = await _db.ParentStudentLinks
+            .AnyAsync(l => l.ParentId == parentId && l.StudentId == childId && l.Status == "accepted");
+        if (!linked)
+            return StatusCode(403, new { error = "Accès refusé : cet enfant n'est pas lié à votre compte." });
+
+        var cutoff = DateTime.UtcNow.AddDays(-30);
+
+        var signals = await _db.ParentAlerts.AsNoTracking()
+            .Where(a => a.ParentId == parentId && a.ChildId == childId
+                && BarometreTypes.Contains(a.Type) && a.DetectedAt >= cutoff)
+            .OrderByDescending(a => a.DetectedAt)
+            .Select(a => new
+            {
+                id = a.Id,
+                type = a.Type,
+                severity = a.Severity,
+                message = a.Content,
+                isRead = a.IsRead,
+                detectedAt = a.DetectedAt,
+            })
+            .ToListAsync();
+
+        return Ok(new { signals });
+    }
+
     /// <summary>Marque une alerte comme lue.</summary>
     [HttpPatch("{id:int}/read")]
     public async Task<IActionResult> MarkRead(int id)

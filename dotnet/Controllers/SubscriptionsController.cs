@@ -76,6 +76,9 @@ public class SubscriptionsController : ControllerBase
             return Ok(new
             {
                 id = sub.Id,
+                // Requis pour renouveler : POST /subscriptions/purchase prend un
+                // PlanId (PricingPlan), pas l'id de la Subscription elle-même.
+                pricingPlanId = sub.PricingPlanId,
                 planName = effectivePlanName ?? "Standard",
                 tier = effectivePlanName?.ToLower() ?? "standard",
                 status = sub.Status,

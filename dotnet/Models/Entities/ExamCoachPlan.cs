@@ -33,6 +33,15 @@ public class ExamCoachPlan
 
     public bool IsActive { get; set; } = true;
 
+    /// <summary>
+    /// Mode veille d'examen activé par un parent lié (ExamCoachController).
+    /// Non null = veille active ; désactivation manuelle (DELETE) ou
+    /// automatique quand ExamDate est dépassée (ExamWatchModeExpirationService)
+    /// remettent le champ à null. N'affecte pas IsActive : la veille est un
+    /// état parental sur le plan, pas le plan lui-même.
+    /// </summary>
+    public DateTime? ParentWatchModeActivatedAt { get; set; }
+
     // Navigation
     public User User { get; set; } = null!;
     public ICollection<ExamCoachDayCompletion> DayCompletions { get; set; } = new List<ExamCoachDayCompletion>();

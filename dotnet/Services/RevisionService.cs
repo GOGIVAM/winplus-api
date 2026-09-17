@@ -519,7 +519,7 @@ public class RevisionService : IRevisionService
         if (string.IsNullOrWhiteSpace(resolvedSubject))
         {
             var goals = await _context.Goals
-                .Where(g => g.UserId == userId && g.Status == "active")
+                .Where(g => g.UserId == userId && g.Status == GoalStatus.Active)
                 .OrderByDescending(g => g.CreatedAt)
                 .Select(g => (g.Title ?? "") + (g.Description != null ? " : " + g.Description : ""))
                 .Take(3)

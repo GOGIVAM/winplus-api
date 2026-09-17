@@ -180,6 +180,75 @@ public class ParentCreditsController : ControllerBase
     }
 
     /// <summary>
+    /// Retour d'usage sur les achats faits pour un enfant, 1 à 30 jours après
+    /// l'achat : signal binaire "consulté / pas encore consulté", jamais un
+    /// compteur (DownloadHistories n'est pas fiable pour compter les
+    /// consultations réelles — déduplication incohérente selon le canal
+    /// d'accès, voir parent_decisions_session.md, fonctionnalité E).
+    ///
+    /// OrderItem n'a pas de colonne "pour quel enfant" : le seul lien fiable
+    /// entre une commande et l'enfant destinataire est ParentCreditLedger
+    /// (EntryType="consumption", ChildId + OrderId), écrit par
+    /// PurchaseForChild au moment de l'achat. Un achat payé autrement qu'avec
+    /// les crédits mensuels n'a donc pas de suivi ici — c'est le seul système
+    /// d'achat-pour-enfant réellement implémenté aujourd'hui.
+    /// </summary>
+    [HttpGet("purchases/{childId:int}/impact")]
+    public async Task<IActionResult> GetPurchaseImpact(int childId)
+    {
+        try
+        {
+            var parentId = User.GetUserId();
+
+            var linked = await _db.ParentStudentLinks.AnyAsync(l =>
+                l.ParentId == parentId && l.StudentId == childId && l.Status == "accepted");
+            if (!linked)
+                return StatusCode(403, new { success = false, error = "Cet enfant n'est pas lié à votre compte." });
+
+            var now = DateTime.UtcNow;
+            var windowStart = now.AddDays(-30);
+            var windowEnd = now.AddDays(-1);
+
+            var purchases = await (
+                from ledger in _db.ParentCreditLedgers
+                where ledger.ParentId == parentId && ledger.ChildId == childId
+                    && ledger.EntryType == "consumption" && ledger.OrderId != null
+                join order in _db.Orders on ledger.OrderId equals order.Id
+                where order.CreatedAt >= windowStart && order.CreatedAt <= windowEnd
+                join item in _db.OrderItems on order.Id equals item.OrderId
+                join subject in _db.Subjects on item.SubjectId equals subject.Id
+                select new { SubjectId = subject.Id, subject.Title, PurchaseDate = order.CreatedAt }
+            ).AsNoTracking().ToListAsync();
+
+            var results = new List<object>(purchases.Count);
+            foreach (var p in purchases)
+            {
+                var firstConsultedAt = await _db.DownloadHistories.AsNoTracking()
+                    .Where(d => d.UserId == childId && d.SubjectId == p.SubjectId && d.CreatedAt >= p.PurchaseDate)
+                    .OrderBy(d => d.CreatedAt)
+                    .Select(d => (DateTime?)d.CreatedAt)
+                    .FirstOrDefaultAsync();
+
+                results.Add(new
+                {
+                    contentId        = p.SubjectId,
+                    contentTitle     = p.Title,
+                    purchaseDate     = p.PurchaseDate,
+                    consulted        = firstConsultedAt != null,
+                    firstConsultedAt = firstConsultedAt,
+                });
+            }
+
+            return Ok(new { data = results, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting purchase impact for child {ChildId}", childId);
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
     /// Achète une épreuve pour un enfant. Débite les crédits du mois si demandé
     /// et suffisants, crée la commande et inscrit l'enfant au contenu.
     /// </summary>

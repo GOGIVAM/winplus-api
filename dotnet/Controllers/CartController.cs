@@ -345,15 +345,17 @@ public class CartController : ControllerBase
             }
             else if (!string.IsNullOrEmpty(request.DeviceId))
             {
-                // ✅ Anonymous user: persist to in-memory cache by deviceId
-                _anonymousCartService.AddToAnonymousCart(request.DeviceId, request.SubjectId, request.Price);
+                // ✅ Anonymous user: persisté en base par deviceId (survit à un
+                // redémarrage du service — voir CartItem.cs)
+                await _cartService.AddToAnonymousCartAsync(request.DeviceId, request.SubjectId, request.Price);
 
-                var anonymousItems = _anonymousCartService.GetAnonymousCart(request.DeviceId)
+                var anonymousList = await _cartService.GetAnonymousCartAsync(request.DeviceId);
+                var anonymousItems = anonymousList
                     .Select(item => new CartItemDto
                     {
                         Id = item.Id,
                         SubjectId = item.SubjectId,
-                        Title = item.Subject?.Title ?? string.Empty, // Subject non chargé pour panier anonyme  enrichi par le frontend
+                        Title = item.Subject?.Title ?? string.Empty,
                         Description = item.Subject?.Description,
                         Price = item.Price,
                         Image = item.Subject?.ThumbnailUrl,
@@ -456,8 +458,8 @@ public class CartController : ControllerBase
             }
             else if (!string.IsNullOrEmpty(deviceId))
             {
-                // ✅ Anonymous user: remove from anonymous cart service using SubjectId
-                var result = _anonymousCartService.RemoveFromAnonymousCart(deviceId, subjectOrItemId);
+                // ✅ Anonymous user: remove from anonymous cart using SubjectId
+                var result = await _cartService.RemoveFromAnonymousCartAsync(deviceId, subjectOrItemId);
                 
                 if (!result)
                 {
@@ -528,7 +530,7 @@ public class CartController : ControllerBase
             else if (!string.IsNullOrEmpty(deviceId))
             {
                 // ✅ Anonymous user: clear anonymous cart
-                _anonymousCartService.ClearAnonymousCart(deviceId);
+                await _cartService.ClearAnonymousCartAsync(deviceId);
 
                 _logger.LogInformation("[ClearCart] Cart cleared for anonymous {DeviceId}", deviceId);
                 

@@ -337,7 +337,6 @@ builder.Services.AddScoped<IAnalyticsRepository, AnalyticsRepository>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<ISubjectService, SubjectService>();
 builder.Services.AddScoped<ICartService, CartService>();
-builder.Services.AddSingleton<IAnonymousCartService, AnonymousCartService>(); // ✅ Singleton for in-memory cart
 builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<IEnrollmentService, EnrollmentService>();
 builder.Services.AddScoped<IPaymentService, PaymentService>();
@@ -374,6 +373,7 @@ builder.Services.AddScoped<ITeacherService, TeacherService>();
 builder.Services.AddScoped<IAffiliateService, AffiliateService>();
 builder.Services.AddScoped<IParentService, ParentService>();
 builder.Services.AddScoped<IStudentService, StudentService>();
+builder.Services.AddScoped<IYearlyAlbumService, YearlyAlbumService>();
 builder.Services.AddScoped<IHomeService, HomeService>();
 builder.Services.AddScoped<ICategoryService, CategoryService>();
 
@@ -484,6 +484,8 @@ builder.Services.AddHostedService<SubscriptionReminderService>();
 
 // Background services for parent features
 builder.Services.AddHostedService<WeeklyParentReportService>();
+builder.Services.AddHostedService<ExamWatchModeExpirationService>();
+builder.Services.AddHostedService<MonthlyPortfolioService>();
 
 // Background services for institution features
 builder.Services.AddHostedService<MonthlyInstitutionReportService>();

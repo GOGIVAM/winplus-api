@@ -11,8 +11,13 @@ namespace Backend.Models.Entities;
 /// DirectMessage faute de canal dédié. Cette table les regroupe, distincte de DirectMessage et de
 /// Notification (rôles différents, ne pas fusionner).
 ///
-/// ReportType : "Hebdomadaire" | "ALaDemande" | "CapsuleHebdo" | "AlbumAnnuel"
+/// ReportType : "Hebdomadaire" | "ALaDemande" | "CapsuleHebdo" | "AlbumAnnuel" | "Portefeuille"
 /// EmitterType : "System" | "Teacher"
+///
+/// "Portefeuille" (MonthlyPortfolioService) : portrait stable de l'apprenant,
+/// recalculé une fois par mois — jamais de score ni de comparaison entre
+/// enfants. Content contient un JSON {"regularite","autonomie","curiosite"}
+/// (trois textes descriptifs), pas de texte libre comme pour "ALaDemande".
 /// </summary>
 public class ParentReport
 {

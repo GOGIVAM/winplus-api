@@ -16,20 +16,17 @@ public class AuthController : ControllerBase
 {
     private readonly ICustomAuthService _customAuthService;
     private readonly ICartService _cartService;
-    private readonly IAnonymousCartService _anonymousCartService;
     private readonly ILogger<AuthController> _logger;
     private readonly ApplicationDbContext _dbContext;
 
     public AuthController(
         ICustomAuthService customAuthService,
         ICartService cartService,
-        IAnonymousCartService anonymousCartService,
         ILogger<AuthController> logger,
         ApplicationDbContext dbContext)
     {
         _customAuthService = customAuthService;
         _cartService = cartService;
-        _anonymousCartService = anonymousCartService;
         _logger = logger;
         _dbContext = dbContext;
     }
@@ -205,29 +202,27 @@ public class AuthController : ControllerBase
                 DateTime.UtcNow
             );
 
-            // ✅ FUSION DU PANIER: Si l'utilisateur avait un panier anonyme, le fusionner
+            // ✅ FUSION DU PANIER: Si l'utilisateur avait un panier anonyme, le fusionner.
+            // Panier anonyme persisté en base par DeviceId (voir CartItem.cs) — la
+            // réassignation se fait directement en base, plus besoin de récupérer une
+            // liste en mémoire puis de la vider séparément.
             if (!string.IsNullOrEmpty(request.DeviceId) && result.User?.Id > 0)
             {
                 try
                 {
-                    var anonymousItems = _anonymousCartService.GetAnonymousCart(request.DeviceId);
-                    if (anonymousItems.Any())
-                    {
-                        await _cartService.MergeAnonymousCartAsync(result.User.Id, anonymousItems);
-                        _anonymousCartService.ClearAnonymousCart(request.DeviceId);
-                        
-                        _logger.LogInformation(
-                            "[SignIn CartMerge] ✅ Panier anonyme fusionné avec succès\n" +
-                            "UserId: {UserId}\n" +
-                            "DeviceId: {DeviceId}\n" +
-                            "ItemsMerged: {ItemsCount}\n" +
-                            "Timestamp: {Timestamp}",
-                            result.User.Id,
-                            request.DeviceId,
-                            anonymousItems.Count,
-                            DateTime.UtcNow
-                        );
-                    }
+                    var merged = await _cartService.MergeAnonymousCartAsync(result.User.Id, request.DeviceId);
+
+                    _logger.LogInformation(
+                        "[SignIn CartMerge] ✅ Panier anonyme fusionné\n" +
+                        "UserId: {UserId}\n" +
+                        "DeviceId: {DeviceId}\n" +
+                        "CartSize: {ItemsCount}\n" +
+                        "Timestamp: {Timestamp}",
+                        result.User.Id,
+                        request.DeviceId,
+                        merged.Count(),
+                        DateTime.UtcNow
+                    );
                 }
                 catch (Exception mergeEx)
                 {

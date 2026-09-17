@@ -66,18 +66,101 @@ public class ParentController : ControllerBase
                 .Where(a => a.UserId == childId && a.CompletedAt >= now.AddDays(-30))
                 .AverageAsync(a => (double?)a.Score) ?? 0;
 
+            // Conversations WinAI actives cette semaine (table partagée avec le
+            // chatbot Python, voir Conversation.cs) — remplace le 0 codé en dur
+            // qui rendait cette statistique toujours nulle quelle que soit
+            // l'activité réelle de l'enfant.
+            var aiSessionsThisWeek = await _db.Conversations
+                .CountAsync(c => c.UserId == childId && !c.IsDeleted && c.LastMessageAt >= weekStart);
+
             return Ok(new
             {
                 downloadsThisWeek,
                 quizzesThisWeek,
                 averageScore = Math.Round(avgScore, 1),
-                aiSessionsThisWeek = 0,
+                aiSessionsThisWeek,
             });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting child stats");
             return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Score moyen par matière (30 derniers jours) et dernier quiz complété,
+    /// pour l'onglet "Résultats" du détail enfant côté app mobile — jusqu'ici
+    /// entièrement simulé côté client (données codées en dur affichées comme
+    /// si elles étaient réelles pour n'importe quel enfant).
+    /// </summary>
+    [HttpGet("children/{childId:int}/subject-scores")]
+    public async Task<IActionResult> GetChildSubjectScores([FromRoute] int childId)
+    {
+        try
+        {
+            var parentId = User.GetUserId();
+            var linked = await _db.ParentStudentLinks.AnyAsync(l => l.ParentId == parentId && l.StudentId == childId && l.Status == "accepted");
+            if (!linked) return Forbid();
+
+            var cutoff = DateTime.UtcNow.AddDays(-30);
+
+            var bySubject = await _db.DailyScores
+                .AsNoTracking()
+                .Where(s => s.UserId == childId && s.CreatedAt >= cutoff && s.SubjectId != null)
+                .GroupBy(s => s.SubjectId)
+                .Select(g => new
+                {
+                    SubjectId = g.Key!.Value,
+                    // Moyenne pondérée par le nombre de quiz de chaque jour, pas une
+                    // simple moyenne de moyennes journalières.
+                    AverageScore = g.Sum(s => s.AverageScore * s.QuizCount) / g.Sum(s => s.QuizCount),
+                })
+                .ToListAsync();
+
+            var subjectIds = bySubject.Select(b => b.SubjectId).ToList();
+            var subjectTitles = await _db.Subjects.AsNoTracking()
+                .Where(s => subjectIds.Contains(s.Id))
+                .ToDictionaryAsync(s => s.Id, s => s.Title);
+
+            var subjects = bySubject
+                .Select(b => new
+                {
+                    subjectId = b.SubjectId,
+                    subjectTitle = subjectTitles.TryGetValue(b.SubjectId, out var t) ? t : "Matière",
+                    averageScore = Math.Round(b.AverageScore, 1),
+                })
+                .OrderByDescending(s => s.averageScore)
+                .ToList();
+
+            var lastAttempt = await (
+                from a in _db.QuizAttempts
+                join q in _db.Quizzes on a.QuizId equals q.Id
+                where a.UserId == childId
+                orderby a.CompletedAt descending
+                select new { q.Title, a.Score, a.CorrectAnswers, q.QuestionCount }
+            ).AsNoTracking().FirstOrDefaultAsync();
+
+            return Ok(new
+            {
+                data = new
+                {
+                    subjects,
+                    lastQuiz = lastAttempt == null ? null : new
+                    {
+                        title = lastAttempt.Title,
+                        scorePercent = Math.Round(lastAttempt.Score, 0),
+                        correctAnswers = lastAttempt.CorrectAnswers,
+                        totalQuestions = lastAttempt.QuestionCount,
+                    },
+                },
+                success = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting child subject scores");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }
 
@@ -248,6 +331,16 @@ public class ParentController : ControllerBase
         try
         {
             var parentId = User.GetUserId();
+
+            // Ce endpoint expose désormais aussi les propositions Pending (voir
+            // GoalsController) : le lien accepted devient une vraie vérification
+            // d'accès, pas juste une formalité comme lorsqu'il ne renvoyait que
+            // des objectifs déjà Active.
+            var linked = await _db.ParentStudentLinks.AnyAsync(l =>
+                l.ParentId == parentId && l.StudentId == childId && l.Status == "accepted");
+            if (!linked)
+                return StatusCode(403, new { success = false, error = "Cet enfant n'est pas lié à votre compte." });
+
             var goals = await _parentService.GetChildGoalsAsync(parentId, childId);
             return Ok(new { data = goals, success = true });
         }
@@ -269,10 +362,12 @@ public class ParentController : ControllerBase
         try
         {
             var parentId = User.GetUserId();
-            var children = await _db.ParentStudentLinks
-                .Where(l => l.ParentId == parentId && l.Status == "accepted")
-                .Include(l => l.Student)
-                .Select(l => new
+            var children = await (
+                from l in _db.ParentStudentLinks
+                where l.ParentId == parentId && l.Status == "accepted"
+                join inst in _db.Institutions on l.Student!.InstitutionId equals inst.Id into instJoin
+                from inst in instJoin.DefaultIfEmpty()
+                select new
                 {
                     id         = l.StudentId,
                     firstName  = l.Student != null ? l.Student.FirstName : null,
@@ -280,7 +375,11 @@ public class ParentController : ControllerBase
                     email      = l.Student != null ? l.Student.Email     : null,
                     level      = l.Student != null ? l.Student.Level     : null,
                     avatarUrl  = l.Student != null ? l.Student.AvatarUrl : null,
-                    schoolName = (string?)null,
+                    // Renseigné seulement pour les élèves rattachés à une
+                    // Institution formelle (réseau B2B) — pas de champ
+                    // "établissement" en texte libre pour les autres, donc
+                    // reste légitimement null pour la majorité des comptes.
+                    schoolName = inst != null ? inst.Name : null,
                     linkedAt   = l.CreatedAt
                 })
                 .ToListAsync();
@@ -384,7 +483,11 @@ public class ParentController : ControllerBase
         if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
         var res = await httpClient.SendAsync(req, ct);
         var content = await res.Content.ReadAsStringAsync(ct);
-        return Content(content, "application/json");
+        // Rediffuser le vrai code HTTP de Python (ex. 403 si l'enfant n'est
+        // pas lié à l'appelant) plutôt qu'un 200 systématique, qui masquait
+        // toute erreur renvoyée par le service Python derrière une réponse
+        // "réussie" en apparence.
+        return new ContentResult { Content = content, ContentType = "application/json", StatusCode = (int)res.StatusCode };
     }
 
     /// <summary>

@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Backend.Data;
+using Backend.Models.Entities;
 
 namespace Backend.Services;
 
@@ -166,6 +167,11 @@ public sealed class WeeklyParentReportService : BackgroundService
             childSummaries.Add(
                 $"{child.FirstName ?? "Votre enfant"} : score moyen {weekAvg:F0}% ({trend}), {quizCount} exercice(s) cette semaine."
             );
+
+            // Capsule hebdomadaire (dashboard, pas l'onglet Rapports  voir
+            // GenerateAndStoreCapsuleAsync) : générée dans la même passe, par
+            // enfant, jamais à la volée.
+            await GenerateAndStoreCapsuleAsync(db, parentUser.Id, child.Id, child.FirstName, quizCount, cutoff, ct);
         }
 
         // Generate synthesis via Python AI service
@@ -221,6 +227,114 @@ public sealed class WeeklyParentReportService : BackgroundService
         );
 
         _logger.LogInformation("Weekly report sent to {Email} ({Children} children).", parentEmail, children.Count);
+    }
+
+    /// <summary>
+    /// Génère la capsule hebdomadaire d'un enfant (3 lignes max, langage naturel,
+    /// pas de chiffres bruts en vrac) et la stocke dans ParentReport
+    /// (ReportType="CapsuleHebdo"). Affichée en haut du dashboard parent, jamais
+    /// dans l'onglet Rapports (voir ParentReportController.GetReportsForChild,
+    /// qui filtre déjà ce type) ni régénérée à la volée entre deux lundis.
+    /// </summary>
+    private async Task GenerateAndStoreCapsuleAsync(
+        ApplicationDbContext db, int parentId, int childId, string? childFirstName, int quizCount, DateTime cutoff, CancellationToken ct)
+    {
+        try
+        {
+            var mostWorkedSubject = await db.DailyScores
+                .Where(s => s.UserId == childId && s.CreatedAt >= cutoff && s.SubjectId != null)
+                .GroupBy(s => s.SubjectId)
+                .Select(g => new { SubjectId = g.Key, Total = g.Sum(s => s.QuizCount) })
+                .OrderByDescending(g => g.Total)
+                .FirstOrDefaultAsync(ct);
+
+            string? mostWorkedTitle = null;
+            if (mostWorkedSubject?.SubjectId != null)
+                mostWorkedTitle = await db.Subjects
+                    .Where(s => s.Id == mostWorkedSubject.SubjectId)
+                    .Select(s => s.Category ?? s.Title)
+                    .FirstOrDefaultAsync(ct);
+
+            var recentDownloadTitle = await db.DownloadHistories
+                .Where(d => d.UserId == childId && d.CreatedAt >= cutoff)
+                .OrderByDescending(d => d.CreatedAt)
+                .Join(db.Subjects, d => d.SubjectId, s => s.Id, (d, s) => s.Title)
+                .FirstOrDefaultAsync(ct);
+
+            var name = childFirstName ?? "Votre enfant";
+            var text = await GenerateCapsuleTextAsync(name, mostWorkedTitle, quizCount, recentDownloadTitle, ct);
+
+            db.ParentReports.Add(new ParentReport
+            {
+                ParentId = parentId,
+                ChildId = childId,
+                ReportType = "CapsuleHebdo",
+                CapsuleText = text,
+                EmitterType = "System",
+            });
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            // Une capsule manquante ne doit jamais empêcher l'envoi du rapport
+            // par email — dégradation silencieuse, comme le reste du service.
+            _logger.LogWarning(ex, "Failed to generate weekly capsule for child {ChildId}", childId);
+        }
+    }
+
+    private async Task<string> GenerateCapsuleTextAsync(
+        string childFirstName, string? mostWorkedSubject, int quizCount, string? recentDownloadTitle, CancellationToken ct)
+    {
+        var facts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(mostWorkedSubject)) facts.Add($"a surtout travaillé {mostWorkedSubject}");
+        if (quizCount > 0) facts.Add($"terminé {quizCount} quiz");
+        if (!string.IsNullOrWhiteSpace(recentDownloadTitle)) facts.Add($"consulté « {recentDownloadTitle} »");
+
+        if (facts.Count == 0)
+            return $"{childFirstName} n'a pas encore d'activité enregistrée cette semaine.";
+
+        try
+        {
+            var client = _httpFactory.CreateClient("FastApiClient");
+            var prompt = new
+            {
+                messages = new[]
+                {
+                    new
+                    {
+                        role = "user",
+                        content = $"Élève : {childFirstName}. Cette semaine : {string.Join(", ", facts)}. "
+                                + "Rédige UNE seule phrase courte (3 lignes maximum), en langage naturel, "
+                                + "qui résume cette activité pour son parent. Jamais de statistiques brutes "
+                                + "en liste ni de pourcentage : juste du sens, sur le ton d'une observation bienveillante."
+                    }
+                },
+                system_prompt = "Tu es WinAI, conseiller pédagogique familial de WinPlus. Réponds en français, une phrase courte, ton chaleureux et factuel.",
+                max_tokens = 80,
+                temperature = 0.6
+            };
+
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/chatbot/chat");
+            req.Content = JsonContent.Create(prompt);
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(15));
+
+            var res = await client.SendAsync(req, cts.Token);
+            var body = await res.Content.ReadAsStringAsync(cts.Token);
+            var doc = JsonSerializer.Deserialize<JsonElement>(body);
+            if (doc.TryGetProperty("content", out var contentProp))
+            {
+                var text = contentProp.GetString();
+                if (!string.IsNullOrWhiteSpace(text)) return text.Trim();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "AI capsule generation failed, using fallback.");
+        }
+
+        return $"Cette semaine, {childFirstName} " + string.Join(", ", facts) + ".";
     }
 
     private async Task<string> GenerateSynthesisAsync(List<string> childSummaries, string parentName, CancellationToken ct)

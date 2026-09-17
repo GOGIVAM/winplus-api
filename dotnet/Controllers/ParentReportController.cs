@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Extensions;
+using System.Linq;
 
 namespace Backend.Controllers;
 
@@ -69,6 +70,143 @@ public class ParentReportController : ControllerBase
             .ToListAsync();
 
         return Ok(reports);
+    }
+
+    /// <summary>
+    /// Capsule hebdomadaire la plus récente d'un enfant (dashboard uniquement,
+    /// jamais l'onglet Rapports — voir ReportsTabPanel.tsx côté frontend, qui
+    /// filtre déjà ReportType="CapsuleHebdo"). Pré-générée chaque lundi par
+    /// WeeklyParentReportService, jamais recalculée à la demande ici.
+    /// Route avant "{id:int}" : "capsule" n'est de toute façon pas un entier,
+    /// mais placée ici pour rester lisible avec les autres routes nommées.
+    /// </summary>
+    [HttpGet("capsule/{childId:int}")]
+    public async Task<IActionResult> GetLatestCapsule(int childId)
+    {
+        var parentId = User.GetUserId();
+
+        var linked = await _db.ParentStudentLinks
+            .AnyAsync(l => l.ParentId == parentId && l.StudentId == childId && l.Status == "accepted");
+        if (!linked)
+            return StatusCode(403, new { error = "Accès refusé : cet enfant n'est pas lié à votre compte." });
+
+        var capsule = await _db.ParentReports.AsNoTracking()
+            .Where(r => r.ParentId == parentId && r.ChildId == childId && r.ReportType == "CapsuleHebdo")
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => new { id = r.Id, capsuleText = r.CapsuleText, createdAt = r.CreatedAt })
+            .FirstOrDefaultAsync();
+
+        // 404 volontaire plutôt qu'un objet vide : le frontend doit pouvoir
+        // distinguer "pas encore de capsule" (premier lundi pas encore passé)
+        // d'une vraie erreur, sans avoir à inspecter le corps de la réponse.
+        if (capsule == null) return NotFound();
+
+        return Ok(capsule);
+    }
+
+    /// <summary>
+    /// Dernier portefeuille de compétences calculé pour un enfant (Régularité /
+    /// Autonomie / Curiosité), généré mensuellement par MonthlyPortfolioService.
+    /// Route "{childId:int}/portefeuille" : "portefeuille" n'est pas un entier,
+    /// aucune collision possible avec GET "{id:int}" (détail par id de rapport).
+    /// </summary>
+    [HttpGet("{childId:int}/portefeuille")]
+    public async Task<IActionResult> GetPortfolio(int childId)
+    {
+        var parentId = User.GetUserId();
+
+        var linked = await _db.ParentStudentLinks
+            .AnyAsync(l => l.ParentId == parentId && l.StudentId == childId && l.Status == "accepted");
+        if (!linked)
+            return StatusCode(403, new { error = "Accès refusé : cet enfant n'est pas lié à votre compte." });
+
+        var report = await _db.ParentReports.AsNoTracking()
+            .Where(r => r.ParentId == parentId && r.ChildId == childId && r.ReportType == "Portefeuille")
+            .OrderByDescending(r => r.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        // 404 volontaire (comme la capsule) plutôt qu'un objet vide : distingue
+        // "pas encore de portefeuille calculé" (premier passage mensuel pas
+        // encore effectué) d'une vraie erreur.
+        if (report?.Content == null) return NotFound();
+
+        string? regularite = null, autonomie = null, curiosite = null;
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(report.Content);
+            var root = doc.RootElement;
+            regularite = root.TryGetProperty("Regularite", out var r1) ? r1.GetString() : null;
+            autonomie = root.TryGetProperty("Autonomie", out var r2) ? r2.GetString() : null;
+            curiosite = root.TryGetProperty("Curiosite", out var r3) ? r3.GetString() : null;
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            _logger.LogWarning(ex, "Portefeuille du rapport {Id} illisible", report.Id);
+        }
+
+        return Ok(new
+        {
+            childId,
+            regularite,
+            autonomie,
+            curiosite,
+            updatedAt = report.CreatedAt,
+        });
+    }
+
+    /// <summary>
+    /// Dernier album de fin d'année d'un enfant (YearlyAlbumService, généré
+    /// manuellement via POST /api/admin/albums/generate). Route
+    /// "{childId:int}/album" : "album" n'est pas un entier, aucune collision
+    /// possible avec GET "{id:int}".
+    /// </summary>
+    [HttpGet("{childId:int}/album")]
+    public async Task<IActionResult> GetAlbum(int childId)
+    {
+        var parentId = User.GetUserId();
+
+        var linked = await _db.ParentStudentLinks
+            .AnyAsync(l => l.ParentId == parentId && l.StudentId == childId && l.Status == "accepted");
+        if (!linked)
+            return StatusCode(403, new { error = "Accès refusé : cet enfant n'est pas lié à votre compte." });
+
+        var report = await _db.ParentReports.AsNoTracking()
+            .Where(r => r.ParentId == parentId && r.ChildId == childId && r.ReportType == "AlbumAnnuel")
+            .OrderByDescending(r => r.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        // 404 volontaire (comme la capsule / le portefeuille) plutôt qu'un objet
+        // vide : distingue "pas encore d'album généré" d'une vraie erreur.
+        if (report?.Content == null) return NotFound();
+
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(report.Content);
+            var root = doc.RootElement;
+
+            string? Get(string name) => root.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : null;
+            List<string> GetList(string name) => root.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Array
+                ? v.EnumerateArray().Select(e => e.GetString() ?? "").Where(s => s.Length > 0).ToList()
+                : new List<string>();
+
+            return Ok(new
+            {
+                childId,
+                schoolYear = Get("SchoolYear"),
+                subjectsWorked = Get("SubjectsWorked"),
+                progression = Get("Progression"),
+                topContents = GetList("TopContents"),
+                goalsSummary = Get("GoalsSummary"),
+                intensityWeeks = GetList("IntensityWeeks"),
+                bulletin = Get("Bulletin"),
+                updatedAt = report.CreatedAt,
+            });
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            _logger.LogWarning(ex, "Album du rapport {Id} illisible", report.Id);
+            return StatusCode(500, new { error = "Album illisible." });
+        }
     }
 
     /// <summary>Détail d'un rapport (contenu complet).</summary>

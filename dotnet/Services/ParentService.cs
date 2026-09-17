@@ -143,8 +143,33 @@ public class ParentService : IParentService
     {
         try
         {
-            // Placeholder: needs Quizzes table
-            return Enumerable.Empty<dynamic>();
+            // Quiz publiés que l'enfant n'a pas encore tentés  les tables
+            // Quizzes/QuizAttempts existent bel et bien aujourd'hui (le
+            // commentaire "Placeholder: needs Quizzes table" datait d'avant
+            // leur création et n'avait jamais été mis à jour).
+            var attemptedQuizIds = await _context.QuizAttempts
+                .Where(a => a.UserId == childId)
+                .Select(a => a.QuizId)
+                .Distinct()
+                .ToListAsync();
+
+            var quizzes = await _context.Quizzes
+                .AsNoTracking()
+                .Where(q => q.IsPublished && !q.IsDeleted && !attemptedQuizIds.Contains(q.Id))
+                .OrderByDescending(q => q.CreatedAt)
+                .Take(limit)
+                .Select(q => new
+                {
+                    q.Id,
+                    q.Title,
+                    q.Subject,
+                    q.Difficulty,
+                    q.QuestionCount,
+                    q.TimeLimit,
+                })
+                .ToListAsync();
+
+            return quizzes;
         }
         catch (Exception ex)
         {
@@ -157,8 +182,25 @@ public class ParentService : IParentService
     {
         try
         {
-            // Placeholder: needs Revisions table
-            return Enumerable.Empty<dynamic>();
+            // Fiches de révision (Revision) appartenant à l'enfant  la table
+            // existe bel et bien (voir RevisionsController/RevisionService),
+            // le commentaire "Placeholder: needs Revisions table" était périmé.
+            var revisions = await _context.Revisions
+                .AsNoTracking()
+                .Where(r => r.CreatedByUserId == childId && r.IsPublished && !r.IsDeleted && !r.HiddenFromList)
+                .OrderByDescending(r => r.CreatedAt)
+                .Take(limit)
+                .Select(r => new
+                {
+                    r.Id,
+                    r.Title,
+                    r.Subject,
+                    r.Type,
+                    r.CreatedAt,
+                })
+                .ToListAsync();
+
+            return revisions;
         }
         catch (Exception ex)
         {
@@ -171,9 +213,13 @@ public class ParentService : IParentService
     {
         try
         {
+            // Rôle stocké en minuscule partout ailleurs dans le code (JwtService,
+            // [Authorize(Roles="parent")], WeeklyParentReportService...) : "Parent"
+            // avec majuscule ne correspondait jamais à aucune ligne, rendant cet
+            // endpoint systématiquement vide (retour null) pour tous les parents.
             var parent = await _context.Users
                 .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == parentId && u.Role == "Parent");
+                .FirstOrDefaultAsync(u => u.Id == parentId && u.Role == "parent");
 
             if (parent == null)
                 return null;
@@ -199,10 +245,14 @@ public class ParentService : IParentService
     {
         try
         {
-            // Récupérer les objectifs de l'enfant depuis la table Goals
+            // Récupérer les objectifs de l'enfant depuis la table Goals. Tous les
+            // statuts (pas seulement Active) : le frontend parent distingue les
+            // propositions en attente (Pending) des objectifs actifs co-construits
+            // (Active + proposedByUserId renseigné) à partir de ces deux champs.
             var goals = await _context.Goals
                 .AsNoTracking()
-                .Where(g => g.UserId == childId && g.Status == "active")
+                .Where(g => g.UserId == childId)
+                .OrderByDescending(g => g.CreatedAt)
                 .Select(g => new
                 {
                     goalId = g.Id,
@@ -211,7 +261,8 @@ public class ParentService : IParentService
                     type = g.Type,
                     targetDate = g.TargetDate,
                     progress = g.Progress,
-                    status = g.Status
+                    status = g.Status,
+                    proposedByUserId = g.ProposedByUserId
                 })
                 .ToListAsync();
 

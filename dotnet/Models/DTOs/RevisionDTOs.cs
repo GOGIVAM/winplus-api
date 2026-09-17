@@ -12,6 +12,17 @@ public class GenerateRevisionRequestDto
     public string? Difficulty { get; set; }
 }
 
+public class GenerateRevisionForChildRequestDto
+{
+    public int ChildId { get; set; }
+    public string Subject { get; set; } = string.Empty;
+    public string? Topic { get; set; }
+    /// <summary>easy | medium | hard. Par défaut "medium" si omis ou invalide.</summary>
+    public string? Difficulty { get; set; }
+    /// <summary>true (défaut) : "Ton parent t'a préparé..." ; false : "Une fiche est disponible...".</summary>
+    public bool NotifyWithParentName { get; set; } = true;
+}
+
 /// <summary>
 /// Réponse du service Python (POST /api/revisions/generate-content). Les
 /// noms de champs snake_case viennent tels quels du JSON de FastAPI.

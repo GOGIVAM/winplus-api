@@ -215,6 +215,17 @@ public class MessagesController : ControllerBase
 
             contactIds.Remove(me);
 
+            // Symétrique (voir GetConversations) : présentation journal identique
+            // des deux côtés du lien parent-enfant.
+            var linkedFamilyIds = (await _db.ParentStudentLinks
+                .AsNoTracking()
+                .Where(l => l.Status == "accepted" &&
+                    ((l.ParentId == me && contactIds.Contains(l.StudentId)) ||
+                     (l.StudentId == me && contactIds.Contains(l.ParentId))))
+                .Select(l => l.ParentId == me ? l.StudentId : l.ParentId)
+                .ToListAsync())
+                .ToHashSet();
+
             var contacts = await _db.Users
                 .AsNoTracking()
                 .Where(u => contactIds.Contains(u.Id))
@@ -229,7 +240,18 @@ public class MessagesController : ControllerBase
                 })
                 .ToListAsync();
 
-            return Ok(contacts);
+            var contactsWithDiscriminant = contacts.Select(c => new
+            {
+                c.Id,
+                c.FirstName,
+                c.LastName,
+                c.Role,
+                c.AvatarUrl,
+                c.IsVerified,
+                isLinkedChild = linkedFamilyIds.Contains(c.Id),
+            });
+
+            return Ok(contactsWithDiscriminant);
         }
         catch (Exception ex)
         {
@@ -278,6 +300,20 @@ public class MessagesController : ControllerBase
                 .Where(u => participantIds.Contains(u.Id))
                 .ToDictionaryAsync(u => u.Id);
 
+            // Discriminant explicite "lien parent-enfant" — journal de bord plutôt
+            // que chat (voir MessagesPage.tsx). Symétrique à dessein : que `me` soit
+            // le parent ou l'enfant, la présentation calme doit être la même des
+            // deux côtés (c'est un journal partagé, pas une vue parent uniquement) —
+            // donc on vérifie les deux sens du lien, pas seulement "me est parent de".
+            var linkedFamilyIds = (await _db.ParentStudentLinks
+                .AsNoTracking()
+                .Where(l => l.Status == "accepted" &&
+                    ((l.ParentId == me && participantIds.Contains(l.StudentId)) ||
+                     (l.StudentId == me && participantIds.Contains(l.ParentId))))
+                .Select(l => l.ParentId == me ? l.StudentId : l.ParentId)
+                .ToListAsync())
+                .ToHashSet();
+
             var conversations = new List<object>();
             foreach (var pid in participantIds)
             {
@@ -304,6 +340,7 @@ public class MessagesController : ControllerBase
                     lastMessage = lastMsg?.Content ?? (lastMsg != null ? (lastMsg.Type == "text" ? null : "📎 Pièce jointe") : null),
                     lastMessageAt = lastMsg?.CreatedAt,
                     unreadCount = unread,
+                    isLinkedChild = linkedFamilyIds.Contains(pid),
                 });
             }
 

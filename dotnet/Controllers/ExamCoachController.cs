@@ -57,49 +57,9 @@ public class ExamCoachController : ControllerBase
             existing.IsActive = false;
 
         // Call Python FastAPI to generate the plan
-        var httpClient = _httpClientFactory.CreateClient("FastApiClient");
-        var body = new
-        {
-            user_id      = userId,
-            exam_type    = request.ExamType,
-            exam_date    = request.ExamDate.ToString("yyyy-MM-dd"),
-            hours_per_day = request.HoursPerDay
-        };
-
-        JsonElement planJson;
-        try
-        {
-            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/exam-coach/generate");
-            req.Content = JsonContent.Create(body);
-
-            var auth = HttpContext.Request.Headers["Authorization"].ToString();
-            if (!string.IsNullOrEmpty(auth))
-                req.Headers.TryAddWithoutValidation("Authorization", auth);
-
-            var res = await httpClient.SendAsync(req);
-
-            if (!res.IsSuccessStatusCode)
-            {
-                var errorBody = await res.Content.ReadAsStringAsync();
-                _logger.LogError("Python exam-coach/generate returned {Status}: {Body}", res.StatusCode, errorBody);
-                return StatusCode((int)res.StatusCode, new { message = "AI plan generation failed", detail = errorBody });
-            }
-
-            var responseText = await res.Content.ReadAsStringAsync();
-            var fullResponse = JsonSerializer.Deserialize<JsonElement>(responseText);
-            // Python wraps responses in { success, data }  extract inner plan
-            planJson = fullResponse.TryGetProperty("data", out var dataEl) ? dataEl : fullResponse;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error calling Python exam-coach/generate");
-            return StatusCode(502, new { message = "Could not reach AI service" });
-        }
-
-        // Extract confidence score from inner plan data
-        float confidenceScore = 0f;
-        if (planJson.TryGetProperty("confidence_score", out var cs))
-            confidenceScore = cs.GetSingle();
+        var (planJson, confidenceScore, genError) = await GeneratePlanFromPythonAsync(
+            userId, request.ExamType, request.ExamDate, request.HoursPerDay);
+        if (genError != null) return genError;
 
         var plan = new ExamCoachPlan
         {
@@ -232,6 +192,165 @@ public class ExamCoachController : ControllerBase
 
         return Ok(new { message = "Plan deactivated successfully" });
     }
+
+    // ── Mode veille d'examen (parent) ──────────────────────────────────────
+    // Ajoute un état d'attention parentale sur le plan actif de l'enfant, sans
+    // dupliquer ExamCoachPlan : ParentWatchModeActivatedAt réutilise l'entité
+    // existante. La désactivation automatique (ExamDate dépassée) est gérée
+    // par ExamWatchModeExpirationService, pas ici.
+
+    /// <summary>
+    /// Active la veille d'examen pour un enfant lié. Réutilise le plan actif
+    /// existant s'il y en a un ; sinon en crée un (mêmes paramètres que
+    /// CreatePlan, appel à l'IA Python) avant d'y activer la veille.
+    /// </summary>
+    [HttpPost("{childId:int}/watch-mode")]
+    [Authorize(Roles = "parent")]
+    public async Task<IActionResult> ActivateWatchMode(int childId, [FromBody] ActivateWatchModeRequest request)
+    {
+        int parentId;
+        try { parentId = GetCurrentUserId(); }
+        catch (UnauthorizedAccessException ex) { return Unauthorized(new { message = ex.Message }); }
+
+        var linked = await _db.ParentStudentLinks.AnyAsync(l =>
+            l.ParentId == parentId && l.StudentId == childId && l.Status == "accepted");
+        if (!linked)
+            return StatusCode(403, new { message = "Cet enfant n'est pas lié à votre compte." });
+
+        var existing = await _db.ExamCoachPlans.FirstOrDefaultAsync(p => p.UserId == childId && p.IsActive);
+        if (existing != null)
+        {
+            existing.ParentWatchModeActivatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return Ok(ToWatchModeDto(existing));
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ExamType) || request.ExamDate == null)
+            return BadRequest(new { message = "exam_type et exam_date sont requis : aucun plan actif n'existe pour cet enfant." });
+
+        var (planJson, confidenceScore, genError) = await GeneratePlanFromPythonAsync(
+            childId, request.ExamType, request.ExamDate.Value, request.HoursPerDay);
+        if (genError != null) return genError;
+
+        var plan = new ExamCoachPlan
+        {
+            UserId                     = childId,
+            ExamType                   = request.ExamType,
+            ExamDate                   = request.ExamDate.Value,
+            HoursPerDay                = request.HoursPerDay,
+            PlanJson                   = planJson.GetRawText(),
+            ConfidenceScore            = confidenceScore,
+            IsActive                   = true,
+            CreatedAt                  = DateTime.UtcNow,
+            ParentWatchModeActivatedAt = DateTime.UtcNow,
+        };
+        _db.ExamCoachPlans.Add(plan);
+        await _db.SaveChangesAsync();
+
+        return Ok(ToWatchModeDto(plan));
+    }
+
+    /// <summary>Désactivation manuelle par le parent — remet ParentWatchModeActivatedAt à null.</summary>
+    [HttpDelete("{childId:int}/watch-mode")]
+    [Authorize(Roles = "parent")]
+    public async Task<IActionResult> DeactivateWatchMode(int childId)
+    {
+        int parentId;
+        try { parentId = GetCurrentUserId(); }
+        catch (UnauthorizedAccessException ex) { return Unauthorized(new { message = ex.Message }); }
+
+        var linked = await _db.ParentStudentLinks.AnyAsync(l =>
+            l.ParentId == parentId && l.StudentId == childId && l.Status == "accepted");
+        if (!linked)
+            return StatusCode(403, new { message = "Cet enfant n'est pas lié à votre compte." });
+
+        await _db.ExamCoachPlans
+            .Where(p => p.UserId == childId && p.IsActive && p.ParentWatchModeActivatedAt != null)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.ParentWatchModeActivatedAt, (DateTime?)null));
+
+        return Ok(new { success = true });
+    }
+
+    /// <summary>État actuel de la veille pour un enfant lié : actif/inactif, ExamDate, ExamType.</summary>
+    [HttpGet("{childId:int}/watch-mode")]
+    [Authorize(Roles = "parent")]
+    public async Task<IActionResult> GetWatchMode(int childId)
+    {
+        int parentId;
+        try { parentId = GetCurrentUserId(); }
+        catch (UnauthorizedAccessException ex) { return Unauthorized(new { message = ex.Message }); }
+
+        var linked = await _db.ParentStudentLinks.AnyAsync(l =>
+            l.ParentId == parentId && l.StudentId == childId && l.Status == "accepted");
+        if (!linked)
+            return StatusCode(403, new { message = "Cet enfant n'est pas lié à votre compte." });
+
+        var plan = await _db.ExamCoachPlans.AsNoTracking()
+            .Where(p => p.UserId == childId && p.IsActive)
+            .OrderByDescending(p => p.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        return Ok(plan == null
+            ? new { active = false, examType = (string?)null, examDate = (string?)null, parentWatchModeActivatedAt = (string?)null }
+            : ToWatchModeDto(plan));
+    }
+
+    private static object ToWatchModeDto(ExamCoachPlan plan) => new
+    {
+        active = plan.ParentWatchModeActivatedAt != null,
+        examType = plan.ExamType,
+        examDate = plan.ExamDate.ToString("yyyy-MM-dd"),
+        parentWatchModeActivatedAt = plan.ParentWatchModeActivatedAt?.ToString("o"),
+    };
+
+    /// <summary>Appelle l'IA Python pour générer un plan (factorisé depuis CreatePlan, réutilisé par ActivateWatchMode).</summary>
+    private async Task<(JsonElement PlanJson, float ConfidenceScore, IActionResult? Error)> GeneratePlanFromPythonAsync(
+        int userId, string examType, DateTime examDate, float hoursPerDay)
+    {
+        var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+        var body = new
+        {
+            user_id       = userId,
+            exam_type     = examType,
+            exam_date     = examDate.ToString("yyyy-MM-dd"),
+            hours_per_day = hoursPerDay
+        };
+
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/exam-coach/generate");
+            req.Content = JsonContent.Create(body);
+
+            var auth = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(auth))
+                req.Headers.TryAddWithoutValidation("Authorization", auth);
+
+            var res = await httpClient.SendAsync(req);
+
+            if (!res.IsSuccessStatusCode)
+            {
+                var errorBody = await res.Content.ReadAsStringAsync();
+                _logger.LogError("Python exam-coach/generate returned {Status}: {Body}", res.StatusCode, errorBody);
+                return (default, 0f, StatusCode((int)res.StatusCode, new { message = "AI plan generation failed", detail = errorBody }));
+            }
+
+            var responseText = await res.Content.ReadAsStringAsync();
+            var fullResponse = JsonSerializer.Deserialize<JsonElement>(responseText);
+            // Python wraps responses in { success, data }  extract inner plan
+            var planJson = fullResponse.TryGetProperty("data", out var dataEl) ? dataEl : fullResponse;
+
+            float confidenceScore = 0f;
+            if (planJson.TryGetProperty("confidence_score", out var cs))
+                confidenceScore = cs.GetSingle();
+
+            return (planJson, confidenceScore, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error calling Python exam-coach/generate");
+            return (default, 0f, StatusCode(502, new { message = "Could not reach AI service" }));
+        }
+    }
 }
 
 // DTOs
@@ -246,4 +365,12 @@ public class CompleteDayRequest
 {
     public int DayNumber { get; set; }
     public float? QuizScore { get; set; }
+}
+
+public class ActivateWatchModeRequest
+{
+    /// <summary>Requis seulement si l'enfant n'a aucun plan actif à réutiliser.</summary>
+    public string? ExamType { get; set; }
+    public DateTime? ExamDate { get; set; }
+    public float HoursPerDay { get; set; } = 2.0f;
 }

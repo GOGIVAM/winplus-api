@@ -20,13 +20,15 @@ public class RevisionsController : ControllerBase
     private readonly IRevisionService _revisionService;
     private readonly ApplicationDbContext _context;
     private readonly IStorageService _storage;
+    private readonly INtfyService _ntfy;
     private readonly ILogger<RevisionsController> _logger;
 
-    public RevisionsController(IRevisionService revisionService, ApplicationDbContext context, IStorageService storage, ILogger<RevisionsController> logger)
+    public RevisionsController(IRevisionService revisionService, ApplicationDbContext context, IStorageService storage, INtfyService ntfy, ILogger<RevisionsController> logger)
     {
         _revisionService = revisionService;
         _context = context;
         _storage = storage;
+        _ntfy = ntfy;
         _logger = logger;
     }
 
@@ -340,6 +342,66 @@ public class RevisionsController : ControllerBase
         try
         {
             var revision = await _revisionService.GenerateAIRevisionAsync(userId, request?.Subject, request?.Topic, request?.Difficulty);
+            return Ok(revision);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(503, new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Génère une fiche de révision pour un enfant lié, à partir des lacunes de
+    /// l'ENFANT (ses quiz, objectifs, notes) — jamais celles du parent appelant.
+    /// Réutilise GenerateAIRevisionAsync tel quel : la méthode est déjà
+    /// paramétrée par userId, il suffit de lui passer childId au lieu de
+    /// l'id de l'appelant (voir parent_decisions_session.md, fonctionnalité A).
+    /// La fiche appartient à l'enfant (CreatedByUserId = childId), directement,
+    /// sans brouillon intermédiaire côté parent — même modèle que l'achat de
+    /// contenu pour un enfant.
+    /// </summary>
+    [HttpPost("for-child/generate")]
+    [Authorize(Roles = "parent")]
+    [ProducesResponseType(typeof(RevisionDto), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(403)]
+    [ProducesResponseType(503)]
+    public async Task<ActionResult<RevisionDto>> GenerateRevisionForChild([FromBody] GenerateRevisionForChildRequestDto request)
+    {
+        var parentId = GetUserId();
+        if (parentId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        if (string.IsNullOrWhiteSpace(request.Subject))
+            return BadRequest(new { message = "La matière est requise." });
+
+        var linked = await _context.ParentStudentLinks.AnyAsync(l =>
+            l.ParentId == parentId && l.StudentId == request.ChildId && l.Status == "accepted");
+        if (!linked)
+            return StatusCode(403, new { message = "Cet enfant n'est pas lié à votre compte." });
+
+        try
+        {
+            var revision = await _revisionService.GenerateAIRevisionAsync(request.ChildId, request.Subject, request.Topic, request.Difficulty);
+
+            var message = request.NotifyWithParentName
+                ? $"Ton parent t'a préparé une fiche de révision sur {revision.Subject}."
+                : $"Une fiche de révision est disponible sur {revision.Subject}.";
+
+            await _ntfy.PublishAsync(
+                topic: $"winplus-user-{request.ChildId}",
+                title: "Nouvelle fiche de révision",
+                message: message,
+                tags: new[] { "bookmark_tabs" },
+                userId: request.ChildId,
+                type: "revision",
+                relatedEntityType: "revision",
+                relatedEntityId: revision.Id);
+
             return Ok(revision);
         }
         catch (ArgumentException ex)
