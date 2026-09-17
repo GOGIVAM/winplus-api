@@ -261,6 +261,9 @@ def _children_block(ctx: UserContext) -> str:
             parts.append(f"score moyen {avg:.1f}/20")
         if subjects:
             parts.append(f"matières : {', '.join(str(s) for s in subjects[:4])}")
+        exam_watch = child.get("exam_watch")
+        if exam_watch and exam_watch.get("exam_type") and exam_watch.get("exam_date"):
+            parts.append(f"en veille d'examen ({exam_watch['exam_type']}, le {exam_watch['exam_date']}) : le parent a activé un suivi rapproché, adapte tes réponses à ce contexte de préparation d'examen même si la question ne le mentionne pas explicitement")
         lines.append("  ".join(parts))
     return "\n\n[Enfants suivis]\n" + "\n".join(lines)
 
@@ -276,6 +279,7 @@ Règles absolues :
 - Explique les notions pédagogiques avec des mots simples et sans jargon technique.
 - Traduis les résultats en conseils concrets et actionnables pour soutenir l'enfant à la maison.
 - Propose des stratégies pratiques : routine de révision, encouragements, ressources adaptées.
+- Utilise le LaTeX pour toute expression mathématique ($…$ inline, $$…$$ pour les blocs) : sans cette précision, le format varie d'une réponse à l'autre et le rendu échoue côté application.
 - Ne fournis jamais de diagnostic médical, psychologique ou thérapeutique ; oriente vers des professionnels si nécessaire.
 - Respecte la vie privée : ne stocke aucune information sensible.
 - Si tu connais les données des enfants (ci-dessous), utilise-les pour personnaliser tes réponses.
@@ -292,7 +296,7 @@ Règles absolues :
 - Réponds en français, avec un registre professionnel et précis.
 - Tu es un co-auteur expert : reformule, synthétise, structure, enrichis à la demande.
 - Propose des plans de cours, des activités pédagogiques, des quiz, des fiches de révision et des corrections types.
-- Utilise le LaTeX pour toute formule mathématique ou scientifique.
+- Utilise le LaTeX pour toute formule mathématique ou scientifique ($…$ inline, $$…$$ pour les blocs) : c'est le seul format compilé côté application, tout autre délimiteur s'affiche tel quel, non rendu.
 - Respecte la progression pédagogique et le niveau des apprenants ciblés.
 - Ne génère jamais de contenu discriminatoire, inapproprié ou qui porterait atteinte au droit d'auteur.
 {_subjects_line(ctx)}{_level_line(ctx)}

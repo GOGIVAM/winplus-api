@@ -109,6 +109,19 @@ class User(Base):
     CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
 
+class ParentStudentLink(Base):
+    """Lecture seule : lien parent-enfant (table .NET). Utilisé pour vérifier
+    qu'un appelant a bien le droit de consulter/générer des données pour un
+    child_id donné avant toute lecture/écriture côté Python (voir
+    parent_alert_routes.py, parent_extra_routes.py)."""
+    __tablename__ = 'ParentStudentLinks'
+
+    Id = Column(Integer, primary_key=True)
+    ParentId = Column(Integer, nullable=False, index=True)
+    StudentId = Column(Integer, nullable=False, index=True)
+    Status = Column(String(20), nullable=False)
+
+
 class Enrollment(Base):
     """Modèle FastApi mappé sur la table Enrollments (ASP.NET)"""
     __tablename__ = 'Enrollments'
@@ -239,6 +252,41 @@ class ExamCoachPlanAI(Base):
     ConfidenceScore = Column(Numeric, nullable=False, default=0.7)
     CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     IsActive = Column(Boolean, nullable=False, default=True)
+
+
+class ExamCoachPlanNet(Base):
+    """Plan de révision  table .NET (ExamCoachController), distincte de
+    ExamCoachPlanAI ci-dessus (stockage Python indépendant). Lue en lecture
+    seule ici pour le mode veille d'examen parental (ParentWatchModeActivatedAt),
+    qui n'existe que côté .NET."""
+    __tablename__ = 'ExamCoachPlans'
+
+    Id = Column(Integer, primary_key=True)
+    UserId = Column(Integer, nullable=False, index=True)
+    ExamType = Column(String(100), nullable=False)
+    ExamDate = Column(DateTime(timezone=True), nullable=False)
+    IsActive = Column(Boolean, nullable=False, default=True)
+    ParentWatchModeActivatedAt = Column(DateTime(timezone=True), nullable=True)
+
+
+class ParentAlertDB(Base):
+    """Historique persistant des alertes WinAI parent  table ParentAlerts créée
+    côté .NET (SQL_AddParentAlertAndParentReport.sql). Suffixe DB pour ne pas
+    entrer en collision avec le modèle Pydantic AlertItem/ParentAlertsResponse
+    de parent_alert_routes.py, qui décrit la forme JSON de la réponse, pas la
+    table. Type : "BaissePerformance" | "Inactivite" | "Surmenage" |
+    "Felicitations" | "AnxieteExamen". Severity : "Low" | "Medium" | "High"."""
+    __tablename__ = 'ParentAlerts'
+
+    Id = Column(Integer, primary_key=True)
+    ParentId = Column(Integer, nullable=False, index=True)
+    ChildId = Column(Integer, nullable=False, index=True)
+    Type = Column(String(30), nullable=False)
+    Severity = Column(String(10), nullable=False, default='Low')
+    Content = Column(Text, nullable=False)
+    IsRead = Column(Boolean, nullable=False, default=False)
+    DetectedAt = Column(DateTime(timezone=True), nullable=False)
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
 
 class QuizMistake(Base):

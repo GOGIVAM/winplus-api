@@ -19,7 +19,7 @@ from services.rag_chat_bridge import build_rag_context_block
 from services.attachment_processor import process_chat_attachment_async
 from auth import verify_token, UserTokenData
 from schemas import ChatRequest, ChatResponse, ChatbotHealthResponse, ChatMessage, ChatbotContextRequest
-from database import Database, Conversation, ChatMessage as ChatMessageDB, UserAIMemory, User, QuizAttempt, DailyScore, QuizMistake
+from database import Database, Conversation, ChatMessage as ChatMessageDB, UserAIMemory, User, QuizAttempt, DailyScore, QuizMistake, ExamCoachPlanNet
 
 logger = logging.getLogger(__name__)
 
@@ -151,11 +151,32 @@ def _load_parent_children_data(child_ids: list) -> list:
                     sum(float(s.AverageScore) for s in scores) / len(scores) * 20 / 100
                     if scores else None
                 )
-                children.append({
+
+                child_entry = {
                     "name": child.FirstName or f"Enfant {child_id}",
                     "avg_score": round(avg_score, 1) if avg_score is not None else None,
                     "subjects": [],
-                })
+                }
+
+                try:
+                    watch_plan = (
+                        session.query(ExamCoachPlanNet)
+                        .filter(
+                            ExamCoachPlanNet.UserId == child_id,
+                            ExamCoachPlanNet.IsActive == True,
+                            ExamCoachPlanNet.ParentWatchModeActivatedAt.isnot(None),
+                        )
+                        .first()
+                    )
+                    if watch_plan is not None:
+                        child_entry["exam_watch"] = {
+                            "exam_type": watch_plan.ExamType,
+                            "exam_date": watch_plan.ExamDate.date().isoformat(),
+                        }
+                except Exception:
+                    session.rollback()
+
+                children.append(child_entry)
         finally:
             session.close()
         return children

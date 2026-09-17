@@ -21,12 +21,27 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from auth import verify_token, UserTokenData
-from database import Database, QuizAttempt, DailyScore, User
+from database import Database, QuizAttempt, DailyScore, User, ParentStudentLink
 from services.deepseek_client import get_deepseek_client
 
 logger = logging.getLogger(__name__)
 
 parent_extra_router = APIRouter()
+
+
+def _assert_can_access_child(session, current_user: UserTokenData, child_id: int) -> None:
+    """Même garde que parent_alert_routes.py : sans ça, n'importe quel
+    utilisateur authentifié pouvait lire le résumé d'activité/score de
+    n'importe quel enfant en devinant son id dans child_ids."""
+    if current_user.user_id == child_id:
+        return
+    linked = session.query(ParentStudentLink).filter(
+        ParentStudentLink.ParentId == current_user.user_id,
+        ParentStudentLink.StudentId == child_id,
+        ParentStudentLink.Status == 'accepted',
+    ).first()
+    if linked is None:
+        raise HTTPException(status_code=403, detail="Cet enfant n'est pas lié à votre compte.")
 
 
 # ── Feature 6  Comparaison inter-enfants (insights) ─────────────────────────
@@ -58,6 +73,7 @@ async def get_children_insights(
         children_data = []
 
         for child_id in ids:
+            _assert_can_access_child(session, current_user, child_id)
             child_user = session.query(User).filter(User.Id == child_id).first()
             child_name = child_user.FirstName or f"Enfant {child_id}" if child_user else f"Enfant {child_id}"
 
@@ -148,6 +164,8 @@ async def get_children_insights(
             "children_summary": children_data,
         }
 
+    except HTTPException:
+        raise  # ex. le 403 de _assert_can_access_child  ne doit pas devenir un 500 générique ci-dessous.
     except Exception as e:
         logger.error(f"Error computing children insights: {e}")
         raise HTTPException(status_code=500, detail="Insights computation failed")

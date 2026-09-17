@@ -6,6 +6,17 @@ GET /api/parent-alerts/{child_id}
    Détecte : baisse de performance, inactivité, excellente semaine
    Génère un message WinAI court via DeepSeek (max_tokens=120)
    Retourne { alerts: [{ type, severity, message, detected_at, child_stats }] }
+   Persiste aussi chaque alerte dans ParentAlerts (table .NET) pour lui donner
+   un historique consultable  voir _persist_alerts. Le baromètre (vue
+   consolidée des signaux comportementaux) lit cet historique côté .NET
+   (ParentAlertController.GetBarometre) plutôt que de dupliquer un lecteur
+   ici : ce module ne fait qu'écrire.
+
+Vocabulaire : jamais de terme clinique ("dépression", "trouble", "burnout",
+"diagnostic"...) dans les messages générés  voir FORBIDDEN_TERMS et
+_contains_forbidden_vocabulary, qui filtrent la sortie DeepSeek avant tout
+retour au parent (le prompt le demande déjà, ce filtre est un filet de
+sécurité, pas la seule protection).
 """
 
 import logging
@@ -16,12 +27,97 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from auth import verify_token, UserTokenData
-from database import Database, QuizAttempt, User, ExamCoachPlanAI
+from database import Database, QuizAttempt, User, ExamCoachPlanAI, ParentAlertDB, ParentStudentLink
 from services.deepseek_client import get_deepseek_client
 
 logger = logging.getLogger(__name__)
 
 parent_alert_router = APIRouter()
+
+
+def _assert_can_access_child(session, current_user: UserTokenData, child_id: int) -> None:
+    """
+    Sans ce garde-fou, n'importe quel utilisateur authentifié pouvait lire (et
+    faire persister à son propre nom) les alertes comportementales de
+    n'importe quel enfant en devinant son id  cette route est la seule à
+    réellement générer/écrire ces données, le contrôleur .NET qui vérifie le
+    lien ne fait que les relire ensuite. Autorisé : l'enfant lui-même, ou un
+    parent avec un ParentStudentLink 'accepted' vers cet enfant.
+    """
+    if current_user.user_id == child_id:
+        return
+    linked = session.query(ParentStudentLink).filter(
+        ParentStudentLink.ParentId == current_user.user_id,
+        ParentStudentLink.StudentId == child_id,
+        ParentStudentLink.Status == 'accepted',
+    ).first()
+    if linked is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                             detail="Cet enfant n'est pas lié à votre compte.")
+
+# Vocabulaire interdit dans tout texte destiné au parent (UI, IA, y compris
+# commentaires/noms de variables du code qui décrivent ces alertes) — jamais
+# de cadrage clinique/diagnostique pour un signal comportemental détecté par
+# des heuristiques d'usage, pas par un professionnel de santé.
+FORBIDDEN_TERMS = ["dépression", "anxiété diagnostiquée", "trouble", "burnout", "diagnostic"]
+
+# Type Python (interne, utilisé par la détection) -> Type ParentAlert (table
+# persistée, voir ParentAlert.cs côté .NET).
+_ALERT_TYPE_TO_DB = {
+    "performance_drop": "BaissePerformance",
+    "inactivity": "Inactivite",
+    "excellent_week": "Felicitations",
+    "exam_anxiety": "AnxieteExamen",
+    "surmenage": "Surmenage",
+}
+_SEVERITY_TO_DB = {"error": "High", "warn": "Medium", "info": "Low", "success": "Low"}
+
+
+def _contains_forbidden_vocabulary(text: str) -> bool:
+    lowered = text.lower()
+    return any(term in lowered for term in FORBIDDEN_TERMS)
+
+
+def _persist_alerts(session, parent_id: int, child_id: int, alerts: list[dict]) -> None:
+    """
+    Écrit chaque alerte calculée dans ParentAlerts, avec déduplication sur 24h
+    (même parent/enfant/type) : cet endpoint est recalculé à chaque appel
+    (dashboard rouvert plusieurs fois par jour), sans cette garde chaque
+    consultation créerait une nouvelle ligne pour le même signal.
+    """
+    now = datetime.now(timezone.utc)
+    dedup_cutoff = now - timedelta(hours=24)
+    try:
+        for a in alerts:
+            db_type = _ALERT_TYPE_TO_DB.get(a["type"])
+            if not db_type:
+                continue
+
+            already_persisted = (
+                session.query(ParentAlertDB)
+                .filter(
+                    ParentAlertDB.ParentId == parent_id,
+                    ParentAlertDB.ChildId == child_id,
+                    ParentAlertDB.Type == db_type,
+                    ParentAlertDB.CreatedAt >= dedup_cutoff,
+                )
+                .first()
+            )
+            if already_persisted:
+                continue
+
+            session.add(ParentAlertDB(
+                ParentId=parent_id,
+                ChildId=child_id,
+                Type=db_type,
+                Severity=_SEVERITY_TO_DB.get(a["severity"], "Low"),
+                Content=a["message"],
+                DetectedAt=now,
+            ))
+        session.commit()
+    except Exception as e:
+        logger.warning(f"Failed to persist parent alerts for child {child_id}: {e}")
+        session.rollback()
 
 
 class AlertItem(BaseModel):
@@ -67,12 +163,22 @@ def _winai_message(alert_type: str, child_name: str, stat_value: float | int | N
             system_prompt=(
                 "Tu es WinAI, assistant pédagogique bienveillant de WinPlus. "
                 "Tu t'adresses aux parents avec empathie, chaleur et encouragement. "
-                "Réponds toujours en français, en 1-2 phrases concises."
+                "Réponds toujours en français, en 1-2 phrases concises. "
+                "IMPORTANT : n'utilise JAMAIS de vocabulaire clinique ou diagnostique "
+                "(interdits : dépression, anxiété diagnostiquée, trouble, burnout, diagnostic). "
+                "Ce sont des signaux comportementaux observés, pas un diagnostic médical. "
+                "Préfère des formulations comme : changement de rythme, signal à ne pas "
+                "ignorer, moment pour prendre des nouvelles, baisse d'activité observée."
             ),
             max_tokens=120,
             temperature=0.7,
         )
-        return result.get("content", "").strip() or _fallback_message(alert_type, child_name)
+        text = result.get("content", "").strip()
+        if text and not _contains_forbidden_vocabulary(text):
+            return text
+        if text:
+            logger.warning(f"WinAI message for {alert_type} contained forbidden vocabulary, using fallback.")
+        return _fallback_message(alert_type, child_name)
     except Exception as e:
         logger.warning(f"DeepSeek WinAI message failed: {e}")
         return _fallback_message(alert_type, child_name)
@@ -103,6 +209,8 @@ async def get_parent_alerts(
     alerts: list[dict] = []
 
     try:
+        _assert_can_access_child(session, current_user, child_id)
+
         # Récupérer le prénom de l'enfant
         child_user = session.query(User).filter(User.Id == child_id).first()
         child_name = child_user.FirstName or f"L'élève" if child_user else "L'élève"
@@ -243,6 +351,14 @@ async def get_parent_alerts(
                     },
                 })
 
+        # Persistance dans ParentAlerts (historique + source du baromètre côté
+        # .NET) — ne doit jamais faire échouer la réponse JSON déjà calculée,
+        # d'où le try/except interne à _persist_alerts.
+        if alerts:
+            _persist_alerts(session, current_user.user_id, child_id, alerts)
+
+    except HTTPException:
+        raise  # ex. le 403 de _assert_can_access_child  ne doit pas devenir un 500 générique ci-dessous.
     except Exception as e:
         logger.error(f"Error computing parent alerts for child {child_id}: {e}")
         raise HTTPException(status_code=500, detail="Alert computation failed")
