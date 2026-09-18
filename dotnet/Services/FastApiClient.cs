@@ -65,7 +65,7 @@ public interface IFastApiClient
     /// doit jamais ralentir ni faire échouer l'enregistrement de la fiche
     /// elle-même. POST /api/rag/ingest répond "queued" immédiatement côté
     /// Python, le traitement réel (OCR, transcription, embedding) tourne
-    /// en tâche de fond là-bas — voir RAG/router.py.
+    /// en tâche de fond là-bas  voir RAG/router.py.
     /// `authorizationHeader` est capturé sur le thread de la requête
     /// d'origine (ex: Request.Headers["Authorization"]) : le HttpContext
     /// n'est plus fiable une fois la réponse HTTP renvoyée au client, donc

@@ -5,7 +5,7 @@ namespace Backend.Services;
 
 /// <summary>
 /// Désactivation automatique du mode veille d'examen (ExamCoachPlan.
-/// ParentWatchModeActivatedAt) une fois la date d'examen dépassée — le parent
+/// ParentWatchModeActivatedAt) une fois la date d'examen dépassée  le parent
 /// peut aussi désactiver manuellement avant (ExamCoachController.DeactivateWatchMode).
 /// </summary>
 public class ExamWatchModeExpirationService : BackgroundService

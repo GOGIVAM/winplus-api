@@ -9,7 +9,7 @@ namespace Backend.Services;
 
 /// <summary>
 /// Réservation de séances de cours particulier (Module 6). Ferme réellement
-/// le calendrier d'un répétiteur une fois son plafond hebdomadaire atteint —
+/// le calendrier d'un répétiteur une fois son plafond hebdomadaire atteint 
 /// contrairement à <see cref="TutorProfileService.UpdateAvailabilityAsync"/>
 /// qui ne plafonne que la grille de créneaux *déclarés*, ce service compte
 /// les réservations *effectives* de la semaine (US-ELV-01, US-PRO-08).
@@ -123,14 +123,14 @@ public class TutorBookingService : ITutorBookingService
         try
         {
             // Le web et le mobile n'envoient pas le numéro dans le même format
-            // (avec ou sans indicatif 237) — on normalise ici plutôt que
+            // (avec ou sans indicatif 237)  on normalise ici plutôt que
             // d'imposer une convention aux deux front-ends.
             var e164Phone = NormalizePhoneToE164(request.Phone);
             var channel = DetectChannelFromPhone(e164Phone);
             var tutorName = $"{tutorProfile.User?.FirstName} {tutorProfile.User?.LastName}".Trim();
             var result = await _notchPay.InitiatePaymentAsync(
                 e164Phone, price, booking.Id,
-                $"WinPlus — Cours particulier avec {tutorName}", studentEmail, studentName, channel, ReferencePrefix);
+                $"WinPlus  Cours particulier avec {tutorName}", studentEmail, studentName, channel, ReferencePrefix);
 
             booking.NotchpayReference = result.Transaction?.Reference;
             booking.PaymentStatus = MapNotchPayStatus(result.Transaction?.Status) ?? "pending";
@@ -155,7 +155,7 @@ public class TutorBookingService : ITutorBookingService
             // NotchPayService distingue déjà un rejet 4xx (numéro invalide,
             // opérateur non supporté…) d'une panne d'infra (5xx/réseau) via
             // le type d'exception. Auparavant les deux remontaient le même
-            // message générique côté élève — impossible de savoir s'il fallait
+            // message générique côté élève  impossible de savoir s'il fallait
             // corriger son numéro ou juste réessayer plus tard.
             if (ex is InvalidOperationException notchPayRejection)
                 throw new InvalidOperationException(
@@ -223,7 +223,7 @@ public class TutorBookingService : ITutorBookingService
         booking.UpdatedAt = DateTime.UtcNow;
 
         // Politique d'annulation (référentiel §I.C) : ne s'applique que si
-        // c'est l'élève qui annule un paiement déjà encaissé — une annulation
+        // c'est l'élève qui annule un paiement déjà encaissé  une annulation
         // à l'initiative du répétiteur reste toujours remboursée à 100%,
         // l'élève ne doit jamais être pénalisé pour une décision qui ne vient
         // pas de lui.
@@ -292,7 +292,7 @@ public class TutorBookingService : ITutorBookingService
         await _context.SaveChangesAsync();
 
         await _ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Comment s'est passée ta séance ?",
-            "Laisse un avis pour ce répétiteur — tes fonds seront libérés sous 2h si tu ne contestes pas.",
+            "Laisse un avis pour ce répétiteur  tes fonds seront libérés sous 2h si tu ne contestes pas.",
             userId: booking.StudentUserId, type: "TutorBooking");
         return MapToDto(booking);
     }
@@ -322,7 +322,7 @@ public class TutorBookingService : ITutorBookingService
                 $"L'élève conteste la séance du {booking.SessionDate:dd/MM/yyyy}. Le support WinPlus va examiner le dossier.",
                 priority: "high", userId: tutorUserId.Value, type: "TutorBooking");
         await _ntfy.PublishAdminAsync("Litige cours particulier",
-            $"Réservation #{booking.Id} contestée par l'élève #{booking.StudentUserId} — motif : {reason}", tags: new[] { "warning" });
+            $"Réservation #{booking.Id} contestée par l'élève #{booking.StudentUserId}  motif : {reason}", tags: new[] { "warning" });
 
         return MapToDto(booking);
     }
@@ -358,7 +358,7 @@ public class TutorBookingService : ITutorBookingService
 
     /// <summary>
     /// Le répétiteur doit répondre dans son délai de préavis configuré, compté
-    /// depuis la demande — sans jamais dépasser 1h avant le début de la
+    /// depuis la demande  sans jamais dépasser 1h avant le début de la
     /// séance (répondre après coup n'a pas de sens).
     /// </summary>
     private static DateTime GetResponseDeadline(TutorBooking b)
@@ -371,8 +371,8 @@ public class TutorBookingService : ITutorBookingService
 
     /// <summary>
     /// Marque la réservation remboursée et prévient élève + admin. Aucun appel
-    /// de remboursement NotchPay réel n'existe dans ce projet — voir la note
-    /// sur PaymentService.RefundPaymentAsync (flip de statut uniquement) — donc
+    /// de remboursement NotchPay réel n'existe dans ce projet  voir la note
+    /// sur PaymentService.RefundPaymentAsync (flip de statut uniquement)  donc
     /// le virement Mobile Money réel reste un geste manuel à faire côté admin.
     /// </summary>
     private async Task SimulateRefundAsync(TutorBooking booking, string reasonLabel, int refundPercent = 100)
@@ -393,14 +393,14 @@ public class TutorBookingService : ITutorBookingService
 
         if (refundPercent > 0)
         {
-            await _ntfy.PublishAdminAsync("Remboursement manuel requis — cours particulier",
+            await _ntfy.PublishAdminAsync("Remboursement manuel requis  cours particulier",
                 $"Réservation #{booking.Id} ({refundAmount:0}/{booking.PriceXaf} XAF, réf. {booking.NotchpayReference}) : " +
                 $"rembourser l'élève #{booking.StudentUserId} via NotchPay/MoMo ({refundPercent}% selon la politique d'annulation).",
                 tags: new[] { "moneybag" });
         }
     }
 
-    /// <summary>Durées de séance proposées, en minutes — "une heure ou deux" (US-ELV-01).</summary>
+    /// <summary>Durées de séance proposées, en minutes  "une heure ou deux" (US-ELV-01).</summary>
     private static readonly int[] BookableDurationsMinutes = { 60, 120 };
     /// <summary>Pas entre deux points de départ réservables dans une fenêtre de disponibilité.</summary>
     private static readonly TimeSpan OccurrenceStep = TimeSpan.FromMinutes(30);
@@ -484,7 +484,7 @@ public class TutorBookingService : ITutorBookingService
         {
             // Le paiement réussi ne confirme pas la séance : le répétiteur doit
             // encore accepter (US-REP-05). Les fonds restent "en attente"
-            // (aucun mouvement réel — voir la note sur l'escrow simulé) jusqu'à
+            // (aucun mouvement réel  voir la note sur l'escrow simulé) jusqu'à
             // l'acceptation, l'expiration ou le refus.
             booking.Status = "pending_tutor_approval";
             await _context.SaveChangesAsync();
@@ -492,9 +492,9 @@ public class TutorBookingService : ITutorBookingService
             var tutorUserId = booking.TutorProfile?.UserId;
             if (tutorUserId.HasValue)
                 await _ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Nouvelle demande de réservation",
-                    $"Séance du {booking.SessionDate:dd/MM/yyyy} de {booking.StartTime:hh\\:mm} à {booking.EndTime:hh\\:mm} — réponds avant expiration du délai.",
+                    $"Séance du {booking.SessionDate:dd/MM/yyyy} de {booking.StartTime:hh\\:mm} à {booking.EndTime:hh\\:mm}  réponds avant expiration du délai.",
                     priority: "high", userId: tutorUserId.Value, type: "TutorBooking");
-            await _ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Paiement reçu — en attente du répétiteur",
+            await _ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Paiement reçu  en attente du répétiteur",
                 $"Ta demande du {booking.SessionDate:dd/MM/yyyy} est payée et en attente d'acceptation par le répétiteur.",
                 userId: booking.StudentUserId, type: "TutorBooking");
         }
@@ -652,9 +652,9 @@ public class TutorBookingService : ITutorBookingService
         else
         {
             booking.PaymentStatus = "refunded";
-            await _ntfy.PublishAdminAsync("Remboursement manuel requis — litige cours particulier",
+            await _ntfy.PublishAdminAsync("Remboursement manuel requis  litige cours particulier",
                 $"Réservation #{booking.Id} ({booking.PriceXaf} XAF, réf. {booking.NotchpayReference}) : " +
-                $"{(resolution == "refunded_full" ? "remboursement total" : "remboursement partiel")} décidé par le support — effectuer le virement NotchPay/MoMo.",
+                $"{(resolution == "refunded_full" ? "remboursement total" : "remboursement partiel")} décidé par le support  effectuer le virement NotchPay/MoMo.",
                 tags: new[] { "moneybag" });
         }
         await _context.SaveChangesAsync();

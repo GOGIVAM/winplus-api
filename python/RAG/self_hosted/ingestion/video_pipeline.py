@@ -1,6 +1,6 @@
 """
 Transcription des vidéos de formation en local via Whisper (implémentation
-PyTorch native `openai-whisper`, chargée une fois via models/loader.py) —
+PyTorch native `openai-whisper`, chargée une fois via models/loader.py) 
 équivalent self_hosted du pipeline vidéo de RAG/api (qui, lui, utilise
 l'API Groq). Répond à la demande initiale : ingérer le contenu des vidéos
 de cours dans la base de connaissance, sans dépendance à un service tiers.

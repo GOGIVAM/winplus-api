@@ -1,5 +1,5 @@
 """
-Configuration du moteur self_hosted — noms de modèles HuggingFace (famille
+Configuration du moteur self_hosted  noms de modèles HuggingFace (famille
 Qwen3 pour la cohérence écosystémique embedding/reranker/LLM, Phase 2 §2.2),
 device et budget mémoire.
 
@@ -29,7 +29,7 @@ WHISPER_MODEL_ID = os.getenv("RAG_SH_WHISPER_MODEL", "large-v3")
 DEVICE = os.getenv("RAG_SH_DEVICE") or ("cuda" if torch.cuda.is_available() else "cpu")
 IS_GPU = DEVICE.startswith("cuda")
 
-# ── Quantization (bitsandbytes, reste dans l'écosystème transformers/torch —
+# ── Quantization (bitsandbytes, reste dans l'écosystème transformers/torch 
 # voir la validation actée avec l'équipe : ce n'est pas "une autre
 # librairie" au sens d'un moteur d'inférence concurrent comme Ollama/vLLM).
 QUANTIZE_4BIT = os.getenv("RAG_SH_QUANTIZE_4BIT", "true").lower() == "true" and IS_GPU

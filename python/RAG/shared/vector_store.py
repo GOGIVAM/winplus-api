@@ -1,5 +1,5 @@
 """
-Client Qdrant partagé par les deux moteurs (Phase 2, §2.3-2.4) — confirmé
+Client Qdrant partagé par les deux moteurs (Phase 2, §2.3-2.4)  confirmé
 hors périmètre "PyTorch uniquement" : c'est une base de données auto-hébergée
 en conteneur Docker, pas une librairie de deep learning.
 
@@ -90,7 +90,7 @@ def search_dense(
     top_k: int = 10,
     filters: Optional[Dict[str, Any]] = None,
 ) -> List[qm.ScoredPoint]:
-    # `query_points` plutôt que `search` (déprécié dans qdrant-client — les
+    # `query_points` plutôt que `search` (déprécié dans qdrant-client  les
     # méthodes search/search_batch/recommend* seront retirées côté serveur
     # à partir de Qdrant v1.18).
     client = get_client()
@@ -105,7 +105,7 @@ def search_dense(
 
 
 def scroll_by_filter(collection: str, filters: Dict[str, Any], limit: int = 20) -> List[qm.Record]:
-    """Récupération sans vecteur de requête, filtrée sur les métadonnées —
+    """Récupération sans vecteur de requête, filtrée sur les métadonnées 
     utilisé par GraphRAG pour remonter les chunks des documents connectés
     par le graphe (Phase 3, §3.7), en dehors de toute similarité cosinus."""
     client = get_client()

@@ -92,7 +92,7 @@ public class TutorVerificationDocumentDto
 
 /// <summary>
 /// Corps des étapes 1 à 4 de l'onboarding (US-PRO-05) : chaque étape est
-/// sauvegardée indépendamment, tous les champs sont donc optionnels — seuls
+/// sauvegardée indépendamment, tous les champs sont donc optionnels  seuls
 /// ceux fournis sont mis à jour (upsert partiel).
 /// </summary>
 public class UpdateTutorProfileRequestDto
@@ -159,7 +159,7 @@ public class TutorProfileMissingItemDto
 
 /// <summary>
 /// État léger du mode Répétiteur, sans jamais créer de profil (contrairement à
-/// GetOrCreateAsync) — sert à un rappel discret sur le dashboard Professeur
+/// GetOrCreateAsync)  sert à un rappel discret sur le dashboard Professeur
 /// qui ne doit apparaître que si le prof a déjà commencé l'onboarding de son
 /// plein gré (US-PRO-05 : activation opt-in depuis les paramètres).
 /// </summary>

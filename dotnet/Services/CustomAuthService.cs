@@ -625,9 +625,16 @@ public class CustomAuthService : ICustomAuthService
             await _dbContext.SaveChangesAsync();
 
             // Send email
-            await _emailService.SendPasswordResetAsync(email, user.FirstName ?? "", resetToken, user.Locale);
+            var emailSent = await _emailService.SendPasswordResetAsync(email, user.FirstName ?? "", resetToken, user.Locale);
 
-            _logger.LogInformation("Password reset email sent for user: {Email}", email);
+            if (emailSent)
+            {
+                _logger.LogInformation("Password reset email sent for user: {Email}", email);
+            }
+            else
+            {
+                _logger.LogError("Password reset email FAILED to send (Resend rejected or errored) for user: {Email}", email);
+            }
 
             return new AuthResult
             {

@@ -1,5 +1,5 @@
 """
-Orchestration de la Phase 1 complète pour un document — classification,
+Orchestration de la Phase 1 complète pour un document  classification,
 extraction (native ou OCR conditionnel), tableaux, images embarquées,
 post-correction, chunking, métadonnées.
 """
@@ -57,7 +57,7 @@ def process_document(request: IngestRequest) -> tuple[List[Chunk], SourceType, L
 def _process_video(request: IngestRequest) -> tuple[List[Chunk], List[str]]:
     """Transcription locale (Whisper) des vidéos de formation, regroupée en
     segments ~90 mots pour rester cohérente avec la granularité utilisée sur
-    les documents — même logique que RAG/api/ingestion/pipeline.py, dont la
+    les documents  même logique que RAG/api/ingestion/pipeline.py, dont la
     seule différence est la source de transcription (locale vs Groq)."""
     warnings: List[str] = []
     chunks: List[Chunk] = []
@@ -187,7 +187,7 @@ def _process_pdf(request: IngestRequest) -> tuple[List[Chunk], SourceType, List[
 
 
 def _extract_and_persist_graph(text: str, doc_id: str, page_number: int, warnings: List[str]) -> None:
-    """Construction incrémentale du graphe GraphRAG (Phase 3, §3.7) — une
+    """Construction incrémentale du graphe GraphRAG (Phase 3, §3.7)  une
     extraction par page plutôt que par chunk pour limiter le nombre d'appels
     LLM à l'ingestion."""
     try:

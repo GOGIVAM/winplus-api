@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace Backend.Controllers;
 
 /// <summary>
-/// Proxy vers la mémoire conversationnelle WinAI (Module 6, 6C) — FastAPI
+/// Proxy vers la mémoire conversationnelle WinAI (Module 6, 6C)  FastAPI
 /// n'est jamais exposé directement au front. Simple relais, comme
 /// TutorProfileController.ProxyToWinAI.
 /// </summary>

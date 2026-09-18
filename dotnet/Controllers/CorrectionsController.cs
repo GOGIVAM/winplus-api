@@ -31,7 +31,7 @@ public class CorrectionsController : ControllerBase
         return submission == null ? NotFound(new { success = false, error = "Copie introuvable." }) : Ok(new { data = submission, success = true });
     }
 
-    /// <summary>Body: {note, comment, status: "draft"|"submitted"} — contrat déjà utilisé par CorrectionQueue.tsx.</summary>
+    /// <summary>Body: {note, comment, status: "draft"|"submitted"}  contrat déjà utilisé par CorrectionQueue.tsx.</summary>
     [HttpPost("{id:int}")]
     public async Task<IActionResult> Grade(int id, [FromBody] GradeSubmissionRequestDto request)
     {

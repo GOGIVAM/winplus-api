@@ -28,7 +28,7 @@ public class AffiliateController : ControllerBase
 
     /// <summary>
     /// Fenêtre d'attribution courante (jours), publique : le frontend en a
-    /// besoin dès la capture d'un ?ref=CODE, avant toute connexion — voir
+    /// besoin dès la capture d'un ?ref=CODE, avant toute connexion  voir
     /// affiliateTracking.ts. Seule cette valeur est exposée, pas le reste des
     /// réglages admin (plafond de commission, etc.).
     /// </summary>

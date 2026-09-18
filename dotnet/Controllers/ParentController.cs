@@ -67,7 +67,7 @@ public class ParentController : ControllerBase
                 .AverageAsync(a => (double?)a.Score) ?? 0;
 
             // Conversations WinAI actives cette semaine (table partagée avec le
-            // chatbot Python, voir Conversation.cs) — remplace le 0 codé en dur
+            // chatbot Python, voir Conversation.cs)  remplace le 0 codé en dur
             // qui rendait cette statistique toujours nulle quelle que soit
             // l'activité réelle de l'enfant.
             var aiSessionsThisWeek = await _db.Conversations
@@ -90,7 +90,7 @@ public class ParentController : ControllerBase
 
     /// <summary>
     /// Score moyen par matière (30 derniers jours) et dernier quiz complété,
-    /// pour l'onglet "Résultats" du détail enfant côté app mobile — jusqu'ici
+    /// pour l'onglet "Résultats" du détail enfant côté app mobile  jusqu'ici
     /// entièrement simulé côté client (données codées en dur affichées comme
     /// si elles étaient réelles pour n'importe quel enfant).
     /// </summary>
@@ -376,7 +376,7 @@ public class ParentController : ControllerBase
                     level      = l.Student != null ? l.Student.Level     : null,
                     avatarUrl  = l.Student != null ? l.Student.AvatarUrl : null,
                     // Renseigné seulement pour les élèves rattachés à une
-                    // Institution formelle (réseau B2B) — pas de champ
+                    // Institution formelle (réseau B2B)  pas de champ
                     // "établissement" en texte libre pour les autres, donc
                     // reste légitimement null pour la majorité des comptes.
                     schoolName = inst != null ? inst.Name : null,
@@ -535,7 +535,7 @@ public class ParentController : ControllerBase
             var student = await _db.Users.FirstOrDefaultAsync(u => u.Email == req.Email && u.Role == "student");
             if (student == null) return NotFound(new { error = "Aucun élève trouvé avec cet email" });
 
-            // Le champ InitiatedBy est obligatoire (FK vers Users) — jamais
+            // Le champ InitiatedBy est obligatoire (FK vers Users)  jamais
             // renseigné auparavant, ce qui plantait sur la contrainte de clé
             // étrangère dès qu'elle a été ajoutée (InitiatedBy valait 0 par
             // défaut). Corrigé ici, et on demande maintenant le consentement

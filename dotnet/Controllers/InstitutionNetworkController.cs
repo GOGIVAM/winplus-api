@@ -15,7 +15,7 @@ public record RequestStudentAccessRequest(int StudentId, int InstitutionId);
 /// <summary>
 /// Fusion Réseau/Mode Tuteur (design confirmé avec le produit) :
 ///   1. Affiliation prof/tuteur ↔ institution, bidirectionnelle, révocable des
-///      deux côtés — même mécanique que TeacherStudentLinksController.
+///      deux côtés  même mécanique que TeacherStudentLinksController.
 ///   2. Une fois affilié, le prof voit (lecture seule) les élèves de
 ///      l'institution (InstitutionStudents), sans pouvoir les contacter.
 ///   3. Passage visible → en contact par l'une des 3 portes :
@@ -25,7 +25,7 @@ public record RequestStudentAccessRequest(int StudentId, int InstitutionId);
 ///         un filtre administratif par l'institution (Stage="institution"),
 ///         puis le consentement de l'élève OU d'un parent lié (Stage="consent",
 ///         premier qui répond, refus définitif et non contournable par
-///         l'institution) — voir TeacherStudentAccessRequest.cs pour le détail
+///         l'institution)  voir TeacherStudentAccessRequest.cs pour le détail
 ///      c) l'élève écrit en premier (déjà couvert par la messagerie existante,
 ///         rien à faire ici)
 /// </summary>
@@ -252,7 +252,7 @@ public class InstitutionNetworkController : ControllerBase
         return Forbid();
     }
 
-    /// <summary>Révoque une affiliation — l'institution ou le prof peut le faire.</summary>
+    /// <summary>Révoque une affiliation  l'institution ou le prof peut le faire.</summary>
     [HttpDelete("affiliation/{id:int}")]
     public async Task<IActionResult> RevokeAffiliation(int id)
     {
@@ -276,7 +276,7 @@ public class InstitutionNetworkController : ControllerBase
     // ───────────────────── Visibilité (lecture seule) ─────────────────────
 
     /// <summary>
-    /// Élèves des institutions où le prof est affilié — lecture seule, pas de
+    /// Élèves des institutions où le prof est affilié  lecture seule, pas de
     /// contact tant qu'aucune des 3 portes n'a été franchie (voir en-tête).
     /// </summary>
     [HttpGet("visible-students")]
@@ -335,7 +335,7 @@ public class InstitutionNetworkController : ControllerBase
 
     // ───────────────────── Portes vers le contact ─────────────────────
 
-    /// <summary>Porte 1 — l'institution assigne directement un élève à un prof affilié.</summary>
+    /// <summary>Porte 1  l'institution assigne directement un élève à un prof affilié.</summary>
     [HttpPost("assign-student")]
     public async Task<IActionResult> AssignStudent([FromBody] AssignStudentRequest req)
     {
@@ -377,7 +377,7 @@ public class InstitutionNetworkController : ControllerBase
         return Ok(new { success = true });
     }
 
-    /// <summary>Porte 2 — le prof demande l'accès à un élève visible.</summary>
+    /// <summary>Porte 2  le prof demande l'accès à un élève visible.</summary>
     [HttpPost("access-requests")]
     public async Task<IActionResult> RequestStudentAccess([FromBody] RequestStudentAccessRequest req)
     {
@@ -412,10 +412,10 @@ public class InstitutionNetworkController : ControllerBase
     }
 
     /// <summary>
-    /// Demandes d'accès en attente que JE peux traiter — selon la hiérarchie à
+    /// Demandes d'accès en attente que JE peux traiter  selon la hiérarchie à
     /// deux étapes : l'institution ne voit que les demandes encore à l'étape
     /// "institution" (filtre administratif) ; l'élève et ses parents liés ne
-    /// voient que celles déjà passées à l'étape "consent" — jamais avant, pour
+    /// voient que celles déjà passées à l'étape "consent"  jamais avant, pour
     /// ne pas les notifier d'une demande qui pourrait être rejetée sans eux.
     /// </summary>
     [HttpGet("access-requests/pending")]
@@ -490,7 +490,7 @@ public class InstitutionNetworkController : ControllerBase
 
             // Transition atomique : si deux membres de l'institution valident au
             // même instant, un seul UPDATE conditionné sur (Status=pending ET
-            // Stage=institution) peut réussir — la lecture Status/Stage faite plus
+            // Stage=institution) peut réussir  la lecture Status/Stage faite plus
             // haut ne suffirait pas seule à empêcher un double traitement.
             var claimed = await _db.TeacherStudentAccessRequests
                 .Where(r => r.Id == id && r.Status == "pending" && r.Stage == "institution")
@@ -501,7 +501,7 @@ public class InstitutionNetworkController : ControllerBase
             if (claimed == 0) return Conflict(new { error = "Cette demande a déjà été traitée." });
 
             // Status reste "pending" : le filtre administratif est passé, mais
-            // rien n'est encore acquis — seuls l'élève ou un parent lié
+            // rien n'est encore acquis  seuls l'élève ou un parent lié
             // peuvent maintenant donner le consentement final.
             await NotifyConsentStageStartedAsync(request);
             await _db.SaveChangesAsync();
@@ -550,7 +550,7 @@ public class InstitutionNetworkController : ControllerBase
     /// Rejette une demande d'accès. Étape "institution" : rejet immédiat et
     /// définitif, l'élève et le parent ne sont jamais notifiés (ils n'ont
     /// jamais su que la demande existait). Étape "consent" : le refus de
-    /// l'élève ou du parent est définitif — l'autre ne peut plus répondre et
+    /// l'élève ou du parent est définitif  l'autre ne peut plus répondre et
     /// l'institution ne peut pas passer outre.
     /// </summary>
     [HttpPut("access-requests/{id:int}/reject")]

@@ -57,7 +57,7 @@ public sealed class AffiliateCommissionMaturityService : BackgroundService
         foreach (var commission in pending)
         {
             // Order.Status ne passe jamais à "refunded" dans ce codebase (seul
-            // Payment.Status le fait, voir PaymentService.RefundPaymentAsync) —
+            // Payment.Status le fait, voir PaymentService.RefundPaymentAsync) 
             // il faut donc regarder les paiements liés, pas seulement la commande.
             var wasRefundedOrFailed = commission.Order.Payments.Any(p => p.Status is "refunded" or "failed");
             if (wasRefundedOrFailed || commission.Order.Status is "cancelled" or "failed")

@@ -6,10 +6,10 @@ namespace Backend.Models.Entities;
 /// Demande de retrait Mobile Money du solde WinPlus (prompt_prof.md Module 7).
 /// Comme pour les remboursements de cours particuliers (voir
 /// TutorBookingService.SimulateRefundAsync), aucun virement NotchPay
-/// automatisé n'existe dans ce projet — INotchPayService ne sait qu'encaisser
+/// automatisé n'existe dans ce projet  INotchPayService ne sait qu'encaisser
 /// (InitiatePaymentAsync), pas décaisser. La demande est donc enregistrée et
 /// réservée sur le solde immédiatement (empêche le double retrait), puis
-/// traitée manuellement par l'admin via Mobile Money — voir WithdrawalsController.
+/// traitée manuellement par l'admin via Mobile Money  voir WithdrawalsController.
 /// </summary>
 public class Withdrawal
 {

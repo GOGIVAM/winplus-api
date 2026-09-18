@@ -38,7 +38,7 @@ public interface IStorageService
 
     /// <summary>
     /// Envoie le contenu et renvoie l'URL publique. `requireS3` : refuse le
-    /// repli local même si Storage:FallbackToLocal est actif — pour les
+    /// repli local même si Storage:FallbackToLocal est actif  pour les
     /// documents qui doivent obligatoirement vivre sur S3 (certificats :
     /// domaine attendu par l'élève, durabilité au-delà du disque éphémère
     /// de l'instance API).

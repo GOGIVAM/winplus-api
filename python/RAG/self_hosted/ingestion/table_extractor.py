@@ -4,7 +4,7 @@ Extraction structurée des tableaux par Table Transformer (Phase 1, §1.4).
 Pipeline en quatre étapes fidèle au référentiel : (1) détection des régions
 de tableau, (2) segmentation ligne/colonne/cellule, (3) reconstruction JSON
 avec en-têtes, (4) le contenu textuel de chaque cellule est lu par GLM-OCR
-plutôt que par un moteur de reconnaissance de caractères séparé — un seul
+plutôt que par un moteur de reconnaissance de caractères séparé  un seul
 moteur de lecture visuelle pour tout le pipeline.
 """
 
@@ -50,7 +50,7 @@ class ExtractedTable:
         }
 
     def to_text(self) -> str:
-        """Représentation textuelle linéarisée, utilisée pour l'embedding —
+        """Représentation textuelle linéarisée, utilisée pour l'embedding 
         conserve les en-têtes à côté de chaque valeur pour ne pas perdre la
         correspondance lors de la vectorisation."""
         lines = []
@@ -81,7 +81,7 @@ def _detect_boxes(image: Image.Image, processor, model, threshold: float, label_
 
 
 def detect_tables(image_bytes: bytes) -> List[List[float]]:
-    """Étape 1 — bounding boxes des tableaux présents dans la page."""
+    """Étape 1  bounding boxes des tableaux présents dans la page."""
     processor, model = get_table_detection_model()
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     boxes = _detect_boxes(
@@ -91,7 +91,7 @@ def detect_tables(image_bytes: bytes) -> List[List[float]]:
 
 
 def extract_table_structure(image_bytes: bytes, table_box: List[float]) -> ExtractedTable:
-    """Étapes 2-3 — segmentation cellule par cellule et reconstruction de la
+    """Étapes 2-3  segmentation cellule par cellule et reconstruction de la
     structure relationnelle."""
     processor, model = get_table_structure_model()
     full_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")

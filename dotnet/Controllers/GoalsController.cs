@@ -35,7 +35,7 @@ public class CreateGoalRequest
 /// <summary>
 /// Workflow de proposition d'objectifs (Goal) entre parent et élève. Deux
 /// origines possibles pour un objectif actif : créé directement par l'élève,
-/// ou proposé par un parent lié puis accepté/modifié par l'élève — jamais
+/// ou proposé par un parent lié puis accepté/modifié par l'élève  jamais
 /// l'inverse, le parent ne peut pas créer un objectif déjà actif pour son
 /// enfant sans son accord.
 ///
@@ -227,7 +227,7 @@ public class GoalsController : ControllerBase
 
     /// <summary>
     /// L'élève modifie une proposition (titre/description/échéance) et l'active
-    /// dans le même geste — pas de re-validation parent, le parent est
+    /// dans le même geste  pas de re-validation parent, le parent est
     /// seulement notifié du résultat.
     /// </summary>
     [HttpPut("{id:int}/modify")]

@@ -4,7 +4,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace Backend.Models.Entities;
 
 /// <summary>
-/// Devoir donné par un professeur à une classe (Module 4 — Corrections).
+/// Devoir donné par un professeur à une classe (Module 4  Corrections).
 /// Porte l'énoncé (texte) utilisé pour générer le barème WinAI (US-COR-05),
 /// réutilisé ensuite pendant chaque session de correction des copies.
 /// </summary>
@@ -19,7 +19,7 @@ public class Assignment
     [Required, MaxLength(200)]
     public required string Title { get; set; }
 
-    /// <summary>Énoncé de l'exercice, collé ou uploadé — sert à générer le barème.</summary>
+    /// <summary>Énoncé de l'exercice, collé ou uploadé  sert à générer le barème.</summary>
     public string? StatementText { get; set; }
 
     /// <summary>Barème structuré généré par WinAI (JSON), modifiable par le professeur.</summary>

@@ -3,7 +3,7 @@
 -- étendue avec Status/InitiatedBy/UpdatedAt pour exiger le consentement de
 -- l'élève avant de lier un parent (au lieu de la liaison instantanée
 -- d'origine), mais la migration EF d'origine (20260624_AddParentStudentLinks)
--- n'a jamais été suivie d'une migration pour ces colonnes — la table réelle
+-- n'a jamais été suivie d'une migration pour ces colonnes  la table réelle
 -- n'avait donc que Id/ParentId/StudentId/CreatedAt, d'où l'erreur Postgres
 -- 42703 "column p.InitiatedBy does not exist" dès qu'une requête EF (ex.
 -- AdminUsersController.ListStudents) matérialisait l'entité complète.

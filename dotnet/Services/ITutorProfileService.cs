@@ -5,7 +5,7 @@ namespace Backend.Services;
 public interface ITutorProfileService
 {
     Task<TutorProfileDto> GetOrCreateAsync(int userId);
-    /// <summary>Lecture seule, ne crée jamais de profil (contrairement à GetOrCreateAsync) — pour un
+    /// <summary>Lecture seule, ne crée jamais de profil (contrairement à GetOrCreateAsync)  pour un
     /// bandeau de rappel qui ne doit pas pousser tous les profs vers le mode Répétiteur (US-PRO-05 : opt-in).</summary>
     Task<TutorOnboardingStatusDto> GetStatusAsync(int userId);
     Task<TutorProfileDto> UpdateAsync(int userId, UpdateTutorProfileRequestDto request);

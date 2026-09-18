@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Backend.Services;
 
 /// <summary>
-/// Gère le profil "Mode Répétiteur" (Module 1 — professeur_complete.md).
+/// Gère le profil "Mode Répétiteur" (Module 1  professeur_complete.md).
 /// Une même colonne User.Role = "teacher" porte les deux modes d'exercice
 /// (Professeur Catalogue et Répétiteur) : TutorProfile n'existe que si le
 /// professeur a au moins commencé l'onboarding Répétiteur (Workflow 1).
@@ -53,7 +53,7 @@ public class TutorProfileService : ITutorProfileService
             // Double clic / double appel (ex. effet React invoqué deux fois) :
             // l'index unique sur UserId a rejeté la deuxième création
             // concurrente. Ce n'est pas une vraie erreur si la ligne existe
-            // déjà — on l'utilise au lieu de renvoyer un 500 au client ;
+            // déjà  on l'utilise au lieu de renvoyer un 500 au client ;
             // sinon, l'échec était pour une autre raison, à relancer.
             _context.Entry(profile).State = EntityState.Detached;
             var existing = await _context.TutorProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
@@ -313,7 +313,7 @@ public class TutorProfileService : ITutorProfileService
         // "Disponibilité immédiate" (US-REP-01) : approximation par les créneaux
         // hebdo déclarés sur les 48h à venir, en respectant le préavis minimum.
         // Ne vérifie pas les réservations déjà prises sur ce créneau précis
-        // (ça exigerait de croiser TutorBookings pour toute la page) — un
+        // (ça exigerait de croiser TutorBookings pour toute la page)  un
         // répétiteur peut donc apparaître "disponible" alors que ce créneau
         // exact est déjà pris ; la fermeture réelle a lieu au moment de réserver
         // (TutorBookingService).
@@ -334,7 +334,7 @@ public class TutorProfileService : ITutorProfileService
             }).ToList();
         }
 
-        // Tri par pertinence (note × volume de séances × réactivité, US-REP-01) —
+        // Tri par pertinence (note × volume de séances × réactivité, US-REP-01) 
         // calculé en batch pour éviter le N+1 sur la page de résultats.
         var candidateIds = candidates.Select(p => p.Id).ToList();
         var completedCounts = await _context.TutorBookings
@@ -472,7 +472,7 @@ public class TutorProfileService : ITutorProfileService
 
     /// <summary>
     /// isPublicView=true (fiche vue par un élève, GetPublicProfileAsync) masque
-    /// explicitement les champs réservés au professeur propriétaire — plutôt
+    /// explicitement les champs réservés au professeur propriétaire  plutôt
     /// que de compter sur le fait que GetPublicProfileAsync n'inclut pas
     /// VerificationDocuments : un futur Include ajouté là-bas sans y penser
     /// exposerait sinon le motif de refus de diplôme (donnée admin) à

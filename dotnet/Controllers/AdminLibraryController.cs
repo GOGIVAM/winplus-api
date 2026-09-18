@@ -160,7 +160,7 @@ public class AdminLibraryController : ControllerBase
         // Nouveau fichier posé sur une fiche existante : ré-indexer. NOTE
         // (voir RAG/README.md « Limites connues ») : les anciens chunks ne
         // sont pas encore marqués "superseded" automatiquement depuis cette
-        // route — la ré-ingestion s'ajoute au corpus plutôt que remplacer.
+        // route  la ré-ingestion s'ajoute au corpus plutôt que remplacer.
         if (content != null && fileChanged)
         {
             var newFileUrl = content.VideoUrl ?? content.DocumentUrl;

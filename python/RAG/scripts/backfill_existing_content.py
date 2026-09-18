@@ -1,6 +1,6 @@
 """
 Script one-shot de ré-ingestion du contenu déjà présent dans WinPlus (topo
-validé avec l'utilisateur, point 2) — à lancer manuellement, UNE fois,
+validé avec l'utilisateur, point 2)  à lancer manuellement, UNE fois,
 après le branchement de RAG au chat. Sans ce script, WinAI ne "connaît"
 que le contenu uploadé APRES le branchement (voir AdminExamsController,
 AdminLibraryController, TeacherCourseController qui déclenchent l'ingestion
@@ -13,7 +13,7 @@ Usage :
     python -m RAG.scripts.backfill_existing_content --limit 20  # test sur un échantillon
 
 Le dry-run sert à estimer le coût AVANT de lancer (chaque document consomme
-des appels Mistral OCR / Groq Whisper / Cohere embedding côté RAG/api) —
+des appels Mistral OCR / Groq Whisper / Cohere embedding côté RAG/api) 
 voir RAG/DEPLOYMENT.md §6 pour les ordres de grandeur.
 
 Exécuté en série, volontairement : un backfill n'est pas sensible à la
@@ -94,7 +94,7 @@ def _collect_items(session, limit: int | None) -> list[IngestRequest]:
         ))
 
     # CourseLessons n'a pas de modèle SQLAlchemy côté Python (table gérée
-    # uniquement par EF Core aujourd'hui) — requête brute plutôt qu'ajouter
+    # uniquement par EF Core aujourd'hui)  requête brute plutôt qu'ajouter
     # un modèle ORM complet pour un usage ponctuel de ce script.
     rows = session.execute(text(
         'SELECT "Id", "Title", "VideoUrl", "FileUrl", "CourseId" FROM "CourseLessons" '

@@ -8,7 +8,7 @@ using Backend.Services;
 namespace Backend.Controllers;
 
 /// <summary>
-/// Devoirs, copies et corrections (Module 4 — professeur_complete.md).
+/// Devoirs, copies et corrections (Module 4  professeur_complete.md).
 /// </summary>
 [ApiController]
 [Route("api/teacher/assignments")]

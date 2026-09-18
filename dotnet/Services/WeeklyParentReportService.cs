@@ -277,7 +277,7 @@ public sealed class WeeklyParentReportService : BackgroundService
         catch (Exception ex)
         {
             // Une capsule manquante ne doit jamais empêcher l'envoi du rapport
-            // par email — dégradation silencieuse, comme le reste du service.
+            // par email  dégradation silencieuse, comme le reste du service.
             _logger.LogWarning(ex, "Failed to generate weekly capsule for child {ChildId}", childId);
         }
     }

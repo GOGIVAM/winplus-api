@@ -14,7 +14,7 @@ namespace Backend.Services;
 /// combinée à une baisse de score de quiz) via FastAPI /api/winai/detection-decrochage,
 /// en persistant les alertes dans AlertesDecrochage pour une vue transversale
 /// toutes formations (TeacherController.GetAlertesDecrochage). Tourne une fois par
-/// jour — cette cadence suffit à elle seule à éviter les alertes en double pour la
+/// jour  cette cadence suffit à elle seule à éviter les alertes en double pour la
 /// notification ntfy ; les alertes de décrochage, elles, sont dédupliquées via un
 /// index unique partiel (CourseId, StudentUserId) WHERE Traitee = FALSE.
 /// </summary>
@@ -116,7 +116,7 @@ public sealed class CourseInactivityAlertService : BackgroundService
         CancellationToken ct)
     {
         // Pré-filtre : seuls les élèves inactifs depuis au moins 7 jours peuvent
-        // déclencher une alerte côté scoring — inutile d'envoyer les autres.
+        // déclencher une alerte côté scoring  inutile d'envoyer les autres.
         var atRiskCandidates = enrollments
             .Select(e => new
             {

@@ -1,5 +1,5 @@
 """
-Génération de la réponse (Phase 3, §3.8) — ancrage strict au corpus fourni,
+Génération de la réponse (Phase 3, §3.8)  ancrage strict au corpus fourni,
 routage dual-modèle SIMPLE/COMPLEXE (Phase 3, §3.2).
 """
 
@@ -10,7 +10,7 @@ from typing import List
 from RAG.self_hosted.engine.llm_utils import generate
 from RAG.self_hosted.models.loader import get_llm_complex, get_llm_simple
 
-# Prompt système non modifiable par l'appelant — équivalent du prompt
+# Prompt système non modifiable par l'appelant  équivalent du prompt
 # d'ancrage strict du référentiel (Phase 3, §3.8), généralisé au contexte
 # WinPlus (pas de RBAC "habilitation", remplacé par un message neutre).
 SYSTEM_PROMPT_TEMPLATE = (

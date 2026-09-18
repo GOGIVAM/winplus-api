@@ -57,7 +57,7 @@ public class TutorReviewService : ITutorReviewService
         {
             // Double tap sur "Envoyer mon avis" : le contrôle `already` ci-dessus
             // n'est pas atomique avec l'insertion, mais l'index unique sur
-            // TutorBookingId l'est — on retombe sur le même message que le
+            // TutorBookingId l'est  on retombe sur le même message que le
             // contrôle applicatif plutôt qu'un 500 brut.
             throw new InvalidOperationException("Tu as déjà noté cette séance.");
         }
@@ -88,7 +88,7 @@ public class TutorReviewService : ITutorReviewService
     }
 
     /// <summary>Signalement d'un avis abusif (référentiel §I). Ne masque pas l'avis
-    /// automatiquement — un modérateur WinPlus tranche ; on notifie l'admin.</summary>
+    /// automatiquement  un modérateur WinPlus tranche ; on notifie l'admin.</summary>
     public async Task ReportAsync(int reportedByUserId, int reviewId, string reason)
     {
         var review = await _context.TutorReviews
@@ -105,8 +105,8 @@ public class TutorReviewService : ITutorReviewService
         review.ReportedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
-        await _ntfy.PublishAdminAsync("Avis signalé — cours particulier",
-            $"Avis #{review.Id} (note {review.Rating}/5) signalé par l'utilisateur #{reportedByUserId} — motif : {review.ReportReason}",
+        await _ntfy.PublishAdminAsync("Avis signalé  cours particulier",
+            $"Avis #{review.Id} (note {review.Rating}/5) signalé par l'utilisateur #{reportedByUserId}  motif : {review.ReportReason}",
             tags: new[] { "warning" });
     }
 

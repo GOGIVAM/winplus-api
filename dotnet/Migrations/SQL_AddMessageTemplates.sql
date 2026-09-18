@@ -1,5 +1,5 @@
 -- Migration: AddMessageTemplates
--- Module 7 — Messagerie (professeur_complete.md), US-MSG-08
+-- Module 7  Messagerie (professeur_complete.md), US-MSG-08
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 
 CREATE TABLE IF NOT EXISTS "MessageTemplates" (

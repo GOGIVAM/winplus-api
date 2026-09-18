@@ -1,5 +1,5 @@
 -- Migration: AddSessionsModule
--- Module 5 — Sessions (professeur_complete.md)
+-- Module 5  Sessions (professeur_complete.md)
 -- Equivalent EF entities: Session.cs (redesign), SessionEnrollment.cs
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 

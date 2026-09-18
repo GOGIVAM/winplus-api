@@ -1,4 +1,4 @@
-"""Mistral OCR API — documents scannés (Phase 1 équivalent, voie API)."""
+"""Mistral OCR API  documents scannés (Phase 1 équivalent, voie API)."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def _get_client() -> Mistral:
 
 
 def ocr_pdf(pdf_path: str) -> str:
-    """Transcrit un PDF scanné complet via l'API Mistral OCR — retourne le
+    """Transcrit un PDF scanné complet via l'API Mistral OCR  retourne le
     texte concaténé de toutes les pages avec numérotation."""
     client = _get_client()
     with open(pdf_path, "rb") as f:

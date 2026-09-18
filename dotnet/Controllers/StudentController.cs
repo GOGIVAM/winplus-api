@@ -630,7 +630,7 @@ public class StudentController : ControllerBase
     /// Demandes de liaison parentale en attente de ma réponse (US consentement,
     /// symétrique à GET /api/teacher-links/pending). Un parent ne voit jamais
     /// les notes/messages/activité de son enfant tant que celui-ci n'a pas
-    /// accepté ici — avant ce correctif, ParentController.AddChild liait
+    /// accepté ici  avant ce correctif, ParentController.AddChild liait
     /// instantanément sans qu'aucun flux de consentement n'existe.
     /// </summary>
     [HttpGet("parent-link-requests")]

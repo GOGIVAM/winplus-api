@@ -8,7 +8,7 @@ namespace Backend.Services;
 /// <summary>
 /// Portefeuille de compétences : portrait stable de l'apprenant, recalculé
 /// une fois par mois pour chaque enfant lié à au moins un parent (accepted).
-/// Trois sections purement descriptives — jamais de score, de jauge chiffrée
+/// Trois sections purement descriptives  jamais de score, de jauge chiffrée
 /// ni de comparaison entre enfants (voir parent_decisions_session.md).
 /// Stocké dans ParentReport (ReportType="Portefeuille"), un exemplaire par
 /// parent lié, comme WeeklyParentReportService le fait pour la capsule.

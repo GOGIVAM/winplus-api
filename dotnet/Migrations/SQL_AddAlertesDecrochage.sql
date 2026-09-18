@@ -1,5 +1,5 @@
 -- Migration: AddAlertesDecrochage
--- prompt_prof.md Module 8 — Détection de décrochage + alertes (8A)
+-- prompt_prof.md Module 8  Détection de décrochage + alertes (8A)
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 
 CREATE TABLE IF NOT EXISTS "AlertesDecrochage" (

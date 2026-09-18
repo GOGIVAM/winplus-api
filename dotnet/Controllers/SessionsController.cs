@@ -6,7 +6,7 @@ using Backend.Services;
 
 namespace Backend.Controllers;
 
-/// <summary>Sessions d'enseignement en ligne (Module 5 — live/enregistrement/correction).</summary>
+/// <summary>Sessions d'enseignement en ligne (Module 5  live/enregistrement/correction).</summary>
 [ApiController]
 [Route("api/sessions")]
 [Authorize]

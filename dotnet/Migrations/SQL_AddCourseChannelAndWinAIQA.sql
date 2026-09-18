@@ -1,5 +1,5 @@
 -- Migration: AddCourseChannelAndWinAIQA
--- Module 7 — Canal de formation + Q&A automatique WinAI (professeur_complete.md, 3C)
+-- Module 7  Canal de formation + Q&A automatique WinAI (professeur_complete.md, 3C)
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 
 ALTER TABLE "Courses" ADD COLUMN IF NOT EXISTS "CanalMessagerie" BOOLEAN NOT NULL DEFAULT FALSE;

@@ -371,7 +371,7 @@ async def get_class_analysis(
         hard_questions: list[HardQuestion] = []
         for a in quiz_attempts:
             if a.QuizId and a.QuizId not in seen:
-                # Score est déjà un pourcentage (0-100) de bonnes réponses —
+                # Score est déjà un pourcentage (0-100) de bonnes réponses 
                 # équivalent à 1 - CorrectAnswers/TotalQuestions sans dépendre
                 # d'une colonne TotalQuestions qui n'existe pas réellement.
                 wr = round(1.0 - float(a.Score or 0) / 100.0, 2)
@@ -996,7 +996,7 @@ async def analyze_tutor_profile(
         "Donne 3 à 5 suggestions concrètes et actionnables pour améliorer l'attractivité de ce profil "
         "auprès d'élèves camerounais (pas de généralités  chaque suggestion doit se rattacher à un "
         "champ précis du profil). Format JSON strict : "
-        '[{"field":"bio","suggestion":"..."}, ...] — field parmi : title, bio, subjects, levels, hourlyRate, video, general.'
+        '[{"field":"bio","suggestion":"..."}, ...]  field parmi : title, bio, subjects, levels, hourlyRate, video, general.'
     )
     system = (
         "Tu es WinAI, coach en optimisation de profil pour répétiteurs. "
@@ -1082,7 +1082,7 @@ async def get_recommended_purchases(current_user: UserTokenData = Depends(verify
             if used_fallback:
                 justification = f"Contenu très bien noté ({float(s.AverageRating):.1f}/5) pour démarrer ta bibliothèque."
             else:
-                justification = f"Bien noté ({float(s.AverageRating):.1f}/5) en {s.Category} — ta matière de prédilection."
+                justification = f"Bien noté ({float(s.AverageRating):.1f}/5) en {s.Category}  ta matière de prédilection."
             items.append(RecommendedPurchase(
                 subjectId=s.Id, title=s.Title, category=s.Category,
                 averageRating=float(s.AverageRating or 0), price=float(s.Price or 0),
@@ -1221,7 +1221,7 @@ async def generate_session_summary(
 # Feature 12  POST /teacher/student-revision-sheet (Module 6, US-REP-11)
 # Fiche de révision personnalisée générée à partir des comptes-rendus de
 # séances précédentes du couple répétiteur/élève (aucune source de "scores
-# aux quiz" n'est fournie ici — la fiche s'appuie sur les comptes-rendus
+# aux quiz" n'est fournie ici  la fiche s'appuie sur les comptes-rendus
 # textuels réellement disponibles, voir TutorBookingController).
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1248,7 +1248,7 @@ async def generate_revision_sheet(
 
     summaries_text = "\n---\n".join(s[:800] for s in body.session_summaries[:20])
     prompt = (
-        f"Élève : {body.student_name}" + (f" — Matière : {body.subject}" if body.subject else "") + "\n\n"
+        f"Élève : {body.student_name}" + (f"  Matière : {body.subject}" if body.subject else "") + "\n\n"
         f"Comptes-rendus des séances précédentes de cours particulier :\n{summaries_text}\n\n"
         "Génère une fiche de révision personnalisée en JSON avec exactement ces champs :\n"
         '1. "priority_topics" : notions à revoir en priorité, identifiées depuis les comptes-rendus\n'
@@ -1465,7 +1465,7 @@ async def generate_inactivity_relaunch_message(
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Module 8  Détection de décrochage (scoring). Appelé quotidiennement par
-# CourseInactivityAlertService (C#, appel interne service-à-service — pas de
+# CourseInactivityAlertService (C#, appel interne service-à-service  pas de
 # jeton utilisateur disponible en tâche de fond, comme WeeklyParentReportService
 # pour /api/chatbot/chat) avec les métriques déjà calculées côté C# (inactivité,
 # scores de quiz récents). Endpoint purement calculatoire, aucun accès DB.

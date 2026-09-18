@@ -131,7 +131,7 @@ public class AffiliateService : IAffiliateService
 
         // Anti-spam simple v1 : un rechargement de page ne doit pas gonfler le
         // compteur de clics utilisé ensuite comme signal de qualité pour le
-        // calcul du taux — un même visiteur ne compte qu'une fois par jour.
+        // calcul du taux  un même visiteur ne compte qu'une fois par jour.
         var today = DateTime.UtcNow.Date;
         var alreadyClickedToday = await _db.AffiliateClicks.AsNoTracking()
             .AnyAsync(c => c.AffiliateAccountId == account.Id && c.VisitorToken == request.VisitorToken && c.ClickedAt >= today);
@@ -162,7 +162,7 @@ public class AffiliateService : IAffiliateService
             var attributionCutoff = order.OrderDate.AddDays(-settings.AttributionWindowDays);
             // Le code est capturé au clic ; on ne peut pas revalider l'âge exact du
             // clic ici sans le rejouer côté frontend, donc on fait confiance au
-            // frontend pour n'envoyer un code que dans sa fenêtre — voir
+            // frontend pour n'envoyer un code que dans sa fenêtre  voir
             // affiliateTracking.ts. On vérifie seulement que le compte existe et
             // qu'il ne s'agit pas d'un auto-parrainage.
 
@@ -271,7 +271,7 @@ public class AffiliateService : IAffiliateService
     /// WinAI (FastAPI, /api/affiliate/commission-rate) pour une analyse
     /// approfondie du profil ; si le service est indisponible ou ne répond
     /// pas encore (endpoint pas déployé côté Python), retombe sur
-    /// <see cref="ComputeHeuristicRate"/> — jamais bloquant, jamais au-dessus
+    /// <see cref="ComputeHeuristicRate"/>  jamais bloquant, jamais au-dessus
     /// du plafond admin.
     /// </summary>
     public async Task RecalculateAllRatesAsync(CancellationToken ct = default)
@@ -327,7 +327,7 @@ public class AffiliateService : IAffiliateService
     /// modeste et le fait monter avec le volume de conversions et la qualité
     /// (faible taux de remboursement), jamais au-delà du plafond admin. Conçue
     /// pour être remplacée en douceur par l'analyse WinAI dès que l'endpoint
-    /// FastAPI existe — même plafond, mêmes signaux d'entrée.
+    /// FastAPI existe  même plafond, mêmes signaux d'entrée.
     /// </summary>
     public static decimal ComputeHeuristicRate(AffiliateRateSignals s)
     {

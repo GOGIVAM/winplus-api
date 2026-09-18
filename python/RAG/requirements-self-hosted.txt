@@ -1,4 +1,4 @@
-# RAG/self_hosted — inférence 100% locale, PyTorch/HuggingFace Transformers
+# RAG/self_hosted  inférence 100% locale, PyTorch/HuggingFace Transformers
 # exclusivement pour la partie deep learning. Qdrant, rank_bm25, igraph/
 # leidenalg et rapidfuzz sont de l'infra/algorithmique classique, pas des
 # frameworks ML concurrents (voir RAG/README.md, §Arbitrage PyTorch).
@@ -6,9 +6,9 @@
 # ── Deep learning (PyTorch uniquement) ──────────────────────────────────────
 torch>=2.3.0
 # >=5.1.0 requis : version qui a introduit le support GLM-OCR
-# (GlmOcrForConditionalGeneration) — voir RAG/README.md. L'environnement de
+# (GlmOcrForConditionalGeneration)  voir RAG/README.md. L'environnement de
 # développement actuel a transformers 4.56.0 : à mettre à jour avant de
-# charger l'OCR (le reste du module — Qwen3, TATR, Whisper — fonctionne déjà
+# charger l'OCR (le reste du module  Qwen3, TATR, Whisper  fonctionne déjà
 # avec 4.56.0).
 transformers>=5.1.0
 accelerate>=0.34.0
@@ -18,7 +18,7 @@ sentencepiece>=0.2.0
 # ── OCR / Vision (GLM-OCR tourne via transformers ci-dessus) ────────────────
 Pillow>=10.4.0
 
-# ── ASR (Whisper — implémentation PyTorch native, pas faster-whisper/CTranslate2)
+# ── ASR (Whisper  implémentation PyTorch native, pas faster-whisper/CTranslate2)
 openai-whisper>=20240930
 
 # ── PDF natif ────────────────────────────────────────────────────────────

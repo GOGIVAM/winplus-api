@@ -27,7 +27,7 @@ public interface IChatbotService
     /// <summary>
     /// Profil réel de l'utilisateur pour injection dans le contexte WinAI,
     /// lu en direct (User.Level, Enrollments, CourseEnrollments) plutôt que
-    /// depuis ChatbotContext — voir StreamLiveProfileContextAsync pour le
+    /// depuis ChatbotContext  voir StreamLiveProfileContextAsync pour le
     /// raisonnement complet. Utilisé aussi bien par le chemin REST
     /// (BuildFastApiRequestAsync) que par le chemin streaming (StreamChat).
     /// </summary>
@@ -63,7 +63,7 @@ public class ChatbotService : IChatbotService
     }
 
     /// <summary>
-    /// Formations réellement inscrites, lues en direct dans Enrollments —
+    /// Formations réellement inscrites, lues en direct dans Enrollments 
     /// utilisé pour RAG (voir services/rag_chat_bridge.py côté Python,
     /// contrôle d'accès aux citations) plutôt que le ChatbotContext
     /// synchronisé, qui reste vide tant que le frontend n'appelle jamais
@@ -85,7 +85,7 @@ public class ChatbotService : IChatbotService
 
     /// <summary>
     /// Équivalent de GetRealEnrolledSubjectsAsync pour les formations
-    /// enseignant (entité Course, distincte de Subject) — nécessaire pour
+    /// enseignant (entité Course, distincte de Subject)  nécessaire pour
     /// que RAG filtre correctement l'accès aux citations de leçons
     /// (course_id), pas seulement aux citations de formations (subject_id).
     /// </summary>
@@ -105,7 +105,7 @@ public class ChatbotService : IChatbotService
 
     /// <summary>
     /// Profil réel de l'utilisateur (niveau + inscriptions), lu en direct.
-    /// User.Level est la seule source de vérité pour le niveau scolaire —
+    /// User.Level est la seule source de vérité pour le niveau scolaire 
     /// ChatbotContext.EducationLevel/Grade (table de synchronisation) n'est
     /// jamais alimenté par le frontend en pratique (POST /chatbot/context/sync
     /// n'envoie que navigation_history), donc rester dépendant de cette table
@@ -377,7 +377,7 @@ public class ChatbotService : IChatbotService
 
             // EnrolledSubjects/Grade toujours recalculés en direct (donnée
             // réelle et à jour), plutôt que la valeur potentiellement absente/
-            // périmée du ChatbotContext synchronisé — voir
+            // périmée du ChatbotContext synchronisé  voir
             // GetLiveProfileContextAsync. Nécessaire pour que RAG (côté
             // Python) sache quelles formations l'utilisateur a le droit de
             // voir citées (voir RAG/README.md, "Intégration au chat WinAI"),
@@ -395,14 +395,14 @@ public class ChatbotService : IChatbotService
     /// FastAPI/Pydantic (schemas.py::ChatRequest, ChatResponse) attend du
     /// snake_case strict, sans alias ni insensibilité à la casse. Les
     /// méthodes PostAsJsonAsync/ReadFromJsonAsync par défaut sérialisent en
-    /// camelCase (JsonSerializerDefaults.Web) — vérifié empiriquement
+    /// camelCase (JsonSerializerDefaults.Web)  vérifié empiriquement
     /// (json Content.Create sur ces mêmes DTO produit "userContext",
     /// "enrolledSubjects", etc.), pas en PascalCase comme on pourrait le
     /// supposer de JsonSerializerOptions.Default. Sans cette policy,
     /// `UserContext` (donc tout le contexte WinAI : formations inscrites,
     /// page consultée, lacunes...) atterrissait sous la clé "userContext",
     /// que `ChatRequest.user_context` (Pydantic) ignore silencieusement
-    /// (le champ a une valeur par défaut, donc pas d'erreur 422 — juste une
+    /// (le champ a une valeur par défaut, donc pas d'erreur 422  juste une
     /// perte de contexte totale et silencieuse). Idem en sens inverse pour
     /// `tokens_used`/`generation_time_ms` à la désérialisation de la
     /// réponse. SnakeCaseLower (net8.0+) corrige les deux sens.

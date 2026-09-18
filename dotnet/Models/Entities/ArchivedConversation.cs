@@ -4,7 +4,7 @@ namespace Backend.Models.Entities;
 
 /// <summary>
 /// Archivage d'une conversation directe (Module 7, UX Messagerie mobile :
-/// "Swipe gauche → archiver"). Par utilisateur — archiver ne masque le fil
+/// "Swipe gauche → archiver"). Par utilisateur  archiver ne masque le fil
 /// que pour soi, jamais pour l'autre participant. Un nouveau message reçu ne
 /// désarchive pas automatiquement le fil (comportement WhatsApp standard) ;
 /// l'utilisateur le désarchive lui-même s'il veut le retrouver dans la liste

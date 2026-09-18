@@ -1,9 +1,9 @@
 """
-WinAI — Gestion de la mémoire conversationnelle persistante (Module 6, 6C).
+WinAI  Gestion de la mémoire conversationnelle persistante (Module 6, 6C).
 
 Réutilise la table UserAIMemories déjà en place et déjà alimentée pour TOUS
 les rôles (chatbot_routes.py : _load_user_memories / _extract_and_save_memories
-ne filtrent pas par rôle — un professeur ou un répétiteur qui discute avec
+ne filtrent pas par rôle  un professeur ou un répétiteur qui discute avec
 WinAI accumule déjà des mémoires, exactement comme un élève). Le référentiel
 demandait une table séparée "WinAI_Memoire" ; ne pas la créer évite deux
 mécanismes de mémoire parallèles à maintenir pour le même chatbot.
@@ -31,7 +31,7 @@ winai_memory_router = APIRouter()
 
 
 def _continuation_suggestion(content: str) -> str:
-    return f"On avait commencé « {content} » — tu veux continuer ?"
+    return f"On avait commencé « {content} »  tu veux continuer ?"
 
 
 @winai_memory_router.get("/winai/memoire")

@@ -196,7 +196,7 @@ public class ForumController : ControllerBase
 
             _ = TriggerModerationAsync((post as dynamic)?.Id ?? 0, id, request.Content ?? "", userId);
 
-            // Notifie l'auteur du thread ET tous les abonnés (US-FOR-COM-01) —
+            // Notifie l'auteur du thread ET tous les abonnés (US-FOR-COM-01) 
             // avant cette correction, seul l'auteur était notifié.
             var threadAuthorId = await _forumService.GetThreadAuthorIdAsync(id);
             var followerIds = await _forumService.GetThreadFollowerIdsAsync(id);

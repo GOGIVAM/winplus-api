@@ -1,5 +1,5 @@
 -- Migration: AddTutorBookingModule
--- Module 6 — Réservation de séances de cours particulier (professeur_complete.md)
+-- Module 6  Réservation de séances de cours particulier (professeur_complete.md)
 -- Equivalent EF entity: Models/Entities/TutorBooking.cs
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 

@@ -49,7 +49,7 @@ public class StudentCourseBadge
 /// <summary>
 /// Certificat de complétion pour une formation (Course), distinct de
 /// Certificate.cs (lié à l'ancien modèle Subject/Enrollment). Le code de
-/// vérification est ici une vraie colonne mappée — voir CertificateService.cs
+/// vérification est ici une vraie colonne mappée  voir CertificateService.cs
 /// où le champ équivalent est [NotMapped] et donc jamais persisté (bug connu,
 /// non corrigé ici pour ne pas toucher au flux "épreuves" existant).
 /// </summary>

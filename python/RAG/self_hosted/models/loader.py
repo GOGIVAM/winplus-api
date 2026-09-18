@@ -1,5 +1,5 @@
 """
-Chargement centralisé des modèles — PyTorch/HuggingFace Transformers
+Chargement centralisé des modèles  PyTorch/HuggingFace Transformers
 exclusivement, aucun moteur d'inférence tiers (pas d'Ollama, pas de vLLM,
 pas de llama.cpp/GGUF). La quantization passe par `bitsandbytes`, qui
 s'intègre nativement dans `transformers` plutôt que de remplacer PyTorch.
@@ -60,7 +60,7 @@ def _load_causal_lm(model_id: str):
 
 
 def get_llm_simple():
-    """Qwen3-14B — modèle nominal, mode non-thinking (Phase 3, §3.1)."""
+    """Qwen3-14B  modèle nominal, mode non-thinking (Phase 3, §3.1)."""
     with _lock:
         if "llm_simple" not in _registry:
             _registry["llm_simple"] = _load_causal_lm(config.LLM_SIMPLE_MODEL_ID)
@@ -68,7 +68,7 @@ def get_llm_simple():
 
 
 def get_llm_complex():
-    """Qwen3-30B-A3B — mode thinking pour requêtes multi-hop (Phase 3, §3.1).
+    """Qwen3-30B-A3B  mode thinking pour requêtes multi-hop (Phase 3, §3.1).
     Bascule sur le modèle simple si le GPU ne peut pas l'accueillir
     (contrainte C3, Phase 3 §3.2)."""
     if config.IS_GPU:
@@ -76,7 +76,7 @@ def get_llm_complex():
         if free_gb < config.MAX_VRAM_GB_FOR_COMPLEX_MODEL * 0.7:
             logger.warning(
                 "[RAG/self_hosted] VRAM insuffisante pour Qwen3-30B-A3B "
-                f"({free_gb:.1f} Go libres) — bascule sur le modèle simple."
+                f"({free_gb:.1f} Go libres)  bascule sur le modèle simple."
             )
             return get_llm_simple()
     with _lock:
@@ -84,13 +84,13 @@ def get_llm_complex():
             try:
                 _registry["llm_complex"] = _load_causal_lm(config.LLM_COMPLEX_MODEL_ID)
             except Exception as e:
-                logger.warning(f"[RAG/self_hosted] Échec chargement modèle complexe ({e}) — repli simple.")
+                logger.warning(f"[RAG/self_hosted] Échec chargement modèle complexe ({e})  repli simple.")
                 return get_llm_simple()
         return _registry["llm_complex"]
 
 
 def get_verifier_llm():
-    """DeepSeek-R1-Distill-Qwen-14B — vérificateur anti-hallucination sur
+    """DeepSeek-R1-Distill-Qwen-14B  vérificateur anti-hallucination sur
     requêtes critiques, raisonnement auditable via tokens <think> (Phase 4)."""
     with _lock:
         if "verifier" not in _registry:
@@ -99,7 +99,7 @@ def get_verifier_llm():
 
 
 def get_embedding_model():
-    """Qwen3-Embedding-8B en 4-bit sur GPU (voir README.md — le budget VRAM
+    """Qwen3-Embedding-8B en 4-bit sur GPU (voir README.md  le budget VRAM
     ≤24 Go annoncé pour l'ensemble embedding+reranker+LLM+OCR suppose que
     les huit milliards de paramètres de ce modèle ET du reranker sont
     quantizés, pas seulement le LLM de génération)."""
@@ -139,7 +139,7 @@ def get_reranker_model():
 
 
 def get_ocr_vlm():
-    """GLM-OCR — moteur unique pour scans, tampons et images embarquées
+    """GLM-OCR  moteur unique pour scans, tampons et images embarquées
     (remplace PaddleOCR-VL + GLM-OCR du référentiel original : premier sur
     OmniDocBench et nativement PyTorch/Transformers, cf. topo validé).
 
@@ -155,7 +155,7 @@ def get_ocr_vlm():
             except ImportError as e:
                 raise ImportError(
                     "GlmOcrForConditionalGeneration introuvable dans cette version de "
-                    "transformers — mettre à jour `transformers` (voir requirements-self-hosted.txt)."
+                    "transformers  mettre à jour `transformers` (voir requirements-self-hosted.txt)."
                 ) from e
 
             logger.info(f"[RAG/self_hosted] Chargement OCR-VLM {config.OCR_VLM_MODEL_ID}...")
@@ -200,7 +200,7 @@ def get_table_structure_model():
 
 
 def get_whisper_model():
-    """openai-whisper — implémentation PyTorch native (volontairement pas
+    """openai-whisper  implémentation PyTorch native (volontairement pas
     `faster-whisper`, qui repose sur CTranslate2, hors périmètre PyTorch)."""
     with _lock:
         if "whisper" not in _registry:

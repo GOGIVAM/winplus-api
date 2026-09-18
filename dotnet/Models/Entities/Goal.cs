@@ -5,7 +5,7 @@ namespace Backend.Models.Entities;
 
 /// <summary>
 /// Valeurs possibles de Goal.Status. Pas de type enum Postgres natif (aucune
-/// entité de ce backend n'en utilise — convention ici est une chaîne
+/// entité de ce backend n'en utilise  convention ici est une chaîne
 /// contrainte côté code, comme ParentStudentLink.Status ou
 /// TeacherStudentAccessRequest.Status).
 /// </summary>

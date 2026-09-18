@@ -1,4 +1,4 @@
-"""Phase 2 — vectorisation et indexation des chunks produits en Phase 1."""
+"""Phase 2  vectorisation et indexation des chunks produits en Phase 1."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def _scope_filters(metadata) -> dict:
 
 def index_chunks(chunks: List[Chunk], previous_doc_id: str | None = None) -> List[str]:
     """Retourne d'éventuels avertissements de scoring (ex: adéquation au
-    sujet faible) — à fusionner par l'appelant avec les warnings
+    sujet faible)  à fusionner par l'appelant avec les warnings
     d'ingestion (voir RAG/router.py::_run_ingestion_job)."""
     if not chunks:
         return []
@@ -52,7 +52,7 @@ def index_chunks(chunks: List[Chunk], previous_doc_id: str | None = None) -> Lis
     scoring_warnings: List[str] = []
     if detail.get("topic_fit") is not None and detail["topic_fit"] < 0.3:
         msg = (
-            f"Adéquation au sujet faible ({detail['topic_fit']:.2f}) — "
+            f"Adéquation au sujet faible ({detail['topic_fit']:.2f})  "
             f"possible erreur de classement (sujet déclaré : {topic_label!r})"
         )
         scoring_warnings.append(msg)

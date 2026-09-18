@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Backend.Services;
 
 /// <summary>
-/// Sessions d'enseignement en ligne (Module 5 — live/enregistrement/correction).
+/// Sessions d'enseignement en ligne (Module 5  live/enregistrement/correction).
 /// Annulation et remboursement suivent le même schéma honnête que
 /// TutorBookingService (Module 6) : pas d'intégration de virement automatique
 /// réel dans ce projet, le remboursement est "simulé" (statut + notification)
@@ -94,7 +94,7 @@ public class TeachingSessionService : ITeachingSessionService
         await _context.SaveChangesAsync();
 
         // Notification (push + email) à tous les inscrits, remboursement pour
-        // les inscriptions payées — US-SES-03.
+        // les inscriptions payées  US-SES-03.
         foreach (var enrollment in session.Enrollments)
         {
             // Awaité : en fire-and-forget, le DbContext scope requête pouvait être
@@ -106,7 +106,7 @@ public class TeachingSessionService : ITeachingSessionService
 
             if (enrollment.Student?.Email is { Length: > 0 } email)
             {
-                _ = _email.SendGenericEmailAsync(email, "Session annulée — WinPlus",
+                _ = _email.SendGenericEmailAsync(email, "Session annulée  WinPlus",
                     $"<p>Bonjour,</p><p>La session <strong>{session.Title}</strong> prévue le " +
                     $"{session.StartDate:dd/MM/yyyy à HH:mm} a été annulée par le professeur." +
                     (enrollment.PaymentStatus == "paid" ? " Le remboursement de ta place est en cours." : "") +
@@ -116,7 +116,7 @@ public class TeachingSessionService : ITeachingSessionService
             if (enrollment.PaymentStatus == "paid")
             {
                 enrollment.PaymentStatus = "refunded";
-                await _ntfy.PublishAdminAsync("Remboursement manuel requis — session annulée",
+                await _ntfy.PublishAdminAsync("Remboursement manuel requis  session annulée",
                     $"Session #{session.Id} annulée : rembourser l'élève #{enrollment.StudentId} " +
                     $"({enrollment.PriceChargedXaf} XAF, réf. {enrollment.NotchpayReference}) via NotchPay/MoMo.",
                     tags: new[] { "moneybag" });
@@ -165,7 +165,7 @@ public class TeachingSessionService : ITeachingSessionService
             {
                 var result = await _notchPay.InitiatePaymentAsync(
                     e164Phone, session.PriceXaf!.Value, sessionId,
-                    $"WinPlus — {session.Title}", email, name, channel, "SESS");
+                    $"WinPlus  {session.Title}", email, name, channel, "SESS");
                 enrollment.NotchpayReference = result.Transaction?.Reference;
                 enrollment.PaymentStatus = "pending";
                 enrollment.PriceChargedXaf = session.PriceXaf;

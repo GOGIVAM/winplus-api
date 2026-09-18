@@ -6,7 +6,7 @@ namespace Backend.Models.Entities;
 /// <summary>
 /// Avis élève sur une séance de cours particulier effectuée (US-REP-08).
 /// Un seul avis par réservation, uniquement pour une séance réellement tenue
-/// — pas d'avis anonyme, pas d'avis sans séance confirmée.
+///  pas d'avis anonyme, pas d'avis sans séance confirmée.
 /// </summary>
 public class TutorReview
 {

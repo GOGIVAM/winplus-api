@@ -1,5 +1,5 @@
 """
-WinAI — Q&A automatique du canal de formation (Module 7, 3C).
+WinAI  Q&A automatique du canal de formation (Module 7, 3C).
 
 - POST /winai/canal-qa → répond à une question élève à partir du contenu des
   leçons de la formation, avec un score de confiance auto-évalué. Sous le
@@ -47,7 +47,7 @@ def _build_prompt(body: CanalQaRequest) -> tuple[str, str]:
         "Tu es WinAI, assistant pédagogique pour la formation "
         f"« {body.course_title or 'cette formation'} » sur WinPlus. "
         "Réponds UNIQUEMENT à partir du contenu des leçons fourni ci-dessous. "
-        "Si le contenu ne permet pas de répondre avec certitude, ne devine pas — "
+        "Si le contenu ne permet pas de répondre avec certitude, ne devine pas  "
         "signale une confiance basse plutôt que d'inventer une réponse. "
         "Réponds en JSON strict : "
         '{"answer": "réponse claire en 2-4 phrases, ou null si tu n\'es pas sûr", '
@@ -71,7 +71,7 @@ async def canal_qa(
             messages=[{"role": "user", "content": question}],
             system_prompt=system,
             max_tokens=400,
-            temperature=0.3,  # réponse factuelle, pas créative — la confiance doit être fiable
+            temperature=0.3,  # réponse factuelle, pas créative  la confiance doit être fiable
         )
         raw = res.get("content", "").strip()
         if raw.startswith("```"):
@@ -80,7 +80,7 @@ async def canal_qa(
             raw = raw.rsplit("```", 1)[0].strip()
         parsed = json.loads(raw)
     except Exception as e:
-        logger.warning(f"canal_qa: échec de génération/parsing — {e}")
+        logger.warning(f"canal_qa: échec de génération/parsing  {e}")
         return CanalQaResponse(action="tag_professor", confidence=0.0)
 
     confidence = float(parsed.get("confidence", 0.0) or 0.0)

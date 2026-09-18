@@ -1,5 +1,5 @@
 -- Migration: AddDeviceCartPersistence
--- Remplace le panier anonyme en mémoire (AnonymousCartService, supprimé — un
+-- Remplace le panier anonyme en mémoire (AnonymousCartService, supprimé  un
 -- dictionnaire statique qui ne survivait pas à un redémarrage du service,
 -- cause du bug "Cart is empty" après connexion) par une persistance directe
 -- dans CartItems : UserId devient nullable, un DeviceId le remplace pour les

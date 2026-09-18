@@ -49,7 +49,7 @@ public class Order
 
     /// <summary>
     /// Code d'affiliation capturé côté frontend (?ref=CODE, localStorage) au
-    /// moment de la commande — la fenêtre d'attribution ne peut plus être
+    /// moment de la commande  la fenêtre d'attribution ne peut plus être
     /// vérifiée une fois le paiement confirmé (webhook async, sans contexte
     /// requête d'origine), donc le code doit être figé ici dès la création.
     /// Voir AffiliateService.RecordCommissionForOrderAsync.

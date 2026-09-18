@@ -1,5 +1,5 @@
 """
-Chaîne OCR conditionnelle (Phase 1, §1.3-1.4) — GLM-OCR comme moteur unique
+Chaîne OCR conditionnelle (Phase 1, §1.3-1.4)  GLM-OCR comme moteur unique
 pour le texte scanné, les zones tamponnées et les images embarquées en mode
 vision-langage. Remplace le duo PaddleOCR-VL/GLM-OCR du référentiel
 original : meilleur score OmniDocBench actuel, et nativement PyTorch/HF
@@ -49,11 +49,11 @@ def _run(image_bytes: bytes, prompt: str, max_new_tokens: int = 1024) -> str:
 
 
 def ocr_transcribe(image_bytes: bytes) -> str:
-    """OCR standard — pages scannées et zones tamponnées (Phase 1, §1.3)."""
+    """OCR standard  pages scannées et zones tamponnées (Phase 1, §1.3)."""
     return _run(image_bytes, _TEXT_PROMPT)
 
 
 def caption_embedded_image(image_bytes: bytes) -> str:
-    """Mode vision-langage — description indexable des schémas/diagrammes
+    """Mode vision-langage  description indexable des schémas/diagrammes
     embarqués dans le corpus (Phase 1, §1.4)."""
     return _run(image_bytes, _CAPTION_PROMPT, max_new_tokens=512)

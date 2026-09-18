@@ -1,12 +1,12 @@
 """
-Point d'entrée UNIQUE des deux moteurs RAG (voir topo validé) — l'appelant
+Point d'entrée UNIQUE des deux moteurs RAG (voir topo validé)  l'appelant
 (ASP.NET Core via FastApiClient.cs, ou tout autre client futur) tape
 toujours sur /rag/query et /rag/ingest, quel que soit le moteur actif. Le
 choix se fait via la variable d'environnement RAG_BACKEND ("self_hosted" |
 "api"), sans changement de code côté appelant.
 
 /rag/ingest répond immédiatement (statut "queued") et lance le traitement
-réel (OCR, transcription, embedding, indexation) en tâche d'arrière-plan —
+réel (OCR, transcription, embedding, indexation) en tâche d'arrière-plan 
 un upload de vidéo ou de PDF volumineux ne doit jamais faire attendre
 l'appelant. Utiliser GET /rag/ingest/{doc_id}/status pour suivre l'avancement.
 """
@@ -53,7 +53,7 @@ def _supersede_previous_version(doc_id: str) -> None:
     """Marque `superseded` tout chunk déjà indexé sous ce doc_id, AVANT
     d'indexer la nouvelle version (les nouveaux chunks n'existent pas
     encore à cet instant, donc le filtre par doc_id ne peut matcher que
-    l'ancienne version) — évite qu'un document remplacé (nouvel upload sur
+    l'ancienne version)  évite qu'un document remplacé (nouvel upload sur
     une fiche existante côté .NET, même doc_id réutilisé) laisse l'ancien
     contenu retrouvable indéfiniment aux côtés du nouveau. Best-effort :
     échoue silencieusement (log) sur une toute première ingestion, la
@@ -72,7 +72,7 @@ def _supersede_previous_version(doc_id: str) -> None:
 
 
 def _run_ingestion_job(request: IngestRequest) -> None:
-    """Exécutée en tâche d'arrière-plan par BackgroundTasks — tout ce qui
+    """Exécutée en tâche d'arrière-plan par BackgroundTasks  tout ce qui
     peut prendre du temps (OCR, transcription vidéo, appels d'embedding)
     tourne ici, après que la réponse HTTP a déjà été envoyée à l'appelant."""
     from RAG.shared.file_resolver import resolve_local_path
@@ -82,7 +82,7 @@ def _run_ingestion_job(request: IngestRequest) -> None:
     try:
         _supersede_previous_version(request.doc_id)
         # resolve_local_path gère les trois cas (URL S3, chemin local,
-        # contenu inline base64 d'une pièce jointe de chat) — process_document
+        # contenu inline base64 d'une pièce jointe de chat)  process_document
         # (fitz/whisper) n'accepte qu'un chemin local, jamais une URL http(s).
         with resolve_local_path(request) as local_path:
             resolved_request = request.model_copy(update={"file_path": local_path})
@@ -109,7 +109,7 @@ async def ingest(
 ):
     # Un document sans subject_id NI course_id est automatiquement traité
     # comme personnel (topo validé) : posé depuis le JWT, jamais accepté
-    # tel quel du corps de la requête — un utilisateur ne doit pas pouvoir
+    # tel quel du corps de la requête  un utilisateur ne doit pas pouvoir
     # usurper owner_user_id pour un autre compte.
     if request.subject_id is None and request.course_id is None:
         request.owner_user_id = current_user.user_id
@@ -152,7 +152,7 @@ class ChatAttachmentResponse(BaseModel):
 @rag_router.post("/chat-attachment", response_model=ChatAttachmentResponse)
 async def chat_attachment(request: ChatAttachmentRequest, current_user: UserTokenData = Depends(verify_token)):
     """Point d'entrée HTTP pour les pièces jointes de chat côté .NET
-    (ChatbotController.cs::DescribeDocument, chemin /stream) — .NET n'a pas
+    (ChatbotController.cs::DescribeDocument, chemin /stream)  .NET n'a pas
     d'équivalent PyMuPDF pour extraire le texte lui-même. Même logique que
     services/attachment_processor.py, utilisée directement en interne côté
     Python par routes/chatbot_routes.py (chemin /chat, pas de HTTP self-call

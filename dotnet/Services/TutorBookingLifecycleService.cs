@@ -70,15 +70,15 @@ public class TutorBookingLifecycleService : BackgroundService
             booking.PaymentStatus = "refunded";
             booking.UpdatedAt = now;
 
-            await ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Demande expirée — remboursement en cours",
+            await ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Demande expirée  remboursement en cours",
                 $"Le répétiteur n'a pas répondu à temps pour ta séance du {booking.SessionDate:dd/MM/yyyy}. Tu seras remboursé.",
                 userId: booking.StudentUserId, type: "TutorBooking");
             var tutorUserId = booking.TutorProfile?.UserId;
             if (tutorUserId.HasValue)
                 await ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Demande expirée",
-                    $"Tu n'as pas répondu à temps à la demande du {booking.SessionDate:dd/MM/yyyy} — elle a été annulée.",
+                    $"Tu n'as pas répondu à temps à la demande du {booking.SessionDate:dd/MM/yyyy}  elle a été annulée.",
                     userId: tutorUserId.Value, type: "TutorBooking");
-            await ntfy.PublishAdminAsync("Remboursement manuel requis — demande expirée",
+            await ntfy.PublishAdminAsync("Remboursement manuel requis  demande expirée",
                 $"Réservation #{booking.Id} ({booking.PriceXaf} XAF, réf. {booking.NotchpayReference}) : rembourser l'élève #{booking.StudentUserId} via NotchPay/MoMo.",
                 tags: new[] { "moneybag" });
         }

@@ -7,7 +7,7 @@ run_query()/retrieve_passages() des deux moteurs sont synchrones et
 bloquants (appels réseau Cohere/DeepSeek ou inférence locale) : les
 appeler directement depuis une route FastAPI async bloquerait l'event
 loop et retarderait TOUTES les requêtes en cours, pas seulement celle qui
-utilise RAG — d'où le passage par un threadpool ici.
+utilise RAG  d'où le passage par un threadpool ici.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def _active_run_query():
 
 
 async def retrieve_context(request: RAGQueryRequest) -> RetrievedContext:
-    """Récupération + rerank seuls (pas de génération) — c'est la fonction
+    """Récupération + rerank seuls (pas de génération)  c'est la fonction
     à utiliser pour enrichir un autre prompt (ex: WinAI) plutôt que
     produire une réponse RAG autonome."""
     fn = _active_retrieve_passages()
@@ -52,6 +52,6 @@ async def retrieve_context(request: RAGQueryRequest) -> RetrievedContext:
 
 async def query_rag(request: RAGQueryRequest) -> RAGAnswer:
     """Pipeline RAG complet (retrieval + génération + validation
-    anti-hallucination) — utilisé par RAG/router.py pour /rag/query."""
+    anti-hallucination)  utilisé par RAG/router.py pour /rag/query."""
     fn = _active_run_query()
     return await run_in_threadpool(fn, request)

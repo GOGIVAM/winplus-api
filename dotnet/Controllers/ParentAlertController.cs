@@ -9,7 +9,7 @@ namespace Backend.Controllers;
 /// <summary>
 /// Historique consultable des alertes WinAI destinées à un parent (table ParentAlert).
 /// Distinct de GET /api/parent/alerts (ParentController), qui lit l'ancienne table
-/// Notification générique — legacy, non alimentée par le flux d'alertes actuel, non touchée ici
+/// Notification générique  legacy, non alimentée par le flux d'alertes actuel, non touchée ici
 /// (ne jamais faire migrer ces alertes vers Notification ou DirectMessage).
 /// </summary>
 [ApiController]
@@ -62,7 +62,7 @@ public class ParentAlertController : ControllerBase
     }
 
     /// <summary>
-    /// Baromètre de bien-être — vue consolidée des seuls signaux comportementaux
+    /// Baromètre de bien-être  vue consolidée des seuls signaux comportementaux
     /// (BaissePerformance, Inactivite, Surmenage, AnxieteExamen), 30 derniers jours.
     /// Ce n'est pas un nouveau moteur de détection : une lecture filtrée de
     /// ParentAlerts, déjà alimentée par parent_alert_routes.py côté Python à

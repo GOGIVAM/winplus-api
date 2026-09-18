@@ -1,5 +1,5 @@
 """
-Orchestration complète de la Phase 3 — du texte de la requête à la réponse
+Orchestration complète de la Phase 3  du texte de la requête à la réponse
 validée. Assemble routage de complexité, HyDE, recherche hybride (dense +
 BM25 + RRF), GraphRAG, reranking, boucle Self-RAG et génération.
 """
@@ -24,7 +24,7 @@ from RAG.shared.graph_registry import GraphRegistry
 from RAG.shared.rrf import reciprocal_rank_fusion
 from RAG.shared.vector_store import get_by_ids, scroll_by_filter, search_dense
 
-# Approximation d'entités normatives dans la requête — même heuristique que
+# Approximation d'entités normatives dans la requête  même heuristique que
 # le routeur de complexité (suites de mots capitalisés ou sigles).
 import re as _re
 
@@ -54,7 +54,7 @@ def _hybrid_retrieve(query_vector: List[float], query_text: str, filters: Dict, 
 
 def _graphrag_augment(question: str, filters: Dict, max_docs: int = 3) -> List[dict]:
     """Complément de contexte structuré pour les requêtes COMPLEXE (Phase 3,
-    §3.7) — parcours BFS borné à 2 sauts depuis les entités de la requête,
+    §3.7)  parcours BFS borné à 2 sauts depuis les entités de la requête,
     puis récupération des chunks des documents connectés."""
     graph = GraphRegistry.get(config.QDRANT_COLLECTION)
     entities = list(set(_ENTITY_RE.findall(question)))
@@ -76,7 +76,7 @@ def _graphrag_augment(question: str, filters: Dict, max_docs: int = 3) -> List[d
 
 
 def _apply_relevance_boost(candidates: List[dict], reranked: List[tuple]) -> List[tuple]:
-    """Voir RAG/api/engine/pipeline.py::_apply_relevance_boost — même
+    """Voir RAG/api/engine/pipeline.py::_apply_relevance_boost  même
     logique, dupliquée ici car les deux moteurs restent indépendants par
     design (voir README.md)."""
     boosted = []
@@ -89,7 +89,7 @@ def _apply_relevance_boost(candidates: List[dict], reranked: List[tuple]) -> Lis
 
 def _retrieve_and_rerank(request: RAGQueryRequest) -> tuple[List[dict], List[tuple], str]:
     """Routage de complexité + HyDE + GraphRAG + recherche hybride + boucle
-    Self-RAG, sans génération ni validation — factorisé pour être partagé
+    Self-RAG, sans génération ni validation  factorisé pour être partagé
     entre run_query() (réponse autonome de ce module) et retrieve_passages()
     (utilisé par l'intégration chatbot WinAI)."""
     complexity = classify_complexity(request.question)
@@ -98,7 +98,7 @@ def _retrieve_and_rerank(request: RAGQueryRequest) -> tuple[List[dict], List[tup
     candidates = _hybrid_retrieve(query_vector, request.question, request.filters, request.top_k)
 
     # HyDE si le meilleur score dense initial suggère un écart sémantique
-    # (Phase 3, §3.4) — appliqué uniquement sur les requêtes SIMPLE, comme
+    # (Phase 3, §3.4)  appliqué uniquement sur les requêtes SIMPLE, comme
     # décrit dans le référentiel.
     if complexity == "simple" and candidates:
         dense_check = search_dense(config.QDRANT_COLLECTION, query_vector, top_k=1, filters=request.filters)
@@ -158,7 +158,7 @@ def _to_citations(candidates: List[dict], reranked: List[tuple]) -> tuple[List[d
 def retrieve_passages(request: RAGQueryRequest) -> RetrievedContext:
     """Point d'entrée dédié à l'intégration chatbot WinAI (voir
     services/rag_chat_bridge.py) : ne fait QUE récupérer et reranker les
-    passages, sans appeler generate_answer() ni validate_answer() — la
+    passages, sans appeler generate_answer() ni validate_answer()  la
     génération finale reste celle du prompt WinAI existant (persona,
     pédagogie, mémoire élève), RAG ne fait qu'apporter du contexte."""
     start = time.time()

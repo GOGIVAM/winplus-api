@@ -63,7 +63,7 @@ public class GradeSubmissionRequestDto
 {
     public decimal? Note { get; set; }
     public string? Comment { get; set; }
-    /// <summary>draft | submitted — miroir du contrat déjà utilisé par CorrectionQueue.tsx.</summary>
+    /// <summary>draft | submitted  miroir du contrat déjà utilisé par CorrectionQueue.tsx.</summary>
     public string Status { get; set; } = "submitted";
 }
 

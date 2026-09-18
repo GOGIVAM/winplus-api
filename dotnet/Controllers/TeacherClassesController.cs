@@ -55,7 +55,7 @@ public class TeacherClassesController : ControllerBase
     }
 
     /// <summary>
-    /// Liste des classes du professeur. Absent jusqu'ici — le frontend
+    /// Liste des classes du professeur. Absent jusqu'ici  le frontend
     /// (teacherExtraService.getClasses → GET /api/teacher/classes)
     /// l'appelait déjà, mais "Mes classes" ne pouvait jamais rien afficher
     /// (404 silencieux). Corrigé ici.
@@ -164,7 +164,7 @@ public class TeacherClassesController : ControllerBase
         }
     }
 
-    /// <summary>Désactive (archive) une classe sans la supprimer — réversible, garde ses élèves et son historique.</summary>
+    /// <summary>Désactive (archive) une classe sans la supprimer  réversible, garde ses élèves et son historique.</summary>
     [HttpPatch("{id:int}/deactivate")]
     public async Task<IActionResult> Deactivate([FromRoute] int id, [FromQuery] bool reactivate = false)
     {
@@ -186,7 +186,7 @@ public class TeacherClassesController : ControllerBase
         }
     }
 
-    /// <summary>Supprime définitivement une classe — uniquement si elle ne contient aucun élève (US-CLA-01).</summary>
+    /// <summary>Supprime définitivement une classe  uniquement si elle ne contient aucun élève (US-CLA-01).</summary>
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete([FromRoute] int id)
     {
@@ -198,7 +198,7 @@ public class TeacherClassesController : ControllerBase
 
             var hasStudents = await _db.TeacherClassStudents.AnyAsync(cs => cs.TeacherClassId == id);
             if (hasStudents)
-                return BadRequest(new { success = false, error = "Cette classe contient des élèves — retirez-les d'abord, ou désactivez la classe au lieu de la supprimer." });
+                return BadRequest(new { success = false, error = "Cette classe contient des élèves  retirez-les d'abord, ou désactivez la classe au lieu de la supprimer." });
 
             _db.TeacherClasses.Remove(klass);
             await _db.SaveChangesAsync();
@@ -245,7 +245,7 @@ public class TeacherClassesController : ControllerBase
             var grouped = attemptsByStudent.GroupBy(a => a.UserId).ToDictionary(g => g.Key, g => g.OrderBy(a => a.StartedAt).ToList());
 
             // Tendance (US-CLA-03) : moyenne de la 2e moitié des tentatives vs
-            // la 1ère moitié — nécessite au moins 4 tentatives pour être
+            // la 1ère moitié  nécessite au moins 4 tentatives pour être
             // significatif, sinon "stable" par défaut (pas assez de données).
             static string ComputeTrend(List<decimal> scores)
             {

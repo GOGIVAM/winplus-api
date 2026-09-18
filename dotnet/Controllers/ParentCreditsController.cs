@@ -21,7 +21,7 @@ public class PurchaseForChildRequest
 /// valeur en dur, tout est en base.
 ///
 /// Règles figées (voir parent_decisions_session.md, correction 1) :
-/// 1 crédit = 1 FCFA, aucun taux de conversion — le montant en base EST le
+/// 1 crédit = 1 FCFA, aucun taux de conversion  le montant en base EST le
 /// montant en FCFA, ne jamais introduire d'unité "crédit" distincte de la
 /// devise. Non reportables et non remboursables en fin de mois. Changement de
 /// plan en cours de mois : le cycle en cours garde son montant déjà alloué,
@@ -183,14 +183,14 @@ public class ParentCreditsController : ControllerBase
     /// Retour d'usage sur les achats faits pour un enfant, 1 à 30 jours après
     /// l'achat : signal binaire "consulté / pas encore consulté", jamais un
     /// compteur (DownloadHistories n'est pas fiable pour compter les
-    /// consultations réelles — déduplication incohérente selon le canal
+    /// consultations réelles  déduplication incohérente selon le canal
     /// d'accès, voir parent_decisions_session.md, fonctionnalité E).
     ///
     /// OrderItem n'a pas de colonne "pour quel enfant" : le seul lien fiable
     /// entre une commande et l'enfant destinataire est ParentCreditLedger
     /// (EntryType="consumption", ChildId + OrderId), écrit par
     /// PurchaseForChild au moment de l'achat. Un achat payé autrement qu'avec
-    /// les crédits mensuels n'a donc pas de suivi ici — c'est le seul système
+    /// les crédits mensuels n'a donc pas de suivi ici  c'est le seul système
     /// d'achat-pour-enfant réellement implémenté aujourd'hui.
     /// </summary>
     [HttpGet("purchases/{childId:int}/impact")]

@@ -3,7 +3,7 @@ using Backend.Models.DTOs;
 namespace Backend.Services;
 
 /// <summary>
-/// Sessions d'enseignement en ligne (Module 5 — live/enregistrement/correction).
+/// Sessions d'enseignement en ligne (Module 5  live/enregistrement/correction).
 /// Nom distinct d'ISessionService (déjà pris par les sessions de connexion
 /// /appareil, UserSessions) pour éviter toute collision de nom.
 /// </summary>

@@ -1,8 +1,8 @@
 """
-Points d'entrée FastAPI du moteur api — router de test direct, synchrone
+Points d'entrée FastAPI du moteur api  router de test direct, synchrone
 (pratique pour observer l'IngestResult complet immédiatement sur un petit
 fichier). Le point d'entrée réel, monté dans app.py et utilisé par
-l'appelant, est RAG/router.py — lui traite l'ingestion en arrière-plan pour
+l'appelant, est RAG/router.py  lui traite l'ingestion en arrière-plan pour
 ne jamais bloquer sur un gros fichier (voir RAG/router.py, RAG/README.md).
 """
 

@@ -1,4 +1,4 @@
-"""Orchestration complète d'une requête côté api — recherche hybride
+"""Orchestration complète d'une requête côté api  recherche hybride
 (Cohere embed + BM25 + RRF), reranking Cohere, génération DeepSeek,
 validation anti-hallucination."""
 
@@ -43,7 +43,7 @@ def _hybrid_retrieve(query_vector: List[float], query_text: str, filters: Dict, 
 
 def _apply_relevance_boost(candidates: List[dict], reranked: List[tuple]) -> List[tuple]:
     """Repondère le score de rerank avec `relevance_score` (topo validé :
-    nouveauté + qualité + adéquation au sujet, calculés à l'ingestion —
+    nouveauté + qualité + adéquation au sujet, calculés à l'ingestion 
     voir RAG/shared/relevance_scoring.py). Un document sans score connu
     (ingéré avant l'introduction de ce champ) n'est ni favorisé ni pénalisé
     (facteur neutre 1.0). Ne fait que réordonner le top_k déjà sélectionné
@@ -58,7 +58,7 @@ def _apply_relevance_boost(candidates: List[dict], reranked: List[tuple]) -> Lis
 
 def _retrieve_and_rerank(request: RAGQueryRequest) -> tuple[List[dict], List[tuple]]:
     """Recherche hybride + boucle Self-RAG (reformulation si le rerank est
-    peu confiant), sans génération ni validation — factorisé pour être
+    peu confiant), sans génération ni validation  factorisé pour être
     partagé entre run_query() (réponse autonome de ce module) et
     retrieve_passages() (utilisé par l'intégration chatbot WinAI)."""
     query_vector = embed_query(request.question)
@@ -108,7 +108,7 @@ def _to_citations(candidates: List[dict], reranked: List[tuple]) -> tuple[List[d
 def retrieve_passages(request: RAGQueryRequest) -> RetrievedContext:
     """Point d'entrée dédié à l'intégration chatbot WinAI (voir
     services/rag_chat_bridge.py) : ne fait QUE récupérer et reranker les
-    passages, sans appeler generate_answer() ni validate_answer() — la
+    passages, sans appeler generate_answer() ni validate_answer()  la
     génération finale reste celle du prompt WinAI existant (persona,
     pédagogie, mémoire élève), RAG ne fait qu'apporter du contexte."""
     start = time.time()

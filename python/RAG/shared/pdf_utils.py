@@ -1,8 +1,8 @@
 """
-Extraction PDF native (Phase 1, §1.2) — commune aux deux moteurs : ni l'un ni
+Extraction PDF native (Phase 1, §1.2)  commune aux deux moteurs : ni l'un ni
 l'autre n'a de raison de repasser par l'OCR/une API payante pour un PDF dont
 la couche texte est déjà encodée. PyMuPDF (fitz) n'est ni un framework ML ni
-une API — c'est une lecture directe du PDF selon ISO 32000, donc hors du
+une API  c'est une lecture directe du PDF selon ISO 32000, donc hors du
 débat "PyTorch uniquement" comme des autres arbitrages de ce module.
 """
 

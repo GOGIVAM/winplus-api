@@ -293,7 +293,7 @@ public class CartService : ICartService
 
     /// <summary>
     /// Fusion du panier anonyme (persisté en base sous DeviceId) avec le compte
-    /// de l'utilisateur qui vient de se connecter — réassignation en base
+    /// de l'utilisateur qui vient de se connecter  réassignation en base
     /// (ReassignDeviceCartToUserAsync), plus de liste en mémoire à transporter.
     /// </summary>
     public async Task<IEnumerable<CartItem>> MergeAnonymousCartAsync(int userId, string deviceId)

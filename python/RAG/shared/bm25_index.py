@@ -1,5 +1,5 @@
 """
-Index BM25 (recherche lexicale éparse, Phase 2 §2.9) — `rank_bm25` est une
+Index BM25 (recherche lexicale éparse, Phase 2 §2.9)  `rank_bm25` est une
 implémentation pure Python de l'algorithme, pas un framework ML : elle reste
 hors du périmètre "PyTorch uniquement" au même titre que Qdrant.
 
@@ -50,7 +50,7 @@ class BM25Index:
         filtre `score > 0` : la formule BM25 classique produit un IDF
         négatif pour un terme présent dans la totalité des documents du
         corpus (pathologie connue sur les petits corpus), ce qui ne veut
-        pas dire que le classement relatif entre documents est faux — la
+        pas dire que le classement relatif entre documents est faux  la
         fusion RRF en aval ne consomme que le RANG, jamais le score brut."""
         if self._bm25 is None:
             return []

@@ -1,7 +1,7 @@
 """
 Suivi de l'état des ingestions lancées en arrière-plan (voir RAG/router.py).
 
-Registre en mémoire — suffisant pour la phase de test actuelle (un seul
+Registre en mémoire  suffisant pour la phase de test actuelle (un seul
 worker FastAPI). À faire évoluer vers une table Postgres si l'ingestion doit
 survivre à un redémarrage du service ou être visible depuis plusieurs
 workers (voir DEPLOYMENT.md).

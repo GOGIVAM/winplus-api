@@ -48,7 +48,7 @@ public class OrdersController : ControllerBase
     /// "Payer avec mon solde WinPlus" (Module 2, US-CAT-06) : le professeur
     /// règle son panier avec ses revenus de vente catalogue au lieu d'un
     /// paiement Mobile Money. Complété immédiatement (débit interne, pas
-    /// d'attente de webhook) — contrairement au flux Mobile Money classique
+    /// d'attente de webhook)  contrairement au flux Mobile Money classique
     /// qui crée la commande "pending" en attendant confirmation.
     ///
     /// ⚠ Pas de split "solde partiel + Mobile Money pour le différentiel" :

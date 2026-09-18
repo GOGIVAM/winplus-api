@@ -16,7 +16,7 @@ combiner les 3") :
 Le score composite (`ChunkMetadata.relevance_score`) sert à prioriser le
 retrieval (les moteurs `engine/pipeline.py` des deux modules l'utilisent
 comme boost du score de rerank) et à signaler, via les `warnings`
-d'IngestResult, un document probablement mal classé ou de faible valeur —
+d'IngestResult, un document probablement mal classé ou de faible valeur 
 sans jamais bloquer son indexation : un souci de scoring (clé API absente,
 collection Qdrant pas encore créée, etc.) se neutralise silencieusement
 plutôt que de faire échouer l'ingestion.
@@ -77,7 +77,7 @@ def resolve_topic_label(subject_id: Optional[int], category: Optional[str]) -> O
 
 
 def _quality_score_llm(text_sample: str) -> Optional[float]:
-    """None si le jugement échoue (clé API absente, etc.) — dégradation
+    """None si le jugement échoue (clé API absente, etc.)  dégradation
     silencieuse, ne bloque jamais l'ingestion."""
     try:
         from services.deepseek_client import get_deepseek_client
@@ -134,7 +134,7 @@ def compute_relevance_score(
 ) -> Tuple[float, dict]:
     """Calcule le score composite pour UN document à partir d'un
     échantillon de ses premiers chunks (un document entier partage la même
-    thématique/qualité globale — inutile de ré-embedder tout le document
+    thématique/qualité globale  inutile de ré-embedder tout le document
     une seconde fois pour le scoring). Renvoie (score, détail) où détail
     contient les trois sous-scores bruts, pour audit."""
     if not chunks_text:

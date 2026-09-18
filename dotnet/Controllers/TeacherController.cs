@@ -70,7 +70,7 @@ public class TeacherController : ControllerBase
 
     // ── Module 2, US-CAT-07  GET /api/teacher/recommended-purchases ────────
 
-    /// <summary>WinAI — contenus recommandés à l'achat pour ce professeur</summary>
+    /// <summary>WinAI  contenus recommandés à l'achat pour ce professeur</summary>
     [HttpGet("recommended-purchases")]
     public async Task<IActionResult> GetRecommendedPurchases(CancellationToken ct)
     {
@@ -82,7 +82,7 @@ public class TeacherController : ControllerBase
 
     // ── Module 2, US-CAT-09  GET /api/teacher/editorial-watch ───────────────
 
-    /// <summary>WinAI — veille éditoriale : matières en demande peu couvertes</summary>
+    /// <summary>WinAI  veille éditoriale : matières en demande peu couvertes</summary>
     [HttpGet("editorial-watch")]
     public async Task<IActionResult> GetEditorialWatch(CancellationToken ct)
     {
@@ -173,7 +173,7 @@ public class TeacherController : ControllerBase
         }
     }
 
-    /// <summary>File de correction (US-COR-01) — filter: pending (défaut) | corrected | all.</summary>
+    /// <summary>File de correction (US-COR-01)  filter: pending (défaut) | corrected | all.</summary>
     [HttpGet("corrections/pending")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
@@ -353,7 +353,7 @@ public class TeacherController : ControllerBase
         return Ok(await _teacherService.GetTutoringTransactionsAsync(teacherId));
     }
 
-    /// <summary>Historique unifié filtrable par source — catalogue / cours_particulier / achat (Module 7, 7B).</summary>
+    /// <summary>Historique unifié filtrable par source  catalogue / cours_particulier / achat (Module 7, 7B).</summary>
     [HttpGet("revenue/transactions")]
     public async Task<IActionResult> GetTransactions([FromQuery] string? source = null)
     {
@@ -370,7 +370,7 @@ public class TeacherController : ControllerBase
         return Ok(new { balance });
     }
 
-    // ── Module 8, 8A — Détection de décrochage ──────────────────────────────
+    // ── Module 8, 8A  Détection de décrochage ──────────────────────────────
     // Vue transversale toutes formations : CourseInactivityAlertService détecte et
     // persiste les alertes quotidiennement ; ces endpoints les consultent/traitent.
 
@@ -398,7 +398,7 @@ public class TeacherController : ControllerBase
             })
             .ToListAsync();
 
-        // Désérialisation JSON en mémoire — non traduisible en SQL par EF Core.
+        // Désérialisation JSON en mémoire  non traduisible en SQL par EF Core.
         var alerts = raw.Select(a => new
         {
             a.id,

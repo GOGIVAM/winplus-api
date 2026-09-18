@@ -346,7 +346,7 @@ public class CartController : ControllerBase
             else if (!string.IsNullOrEmpty(request.DeviceId))
             {
                 // ✅ Anonymous user: persisté en base par deviceId (survit à un
-                // redémarrage du service — voir CartItem.cs)
+                // redémarrage du service  voir CartItem.cs)
                 await _cartService.AddToAnonymousCartAsync(request.DeviceId, request.SubjectId, request.Price);
 
                 var anonymousList = await _cartService.GetAnonymousCartAsync(request.DeviceId);

@@ -21,7 +21,7 @@ CREATE INDEX IF NOT EXISTS "IX_Goals_Status" ON "Goals"("Status");
 -- donc sans proposition parent ni statut Pending/Refused à préserver. On
 -- recase juste la casse/les valeurs vers le nouveau vocabulaire : "completed"
 -- et "cancelled" gardent leur sens (recasés), tout le reste (dont "active",
--- "in_progress" et NULL) devient Active — "données en base = déjà actifs".
+-- "in_progress" et NULL) devient Active  "données en base = déjà actifs".
 UPDATE "Goals" SET "Status" = 'Completed' WHERE LOWER("Status") = 'completed' AND "Status" <> 'Completed';
 UPDATE "Goals" SET "Status" = 'Cancelled' WHERE LOWER("Status") = 'cancelled' AND "Status" <> 'Cancelled';
 UPDATE "Goals" SET "Status" = 'Active' WHERE "Status" IS NULL OR "Status" NOT IN ('Completed', 'Cancelled');

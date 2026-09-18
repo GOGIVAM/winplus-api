@@ -2,7 +2,7 @@
 
 import os
 
-# "self_hosted" ou "api" — bascule le moteur derrière l'unique endpoint
+# "self_hosted" ou "api"  bascule le moteur derrière l'unique endpoint
 # /rag/query. Les deux modules restent indépendants ; ceci ne fait que
 # décider lequel répond, sans que l'appelant ait à changer de code.
 RAG_BACKEND = os.getenv("RAG_BACKEND", "api")

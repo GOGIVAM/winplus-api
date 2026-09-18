@@ -173,7 +173,7 @@ public sealed class YearlyAlbumService : IYearlyAlbumService
                     .Where(e => e.Id == tc.ExamId).Select(e => e.Title).FirstOrDefaultAsync(ct);
                 if (!string.IsNullOrWhiteSpace(examTitle)) label = $"{examTitle} ({subjectTitle})";
             }
-            topContentLabels.Add($"{label} — consulté {tc.Count} fois");
+            topContentLabels.Add($"{label}  consulté {tc.Count} fois");
         }
 
         // ── Progression : score moyen des premiers quiz vs des derniers quiz de l'année.
@@ -191,7 +191,7 @@ public sealed class YearlyAlbumService : IYearlyAlbumService
         else if (quizAttempts.Count < 4)
         {
             var avg = quizAttempts.Average(a => a.Score);
-            progression = $"{childName} a fait {quizAttempts.Count} quiz cette année, avec un score moyen de {avg:F0}% — pas assez de quiz pour dégager une tendance.";
+            progression = $"{childName} a fait {quizAttempts.Count} quiz cette année, avec un score moyen de {avg:F0}%  pas assez de quiz pour dégager une tendance.";
         }
         else
         {

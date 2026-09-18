@@ -1,5 +1,5 @@
 """
-Validation anti-hallucination côté api — même méthode que self_hosted
+Validation anti-hallucination côté api  même méthode que self_hosted
 (décomposition en affirmations atomiques + vérification contre les
 passages), mais le juge LLM est DeepSeek plutôt qu'un modèle local.
 """

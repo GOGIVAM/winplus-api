@@ -129,7 +129,7 @@ app.include_router(admin_router, prefix="/api", tags=["admin-ai"])
 app.include_router(smart_ai_router, prefix="/api", tags=["smart-ai"])
 app.include_router(canal_qa_router, prefix="/api", tags=["canal-qa"])
 app.include_router(winai_memory_router, prefix="/api", tags=["winai-memory"])
-# RAG (self_hosted / api) — branché pour test, voir RAG/README.md et
+# RAG (self_hosted / api)  branché pour test, voir RAG/README.md et
 # RAG/DEPLOYMENT.md. Expose /api/rag/query, /api/rag/ingest, /api/rag/health.
 app.include_router(rag_router, prefix="/api", tags=["rag"])
 

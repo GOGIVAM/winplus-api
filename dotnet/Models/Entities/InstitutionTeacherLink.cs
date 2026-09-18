@@ -4,7 +4,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace Backend.Models.Entities;
 
 /// <summary>
-/// Affiliation prof/tuteur ↔ institution — même forme que TeacherStudentLink :
+/// Affiliation prof/tuteur ↔ institution  même forme que TeacherStudentLink :
 /// demande dans les deux sens (InitiatedBy), acceptation, révocation par
 /// n'importe laquelle des deux parties (suppression de la ligne).
 /// Status: pending | accepted | rejected
@@ -23,7 +23,7 @@ public class InstitutionTeacherLink
     [MaxLength(20)]
     public string Status { get; set; } = "pending";
 
-    /// <summary>UserId de qui a initié — le compte institution (User.InstitutionId) ou le prof.</summary>
+    /// <summary>UserId de qui a initié  le compte institution (User.InstitutionId) ou le prof.</summary>
     [Required]
     public int InitiatedBy { get; set; }
 

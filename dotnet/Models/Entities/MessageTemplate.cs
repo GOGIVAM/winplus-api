@@ -4,7 +4,7 @@ namespace Backend.Models.Entities;
 
 /// <summary>
 /// Modèle de message réutilisable (US-MSG-08, Module 7). Le texte peut contenir
-/// des variables {{NomEleve}}, {{DateSession}}, {{Matière}} — la substitution
+/// des variables {{NomEleve}}, {{DateSession}}, {{Matière}}  la substitution
 /// se fait côté client au moment de l'insertion dans le composeur.
 /// </summary>
 public class MessageTemplate

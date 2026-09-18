@@ -13,7 +13,7 @@ public record CreateWithdrawalRequest(string Operator, string Phone, decimal Amo
 /// <summary>
 /// Retrait Mobile Money du solde WinPlus (prompt_prof.md Module 7).
 /// Le frontend (RevenueOverview.tsx) appelait déjà ces routes, mais aucun
-/// contrôleur n'existait — le bouton "Retirer" ne faisait donc jamais rien de
+/// contrôleur n'existait  le bouton "Retirer" ne faisait donc jamais rien de
 /// réel (404 silencieux traité comme un succès optimiste côté UI). Corrigé
 /// ici. Comme le reste du projet (voir TutorBookingService), aucun virement
 /// Mobile Money automatisé n'existe : la demande réserve le montant sur le
@@ -39,7 +39,7 @@ public class WithdrawalsController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>Demande un retrait — réserve immédiatement le montant sur le solde.</summary>
+    /// <summary>Demande un retrait  réserve immédiatement le montant sur le solde.</summary>
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateWithdrawalRequest req)
     {

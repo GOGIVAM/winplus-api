@@ -1,5 +1,5 @@
 """
-Validation anti-hallucination (Phase 4) — implémentation allégée du cadre
+Validation anti-hallucination (Phase 4)  implémentation allégée du cadre
 RAGAS : décomposition de la réponse en affirmations atomiques, vérification
 de chacune contre les passages sources, calcul de la faithfulness. Le
 jugement est réalisé par le LLM local lui-même (Qwen3-14B), ce qui préserve

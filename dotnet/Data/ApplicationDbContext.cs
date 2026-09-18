@@ -96,7 +96,7 @@ public partial class ApplicationDbContext : DbContext
     public DbSet<ParentAlert> ParentAlerts => Set<ParentAlert>();
     public DbSet<ParentReport> ParentReports => Set<ParentReport>();
 
-    // Mode Répétiteur (Module 1 — profil et onboarding cours particuliers)
+    // Mode Répétiteur (Module 1  profil et onboarding cours particuliers)
     public DbSet<TutorProfile> TutorProfiles => Set<TutorProfile>();
     public DbSet<TutorSubject> TutorSubjects => Set<TutorSubject>();
     public DbSet<TutorLevel> TutorLevels => Set<TutorLevel>();
@@ -106,7 +106,7 @@ public partial class ApplicationDbContext : DbContext
     public DbSet<TutorAvailabilitySlot> TutorAvailabilitySlots => Set<TutorAvailabilitySlot>();
     public DbSet<TutorVerificationDocument> TutorVerificationDocuments => Set<TutorVerificationDocument>();
 
-    // Mode Répétiteur (Module 6 — réservation de séances)
+    // Mode Répétiteur (Module 6  réservation de séances)
     public DbSet<TutorBooking> TutorBookings => Set<TutorBooking>();
     public DbSet<TutorReview> TutorReviews => Set<TutorReview>();
     public DbSet<TutorRevisionSheet> TutorRevisionSheets => Set<TutorRevisionSheet>();
@@ -384,7 +384,7 @@ public partial class ApplicationDbContext : DbContext
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
-        // ── Assignment / Submission (Module 4 — Corrections) ───────────────
+        // ── Assignment / Submission (Module 4  Corrections) ───────────────
         modelBuilder.Entity<Assignment>(entity =>
         {
             entity.Property(e => e.MaxScore).HasColumnType("numeric(5,2)");
@@ -1247,7 +1247,7 @@ modelBuilder.Entity<Exam>(entity =>
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
-        // Alertes WinAI destinées aux parents (historique — calcul à la volée jusqu'ici)
+        // Alertes WinAI destinées aux parents (historique  calcul à la volée jusqu'ici)
         modelBuilder.Entity<ParentAlert>(entity =>
         {
             entity.HasKey(e => e.Id);

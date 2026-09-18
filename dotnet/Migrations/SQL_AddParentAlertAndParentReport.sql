@@ -1,7 +1,7 @@
 -- Migration: AddParentAlertAndParentReport
 -- Historique consultable des alertes WinAI et des rapports destinés aux parents.
 -- Jusqu'ici : les alertes étaient recalculées à la volée (jamais stockées) et les rapports
--- soit envoyés par email sans trace, soit renvoyés en texte brut sans persistance — ce dernier
+-- soit envoyés par email sans trace, soit renvoyés en texte brut sans persistance  ce dernier
 -- finissait par erreur dans DirectMessage faute de canal dédié (corrigé côté API séparément).
 -- Ces deux tables sont volontairement distinctes de "DirectMessages" et de "Notifications" :
 -- rôles différents, ne jamais y faire migrer ces données.

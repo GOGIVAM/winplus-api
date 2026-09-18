@@ -107,7 +107,7 @@ public class CourseGamificationService : ICourseGamificationService
                 BadgeLabel(badge), userId: userId, type: "CourseGamification");
         }
 
-        // Certificat automatique à 100% (US-3C) — le générer ici (déclenché par
+        // Certificat automatique à 100% (US-3C)  le générer ici (déclenché par
         // la complétion de la dernière leçon) est plus réactif que d'attendre un
         // job périodique ; CourseCertificateService reste idempotent si rappelé.
         if (enrollment?.ProgressPercent >= 100)

@@ -1,5 +1,5 @@
 """
-Description textuelle indexable des images/schémas embarqués — Gemini 2.5
+Description textuelle indexable des images/schémas embarqués  Gemini 2.5
 Flash, retenu plutôt que GPT-4o-mini : environ 3-4x moins cher par image
 (moins de tokens consommés par image, à tarif par token comparable),
 vérifié en ligne (voir RAG/README.md).

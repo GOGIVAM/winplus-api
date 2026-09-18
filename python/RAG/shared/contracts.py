@@ -1,7 +1,7 @@
 """
 Contrats partagés entre RAG/self_hosted et RAG/api.
 
-Les deux moteurs implémentent la même interface d'entrée/sortie — c'est ce
+Les deux moteurs implémentent la même interface d'entrée/sortie  c'est ce
 qui permet au routeur unique (RAG/router.py) de les faire cohabiter derrière
 UN SEUL endpoint, le choix du moteur n'étant qu'une variable d'environnement
 (RAG_BACKEND) plutôt qu'un branchement différent côté appelant.
@@ -55,7 +55,7 @@ class ChunkMetadata(BaseModel):
     timestamp_start: Optional[float] = None
     timestamp_end: Optional[float] = None
     # Base de connaissance PERSONNELLE (topo validé) : un chunk avec
-    # owner_user_id posé n'est retrouvable QUE pour cet utilisateur — voir
+    # owner_user_id posé n'est retrouvable QUE pour cet utilisateur  voir
     # services/rag_chat_bridge.py. None = document public (catalogue).
     owner_user_id: Optional[int] = None
     # Score composite calculé à l'ingestion (voir RAG/shared/relevance_scoring.py) :
@@ -77,7 +77,7 @@ class IngestRequest(BaseModel):
     title: str
     # URL (http/https, téléchargée), chemin local, ou vide si
     # inline_content_base64 est fourni (pièce jointe de chat, jamais passée
-    # par S3) — voir RAG/shared/file_resolver.py qui résout ce champ vers un
+    # par S3)  voir RAG/shared/file_resolver.py qui résout ce champ vers un
     # chemin local utilisable par fitz/whisper quel que soit le cas.
     file_path: str = ""
     inline_content_base64: Optional[str] = None
@@ -89,7 +89,7 @@ class IngestRequest(BaseModel):
     course_id: Optional[int] = None
     lesson_id: Optional[int] = None
     # Posé automatiquement par RAG/router.py à partir du JWT quand
-    # subject_id/course_id sont absents — jamais fourni directement par
+    # subject_id/course_id sont absents  jamais fourni directement par
     # l'appelant (un utilisateur ne doit pas pouvoir usurper owner_user_id).
     owner_user_id: Optional[int] = None
 
@@ -109,7 +109,7 @@ class IngestJobStatus(str, Enum):
 
 
 class IngestQueuedResponse(BaseModel):
-    """Réponse immédiate de POST /rag/ingest — le traitement réel (OCR,
+    """Réponse immédiate de POST /rag/ingest  le traitement réel (OCR,
     transcription, embedding, indexation) tourne en tâche d'arrière-plan
     après l'envoi de cette réponse, pour ne pas faire attendre l'appelant
     (upload d'une vidéo d'une heure, PDF scanné volumineux, etc.)."""
@@ -147,7 +147,7 @@ class RAGQueryRequest(BaseModel):
             "Filtre de métadonnées appliqué à la recherche (subject_id, "
             "course_id, status='active', etc.). Le contrôle d'accès réel "
             "(qui a le droit de voir quoi) reste de la responsabilité de "
-            "l'appelant — ce module reste agnostique du modèle de "
+            "l'appelant  ce module reste agnostique du modèle de "
             "permissions WinPlus, il applique juste le filtre reçu."
         ),
     )
@@ -155,7 +155,7 @@ class RAGQueryRequest(BaseModel):
 
 
 class RetrievedContext(BaseModel):
-    """Résultat de récupération + rerank SANS génération ni validation —
+    """Résultat de récupération + rerank SANS génération ni validation 
     utilisé par l'intégration chatbot (RAG/query_service.py), qui délègue
     la génération finale au prompt WinAI existant plutôt qu'au prompt
     générique de run_query(). `passages[i]` correspond à `citations[i]`."""

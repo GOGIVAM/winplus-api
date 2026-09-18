@@ -156,7 +156,7 @@ public class GroupsController : ControllerBase
         var group = await _db.ChatGroups.FindAsync(id);
         if (group == null) return NotFound();
         if (group.IsAnnouncementOnly && !await IsAdminAsync(id, me))
-            return StatusCode(403, new { error = "Ce groupe est un canal d'annonce — seuls les administrateurs peuvent y écrire." });
+            return StatusCode(403, new { error = "Ce groupe est un canal d'annonce  seuls les administrateurs peuvent y écrire." });
 
         if (string.IsNullOrWhiteSpace(req.Content) && string.IsNullOrWhiteSpace(req.FileUrl))
             return BadRequest(new { error = "Message vide : ajoute du texte ou une pièce jointe." });

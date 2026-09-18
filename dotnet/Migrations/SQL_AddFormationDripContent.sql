@@ -1,5 +1,5 @@
 -- Migration: AddFormationDripContent
--- prompt_prof.md Module 5B — Drip content et checkpoints vidéo (Formations)
+-- prompt_prof.md Module 5B  Drip content et checkpoints vidéo (Formations)
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 
 ALTER TABLE "CourseSections" ADD COLUMN IF NOT EXISTS "UnlockRule" VARCHAR(20) NOT NULL DEFAULT 'immediate';

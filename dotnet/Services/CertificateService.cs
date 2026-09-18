@@ -269,7 +269,7 @@ public class CertificateService : ICertificateService
 
             // Le chemin élève (ligne ~91) génère et héberge un vrai PDF sur S3 ;
             // l'émission admin se contentait jusqu'ici d'un chemin inventé
-            // (`/certificates/*.pdf`, servi par aucune route) — lien mort
+            // (`/certificates/*.pdf`, servi par aucune route)  lien mort
             // systématique. Même génération ici.
             cert.FileUrl = await GenerateAndUploadPdfAsync(cert, enrollment.User!, enrollment.Subject!, certNumber);
             await _context.SaveChangesAsync();
@@ -295,7 +295,7 @@ public class CertificateService : ICertificateService
 
     /// <summary>
     /// Null en cas d'échec plutôt qu'un chemin local inventé : aucune route ne
-    /// sert `/certificates/*.pdf`, ce faux chemin ne menait donc nulle part —
+    /// sert `/certificates/*.pdf`, ce faux chemin ne menait donc nulle part 
     /// un lien mort est pire qu'une absence de lien (le frontend doit pouvoir
     /// afficher "PDF en cours de génération" au lieu d'un 404 silencieux).
     /// `requireS3: true` : un certificat doit vivre sur S3, jamais sur le

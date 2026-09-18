@@ -8,15 +8,15 @@ namespace Backend.Models.Entities;
 /// voit ses élèves (lecture seule, via InstitutionStudents) mais ne peut pas
 /// encore les contacter. Cette demande débloque le contact, via une hiérarchie
 /// à deux étapes (corrigé après une première version "premier qui répond
-/// gagne", sans hiérarchie en cas de désaccord — voir parent_decisions_session.md) :
+/// gagne", sans hiérarchie en cas de désaccord  voir parent_decisions_session.md) :
 ///
 ///   Étape 1 (Stage="institution") : l'institution valide un fait administratif
-///   (l'enseignant lui est bien affilié) — pas un consentement. Un refus ici est
+///   (l'enseignant lui est bien affilié)  pas un consentement. Un refus ici est
 ///   immédiat et définitif ; l'élève et le parent ne sont jamais notifiés d'une
 ///   demande qui n'a pas passé ce filtre.
 ///
 ///   Étape 2 (Stage="consent") : seuls l'élève OU un parent lié (accepted)
-///   peuvent désormais répondre — l'institution ne peut plus agir. Le premier
+///   peuvent désormais répondre  l'institution ne peut plus agir. Le premier
 ///   des deux qui répond est définitif : un refus bloque l'autre (même non
 ///   encore répondu), une acceptation rend la seconde réponse sans effet.
 ///
@@ -34,7 +34,7 @@ public class TeacherStudentAccessRequest
     [Required]
     public int StudentId { get; set; }
 
-    /// <summary>Institution via laquelle le prof voyait cet élève — contexte de la demande.</summary>
+    /// <summary>Institution via laquelle le prof voyait cet élève  contexte de la demande.</summary>
     [Required]
     public int InstitutionId { get; set; }
 
@@ -47,11 +47,11 @@ public class TeacherStudentAccessRequest
     [MaxLength(20)]
     public string Stage { get; set; } = "institution";
 
-    /// <summary>UserId de l'admin institution qui a validé l'étape 1 — null tant que non franchie.</summary>
+    /// <summary>UserId de l'admin institution qui a validé l'étape 1  null tant que non franchie.</summary>
     public int? InstitutionApprovedBy { get; set; }
     public DateTime? InstitutionRespondedAt { get; set; }
 
-    /// <summary>UserId de qui a donné le consentement final (élève ou parent lié) — null tant que pending.</summary>
+    /// <summary>UserId de qui a donné le consentement final (élève ou parent lié)  null tant que pending.</summary>
     public int? RespondedBy { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

@@ -5,7 +5,7 @@ namespace Backend.Services;
 
 /// <summary>
 /// Envoie la notification d'un message direct programmé au moment défini
-/// (US-MSG, Module 7). Le message est déjà en base dès sa création — c'est la
+/// (US-MSG, Module 7). Le message est déjà en base dès sa création  c'est la
 /// visibilité côté destinataire (filtrée par date dans MessagesController) et
 /// la notification qui sont différées jusqu'à l'heure programmée.
 /// </summary>

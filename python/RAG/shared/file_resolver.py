@@ -4,14 +4,14 @@ local réel, utilisable par `fitz.open()`, `whisper`, etc.
 
 Bug réel trouvé en vérifiant le code (pas supposé) : tous les appelants
 (.NET via QueueRagIngestion, le script de backfill) passent une URL S3
-publique comme `file_path`. Or `fitz.open(pdf_path)` — utilisé partout
-dans `RAG/*/ingestion/pipeline.py` — n'accepte qu'un chemin local ou un
+publique comme `file_path`. Or `fitz.open(pdf_path)`  utilisé partout
+dans `RAG/*/ingestion/pipeline.py`  n'accepte qu'un chemin local ou un
 flux d'octets, PAS une URL http(s) : ça aurait échoué dès le premier vrai
 appel avec de vraies données. Ce module télécharge l'URL une fois vers un
 fichier temporaire avant tout traitement.
 
 Sert aussi à décoder un contenu inline en base64 (pièce jointe de chat,
-qui ne passe jamais par S3) vers ce même chemin temporaire — l'appelant
+qui ne passe jamais par S3) vers ce même chemin temporaire  l'appelant
 (process_document) n'a donc jamais besoin de savoir d'où vient le fichier.
 """
 
@@ -37,7 +37,7 @@ _DOWNLOAD_TIMEOUT_SECONDS = 60
 def resolve_local_path(request: IngestRequest) -> Iterator[str]:
     """Context manager : renvoie un chemin de fichier local valide pour la
     durée du bloc `with`, en gérant les trois cas (URL distante, chemin
-    local déjà valide, contenu inline base64) — nettoie le fichier
+    local déjà valide, contenu inline base64)  nettoie le fichier
     temporaire créé, le cas échéant, à la sortie du bloc."""
     if request.inline_content_base64:
         yield from _from_inline_base64(request)
@@ -60,7 +60,7 @@ def resolve_local_path(request: IngestRequest) -> Iterator[str]:
 def _cleanup(tmp_path: str) -> None:
     """Best-effort : sur Windows, un fichier encore ouvert par un handle
     fitz (PyMuPDF ne le ferme pas toujours explicitement avant la fin du
-    traitement) ne peut pas être supprimé (PermissionError) — trouvé en
+    traitement) ne peut pas être supprimé (PermissionError)  trouvé en
     testant réellement le cycle complet, pas supposé. Un fichier temporaire
     qui traîne est un détail de nettoyage, jamais une raison de faire
     échouer une ingestion par ailleurs réussie."""

@@ -1,4 +1,4 @@
-"""Configuration du moteur api — clés et modèles des fournisseurs tiers,
+"""Configuration du moteur api  clés et modèles des fournisseurs tiers,
 choisis pour le rapport coût/performance vérifié (voir RAG/README.md)."""
 
 import os
@@ -24,7 +24,7 @@ GROQ_WHISPER_MODEL = os.getenv("RAG_API_WHISPER_MODEL", "whisper-large-v3-turbo"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 VISION_MODEL = os.getenv("RAG_API_VISION_MODEL", "gemini-2.5-flash")
 
-# ── DeepSeek (génération — réutilise services/deepseek_client.py) ──────────
+# ── DeepSeek (génération  réutilise services/deepseek_client.py) ──────────
 # Pas de config séparée : le client existant est réutilisé tel quel.
 
 QDRANT_COLLECTION = os.getenv("RAG_API_COLLECTION", "winplus_api")

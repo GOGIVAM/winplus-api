@@ -58,7 +58,7 @@ services:
       retries: 3
       start_period: 40s
 
-  # Qdrant — base vectorielle partagée par RAG/self_hosted et RAG/api
+  # Qdrant  base vectorielle partagée par RAG/self_hosted et RAG/api
   # (modules non branchés à l'app, voir RAG/README.md et DEPLOYMENT.md §3).
   # Démarre avec le reste de la stack en local ; en production, préférer une
   # instance dédiée avec QDRANT__SERVICE__API_KEY (voir DEPLOYMENT.md).

@@ -6,7 +6,7 @@ namespace Backend.Models.Entities;
 /// "?ref=Code" partagé par l'affilié rapporte une commission sur N'IMPORTE
 /// QUEL achat effectué sur la plateforme dans la fenêtre d'attribution
 /// (AffiliateSettings.AttributionWindowDays), pas seulement sur son propre
-/// contenu — décision produit du 2026-09-11.
+/// contenu  décision produit du 2026-09-11.
 /// </summary>
 public class AffiliateAccount
 {
@@ -20,13 +20,13 @@ public class AffiliateAccount
     /// <summary>
     /// Taux de commission courant (%), recalculé périodiquement par
     /// AffiliateRateRecalculationService à partir des métriques réelles de
-    /// l'affilié (WinAI si disponible, heuristique locale en repli) — voir
+    /// l'affilié (WinAI si disponible, heuristique locale en repli)  voir
     /// AffiliateService.ComputeHeuristicRate. Ne peut jamais dépasser
     /// AffiliateSettings.CommissionRateCapPercent.
     /// </summary>
     public decimal CommissionRate { get; set; }
 
-    /// <summary>"active" ou "suspended" (fraude, abus — décision admin).</summary>
+    /// <summary>"active" ou "suspended" (fraude, abus  décision admin).</summary>
     public string Status { get; set; } = "active";
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -87,7 +87,7 @@ public class AffiliateCommission
 }
 
 /// <summary>
-/// Réglages globaux du programme d'affiliation — ligne singleton (Id = 1).
+/// Réglages globaux du programme d'affiliation  ligne singleton (Id = 1).
 /// </summary>
 public class AffiliateSettings
 {

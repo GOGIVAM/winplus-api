@@ -1,6 +1,6 @@
 """
 Détection de tampons administratifs par transformée de Hough (Phase 1,
-§1.3) — traitement d'image classique (OpenCV), sans inférence neuronale :
+§1.3)  traitement d'image classique (OpenCV), sans inférence neuronale :
 hors du débat PyTorch, au même titre que Qdrant ou rank_bm25.
 """
 

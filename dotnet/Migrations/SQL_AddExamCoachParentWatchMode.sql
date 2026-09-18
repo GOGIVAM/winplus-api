@@ -1,7 +1,7 @@
 -- Migration: AddExamCoachParentWatchMode
 -- Mode veille d'examen : un parent lié peut activer une attention renforcée
 -- sur le plan ExamCoachPlan actif de son enfant. Réutilise l'entité
--- existante (ExamCoachPlan.cs) plutôt que d'en créer une nouvelle — un seul
+-- existante (ExamCoachPlan.cs) plutôt que d'en créer une nouvelle  un seul
 -- champ nullable, ParentWatchModeActivatedAt (non null = veille active).
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 

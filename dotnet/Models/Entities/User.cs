@@ -64,13 +64,13 @@ public class User
 
     /// <summary>
     /// Matières enseignées déclarées par un professeur (Role = "teacher") à la complétion
-    /// de profil — US-PRO-02. Indépendant du mode Répétiteur (voir TutorProfile.Subjects) :
+    /// de profil  US-PRO-02. Indépendant du mode Répétiteur (voir TutorProfile.Subjects) :
     /// sert de base au profil "Professeur Catalogue" et peut préremplir l'onboarding
     /// Répétiteur si l'utilisateur active ce mode plus tard.
     /// </summary>
     public List<string> TeachingSubjects { get; set; } = new();
 
-    /// <summary>Niveaux enseignés déclarés par un professeur — US-PRO-02.</summary>
+    /// <summary>Niveaux enseignés déclarés par un professeur  US-PRO-02.</summary>
     public List<string> TeachingLevels { get; set; } = new();
 
     /// <summary>

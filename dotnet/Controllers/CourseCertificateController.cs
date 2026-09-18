@@ -22,7 +22,7 @@ public class CourseCertificateController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>Vérification publique d'un certificat par son code (US-3C) — aucune authentification requise.</summary>
+    /// <summary>Vérification publique d'un certificat par son code (US-3C)  aucune authentification requise.</summary>
     [HttpGet("api/certificats/{code}")]
     [AllowAnonymous]
     public async Task<IActionResult> Verify(string code)
@@ -47,7 +47,7 @@ public class CourseCertificateController : ControllerBase
     {
         var userId = User.GetUserId();
         var cert = await _certificates.GetMineAsync(userId, courseId);
-        if (cert == null) return NotFound(new { error = "Aucun certificat pour l'instant — termine la formation à 100%." });
+        if (cert == null) return NotFound(new { error = "Aucun certificat pour l'instant  termine la formation à 100%." });
 
         return Ok(new
         {

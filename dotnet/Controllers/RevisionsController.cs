@@ -356,12 +356,12 @@ public class RevisionsController : ControllerBase
 
     /// <summary>
     /// Génère une fiche de révision pour un enfant lié, à partir des lacunes de
-    /// l'ENFANT (ses quiz, objectifs, notes) — jamais celles du parent appelant.
+    /// l'ENFANT (ses quiz, objectifs, notes)  jamais celles du parent appelant.
     /// Réutilise GenerateAIRevisionAsync tel quel : la méthode est déjà
     /// paramétrée par userId, il suffit de lui passer childId au lieu de
     /// l'id de l'appelant (voir parent_decisions_session.md, fonctionnalité A).
     /// La fiche appartient à l'enfant (CreatedByUserId = childId), directement,
-    /// sans brouillon intermédiaire côté parent — même modèle que l'achat de
+    /// sans brouillon intermédiaire côté parent  même modèle que l'achat de
     /// contenu pour un enfant.
     /// </summary>
     [HttpPost("for-child/generate")]

@@ -5,7 +5,7 @@ namespace Backend.Data;
 
 /// <summary>
 /// Programme d'affiliation (profs/tuteurs, commission sur tout achat de la
-/// plateforme). Isolé du fichier historique — voir ApplicationDbContext.Sprints.cs
+/// plateforme). Isolé du fichier historique  voir ApplicationDbContext.Sprints.cs
 /// pour la justification du découpage en fichiers partiels.
 /// </summary>
 public partial class ApplicationDbContext

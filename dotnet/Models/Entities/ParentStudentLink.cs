@@ -4,9 +4,9 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace Backend.Models.Entities;
 
 /// <summary>
-/// Liaison parent-enfant — un parent peut avoir plusieurs enfants (étudiants).
+/// Liaison parent-enfant  un parent peut avoir plusieurs enfants (étudiants).
 /// Status: pending | accepted | rejected. Auparavant liée instantanément sans
-/// consentement de l'élève (AddChild créait la ligne directement) — corrigé
+/// consentement de l'élève (AddChild créait la ligne directement)  corrigé
 /// pour exiger l'acceptation de l'élève, comme TeacherStudentLink.
 /// </summary>
 public class ParentStudentLink

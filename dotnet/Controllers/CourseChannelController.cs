@@ -116,7 +116,7 @@ public class CourseChannelController : ControllerBase
                 .ToListAsync();
 
             var context = lessons
-                .Select(l => $"{l.Title} — {l.Description}\n{l.ArticleContent}")
+                .Select(l => $"{l.Title}  {l.Description}\n{l.ArticleContent}")
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .Take(20); // évite un prompt trop long sur une formation à beaucoup de leçons
 
@@ -165,7 +165,7 @@ public class CourseChannelController : ControllerBase
                 await _db.SaveChangesAsync();
 
                 await _ntfy.PublishAsync($"winplus-user-{course.InstructorId}", "Question signalée dans le canal",
-                    $"WinAI n'est pas assez confiant pour répondre dans « {course.Title} » — ta réponse est attendue.",
+                    $"WinAI n'est pas assez confiant pour répondre dans « {course.Title} »  ta réponse est attendue.",
                     priority: "high", userId: course.InstructorId, type: "CourseChannel");
                 return;
             }

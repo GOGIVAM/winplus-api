@@ -2,7 +2,7 @@ namespace Backend.Models.Entities;
 
 /// <summary>
 /// Alerte de similarité entre deux copies marquée "Faux positif" par le
-/// professeur (US-COR-03) — la similarité est recalculée à chaque appel
+/// professeur (US-COR-03)  la similarité est recalculée à chaque appel
 /// (pas de score stocké), seule la décision de l'ignorer est persistée.
 /// SubmissionAId est toujours le plus petit des deux id (ordre canonique),
 /// pour qu'une paire ne soit jamais stockée deux fois dans des sens opposés.

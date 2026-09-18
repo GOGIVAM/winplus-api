@@ -250,7 +250,7 @@ public class ExamCoachController : ControllerBase
         return Ok(ToWatchModeDto(plan));
     }
 
-    /// <summary>Désactivation manuelle par le parent — remet ParentWatchModeActivatedAt à null.</summary>
+    /// <summary>Désactivation manuelle par le parent  remet ParentWatchModeActivatedAt à null.</summary>
     [HttpDelete("{childId:int}/watch-mode")]
     [Authorize(Roles = "parent")]
     public async Task<IActionResult> DeactivateWatchMode(int childId)

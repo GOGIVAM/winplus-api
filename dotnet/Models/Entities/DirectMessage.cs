@@ -33,7 +33,7 @@ public class DirectMessage
     /// <summary>Non nul = message programmé, invisible du destinataire tant que l'heure n'est pas atteinte.</summary>
     public DateTime? ScheduledSendAt { get; set; }
 
-    /// <summary>false uniquement pour un message programmé pas encore "délivré" — voir ScheduledMessageDeliveryService.</summary>
+    /// <summary>false uniquement pour un message programmé pas encore "délivré"  voir ScheduledMessageDeliveryService.</summary>
     public bool ScheduledNotificationSent { get; set; } = true;
 
     public bool IsDeleted { get; set; } = false;
@@ -56,7 +56,7 @@ public class DirectMessage
     public ICollection<DirectMessageReaction> Reactions { get; set; } = new List<DirectMessageReaction>();
 }
 
-/// <summary>Réaction emoji d'un utilisateur sur un message direct — une par utilisateur et par message (toggle).</summary>
+/// <summary>Réaction emoji d'un utilisateur sur un message direct  une par utilisateur et par message (toggle).</summary>
 public class DirectMessageReaction
 {
     public int Id { get; set; }

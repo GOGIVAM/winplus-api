@@ -8,7 +8,7 @@ namespace Backend.Controllers;
 
 public class GenerateAlbumsRequest
 {
-    /// <summary>Ex: "2024-2025", "2024/2025", "24-25" — normalisé par YearlyAlbumService.</summary>
+    /// <summary>Ex: "2024-2025", "2024/2025", "24-25"  normalisé par YearlyAlbumService.</summary>
     public string SchoolYear { get; set; } = string.Empty;
 
     /// <summary>true : aperçu pour un seul parent test, rien n'est écrit en base.</summary>

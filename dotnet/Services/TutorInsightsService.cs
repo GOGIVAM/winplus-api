@@ -93,7 +93,7 @@ public class TutorInsightsService : ITutorInsightsService
             .ToListAsync();
 
         var reviewTexts = reviews.Where(r => !string.IsNullOrWhiteSpace(r.Comment))
-            .Select(r => $"{r.Rating}/5 — {r.Comment}").ToList();
+            .Select(r => $"{r.Rating}/5  {r.Comment}").ToList();
         var subjects = bookings.Where(b => !string.IsNullOrWhiteSpace(b.Subject)).Select(b => b.Subject!).Distinct().ToList();
         var avgRating = reviews.Count > 0 ? reviews.Average(r => r.Rating) : (double?)null;
 

@@ -1,5 +1,5 @@
 -- Migration: AddTutorProfileModule
--- Module 1 — Onboarding et profil répétiteur (professeur_complete.md)
+-- Module 1  Onboarding et profil répétiteur (professeur_complete.md)
 -- Equivalent EF entities: Models/Entities/TutorProfile.cs
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 

@@ -11,12 +11,12 @@ namespace Backend.Controllers;
 
 /// <summary>
 /// "Ma bibliothèque" (Module 2, US-CAT-05) : vue unifiée de tout le contenu
-/// qu'un utilisateur possède — acheté ou ajouté au cœur — organisable en
+/// qu'un utilisateur possède  acheté ou ajouté au cœur  organisable en
 /// dossiers avec notes privées. Ce n'est pas un système parallèle aux
 /// Favoris : c'est leur usage étendu. Un contenu simplement acheté apparaît
 /// ici sans être "un favori" au sens propre tant qu'il n'est pas organisé
 /// (dossier/tag/note) ; dès qu'on l'organise, on écrit dans la même table
-/// Favorite que le cœur du catalogue utilise déjà — un seul mécanisme, pas
+/// Favorite que le cœur du catalogue utilise déjà  un seul mécanisme, pas
 /// deux bibliothèques à maintenir en parallèle.
 /// </summary>
 [ApiController]

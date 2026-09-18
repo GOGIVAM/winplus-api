@@ -1,5 +1,5 @@
 -- Migration: AddDirectMessageAttachmentsReactions
--- Module 7 — Messagerie directe : pièces jointes, citation, réactions,
+-- Module 7  Messagerie directe : pièces jointes, citation, réactions,
 -- suppression, messages programmés (professeur_complete.md, 3B).
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 

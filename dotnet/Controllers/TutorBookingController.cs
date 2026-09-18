@@ -7,7 +7,7 @@ using Backend.Services;
 namespace Backend.Controllers;
 
 /// <summary>
-/// Module 6 — Réservation de séances de cours particulier (professeur_complete.md).
+/// Module 6  Réservation de séances de cours particulier (professeur_complete.md).
 /// Distinct de TutorProfileController (déclaration du profil/des disponibilités
 /// types) : ce contrôleur gère le cycle de vie réel d'une réservation datée,
 /// paiement compris.
@@ -92,7 +92,7 @@ public class TutorBookingController : ControllerBase
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
     }
 
-    /// <summary>Le répétiteur refuse une demande en attente — remboursement déclenché.</summary>
+    /// <summary>Le répétiteur refuse une demande en attente  remboursement déclenché.</summary>
     [HttpPut("{id:int}/decline")]
     public async Task<ActionResult<TutorBookingDto>> Decline(int id, [FromBody] DeclineTutorBookingRequestDto request)
     {

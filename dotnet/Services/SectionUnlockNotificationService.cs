@@ -8,7 +8,7 @@ namespace Backend.Services;
 /// Service hébergé (prompt_prof.md Module 5B) : débloque automatiquement les
 /// sections dont la condition de drip content est remplie et notifie
 /// l'élève. L'accès réel reste calculé en temps réel par
-/// <see cref="ICourseAccessService"/> à chaque requête — ce job ne fait que
+/// <see cref="ICourseAccessService"/> à chaque requête  ce job ne fait que
 /// détecter la transition verrouillé→déverrouillé pour déclencher une
 /// notification une seule fois par élève et par section.
 /// </summary>
@@ -45,7 +45,7 @@ public sealed class SectionUnlockNotificationService : BackgroundService
         var access = scope.ServiceProvider.GetRequiredService<ICourseAccessService>();
         var ntfy = scope.ServiceProvider.GetRequiredService<INtfyService>();
 
-        // Uniquement les sections avec une règle de déblocage réelle — pas la peine
+        // Uniquement les sections avec une règle de déblocage réelle  pas la peine
         // d'itérer les formations sans drip content.
         var gatedCourseIds = await db.CourseSections
             .Where(s => s.UnlockRule != "immediate")

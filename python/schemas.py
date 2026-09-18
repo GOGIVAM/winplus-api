@@ -225,7 +225,7 @@ class EnrolledSubjectRef(BaseModel):
 class EnrolledCourseRef(BaseModel):
     """Équivalent de EnrolledSubjectRef pour les formations créées par des
     enseignants (entité Course/CourseEnrollment côté .NET, distincte de
-    Subject) — nécessaire pour que le filtrage d'accès aux citations
+    Subject)  nécessaire pour que le filtrage d'accès aux citations
     (topo, point 5) fonctionne aussi pour les chunks indexés avec
     seulement `course_id` (leçons de TeacherCourseController), pas
     seulement `subject_id`."""

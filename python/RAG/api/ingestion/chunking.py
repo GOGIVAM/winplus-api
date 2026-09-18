@@ -1,5 +1,5 @@
 """Adapte le chunking partagé (RAG/shared/chunking.py) à tiktoken (agnostique
-du fournisseur — Cohere/DeepSeek n'exposent pas de tokenizer local)."""
+du fournisseur  Cohere/DeepSeek n'exposent pas de tokenizer local)."""
 
 from __future__ import annotations
 

@@ -181,11 +181,11 @@ public class PaymentService : IPaymentService
 
             // Programme d'affiliation : attribue une commission si la commande
             // porte un code de parrainage (voir Order.ReferralCode). Ne doit
-            // jamais faire échouer la confirmation de paiement elle-même —
+            // jamais faire échouer la confirmation de paiement elle-même 
             // erreurs déjà avalées à l'intérieur de RecordCommissionForOrderAsync.
             await _affiliate.RecordCommissionForOrderAsync(payment.OrderId);
 
-            // Notification push — awaité : en fire-and-forget, le DbContext (scope
+            // Notification push  awaité : en fire-and-forget, le DbContext (scope
             // requête) peut être détruit avant la fin de l'appel HTTP vers ntfy,
             // faisant échouer silencieusement PublishAsync (ObjectDisposedException
             // avalée par son propre try/catch) et perdant la notification la plus

@@ -56,7 +56,7 @@ def _assert_can_access_child(session, current_user: UserTokenData, child_id: int
                              detail="Cet enfant n'est pas lié à votre compte.")
 
 # Vocabulaire interdit dans tout texte destiné au parent (UI, IA, y compris
-# commentaires/noms de variables du code qui décrivent ces alertes) — jamais
+# commentaires/noms de variables du code qui décrivent ces alertes)  jamais
 # de cadrage clinique/diagnostique pour un signal comportemental détecté par
 # des heuristiques d'usage, pas par un professionnel de santé.
 FORBIDDEN_TERMS = ["dépression", "anxiété diagnostiquée", "trouble", "burnout", "diagnostic"]
@@ -352,7 +352,7 @@ async def get_parent_alerts(
                 })
 
         # Persistance dans ParentAlerts (historique + source du baromètre côté
-        # .NET) — ne doit jamais faire échouer la réponse JSON déjà calculée,
+        # .NET)  ne doit jamais faire échouer la réponse JSON déjà calculée,
         # d'où le try/except interne à _persist_alerts.
         if alerts:
             _persist_alerts(session, current_user.user_id, child_id, alerts)

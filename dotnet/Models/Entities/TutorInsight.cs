@@ -4,7 +4,7 @@ namespace Backend.Models.Entities;
 
 /// <summary>
 /// Fiche de révision WinAI générée par un répétiteur pour un élève donné
-/// (US-REP-11, Module 6). Une seule fiche par couple répétiteur/élève —
+/// (US-REP-11, Module 6). Une seule fiche par couple répétiteur/élève 
 /// régénérée écrase la précédente (le professeur peut la modifier avant envoi).
 /// </summary>
 public class TutorRevisionSheet

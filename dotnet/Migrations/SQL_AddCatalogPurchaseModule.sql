@@ -1,12 +1,12 @@
 -- Migration: AddCatalogPurchaseModule
--- Module 2 — Catalogue et achat de contenu (professeur_complete.md)
+-- Module 2  Catalogue et achat de contenu (professeur_complete.md)
 -- Equivalent EF entities: Subject.AuthorUserId, CourseLesson.SourceSubjectId,
 -- TeacherClassContent.cs, ConcoursEvent.Tips/FaqJson
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 
 -- ── Subject.AuthorUserId : attribution d'auteur (US-CAT-01 filtre "Auteur
 --    Vérifié", US-CAT-02 compteur d'usage). Null pour le contenu historique
---    sans auteur attribué — corrige aussi GetTeacherRevenuesAsync/GetTeacherStatsAsync
+--    sans auteur attribué  corrige aussi GetTeacherRevenuesAsync/GetTeacherStatsAsync
 --    qui sommaient les revenus de TOUTE la plateforme faute de ce lien.
 ALTER TABLE "Subjects"
     ADD COLUMN IF NOT EXISTS "AuthorUserId" INTEGER;

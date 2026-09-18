@@ -37,7 +37,7 @@ public class CourseChannelMessage
 
 /// <summary>
 /// Journal des interactions Q&amp;A WinAI par formation (US-3C, "WinAI_InteractionLog"
-/// du référentiel) — persisté côté C# plutôt que Python pour rester la seule
+/// du référentiel)  persisté côté C# plutôt que Python pour rester la seule
 /// source de vérité du schéma (même convention que le reste du projet : le
 /// service Python est un calcul sans état, jamais un propriétaire de table).
 /// </summary>

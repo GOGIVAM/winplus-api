@@ -81,7 +81,7 @@ builder.Services.AddControllers()
         // ❌ RETIRÉ: ReferenceHandler.Preserve crée des structures circulaires que le frontend ne peut pas parser
         // options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.Preserve;
         // ✅ IgnoreCycles (différent de Preserve : ne change pas la forme du JSON,
-        // n'ajoute pas de $id/$ref) — filet de sécurité pour tout endpoint qui
+        // n'ajoute pas de $id/$ref)  filet de sécurité pour tout endpoint qui
         // renvoie encore une entité EF brute avec ses navigations peuplées dans
         // les deux sens (ex. FavoritesController → Favorite.User.Favorites...
         // "A possible object cycle was detected", 500 systématique). Le vrai
@@ -164,7 +164,7 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
             pgOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
         });
     // Les entités avec soft-delete (HasQueryFilter !IsDeleted) sont l'extrémité
-    // required de nombreuses relations — comportement voulu et maîtrisé : les
+    // required de nombreuses relations  comportement voulu et maîtrisé : les
     // requêtes admin utilisent .IgnoreQueryFilters() quand elles ont besoin des
     // enregistrements supprimés. Supprimer les 49 avertissements parasites.
     options.ConfigureWarnings(w =>

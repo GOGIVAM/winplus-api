@@ -1,8 +1,8 @@
 """
-HyDE — Hypothetical Document Embeddings (Phase 3, §3.4). Comble l'écart
+HyDE  Hypothetical Document Embeddings (Phase 3, §3.4). Comble l'écart
 sémantique entre une question en langage courant et le registre du corpus :
 on génère un court passage hypothétique dans le style du corpus, et c'est
-son vecteur — pas celui de la question brute — qui sert de requête.
+son vecteur  pas celui de la question brute  qui sert de requête.
 """
 
 from __future__ import annotations

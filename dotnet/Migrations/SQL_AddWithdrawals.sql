@@ -1,5 +1,5 @@
 -- Migration: AddWithdrawals
--- prompt_prof.md Module 7 — Revenus et paiements (retrait Mobile Money)
+-- prompt_prof.md Module 7  Revenus et paiements (retrait Mobile Money)
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 
 CREATE TABLE IF NOT EXISTS "Withdrawals" (

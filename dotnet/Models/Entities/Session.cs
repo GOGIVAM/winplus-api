@@ -1,7 +1,7 @@
 namespace Backend.Models.Entities;
 
 /// <summary>
-/// Session d'enseignement en ligne — live, enregistrement ou correction
+/// Session d'enseignement en ligne  live, enregistrement ou correction
 /// (Module 5). Distincte de TutorBooking (Module 1/6, cours particulier
 /// 1-à-1) : une Session est ouverte à plusieurs élèves inscrits.
 /// </summary>
@@ -16,7 +16,7 @@ public class Session
     /// <summary>live | recording | correction (US-SES-01/02, code couleur calendrier).</summary>
     public string Type { get; set; } = "live";
 
-    /// <summary>Matière en texte libre (comme le reste du tableau de bord professeur, ex. MATIERES.id côté front) — pas de FK vers le catalogue.</summary>
+    /// <summary>Matière en texte libre (comme le reste du tableau de bord professeur, ex. MATIERES.id côté front)  pas de FK vers le catalogue.</summary>
     public string? Subject { get; set; }
 
     public string? Level { get; set; }
@@ -34,7 +34,7 @@ public class Session
 
     public decimal? PriceXaf { get; set; }
 
-    /// <summary>Lien externe (Meet/Zoom) — WinPlus n'héberge pas l'appel elle-même.</summary>
+    /// <summary>Lien externe (Meet/Zoom)  WinPlus n'héberge pas l'appel elle-même.</summary>
     public string? ExternalLink { get; set; }
 
     /// <summary>scheduled | ongoing | completed | cancelled</summary>
@@ -51,7 +51,7 @@ public class Session
     /// <summary>
     /// Transcription collée manuellement par le professeur (US-SES-04) : pas
     /// de pipeline audio/vidéo dans ce projet (le live se passe sur un lien
-    /// externe, WinPlus n'enregistre rien) — WinAI résume ce texte plutôt que
+    /// externe, WinPlus n'enregistre rien)  WinAI résume ce texte plutôt que
     /// de "transcrire" automatiquement un flux qui n'existe pas côté serveur.
     /// </summary>
     public string? TranscriptText { get; set; }

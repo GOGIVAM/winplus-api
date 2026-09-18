@@ -1,5 +1,5 @@
 """
-Reciprocal Rank Fusion (Phase 2, §2.9) — fusionne les listes ordonnées
+Reciprocal Rank Fusion (Phase 2, §2.9)  fusionne les listes ordonnées
 issues de la recherche dense et de BM25. Pure fonction, aucune dépendance ML.
 """
 

@@ -1,11 +1,11 @@
 """
-GraphRAG — graphe de connaissances pour les requêtes multi-hop (Phase 3,
+GraphRAG  graphe de connaissances pour les requêtes multi-hop (Phase 3,
 §3.7). Construit un graphe d'entités/relations pendant l'ingestion, détecte
 des communautés par l'algorithme de Leiden, et l'exploite en génération pour
 les requêtes classées COMPLEXE via un parcours BFS borné à 2 sauts.
 
 `networkx` (structure de graphe) et `python-igraph`/`leidenalg` (Leiden) sont
-des librairies d'algorithmique de graphe classique, pas des frameworks ML —
+des librairies d'algorithmique de graphe classique, pas des frameworks ML 
 même statut que Qdrant ou rank_bm25 dans l'arbitrage "PyTorch uniquement".
 """
 
@@ -20,7 +20,7 @@ from typing import Dict, List, Tuple
 import networkx as nx
 
 # Espace de noms fixe pour dériver des UUID5 déterministes à partir des
-# identifiants logiques de communauté — un point Qdrant n'accepte qu'un
+# identifiants logiques de communauté  un point Qdrant n'accepte qu'un
 # entier ou un UUID valide, mais l'upsert doit rester idempotent (même
 # communauté ré-indexée = même point écrasé, pas un doublon).
 _GRAPHRAG_NAMESPACE = uuid.UUID("5b3f6f1a-3b8e-4b7b-9c8e-2b7b7b3f6f1a")
@@ -85,7 +85,7 @@ def detect_communities(graph: nx.DiGraph) -> Dict[str, int]:
         import igraph as ig
         import leidenalg
     except ImportError:
-        logger.warning("[RAG/self_hosted/graphrag] python-igraph/leidenalg absents — communautés non calculées.")
+        logger.warning("[RAG/self_hosted/graphrag] python-igraph/leidenalg absents  communautés non calculées.")
         return {node: 0 for node in graph.nodes}
 
     node_list = list(graph.nodes)
@@ -108,7 +108,7 @@ def summarize_community(graph: nx.DiGraph, nodes: List[str]) -> str:
 
 def build_and_index_community_summaries(collection: str, graph: nx.DiGraph) -> int:
     """Détecte les communautés du graphe et indexe leur résumé comme chunks
-    `graph_summary` dans Qdrant (Phase 3, §3.7) — complète l'extraction de
+    `graph_summary` dans Qdrant (Phase 3, §3.7)  complète l'extraction de
     triples faite à l'ingestion. Recalcule et ré-indexe l'ensemble des
     résumés de communautés à chaque appel (les anciens `graph_summary` du
     même identifiant sont écrasés par upsert) : suffisant pour un corpus de
@@ -161,7 +161,7 @@ def build_and_index_community_summaries(collection: str, graph: nx.DiGraph) -> i
 
 def bfs_related_docs(graph: nx.DiGraph, entities: List[str], max_hops: int = 2) -> List[Tuple[str, str]]:
     """Retourne les paires (relation, doc_id) atteintes par parcours BFS
-    borné depuis les entités de la requête — contexte structuré fourni au
+    borné depuis les entités de la requête  contexte structuré fourni au
     reranker en complément de la recherche vectorielle."""
     results: List[Tuple[str, str]] = []
     seen = set()

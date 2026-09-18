@@ -81,7 +81,7 @@ public class TeacherCourseController : ControllerBase
     /// Détail complet d'une formation pour l'éditeur (sections + toutes les
     /// leçons, publiées ou non). Le frontend (TeacherFormations.tsx,
     /// SubjectActionModal.tsx) appelait déjà cet endpoint, mais il n'existait
-    /// pas encore — l'éditeur de formation ne pouvait jamais charger le
+    /// pas encore  l'éditeur de formation ne pouvait jamais charger le
     /// détail d'une formation existante (404 silencieux). Corrigé ici.
     /// </summary>
     [HttpGet("{id}")]
@@ -846,7 +846,7 @@ public class TeacherCourseController : ControllerBase
     /// <summary>
     /// Importe un syllabus généré (ou édité) comme structure de sections/leçons
     /// de la formation : une section par semaine, une leçon "article" reprenant
-    /// notions/activités/ressources — le professeur complète ensuite (vidéo,
+    /// notions/activités/ressources  le professeur complète ensuite (vidéo,
     /// fichiers…) depuis l'éditeur habituel.
     /// </summary>
     [HttpPost("{id}/import-syllabus")]
@@ -869,7 +869,7 @@ public class TeacherCourseController : ControllerBase
                 var section = new CourseSection
                 {
                     CourseId = id,
-                    Title = $"Semaine {week.Week} — {week.Title}",
+                    Title = $"Semaine {week.Week}  {week.Title}",
                     Position = maxPos,
                 };
                 _db.CourseSections.Add(section);

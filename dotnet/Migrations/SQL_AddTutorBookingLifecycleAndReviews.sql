@@ -1,5 +1,5 @@
 -- Migration: AddTutorBookingLifecycleAndReviews
--- Module 6 — Cycle de vie complet de la réservation (accept/refuse/expiration/
+-- Module 6  Cycle de vie complet de la réservation (accept/refuse/expiration/
 -- escrow simulé) + module Avis (professeur_complete.md, US-REP-05..08).
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 

@@ -1,5 +1,5 @@
 -- Migration: AddCourseGamificationAndCertificates
--- Module 5 — Gamification et certificats vérifiables pour les formations
+-- Module 5  Gamification et certificats vérifiables pour les formations
 -- (professeur_complete.md, 5C). Idempotent : peut être rejoué sans casser
 -- une base déjà migrée.
 

@@ -1,5 +1,5 @@
 -- Migration: AddInstitutionTeacherNetwork
--- Fusion Réseau/Mode Tuteur — affiliation prof/tuteur <-> institution (bidirectionnelle,
+-- Fusion Réseau/Mode Tuteur  affiliation prof/tuteur <-> institution (bidirectionnelle,
 -- révocable des deux côtés comme TeacherStudentLinks) + demande d'accès pour contacter
 -- un élève de l'institution vu en lecture seule (approuvable élève/institution/parent lié).
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.

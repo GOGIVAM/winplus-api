@@ -226,7 +226,7 @@ public class EnrolledSubjectDto
 
 /// <summary>
 /// Équivalent de EnrolledSubjectDto pour les formations enseignant (entité
-/// Course/CourseEnrollment, distincte de Subject) — nécessaire pour que
+/// Course/CourseEnrollment, distincte de Subject)  nécessaire pour que
 /// RAG (côté Python) puisse filtrer l'accès aux citations dont le chunk ne
 /// porte qu'un course_id (leçons de TeacherCourseController).
 /// </summary>

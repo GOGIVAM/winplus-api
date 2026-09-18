@@ -4,7 +4,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace Backend.Models.Entities;
 
 /// <summary>
-/// Copie d'un élève pour un devoir (Module 4 — Corrections). Deux origines
+/// Copie d'un élève pour un devoir (Module 4  Corrections). Deux origines
 /// possibles (<see cref="Source"/>) : l'élève l'a soumise lui-même depuis son
 /// espace, ou le professeur l'a uploadée pour lui (copie papier scannée).
 /// Porte aussi la correction elle-même (note/commentaire/brouillon) : pas de
@@ -39,7 +39,7 @@ public class Submission
 
     public string? Comment { get; set; }
 
-    /// <summary>methodological | calculation | conceptual | none — dernière analyse WinAI.</summary>
+    /// <summary>methodological | calculation | conceptual | none  dernière analyse WinAI.</summary>
     [MaxLength(30)]
     public string? ErrorType { get; set; }
 

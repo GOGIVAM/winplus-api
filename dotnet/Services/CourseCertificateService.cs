@@ -10,7 +10,7 @@ public record CourseCertificateVerificationResult(bool IsValid, string? StudentN
 public interface ICourseCertificateService
 {
     /// <summary>
-    /// Génère le certificat si l'élève a atteint 100% (US-3C) — idempotent :
+    /// Génère le certificat si l'élève a atteint 100% (US-3C)  idempotent :
     /// renvoie le certificat existant s'il y en a déjà un pour ce couple.
     /// </summary>
     Task<CourseCertificate> GenerateForCompletedCourseAsync(int userId, int courseId);

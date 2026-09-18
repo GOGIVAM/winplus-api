@@ -87,7 +87,7 @@ public class MessagesController : ControllerBase
 
     private async Task<bool> AreLinkedAsync(int userId1, int userId2)
     {
-        // 1. Parent-élève (dans les deux sens) — seulement une fois le lien
+        // 1. Parent-élève (dans les deux sens)  seulement une fois le lien
         // accepté par l'élève, pas dès l'envoi de la demande par le parent.
         if (await _db.ParentStudentLinks.AnyAsync(l =>
             l.Status == "accepted" &&
@@ -131,7 +131,7 @@ public class MessagesController : ControllerBase
             return true;
 
         // 6. Professeur ↔ élève inscrit à une de ses formations (Module 9,
-        // US-FOR-07 : la relance d'inactivité crée un DirectMessage — sans ce
+        // US-FOR-07 : la relance d'inactivité crée un DirectMessage  sans ce
         // lien, l'élève recevait le message mais ne pouvait pas y répondre).
         if (await _db.CourseEnrollments.AnyAsync(e => e.IsActive &&
             ((e.Course.InstructorId == userId1 && e.UserId == userId2) ||
@@ -140,7 +140,7 @@ public class MessagesController : ControllerBase
 
         // 7. Répétiteur actif ↔ n'importe quel élève (messagerie pré-réservation,
         // référentiel §I.C : "l'élève et le répétiteur échangent avant de
-        // confirmer" — par définition, aucune relation n'existe encore à ce
+        // confirmer"  par définition, aucune relation n'existe encore à ce
         // stade. Un profil répétiteur actif est public et bookable par
         // n'importe qui : le rendre injoignable en message contredirait le
         // bouton "Message" affiché sur sa fiche publique.
@@ -300,10 +300,10 @@ public class MessagesController : ControllerBase
                 .Where(u => participantIds.Contains(u.Id))
                 .ToDictionaryAsync(u => u.Id);
 
-            // Discriminant explicite "lien parent-enfant" — journal de bord plutôt
+            // Discriminant explicite "lien parent-enfant"  journal de bord plutôt
             // que chat (voir MessagesPage.tsx). Symétrique à dessein : que `me` soit
             // le parent ou l'enfant, la présentation calme doit être la même des
-            // deux côtés (c'est un journal partagé, pas une vue parent uniquement) —
+            // deux côtés (c'est un journal partagé, pas une vue parent uniquement) 
             // donc on vérifie les deux sens du lien, pas seulement "me est parent de".
             var linkedFamilyIds = (await _db.ParentStudentLinks
                 .AsNoTracking()
@@ -358,7 +358,7 @@ public class MessagesController : ControllerBase
         }
     }
 
-    /// <summary>Archive une conversation — pour soi uniquement, l'autre participant n'est pas affecté.</summary>
+    /// <summary>Archive une conversation  pour soi uniquement, l'autre participant n'est pas affecté.</summary>
     [HttpPost("conversations/{participantId:int}/archive")]
     public async Task<IActionResult> ArchiveConversation(int participantId)
     {
@@ -583,7 +583,7 @@ public class MessagesController : ControllerBase
             if (msg == null) return NotFound(new { error = "Message introuvable." });
             if (msg.FromUserId != me) return StatusCode(403, new { error = "Tu ne peux annuler que tes propres messages programmés." });
             if (!msg.ScheduledSendAt.HasValue || msg.ScheduledSendAt.Value <= DateTime.UtcNow)
-                return BadRequest(new { error = "Ce message n'est plus programmé — il a déjà été envoyé." });
+                return BadRequest(new { error = "Ce message n'est plus programmé  il a déjà été envoyé." });
 
             _db.DirectMessages.Remove(msg);
             await _db.SaveChangesAsync();
@@ -624,7 +624,7 @@ public class MessagesController : ControllerBase
     /// Recherche textuelle dans toutes mes conversations, avec filtres (US-MSG-09).
     /// Retourne le message trouvé et l'identité de la conversation ; le contexte
     /// (5 messages avant/après) est affiché en ouvrant la conversation ciblée
-    /// côté front plutôt que renvoyé ici — évite un aller-retour N+1 par résultat.
+    /// côté front plutôt que renvoyé ici  évite un aller-retour N+1 par résultat.
     /// </summary>
     [HttpGet("search")]
     public async Task<IActionResult> Search(

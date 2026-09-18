@@ -102,6 +102,6 @@ public sealed class TutorCoachingReportService : BackgroundService
 
         var body = await response.Content.ReadAsStringAsync(ct);
         await insights.SaveCoachingReportAsync(tutorUserId, monthLabel, body);
-        _logger.LogInformation("Coaching report saved for tutor {TutorUserId} — {Month}", tutorUserId, monthLabel);
+        _logger.LogInformation("Coaching report saved for tutor {TutorUserId}  {Month}", tutorUserId, monthLabel);
     }
 }

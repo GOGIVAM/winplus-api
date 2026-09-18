@@ -9,7 +9,7 @@ namespace Backend.Models.Entities;
 /// le répétiteur) : une réservation porte sur une date précise et suit son
 /// propre cycle de vie (paiement, confirmation, annulation). Le paiement est
 /// suivi directement ici (pas via Payment/Order, réservés au catalogue
-/// épreuves/formations — voir Order.cs) pour ne pas coupler le module
+/// épreuves/formations  voir Order.cs) pour ne pas coupler le module
 /// Répétiteur au panier/checkout existant.
 /// </summary>
 public class TutorBooking
@@ -46,7 +46,7 @@ public class TutorBooking
     [MaxLength(100)]
     public string? NotchpayReference { get; set; }
 
-    /// <summary>pending | completed | failed — miroir du statut NotchPay pour cette réservation.</summary>
+    /// <summary>pending | completed | failed  miroir du statut NotchPay pour cette réservation.</summary>
     [MaxLength(20)]
     public string PaymentStatus { get; set; } = "pending";
 
@@ -71,7 +71,7 @@ public class TutorBooking
     public DateTime? CompletedAt { get; set; }
 
     /// <summary>
-    /// Fonds crédités au solde WinPlus du répétiteur (simulation en base — le
+    /// Fonds crédités au solde WinPlus du répétiteur (simulation en base  le
     /// virement Mobile Money réel reste manuel, voir TutorBookingLifecycleService).
     /// Non nul = disponible dans TeacherService.GetSpendableBalanceAsync.
     /// </summary>

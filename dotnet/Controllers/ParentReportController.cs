@@ -13,7 +13,7 @@ public record PublishParentReportRequest(int ChildId, string Content);
 /// Historique consultable des rapports destinés à un parent (table ParentReport) :
 /// hebdomadaire automatique, à la demande d'un enseignant, capsule hebdomadaire, album annuel.
 ///
-/// Remplace l'ancien ReportsController — l'action de création vivait déjà sur
+/// Remplace l'ancien ReportsController  l'action de création vivait déjà sur
 /// POST /api/reports/parent-report (contrat déjà utilisé par le frontend, conservé ici via
 /// une route absolue) et ne faisait que journaliser en attendant cette table.
 ///
@@ -36,7 +36,7 @@ public class ParentReportController : ControllerBase
     /// <summary>
     /// Liste des rapports d'un enfant, pour le parent connecté.
     /// Route en "/child/{childId}" plutôt que "/{childId}" pour ne pas entrer en collision
-    /// avec GET /api/parent-reports/{id} (détail) — les deux routes partageraient sinon le
+    /// avec GET /api/parent-reports/{id} (détail)  les deux routes partageraient sinon le
     /// même schéma d'URL pour un paramètre de sens différent.
     /// </summary>
     [HttpGet("child/{childId:int}")]
@@ -74,7 +74,7 @@ public class ParentReportController : ControllerBase
 
     /// <summary>
     /// Capsule hebdomadaire la plus récente d'un enfant (dashboard uniquement,
-    /// jamais l'onglet Rapports — voir ReportsTabPanel.tsx côté frontend, qui
+    /// jamais l'onglet Rapports  voir ReportsTabPanel.tsx côté frontend, qui
     /// filtre déjà ReportType="CapsuleHebdo"). Pré-générée chaque lundi par
     /// WeeklyParentReportService, jamais recalculée à la demande ici.
     /// Route avant "{id:int}" : "capsule" n'est de toute façon pas un entier,
@@ -241,7 +241,7 @@ public class ParentReportController : ControllerBase
 
     /// <summary>
     /// Publie un rapport WinAI généré par un enseignant à destination des parents liés à un
-    /// élève. Route absolue conservée telle qu'utilisée par le frontend (US-MSG-10) — ne passe
+    /// élève. Route absolue conservée telle qu'utilisée par le frontend (US-MSG-10)  ne passe
     /// jamais par DirectMessage.
     /// </summary>
     [HttpPost("/api/reports/parent-report")]

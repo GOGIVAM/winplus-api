@@ -203,7 +203,7 @@ public class AuthController : ControllerBase
             );
 
             // ✅ FUSION DU PANIER: Si l'utilisateur avait un panier anonyme, le fusionner.
-            // Panier anonyme persisté en base par DeviceId (voir CartItem.cs) — la
+            // Panier anonyme persisté en base par DeviceId (voir CartItem.cs)  la
             // réassignation se fait directement en base, plus besoin de récupérer une
             // liste en mémoire puis de la vider séparément.
             if (!string.IsNullOrEmpty(request.DeviceId) && result.User?.Id > 0)

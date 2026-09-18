@@ -6,14 +6,14 @@ Déclenchement hybride PUBLIC (topo validé avec l'utilisateur) :
      (dernière entrée envoyée par le frontend à chaque changement de page).
   2. À défaut, mention explicite d'une formation inscrite dans le message
      de l'utilisateur (correspondance sur le titre).
-  3. Sinon, pas de recherche PUBLIQUE — pas de coût ni de latence ajoutée
+  3. Sinon, pas de recherche PUBLIQUE  pas de coût ni de latence ajoutée
      sur les messages qui ne portent pas sur un contenu du catalogue.
 
 Base de connaissance PERSONNELLE (décision utilisateur : "tout document
 uploadé doit servir dans la base de connaissance") : en complément du
 scope public ci-dessus, TOUJOURS interroger aussi le corpus personnel de
 l'utilisateur (pièces jointes de chat qu'il a lui-même envoyées, indexées
-avec owner_user_id — voir RAG/router.py). Peu coûteux : ce corpus est
+avec owner_user_id  voir RAG/router.py). Peu coûteux : ce corpus est
 petit par utilisateur, et beaucoup n'y auront jamais rien indexé (Qdrant
 répond alors vite, liste vide).
 
@@ -24,7 +24,7 @@ lui-même). Le filtrage se fait uniquement sur l'AFFICHAGE de la source :
 une citation n'est marquée « visible » que si son subject_id (resp.
 course_id) figure dans les formations (resp. cours) auxquels l'utilisateur
 est inscrit. Les citations personnelles (owner_user_id) sont toujours
-visibles pour leur propriétaire — c'est son propre contenu. WinAI reçoit
+visibles pour leur propriétaire  c'est son propre contenu. WinAI reçoit
 une consigne explicite de ne jamais donner de lien/référence vers une
 source non visible.
 """
@@ -121,7 +121,7 @@ def _format_context_block(
         subject_ok = citation.subject_id is None or citation.subject_id in accessible_subject_ids
         course_ok = citation.course_id is None or citation.course_id in accessible_course_ids
         visible = subject_ok and course_ok
-        tag = f"[Source citable : {citation.title}]" if visible else "[Source NON citable — accès non détenu par l'utilisateur]"
+        tag = f"[Source citable : {citation.title}]" if visible else "[Source NON citable  accès non détenu par l'utilisateur]"
         excerpt = passage.strip().replace("\n", " ")[:600]
         lines.append(f"{i}. {tag}\n{excerpt}")
     return (
@@ -132,7 +132,7 @@ def _format_context_block(
         "- Pour un extrait marqué [Source citable], tu peux nommer la formation/le document et inviter "
         "l'utilisateur à le consulter.\n"
         "- Pour un extrait marqué [Source NON citable], tu peux utiliser l'information pour répondre "
-        "mais SANS jamais nommer le document, la formation ou proposer un lien vers celui-ci — "
+        "mais SANS jamais nommer le document, la formation ou proposer un lien vers celui-ci  "
         "présente l'information comme une connaissance générale, et si l'utilisateur veut approfondir, "
         "indique qu'une formation existe sur ce thème et qu'il peut s'y abonner pour y accéder.\n"
         "- Si aucun extrait n'est pertinent, ignore ce bloc et réponds normalement."
@@ -159,7 +159,7 @@ async def build_rag_context_block(
     chaîne vide si RAG n'a rien trouvé de pertinent (ni côté public, ni
     côté personnel). Ne lève jamais d'exception : un souci RAG ne doit
     jamais empêcher WinAI de répondre normalement (dégradation silencieuse
-    par source — un échec sur l'une n'empêche pas l'autre)."""
+    par source  un échec sur l'une n'empêche pas l'autre)."""
     last_message = _extract_last_user_text(messages)
     if not last_message:
         return ""

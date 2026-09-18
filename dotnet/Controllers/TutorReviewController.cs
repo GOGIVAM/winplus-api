@@ -37,7 +37,7 @@ public class TutorReviewController : ControllerBase
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
     }
 
-    /// <summary>Signale un avis comme abusif — l'équipe WinPlus tranche.</summary>
+    /// <summary>Signale un avis comme abusif  l'équipe WinPlus tranche.</summary>
     [HttpPost("{id:int}/report")]
     [Authorize]
     public async Task<IActionResult> Report(int id, [FromBody] ReportTutorReviewRequestDto request)

@@ -1,5 +1,5 @@
 """
-Génération via DeepSeek — réutilise le client existant
+Génération via DeepSeek  réutilise le client existant
 (services/deepseek_client.py) plutôt que d'en dupliquer un, avec le même
 prompt d'ancrage strict que le moteur self_hosted.
 """

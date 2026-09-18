@@ -1,5 +1,5 @@
 -- Migration: AddChatGroups
--- Module 7 — Messagerie (professeur_complete.md), US-MSG-03
+-- Module 7  Messagerie (professeur_complete.md), US-MSG-03
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 
 CREATE TABLE IF NOT EXISTS "ChatGroups" (

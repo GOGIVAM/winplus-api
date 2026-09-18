@@ -6,10 +6,10 @@ using Microsoft.EntityFrameworkCore;
 namespace Backend.Services;
 
 /// <summary>
-/// Devoirs et corrections (Module 4 — professeur_complete.md). Une copie
+/// Devoirs et corrections (Module 4  professeur_complete.md). Une copie
 /// arrive de deux façons possibles (Submission.Source) : l'élève la soumet
 /// lui-même depuis son espace, ou le professeur l'uploade pour lui (copie
-/// papier scannée) — les deux alimentent la même file de correction.
+/// papier scannée)  les deux alimentent la même file de correction.
 /// </summary>
 public class AssignmentService : IAssignmentService
 {
@@ -207,7 +207,7 @@ public class AssignmentService : IAssignmentService
     /// Similarité algorithmique (Jaccard sur tokens normalisés), pas de LLM :
     /// détection purement textuelle, déterministe, sans coût d'appel IA pour
     /// une opération potentiellement O(n²) par devoir. Ne compare que les
-    /// copies avec du texte (Content) — les copies fichier-seul (scans PDF)
+    /// copies avec du texte (Content)  les copies fichier-seul (scans PDF)
     /// ne sont pas comparables sans extraction de texte, non disponible.
     /// </summary>
     public async Task<List<SimilarityPairDto>> GetSimilarityAsync(int teacherId, int assignmentId)
@@ -327,7 +327,7 @@ public class AssignmentService : IAssignmentService
             DaysWaiting = Math.Max(0, days),
             FileUrl = s.FileUrl,
             TextContent = s.Content,
-            // "Urgent" à partir de 48h en attente (US-COR-01) — n'a de sens que
+            // "Urgent" à partir de 48h en attente (US-COR-01)  n'a de sens que
             // pour une copie pas encore corrigée.
             Priority = s.Status != "corrected" && days >= 2 ? "high" : "normal",
             Status = s.Status,

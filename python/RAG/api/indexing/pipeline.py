@@ -1,4 +1,4 @@
-"""Vectorisation et indexation côté api — même Qdrant que self_hosted,
+"""Vectorisation et indexation côté api  même Qdrant que self_hosted,
 collection distincte (dimensions Cohere embed-v4 ≠ Qwen3-Embedding-8B)."""
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def _scope_filters(metadata) -> dict:
 
 def index_chunks(chunks: List[Chunk], previous_doc_id: str | None = None) -> List[str]:
     """Retourne d'éventuels avertissements de scoring (ex: adéquation au
-    sujet faible) — à fusionner par l'appelant avec les warnings
+    sujet faible)  à fusionner par l'appelant avec les warnings
     d'ingestion (voir RAG/router.py::_run_ingestion_job)."""
     if not chunks:
         return []
@@ -39,7 +39,7 @@ def index_chunks(chunks: List[Chunk], previous_doc_id: str | None = None) -> Lis
     if previous_doc_id:
         mark_superseded(config.QDRANT_COLLECTION, previous_doc_id, chunks[0].metadata.doc_id)
 
-    # Score de pertinence composite (topo validé) — calculé une fois par
+    # Score de pertinence composite (topo validé)  calculé une fois par
     # document (échantillon des premiers chunks), appliqué à tous ses
     # chunks. Voir RAG/shared/relevance_scoring.py pour le détail.
     first_meta = chunks[0].metadata
@@ -56,7 +56,7 @@ def index_chunks(chunks: List[Chunk], previous_doc_id: str | None = None) -> Lis
     scoring_warnings: List[str] = []
     if detail.get("topic_fit") is not None and detail["topic_fit"] < 0.3:
         msg = (
-            f"Adéquation au sujet faible ({detail['topic_fit']:.2f}) — "
+            f"Adéquation au sujet faible ({detail['topic_fit']:.2f})  "
             f"possible erreur de classement (sujet déclaré : {topic_label!r})"
         )
         scoring_warnings.append(msg)

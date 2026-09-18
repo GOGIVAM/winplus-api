@@ -1,5 +1,5 @@
 -- Migration: AddTutorInsightsModule
--- Module 6 — Cours particuliers (professeur_complete.md)
+-- Module 6  Cours particuliers (professeur_complete.md)
 -- US-REP-11 (fiche de révision élève), US-REP-12 (rapport mensuel de coaching)
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 

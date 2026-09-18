@@ -3,14 +3,14 @@ Traitement des pièces jointes envoyées directement dans un message de chat
 (à distinguer d'un upload catalogue via AdminExamsController/
 AdminLibraryController/TeacherCourseController, qui reste public). Décision
 utilisateur (topo validé) : "tout document uploadé doit servir dans la
-base de connaissance" — une pièce jointe de chat, souvent personnelle
+base de connaissance"  une pièce jointe de chat, souvent personnelle
 (devoir, brouillon), est donc toujours indexée dans la base PERSONNELLE de
 l'utilisateur (owner_user_id, voir RAG/router.py), jamais dans le corpus
 public partagé entre utilisateurs.
 
 Deux effets, en parallèle, à chaque pièce jointe binaire (PDF, docx...) :
 1. Extraction immédiate d'un aperçu texte (PDF natif, texte brut) injecté
-   dans le prompt WinAI pour répondre à CE message sans attendre — c'est
+   dans le prompt WinAI pour répondre à CE message sans attendre  c'est
    ce qui manquait avant (le fichier n'était jamais lu, juste nommé).
 2. Ingestion RAG complète en tâche de fond (OCR si le PDF est scanné,
    embeddings, indexation) pour que le contenu redevienne cherchable sur
@@ -58,7 +58,7 @@ def _guess_extension(mime_type: Optional[str], filename: Optional[str]) -> str:
 
 def _extract_quick_preview(raw_bytes: bytes, ext: str) -> Optional[str]:
     """Extraction synchrone légère pour répondre à CE message sans attendre
-    l'ingestion complète — PDF natif et texte brut seulement (pas d'OCR
+    l'ingestion complète  PDF natif et texte brut seulement (pas d'OCR
     ici : trop lent pour rester synchrone, voir l'ingestion de fond)."""
     if ext == ".pdf":
         try:
@@ -80,7 +80,7 @@ def _extract_quick_preview(raw_bytes: bytes, ext: str) -> Optional[str]:
 
 def _prepare(data_url_or_base64: str, filename: Optional[str], user_id: int) -> tuple[str, Optional[object]]:
     """Partie 100% synchrone (décodage + extraction native, potentiellement
-    coûteuse en CPU) — SANS aucun appel asyncio, pour pouvoir tourner en
+    coûteuse en CPU)  SANS aucun appel asyncio, pour pouvoir tourner en
     toute sécurité dans un threadpool (voir process_chat_attachment_async).
     Renvoie (texte_pour_le_prompt, IngestRequest_ou_None à ingérer)."""
     from RAG.shared.contracts import IngestRequest
@@ -92,7 +92,7 @@ def _prepare(data_url_or_base64: str, filename: Optional[str], user_id: int) -> 
 
         ext = _guess_extension(mime_type, filename)
         # Hash du contenu (pas un uuid) : si le même fichier est renvoyé
-        # deux fois, l'ingestion re-déclenchée réutilise le même doc_id —
+        # deux fois, l'ingestion re-déclenchée réutilise le même doc_id 
         # la supersession (RAG/router.py) évite un doublon dans le corpus
         # personnel plutôt que de l'indexer indéfiniment à chaque envoi.
         content_hash = hashlib.sha256(raw_bytes).hexdigest()[:16]
@@ -111,7 +111,7 @@ def _prepare(data_url_or_base64: str, filename: Optional[str], user_id: int) -> 
             text = f"[Contenu du fichier joint « {name} »]\n{preview}"
         else:
             text = (
-                f"[Pièce jointe « {name} » reçue — traitement en cours (une lecture optique peut être "
+                f"[Pièce jointe « {name} » reçue  traitement en cours (une lecture optique peut être "
                 "nécessaire pour un document scanné). Réponds à l'utilisateur avec ce que tu sais déjà, "
                 "et indique-lui qu'il peut reposer sa question dans un instant une fois le document "
                 "analysé, ou recopier directement le passage qui l'intéresse pour une réponse immédiate.]"
@@ -119,7 +119,7 @@ def _prepare(data_url_or_base64: str, filename: Optional[str], user_id: int) -> 
         return text, ingest_request
     except Exception as e:
         logger.warning(f"[Attachment] Traitement de la pièce jointe échoué : {e}")
-        return f"[Pièce jointe : {name} — contenu illisible.]", None
+        return f"[Pièce jointe : {name}  contenu illisible.]", None
 
 
 async def process_chat_attachment_async(data_url_or_base64: str, filename: Optional[str], user_id: int) -> str:
@@ -127,7 +127,7 @@ async def process_chat_attachment_async(data_url_or_base64: str, filename: Optio
     pas l'event loop sur un gros PDF), puis planifie l'ingestion RAG
     complète en tâche de fond (fire-and-forget, ne retarde jamais la
     réponse au message en cours) depuis le thread de la boucle d'événements
-    — `asyncio.create_task` exige d'y être appelé, d'où la séparation
+     `asyncio.create_task` exige d'y être appelé, d'où la séparation
     stricte avec `_prepare` (qui, lui, ne doit JAMAIS appeler asyncio)."""
     from starlette.concurrency import run_in_threadpool
 

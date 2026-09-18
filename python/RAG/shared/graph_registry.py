@@ -1,6 +1,6 @@
 """
 Persistance du graphe de connaissances GraphRAG entre les appels d'ingestion
-et de requête — même principe que BM25Registry : un graphe par collection,
+et de requête  même principe que BM25Registry : un graphe par collection,
 sérialisé sur disque (pickle) pour survivre aux redémarrages.
 """
 

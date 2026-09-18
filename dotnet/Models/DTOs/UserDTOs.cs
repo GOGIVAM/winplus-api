@@ -11,17 +11,17 @@ public class UpdateProfileRequest
     [MaxLength(100)] public string? Level { get; set; }
     [MaxLength(100)] public string? City { get; set; }
     [MaxLength(50)]  public string? LearningStyle { get; set; }
-    /// <summary>"fr" ou "en" — langue préférée (UI + emails transactionnels).</summary>
+    /// <summary>"fr" ou "en"  langue préférée (UI + emails transactionnels).</summary>
     [MaxLength(5)]   public string? Locale { get; set; }
 
-    /// <summary>Onboarding élève — filière/série (US CompleteProfile).</summary>
+    /// <summary>Onboarding élève  filière/série (US CompleteProfile).</summary>
     [MaxLength(150)] public string? Specialization { get; set; }
-    /// <summary>Onboarding élève — examen ou concours visé.</summary>
+    /// <summary>Onboarding élève  examen ou concours visé.</summary>
     [MaxLength(150)] public string? TargetExam { get; set; }
 
-    /// <summary>Onboarding professeur — matières enseignées (US-PRO-02). Null = inchangé.</summary>
+    /// <summary>Onboarding professeur  matières enseignées (US-PRO-02). Null = inchangé.</summary>
     public List<string>? TeachingSubjects { get; set; }
-    /// <summary>Onboarding professeur — niveaux enseignés (US-PRO-02). Null = inchangé.</summary>
+    /// <summary>Onboarding professeur  niveaux enseignés (US-PRO-02). Null = inchangé.</summary>
     public List<string>? TeachingLevels { get; set; }
 }
 

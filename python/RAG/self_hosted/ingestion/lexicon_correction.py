@@ -1,11 +1,11 @@
 """
-Post-correction OCR par lexique métier (Phase 1, §1.5) — corrige les
+Post-correction OCR par lexique métier (Phase 1, §1.5)  corrige les
 substitutions de caractères statistiquement prévisibles sur les termes
 techniques absents des corpus d'entraînement des moteurs OCR/ASR (sigles
 d'examens, noms de matières, vocabulaire pédagogique camerounais : BEPC,
 Probatoire, ENSP, FMSB, ENAM...).
 
-`rapidfuzz` calcule la distance de Levenshtein normalisée — c'est un
+`rapidfuzz` calcule la distance de Levenshtein normalisée  c'est un
 utilitaire de comparaison de chaînes, pas un framework ML, au même titre que
 rank_bm25 ou Qdrant.
 """
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 _WORD_RE = re.compile(r"\b[\wÀ-ÿ]+\b", re.UNICODE)
 
-# Lexique de repli si le fichier n'existe pas encore — à enrichir par
+# Lexique de repli si le fichier n'existe pas encore  à enrichir par
 # extraction semi-automatique sur un échantillon du corpus WinPlus (Phase 0).
 _DEFAULT_LEXICON = [
     "BEPC", "Probatoire", "Baccalauréat", "BTS", "Licence", "Master",
@@ -42,7 +42,7 @@ def _load_lexicon() -> List[str]:
             terms = [line.strip() for line in f if line.strip()]
         if terms:
             return terms
-    logger.warning(f"[RAG/self_hosted] Lexique introuvable ({config.LEXICON_PATH}) — repli sur le lexique par défaut.")
+    logger.warning(f"[RAG/self_hosted] Lexique introuvable ({config.LEXICON_PATH})  repli sur le lexique par défaut.")
     return _DEFAULT_LEXICON
 
 

@@ -1,5 +1,5 @@
 """
-Évaluateur de complexité (Phase 3, §3.2) — décide si une requête est SIMPLE
+Évaluateur de complexité (Phase 3, §3.2)  décide si une requête est SIMPLE
 (passage unique) ou COMPLEXE (multi-hop) avant de choisir le modèle de
 génération. Heuristique légère, sans appel modèle : connecteurs multi-hop et
 nombre d'entités distinctes dans la requête.

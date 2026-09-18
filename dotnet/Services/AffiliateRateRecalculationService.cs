@@ -2,7 +2,7 @@ namespace Backend.Services;
 
 /// <summary>
 /// Recalcule le 1er de chaque mois le taux de commission de chaque affilié
-/// actif (WinAI si disponible, heuristique locale en repli — voir
+/// actif (WinAI si disponible, heuristique locale en repli  voir
 /// AffiliateService.RecalculateAllRatesAsync). Même mécanique de
 /// planification que TutorCoachingReportService/MonthlyInstitutionReportService.
 /// </summary>

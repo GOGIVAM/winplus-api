@@ -7,7 +7,7 @@ namespace Backend.Models.Entities;
 /// Historique consultable des rapports destinés à un parent (hebdomadaire automatique, à la demande
 /// d'un enseignant, capsule hebdomadaire, album de fin d'année). Jusqu'ici ces rapports étaient soit
 /// envoyés uniquement par email sans trace (WeeklyParentReportService), soit renvoyés en texte brut
-/// à l'appelant sans persistance (rapport à la demande) — et ce dernier finissait par erreur dans
+/// à l'appelant sans persistance (rapport à la demande)  et ce dernier finissait par erreur dans
 /// DirectMessage faute de canal dédié. Cette table les regroupe, distincte de DirectMessage et de
 /// Notification (rôles différents, ne pas fusionner).
 ///
@@ -15,7 +15,7 @@ namespace Backend.Models.Entities;
 /// EmitterType : "System" | "Teacher"
 ///
 /// "Portefeuille" (MonthlyPortfolioService) : portrait stable de l'apprenant,
-/// recalculé une fois par mois — jamais de score ni de comparaison entre
+/// recalculé une fois par mois  jamais de score ni de comparaison entre
 /// enfants. Content contient un JSON {"regularite","autonomie","curiosite"}
 /// (trois textes descriptifs), pas de texte libre comme pour "ALaDemande".
 /// </summary>

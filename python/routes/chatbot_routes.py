@@ -92,7 +92,7 @@ def _text_similarity(a: str, b: str) -> float:
 def _load_user_memories(user_id: int, current_message: str = "") -> list:
     """Charge les mémoires WinAI persistantes pour un utilisateur, en
     priorisant celles liées au sujet de la conversation en cours plutôt
-    que la simple récence — sinon une lacune vieille de plusieurs mois
+    que la simple récence  sinon une lacune vieille de plusieurs mois
     s'affiche même quand l'utilisateur parle d'une tout autre matière
     aujourd'hui. Repli sur la récence si le message ne donne aucun signal
     de recouvrement (comportement inchangé dans ce cas)."""
@@ -262,7 +262,7 @@ def _extract_and_save_memories(user_id: int, assistant_content: str, session) ->
                 continue
             # Upsert sémantique : une reformulation proche de la même lacune
             # ("Difficulté avec les limites" vs "A du mal avec les limites")
-            # ne doit pas créer un doublon — comparaison par similarité de
+            # ne doit pas créer un doublon  comparaison par similarité de
             # texte, pas par égalité stricte (trop fragile face aux
             # reformulations naturelles de DeepSeek d'un appel à l'autre).
             same_type = session.query(UserAIMemory).filter(
@@ -287,7 +287,7 @@ def _extract_and_save_memories(user_id: int, assistant_content: str, session) ->
                 ))
 
             # Péremption des lacunes résolues : une notion qui devient
-            # "comprise" n'est plus une difficulté actuelle — supprime les
+            # "comprise" n'est plus une difficulté actuelle  supprime les
             # struggling_topics correspondants plutôt que de laisser
             # cohabiter indéfiniment une lacune et sa version désormais acquise.
             if mtype == "understood_topics":
@@ -309,7 +309,7 @@ def _extract_and_save_memories(user_id: int, assistant_content: str, session) ->
 
 
 def _extract_memories_background(user_id: int, assistant_content: str) -> None:
-    """Ouvre sa propre session DB — appelée en tâche de fond (voir chat()),
+    """Ouvre sa propre session DB  appelée en tâche de fond (voir chat()),
     ne peut pas réutiliser une session déjà fermée après la réponse HTTP."""
     db = Database()
     session = db.SessionLocal()
@@ -378,7 +378,7 @@ async def format_messages_for_deepseek(messages: List[ChatMessage], user_id: Opt
 
     Args:
         messages: Liste de messages avec role, content, attachments
-        user_id: requis pour traiter les pièces jointes de type fichier —
+        user_id: requis pour traiter les pièces jointes de type fichier 
             voir services/attachment_processor.py (extraction + ingestion
             RAG personnelle). Sans user_id, les fichiers sont juste nommés
             comme avant (comportement de repli, jamais d'exception).
@@ -402,7 +402,7 @@ async def format_messages_for_deepseek(messages: List[ChatMessage], user_id: Opt
                     attachment_descriptions.append(f"[Équation: {att.data}]")
                 elif att.data and user_id is not None:
                     # Fichier binaire (PDF, etc.) : extraction immédiate +
-                    # ingestion RAG personnelle en tâche de fond — voir
+                    # ingestion RAG personnelle en tâche de fond  voir
                     # services/attachment_processor.py. C'était auparavant
                     # un simple "[Fichier: nom.pdf]" jamais lu.
                     attachment_descriptions.append(
@@ -493,7 +493,7 @@ async def chat(
         # RAG (voir services/rag_chat_bridge.py) : ajoute du contexte public si
         # la question porte sur une formation identifiable (page consultée ou
         # mention explicite), et TOUJOURS le contexte personnel de l'utilisateur
-        # (ses propres pièces jointes déjà indexées) — dégradation silencieuse
+        # (ses propres pièces jointes déjà indexées)  dégradation silencieuse
         # en cas d'échec/timeout, ne casse jamais le comportement WinAI existant.
         rag_block = await build_rag_context_block(chat_request.user_context, formatted_messages, current_user.user_id)
         if rag_block:
@@ -516,7 +516,7 @@ async def chat(
         logger.info(f"Chat response: success={result.get('success')}, tokens={result.get('tokens_used')}")
 
         # Mémoire WinAI (voir _extract_and_save_memories) : n'était déclenchée
-        # que dans stream_chat() — jamais ici, alors que /chat est le chemin
+        # que dans stream_chat()  jamais ici, alors que /chat est le chemin
         # réellement utilisé par le frontend aujourd'hui (useChatbot.ts). En
         # tâche de fond : ne retarde jamais la réponse HTTP pour un coût
         # supplémentaire (appel DeepSeek dédié à l'extraction).

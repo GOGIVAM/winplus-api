@@ -8,7 +8,7 @@ using Backend.Services;
 namespace Backend.Controllers;
 
 /// <summary>
-/// Module 1 — Onboarding et profil répétiteur (professeur_complete.md).
+/// Module 1  Onboarding et profil répétiteur (professeur_complete.md).
 /// Gère le profil "Mode Répétiteur" d'un compte Professeur : matières,
 /// niveaux, tarifs, disponibilités, vérification de diplôme. Distinct du
 /// mode "Professeur Catalogue" (TeacherController) ; les deux coexistent sur
@@ -45,7 +45,7 @@ public class TutorProfileController : ControllerBase
     /// <summary>
     /// Téléversement direct du diplôme/relevé (PDF ou photo scannée). Avant ceci,
     /// le champ "diplôme" du step 5 exigeait de coller l'URL d'un document déjà
-    /// hébergé ailleurs — inutilisable en pratique (TC-PRO-06/07/08).
+    /// hébergé ailleurs  inutilisable en pratique (TC-PRO-06/07/08).
     /// </summary>
     [HttpPost("uploads/document")]
     [RequestSizeLimit(MaxDocumentBytes + 1024)]
@@ -172,7 +172,7 @@ public class TutorProfileController : ControllerBase
     public async Task<ActionResult<TutorProfileCompletionDto>> GetCompletion()
         => Ok(await _service.GetCompletionAsync(User.GetUserId()));
 
-    /// <summary>Active le profil (visible dans la recherche élève) — fin du Workflow 1.</summary>
+    /// <summary>Active le profil (visible dans la recherche élève)  fin du Workflow 1.</summary>
     [HttpPost("me/activate")]
     public async Task<ActionResult<TutorProfileDto>> Activate()
     {
@@ -211,7 +211,7 @@ public class TutorProfileController : ControllerBase
         }
     }
 
-    /// <summary>Fiche publique d'un répétiteur (US-10, côté élève) — 404 si non actif.</summary>
+    /// <summary>Fiche publique d'un répétiteur (US-10, côté élève)  404 si non actif.</summary>
     [HttpGet("{userId:int}")]
     [AllowAnonymous]
     public async Task<ActionResult<TutorProfileDto>> GetPublic(int userId)
@@ -220,12 +220,12 @@ public class TutorProfileController : ControllerBase
         return profile == null ? NotFound(new { message = "Profil répétiteur introuvable ou non actif." }) : Ok(profile);
     }
 
-    /// <summary>WinAI — suggestion de tarif horaire (US-PRO-05/US-PRO-07).</summary>
+    /// <summary>WinAI  suggestion de tarif horaire (US-PRO-05/US-PRO-07).</summary>
     [HttpPost("me/suggest-rate")]
     public Task<IActionResult> SuggestRate([FromBody] object body, CancellationToken ct)
         => ProxyToWinAI("/api/teacher/suggest-tutor-rate", body, ct);
 
-    /// <summary>WinAI — analyse et suggestions d'optimisation du profil (US-PRO-04).</summary>
+    /// <summary>WinAI  analyse et suggestions d'optimisation du profil (US-PRO-04).</summary>
     [HttpPost("me/ai-analysis")]
     public Task<IActionResult> AnalyzeProfile([FromBody] object body, CancellationToken ct)
         => ProxyToWinAI("/api/teacher/analyze-tutor-profile", body, ct);

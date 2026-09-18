@@ -1,5 +1,5 @@
 -- Migration: AddCourseInactivityDetection
--- professeur_complete.md Module 9 — Formations structurées, US-FOR-07
+-- professeur_complete.md Module 9  Formations structurées, US-FOR-07
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 
 ALTER TABLE "Courses" ADD COLUMN IF NOT EXISTS "InactivityThresholdDays" INTEGER NOT NULL DEFAULT 7;

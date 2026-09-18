@@ -1,5 +1,5 @@
 """
-Segmentation en chunks (Phase 1, §1.6) — stratégie de double granularité
+Segmentation en chunks (Phase 1, §1.6)  stratégie de double granularité
 (parent-child chunking) + semantic chunking pour les documents structurés.
 
 Agnostique du tokenizer : on injecte une fonction de comptage de tokens
@@ -102,7 +102,7 @@ def semantic_chunk_pairs(
     page: Optional[int] = None,
 ) -> List[ChunkPair]:
     """Découpage sur les frontières structurelles du document (articles,
-    chapitres, exercices...) plutôt que sur des fenêtres fixes — utilisé pour
+    chapitres, exercices...) plutôt que sur des fenêtres fixes  utilisé pour
     les documents dont la structure garantit la complétude sémantique de
     chaque section (Phase 1 §1.6)."""
     lines = text.splitlines()

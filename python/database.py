@@ -59,7 +59,7 @@ class Exam(Base):
     Year = Column(Integer, nullable=False)
     Session = Column(String(100))
     Level = Column(String(100))
-    # Colonne réelle "Duration" côté .NET ([Column("Duration")] sur Exam.cs) —
+    # Colonne réelle "Duration" côté .NET ([Column("Duration")] sur Exam.cs) 
     # le nom Python DurationMinutes est gardé pour la lisibilité du code, mais
     # doit être mappé explicitement, sinon SQLAlchemy cherche une colonne
     # "DurationMinutes" qui n'existe pas en base (UndefinedColumn).
@@ -200,7 +200,7 @@ class QuizAttempt(Base):
     __tablename__ = 'QuizAttempts'
 
     # Pas de colonne "TotalQuestions" : elle n'existe pas sur la vraie table
-    # (voir Models/Entities/Quiz.cs côté .NET — seul QuestionCount existe, sur
+    # (voir Models/Entities/Quiz.cs côté .NET  seul QuestionCount existe, sur
     # Quizzes, pas sur QuizAttempts). Un ancien modèle l'inventait, ce qui
     # faisait échouer TOUTE requête sur QuizAttempt (UndefinedColumn), y
     # compris celles qui n'utilisaient même pas ce champ.

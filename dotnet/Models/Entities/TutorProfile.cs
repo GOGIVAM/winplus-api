@@ -4,11 +4,11 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace Backend.Models.Entities;
 
 /// <summary>
-/// Profil "Mode Répétiteur" d'un professeur — cours particuliers, distinct du
+/// Profil "Mode Répétiteur" d'un professeur  cours particuliers, distinct du
 /// mode "Professeur Catalogue" (publication d'épreuves/formations). Un même
 /// compte User (Role = "teacher") peut avoir les deux modes actifs en même
 /// temps ; ce profil n'existe que si l'utilisateur a activé le mode Répétiteur
-/// au moins une fois (voir Workflow 1 — Onboarding Répétiteur).
+/// au moins une fois (voir Workflow 1  Onboarding Répétiteur).
 /// </summary>
 public class TutorProfile
 {
@@ -16,7 +16,7 @@ public class TutorProfile
 
     public int UserId { get; set; }
 
-    /// <summary>Titre libre : "Prof de Maths — Terminale C/D".</summary>
+    /// <summary>Titre libre : "Prof de Maths  Terminale C/D".</summary>
     [MaxLength(150)]
     public string? Title { get; set; }
 

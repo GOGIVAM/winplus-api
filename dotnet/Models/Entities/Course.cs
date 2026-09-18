@@ -87,7 +87,7 @@ public class CourseSection
     /// Score minimum (0-100) requis sur le quiz de la section précédente pour
     /// débloquer celle-ci (règle "min_score"). Sans quiz sur la section
     /// précédente, la règle ne peut pas s'appliquer et la section reste
-    /// débloquée par défaut — voir CoursePlayerController.ComputeSectionAccess.
+    /// débloquée par défaut  voir CoursePlayerController.ComputeSectionAccess.
     /// </summary>
     public int? MinScore { get; set; }
 
@@ -128,7 +128,7 @@ public class CourseLesson
     /// { timestampMs, question, options[], bonneReponseIndex }. Sérialisé/
     /// désérialisé côté contrôleur (pas de colonne JSON typée EF ici, cohérent
     /// avec Tags/Requirements sur Course qui restent des List&lt;string&gt; côté
-    /// C# mappées en JSON par ailleurs) — voir CheckpointDto.
+    /// C# mappées en JSON par ailleurs)  voir CheckpointDto.
     /// </summary>
     public string? CheckpointsJson { get; set; }
 }
@@ -166,7 +166,7 @@ public class LessonProgress
 
 /// <summary>
 /// Trace qu'une notification "section débloquée" a déjà été envoyée pour un
-/// couple (élève, section) — évite les doublons puisque SectionUnlockNotificationService
+/// couple (élève, section)  évite les doublons puisque SectionUnlockNotificationService
 /// tourne périodiquement et réévalue l'accès à chaque passage.
 /// </summary>
 public class SectionUnlockNotification

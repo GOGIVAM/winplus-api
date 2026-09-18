@@ -425,7 +425,7 @@ public class ChatbotController : ControllerBase
     /// aperçu texte immédiat ET planifie l'ingestion complète en tâche de
     /// fond dans la base de connaissance PERSONNELLE de l'utilisateur.
     /// Avant : un PDF, même natif et parfaitement lisible, recevait
-    /// toujours "contenu non extrait" — jamais lu.
+    /// toujours "contenu non extrait"  jamais lu.
     /// </summary>
     private async Task<string> DescribeDocumentAsync(StreamAttachment att)
     {
@@ -604,7 +604,7 @@ public class ChatbotController : ControllerBase
         }).ToList();
 
         // Profil réel (niveau + inscriptions), recalculé en direct à chaque
-        // message — jamais depuis ChatbotContext (table de synchronisation
+        // message  jamais depuis ChatbotContext (table de synchronisation
         // jamais alimentée en pratique par le frontend, voir
         // IChatbotService.GetLiveProfileContextAsync). Absent auparavant sur
         // ce chemin streaming (seul force_language était transmis), ce qui

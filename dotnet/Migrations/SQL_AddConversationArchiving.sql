@@ -1,6 +1,6 @@
 -- Migration: AddConversationArchiving
 -- Audit complet messagerie vs professeur_complete.md : "Swipe gauche →
--- archiver" (§ UX Messagerie mobile) — seule fonctionnalité de messagerie
+-- archiver" (§ UX Messagerie mobile)  seule fonctionnalité de messagerie
 -- confirmée absente sur les ~15 attendues. Idempotent.
 
 CREATE TABLE IF NOT EXISTS "ArchivedConversations" (

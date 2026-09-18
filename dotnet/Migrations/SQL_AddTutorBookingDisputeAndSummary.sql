@@ -1,5 +1,5 @@
 -- Migration: AddTutorBookingDisputeAndSummary
--- Module 6 — Cours particuliers (professeur_complete.md)
+-- Module 6  Cours particuliers (professeur_complete.md)
 -- US-REP-07 (compte-rendu WinAI), US-REP-09 (résolution de litige), US-REP-10 (matière par réservation)
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 

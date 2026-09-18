@@ -1729,7 +1729,7 @@ public class AdminController : ControllerBase
         var email = doc.TutorProfile?.User?.Email;
         if (!string.IsNullOrEmpty(email))
         {
-            _ = _email.SendGenericEmailAsync(email, "Diplôme vérifié — WinPlus",
+            _ = _email.SendGenericEmailAsync(email, "Diplôme vérifié  WinPlus",
                 "<p>Bonne nouvelle : ton diplôme a été validé par l'équipe WinPlus. " +
                 "Le badge « Vérifié Diplôme » est maintenant visible sur ton profil répétiteur.</p>");
         }
@@ -1756,7 +1756,7 @@ public class AdminController : ControllerBase
         var email = doc.TutorProfile?.User?.Email;
         if (!string.IsNullOrEmpty(email))
         {
-            _ = _email.SendGenericEmailAsync(email, "Diplôme non validé — WinPlus",
+            _ = _email.SendGenericEmailAsync(email, "Diplôme non validé  WinPlus",
                 $"<p>Ton document n'a pas pu être validé : <strong>{doc.RejectionReason}</strong>. " +
                 "Tu peux déposer un nouveau document depuis ton profil répétiteur.</p>");
         }

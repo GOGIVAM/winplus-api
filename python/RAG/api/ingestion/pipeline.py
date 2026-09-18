@@ -1,5 +1,5 @@
 """
-Orchestration de l'ingestion côté api — PDF (natif ou scanné via Mistral
+Orchestration de l'ingestion côté api  PDF (natif ou scanné via Mistral
 OCR), images embarquées (vision Gemini 2.5 Flash), et vidéos de formation
 (transcription Groq Whisper) : c'est ce dernier point qui répond à la
 demande initiale d'ingérer le contenu des vidéos de cours.

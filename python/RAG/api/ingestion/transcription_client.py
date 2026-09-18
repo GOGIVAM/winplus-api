@@ -1,5 +1,5 @@
 """
-Transcription des vidéos de formation via Groq Whisper (large-v3-turbo) —
+Transcription des vidéos de formation via Groq Whisper (large-v3-turbo) 
 le plus économique et le plus rapide des fournisseurs vérifiés (voir
 RAG/README.md). Extraction audio préalable par ffmpeg.
 """
@@ -56,7 +56,7 @@ def transcribe_video(video_path: str) -> List[TranscriptSegment]:
             model=config.GROQ_WHISPER_MODEL,
             response_format="verbose_json",
             # Sans timestamp_granularities, l'API ne garantit pas de renvoyer
-            # les segments horodatés (vérifié sur la doc officielle Groq) —
+            # les segments horodatés (vérifié sur la doc officielle Groq) 
             # or c'est précisément ce dont on a besoin pour citer "à 12:34".
             timestamp_granularities=["segment"],
             language="fr",
@@ -73,7 +73,7 @@ def transcribe_video(video_path: str) -> List[TranscriptSegment]:
 
 def _field(obj, name: str):
     """Le SDK Groq peut renvoyer les segments verbose_json comme dicts bruts
-    ou comme attributs d'un modèle Pydantic selon la version — non vérifiable
+    ou comme attributs d'un modèle Pydantic selon la version  non vérifiable
     sans appel réel à l'API, donc on gère les deux plutôt que de parier."""
     if isinstance(obj, dict):
         return obj.get(name)

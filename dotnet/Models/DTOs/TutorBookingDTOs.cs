@@ -12,7 +12,7 @@ public class CreateTutorBookingRequestDto
     public string Mode { get; set; } = "online";
     /// <summary>Numéro Mobile Money pour le paiement NotchPay.</summary>
     public string Phone { get; set; } = null!;
-    /// <summary>Matière souhaitée (facultatif — utilisé pour la ventilation des revenus, US-REP-10).</summary>
+    /// <summary>Matière souhaitée (facultatif  utilisé pour la ventilation des revenus, US-REP-10).</summary>
     public string? Subject { get; set; }
 }
 
@@ -42,7 +42,7 @@ public class TutorBookingDto
     public DateTime? DisputeResolvedAt { get; set; }
     public string? Subject { get; set; }
     public string? SummaryText { get; set; }
-    /// <summary>true si l'heure de fin de la séance est passée — active "Marquer effectuée" côté répétiteur.</summary>
+    /// <summary>true si l'heure de fin de la séance est passée  active "Marquer effectuée" côté répétiteur.</summary>
     public bool CanMarkCompleted { get; set; }
     /// <summary>true si encore dans la fenêtre de contestation de 2h côté élève.</summary>
     public bool CanDispute { get; set; }
@@ -110,6 +110,6 @@ public class TutorAvailabilityOccurrenceDto
     public string StartTime { get; set; } = null!;
     /// <summary>Durées (en minutes) réservables depuis ce point de départ sans dépasser la fenêtre ni chevaucher une réservation existante. Vide = occurrence non affichée par GetAvailabilityCalendarAsync (jamais vide dans la réponse).</summary>
     public List<int> AvailableDurationsMinutes { get; set; } = new();
-    /// <summary>false si le préavis minimum n'est pas respecté, ou si le plafond hebdo du répétiteur est atteint — l'occurrence reste listée mais non cliquable.</summary>
+    /// <summary>false si le préavis minimum n'est pas respecté, ou si le plafond hebdo du répétiteur est atteint  l'occurrence reste listée mais non cliquable.</summary>
     public bool IsBookable { get; set; }
 }

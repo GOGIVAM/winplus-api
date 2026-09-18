@@ -1,5 +1,5 @@
 -- Migration: AddCorrectionsModule
--- Module 4 — Corrections (professeur_complete.md)
+-- Module 4  Corrections (professeur_complete.md)
 -- Equivalent EF entities: Assignment.cs, Submission.cs, SubmissionSimilarityDismissal.cs
 -- Idempotent : peut être rejoué sans casser une base déjà migrée.
 

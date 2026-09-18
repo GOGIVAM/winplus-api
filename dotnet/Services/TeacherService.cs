@@ -161,7 +161,7 @@ public class TeacherService : ITeacherService
         {
             // ⚠ Corrigé : ces trois requêtes n'étaient scoping ni par
             // teacherId ni par le contenu réellement possédé par ce
-            // professeur — chaque professeur voyait les stats de TOUTE la
+            // professeur  chaque professeur voyait les stats de TOUTE la
             // plateforme (inscriptions, note moyenne, nombre de contenus)
             // affichées comme les siennes sur le tableau de bord.
             var mySubjectIds = await _context.CourseContents
@@ -237,7 +237,7 @@ public class TeacherService : ITeacherService
         try
         {
             // ⚠ Corrigé : sommait TOUTES les commandes de la plateforme sans
-            // filtrer par professeur — chaque professeur voyait le chiffre
+            // filtrer par professeur  chaque professeur voyait le chiffre
             // d'affaires total de WinPlus affiché comme son propre revenu.
             // On attribue maintenant chaque vente via OrderItem.Subject.AuthorUserId
             // (Module 2) : le contenu créé avant cette colonne n'a pas
@@ -289,7 +289,7 @@ public class TeacherService : ITeacherService
 
         // Cours particuliers (Module 6) : fonds crédités dès la libération de
         // l'escrow simulé (TutorBookingLifecycleService), à la même part
-        // enseignant que le catalogue — voir TeacherContentController.GetRevenueShareAsync.
+        // enseignant que le catalogue  voir TeacherContentController.GetRevenueShareAsync.
         var revenueShare = await GetRevenueShareAsync(teacherId) ?? 0.80m;
         var tutoringRevenue = await _context.TutorBookings
             .AsNoTracking()
@@ -298,7 +298,7 @@ public class TeacherService : ITeacherService
 
         // Programme d'affiliation (2026-09-11) : seules les commissions déjà
         // "confirmed" (délai de rétractation commande écoulé, voir
-        // AffiliateCommissionMaturityService) alimentent le solde retirable —
+        // AffiliateCommissionMaturityService) alimentent le solde retirable 
         // les "pending" ne sont pas encore acquises.
         var affiliateEarnings = await _context.AffiliateCommissions
             .AsNoTracking()
@@ -307,7 +307,7 @@ public class TeacherService : ITeacherService
 
         // Retraits déjà effectués ou en cours (Module 7) : réservés dès la
         // demande pour empêcher un double retrait pendant le traitement
-        // manuel Mobile Money — voir Withdrawal.cs.
+        // manuel Mobile Money  voir Withdrawal.cs.
         var withdrawn = await _context.Withdrawals
             .AsNoTracking()
             .Where(w => w.UserId == teacherId && (w.Status == "pending" || w.Status == "completed"))
@@ -316,7 +316,7 @@ public class TeacherService : ITeacherService
         return Math.Max(0, totalRevenue - spentOnClassAssignments - spentOnBalancePurchases + tutoringRevenue * revenueShare + affiliateEarnings - withdrawn);
     }
 
-    /// <summary>Part enseignant lue sur le plan actif (dupliqué de TeacherContentController — même formule, contexte différent).</summary>
+    /// <summary>Part enseignant lue sur le plan actif (dupliqué de TeacherContentController  même formule, contexte différent).</summary>
     private async Task<decimal?> GetRevenueShareAsync(int teacherId) =>
         await _context.Subscriptions.AsNoTracking()
             .Where(s => s.UserId == teacherId && s.Status == "active" && !s.IsDeleted)
@@ -429,7 +429,7 @@ public class TeacherService : ITeacherService
         var revenueShare = await GetRevenueShareAsync(teacherId) ?? 0.80m;
         var rows = new List<(DateTime Date, string Type, string Source, string Label, decimal Gross, decimal Commission, decimal Net, string Status)>();
 
-        // Vente catalogue (crédit) — pas de commission déduite dans ce modèle
+        // Vente catalogue (crédit)  pas de commission déduite dans ce modèle
         // (voir GetSpendableBalanceAsync : totalRevenue n'applique aucune part
         // enseignant sur les ventes catalogue, contrairement aux cours
         // particuliers). Affiché tel quel plutôt que d'inventer une commission.
@@ -449,20 +449,20 @@ public class TeacherService : ITeacherService
         rows.AddRange(tutoring.Select(b =>
         {
             var studentName = b.Student != null ? $"{b.Student.FirstName} {b.Student.LastName}".Trim() : "Élève";
-            var label = string.IsNullOrWhiteSpace(b.Subject) ? $"Séance avec {studentName}" : $"{b.Subject} — {studentName}";
+            var label = string.IsNullOrWhiteSpace(b.Subject) ? $"Séance avec {studentName}" : $"{b.Subject}  {studentName}";
             var commission = Math.Round(b.PriceXaf * (1 - revenueShare), 0);
             return (b.EscrowReleasedAt!.Value, "credit", "cours_particulier", label, b.PriceXaf, commission, b.PriceXaf - commission, "completed");
         }));
 
-        // Achat catalogue — assignation à une classe (débit)
+        // Achat catalogue  assignation à une classe (débit)
         var assignments = await _context.TeacherClassContents
             .AsNoTracking()
             .Where(tcc => tcc.AssignedByUserId == teacherId && tcc.PriceChargedXaf > 0)
             .Select(tcc => new { tcc.AssignedAt, Title = tcc.Subject != null ? tcc.Subject.Title : "Contenu", tcc.PriceChargedXaf })
             .ToListAsync();
-        rows.AddRange(assignments.Select(a => (a.AssignedAt, "debit", "achat", $"Assignation classe — {a.Title}", a.PriceChargedXaf, 0m, a.PriceChargedXaf, "completed")));
+        rows.AddRange(assignments.Select(a => (a.AssignedAt, "debit", "achat", $"Assignation classe  {a.Title}", a.PriceChargedXaf, 0m, a.PriceChargedXaf, "completed")));
 
-        // Achat catalogue — payé sur le solde WinPlus (débit)
+        // Achat catalogue  payé sur le solde WinPlus (débit)
         var balancePurchases = await _context.Orders
             .AsNoTracking()
             .Where(o => o.UserId == teacherId && o.Status == "completed" && o.PaymentMethod == "balance")

@@ -1,11 +1,11 @@
 """
-Reranking par Qwen3-Reranker (Phase 3, §3.6) — cross-encoder qui évalue la
+Reranking par Qwen3-Reranker (Phase 3, §3.6)  cross-encoder qui évalue la
 pertinence croisée (question, passage) par attention bidirectionnelle,
 contrairement au bi-encoder utilisé pour la recherche vectorielle initiale.
 
 Gabarit exact de la fiche modèle officielle (Qwen/Qwen3-Reranker-8B) : préfixe
 système forçant le format yes/no, suffixe `<think>\n\n</think>\n\n` qui
-désactive le mode raisonnement pour cette tâche de classification — un
+désactive le mode raisonnement pour cette tâche de classification  un
 `apply_chat_template` générique produit un prompt légèrement différent de
 celui sur lequel le modèle a été entraîné et dégraderait la qualité du score.
 """
