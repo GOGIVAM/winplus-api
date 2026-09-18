@@ -264,7 +264,7 @@ public class CustomAuthService : ICustomAuthService
                 return new AuthResult
                 {
                     Success = false,
-                    Message = "Please verify your email before logging in. Check your inbox for the verification code.",
+                    Message = "Votre adresse email n'est pas encore vérifiée. Consultez votre boîte de réception pour le code de vérification, ou utilisez « Mot de passe oublié » si vous ne le recevez pas.",
                     ErrorCode = "EMAIL_NOT_VERIFIED", // ✅ Code d'erreur spécifique
                     Errors = new() { { "email_verification", "Email not verified" } }
                 };

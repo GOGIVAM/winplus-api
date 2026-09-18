@@ -431,47 +431,66 @@ async def generate_revision_content(
         "}"
     )
 
+    import json as _json
+    import re as _re
+
+    client = get_deepseek_client()
+    # 400-700 mots de Markdown + titre + échappement JSON (les formules LaTeX
+    # doublent leurs backslashes) dépassaient régulièrement 2200 tokens et
+    # coupaient la réponse en plein milieu d'une chaîne JSON (finish_reason
+    # "length")  json.loads() échouait alors systématiquement en aval. Un
+    # deuxième essai avec un budget plus large rattrape ce cas au lieu de
+    # renvoyer une 500 à chaque fois que la fiche générée est un peu longue.
+    attempts = [3200, 4200]
     raw = ""
-    try:
-        client = get_deepseek_client()
-        result = client.chat(
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2200,
-            temperature=0.5,
-        )
-        raw = result.get("content", "").strip()
-        content = raw
-        if content.startswith("```"):
-            lines = content.split("\n")
-            content = "\n".join(lines[1:]).rstrip("`").strip()
+    last_error: Optional[Exception] = None
 
-        # DeepSeek ajoute parfois une phrase avant/après le JSON malgré la
-        # consigne ("Voici la fiche : {...}")  json.loads() plantait alors
-        # immédiatement sur tout le bloc. Même extraction par regex que
-        # generate_quiz_content, pour ne garder que l'objet JSON lui-même.
-        import json as _json
-        import re as _re
-        match = _re.search(r"\{.*\}", content, _re.DOTALL)
-        if not match:
-            raise ValueError("Aucun objet JSON trouvé dans la réponse de DeepSeek.")
-        data = _json.loads(match.group())
+    for max_tokens in attempts:
+        try:
+            result = client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=max_tokens,
+                temperature=0.5,
+            )
+            raw = result.get("content", "").strip()
+            truncated = result.get("finish_reason") == "length"
+            content = raw
+            if content.startswith("```"):
+                lines = content.split("\n")
+                content = "\n".join(lines[1:]).rstrip("`").strip()
 
-        chosen_subject = body.subject or data.get("subject")
-        content_markdown = str(data.get("content_markdown") or "")
-        if not content_markdown.strip():
-            raise ValueError("content_markdown vide dans la réponse de DeepSeek.")
+            # DeepSeek ajoute parfois une phrase avant/après le JSON malgré la
+            # consigne ("Voici la fiche : {...}")  json.loads() plantait alors
+            # immédiatement sur tout le bloc. Même extraction par regex que
+            # generate_quiz_content, pour ne garder que l'objet JSON lui-même.
+            match = _re.search(r"\{.*\}", content, _re.DOTALL)
+            if not match:
+                raise ValueError(
+                    "Aucun objet JSON trouvé dans la réponse de DeepSeek"
+                    + (" (réponse tronquée par max_tokens)." if truncated else ".")
+                )
+            data = _json.loads(match.group())
 
-        return {
-            "success": True,
-            "subject": chosen_subject,
-            "title": str(data.get("title") or (f"Révision  {chosen_subject}" if chosen_subject else "Fiche de révision"))[:255],
-            "content_markdown": content_markdown,
-            "difficulty": data.get("difficulty") if data.get("difficulty") in ("easy", "medium", "hard") else (difficulty or "medium"),
-            "estimated_duration_minutes": int(data.get("estimated_duration_minutes") or 15),
-        }
-    except Exception as e:
-        logger.error(f"[revision-content] error: {e}  raw DeepSeek content: {raw[:500]!r}")
-        raise HTTPException(status_code=500, detail="Génération de la fiche impossible pour le moment.")
+            chosen_subject = body.subject or data.get("subject")
+            content_markdown = str(data.get("content_markdown") or "")
+            if not content_markdown.strip():
+                raise ValueError("content_markdown vide dans la réponse de DeepSeek.")
+
+            return {
+                "success": True,
+                "subject": chosen_subject,
+                "title": str(data.get("title") or (f"Révision  {chosen_subject}" if chosen_subject else "Fiche de révision"))[:255],
+                "content_markdown": content_markdown,
+                "difficulty": data.get("difficulty") if data.get("difficulty") in ("easy", "medium", "hard") else (difficulty or "medium"),
+                "estimated_duration_minutes": int(data.get("estimated_duration_minutes") or 15),
+            }
+        except Exception as e:
+            last_error = e
+            logger.warning(f"[revision-content] attempt with max_tokens={max_tokens} failed: {e}  raw: {raw[:500]!r}")
+            continue
+
+    logger.error(f"[revision-content] error after {len(attempts)} attempts: {last_error}  raw DeepSeek content: {raw[:500]!r}")
+    raise HTTPException(status_code=500, detail="Génération de la fiche impossible pour le moment.")
 
 
 QUIZ_QUESTION_COUNT = 8

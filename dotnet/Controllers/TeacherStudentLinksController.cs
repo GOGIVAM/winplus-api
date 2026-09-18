@@ -139,6 +139,8 @@ public class TeacherStudentLinksController : ControllerBase
                     l.Initiator.LastName,
                     l.Initiator.Role,
                     l.Initiator.AvatarUrl,
+                    l.Initiator.Email,
+                    l.Initiator.Phone,
                 },
             })
             .ToListAsync();

@@ -646,7 +646,7 @@ public class StudentController : ControllerBase
             {
                 l.Id,
                 l.CreatedAt,
-                Parent = new { l.Parent!.Id, l.Parent.FirstName, l.Parent.LastName, l.Parent.AvatarUrl, l.Parent.Email },
+                Parent = new { l.Parent!.Id, l.Parent.FirstName, l.Parent.LastName, l.Parent.AvatarUrl, l.Parent.Email, l.Parent.Phone },
             })
             .ToListAsync();
 

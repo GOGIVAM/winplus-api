@@ -44,8 +44,12 @@ public class MessagesController : ControllerBase
         ["image"] = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" },
         ["pdf"] = new[] { ".pdf" },
         ["voice"] = new[] { ".webm", ".m4a", ".mp3", ".ogg", ".wav" },
+        ["video"] = new[] { ".mp4", ".webm", ".mov", ".m4v" },
     };
+    // Les vidéos pèsent nettement plus lourd qu'une image/PDF/note vocale :
+    // une limite unique à 20 Mo aurait rejeté presque tous les cas d'usage réels.
     private const long MaxAttachmentSize = 20 * 1024 * 1024; // 20 Mo
+    private const long MaxVideoAttachmentSize = 80 * 1024 * 1024; // 80 Mo
 
     public MessagesController(ApplicationDbContext db, ILogger<MessagesController> logger, IHttpClientFactory http, IStorageService storage)
     {
@@ -420,19 +424,21 @@ public class MessagesController : ControllerBase
         }
     }
 
-    /// <summary>Upload d'une pièce jointe (image, PDF, note vocale) pour la messagerie (US-MSG-02).</summary>
+    /// <summary>Upload d'une pièce jointe (image, PDF, note vocale, vidéo) pour la messagerie (US-MSG-02).</summary>
     [HttpPost("attachments")]
-    [RequestSizeLimit(MaxAttachmentSize)]
+    [RequestSizeLimit(MaxVideoAttachmentSize)]
     public async Task<IActionResult> UploadAttachment([FromForm] IFormFile file, [FromForm] string type)
     {
         try
         {
             if (file == null || file.Length == 0)
                 return BadRequest(new { error = "Aucun fichier fourni." });
-            if (file.Length > MaxAttachmentSize)
-                return BadRequest(new { error = "Fichier trop volumineux (max 20 Mo)." });
             if (!AllowedAttachmentExtensions.TryGetValue(type, out var allowedExt))
-                return BadRequest(new { error = "Type de pièce jointe invalide (image, pdf ou voice)." });
+                return BadRequest(new { error = "Type de pièce jointe invalide (image, pdf, voice ou video)." });
+
+            var maxSize = type == "video" ? MaxVideoAttachmentSize : MaxAttachmentSize;
+            if (file.Length > maxSize)
+                return BadRequest(new { error = $"Fichier trop volumineux (max {maxSize / (1024 * 1024)} Mo)." });
 
             var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
             if (!allowedExt.Contains(ext))

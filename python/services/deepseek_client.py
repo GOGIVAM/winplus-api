@@ -92,18 +92,29 @@ class DeepSeekClient:
                 
                 # Extraire la réponse
                 generation_time = int((time.time() - start_time) * 1000)
-                content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+                choice = result.get('choices', [{}])[0]
+                content = choice.get('message', {}).get('content', '')
+                finish_reason = choice.get('finish_reason')
                 usage = result.get('usage', {})
                 tokens_used = usage.get('total_tokens', 0)
-                
-                logger.info(f"DeepSeek response received: {tokens_used} tokens in {generation_time}ms")
-                
+
+                logger.info(f"DeepSeek response received: {tokens_used} tokens in {generation_time}ms (finish_reason={finish_reason})")
+                # finish_reason == "length" : la réponse a été coupée par max_tokens
+                # avant sa fin naturelle  très souvent du JSON invalide en aval
+                # (chaîne non terminée, accolade fermante manquante) sans que ce
+                # ne soit une erreur réseau. Le signaler explicitement permet aux
+                # appelants de distinguer "DeepSeek a mal répondu" de "la réponse
+                # a été tronquée", au lieu de deviner depuis un message json.loads.
+                if finish_reason == "length":
+                    logger.warning("DeepSeek response truncated by max_tokens (finish_reason=length)")
+
                 return {
                     "success": True,
                     "content": content,
                     "tokens_used": tokens_used,
                     "generation_time_ms": generation_time,
-                    "model": result.get('model', self.model)
+                    "model": result.get('model', self.model),
+                    "finish_reason": finish_reason,
                 }
                 
             except requests.exceptions.Timeout:

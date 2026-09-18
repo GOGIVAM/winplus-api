@@ -133,6 +133,16 @@ public class OrdersController : ControllerBase
                 return Ok(order);
             }
         }
+        // Panier vide côté serveur au moment de payer : arrive typiquement quand
+        // le panier n'a été rempli qu'en local (deviceId) avant une connexion
+        // dont la fusion a échoué ou n'a pas encore eu lieu. C'est un état
+        // utilisateur normal, pas une panne  un 500 générique masquait la vraie
+        // cause et empêchait le frontend d'afficher un message actionnable.
+        catch (InvalidOperationException ex) when (ex.Message == "Cart is empty")
+        {
+            _logger.LogWarning("Tentative de création de commande avec un panier vide pour {UserId}", User.Identity?.Name);
+            return BadRequest(new { error = "Votre panier est vide. Ajoutez des articles avant de commander." });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erreur lors de la création de la commande");
