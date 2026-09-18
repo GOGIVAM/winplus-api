@@ -714,6 +714,13 @@ public class CustomAuthService : ICustomAuthService
             var passwordHash = BC.HashPassword(newPassword);
             user.PasswordHash = passwordHash;
 
+            // Cliquer sur le lien de réinitialisation reçu par email est déjà une
+            // preuve de possession de la boîte mail (au moins aussi forte que le
+            // code à 6 chiffres) : on évite ainsi de bloquer ensuite la connexion
+            // sur IsEmailVerified pour un compte jamais vérifié qui a oublié son
+            // mot de passe avant de vérifier son email.
+            user.IsEmailVerified = true;
+
             // Mark token as used and invalidate all refresh tokens
             passwordResetToken.IsUsed = true;
             passwordResetToken.UsedAt = DateTime.UtcNow;
