@@ -85,6 +85,13 @@ public class OrderService : IOrderService
 
             return createdOrder;
         }
+        // Panier vide est un état utilisateur normal (voir OrdersController.CreateOrder),
+        // pas une panne : le logger ici sans distinction doublait un WARN déjà loggé
+        // par le contrôleur avec une ERREUR pour rien.
+        catch (InvalidOperationException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating order for user {UserId}", userId);

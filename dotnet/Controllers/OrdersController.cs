@@ -140,7 +140,10 @@ public class OrdersController : ControllerBase
         // cause et empêchait le frontend d'afficher un message actionnable.
         catch (InvalidOperationException ex) when (ex.Message == "Cart is empty")
         {
-            _logger.LogWarning("Tentative de création de commande avec un panier vide pour {UserId}", User.Identity?.Name);
+            // Cette branche n'est atteinte que depuis le chemin authentifié
+            // (le chemin invité valide request.Items avant d'appeler le
+            // service), donc User.GetUserId() est toujours disponible ici.
+            _logger.LogWarning("Tentative de création de commande avec un panier vide pour l'utilisateur {UserId}", User.GetUserId());
             return BadRequest(new { error = "Votre panier est vide. Ajoutez des articles avant de commander." });
         }
         catch (Exception ex)
