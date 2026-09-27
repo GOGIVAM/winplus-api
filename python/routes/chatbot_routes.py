@@ -17,6 +17,8 @@ from services.deepseek_client import get_deepseek_client
 from services.prompt_builder import build_system_prompt, UserContext, detect_language
 from services.rag_chat_bridge import build_rag_context_block
 from services.attachment_processor import process_chat_attachment_async
+from services.ai_quota import check_quota
+from sqlalchemy import text as sql_text
 from auth import verify_token, UserTokenData
 from schemas import ChatRequest, ChatResponse, ChatbotHealthResponse, ChatMessage, ChatbotContextRequest
 from database import Database, Conversation, ChatMessage as ChatMessageDB, UserAIMemory, User, QuizAttempt, DailyScore, QuizMistake, ExamCoachPlanNet
@@ -551,6 +553,9 @@ class StreamChatBody(BaseModel):
     user_context: Optional[ChatbotContextRequest] = None
     max_tokens: Optional[int] = 2000
     temperature: Optional[float] = 0.7
+    # Partie 8.7/8.8 : identifiant du message utilisateur. Transmis par le
+    # proxy .NET, qui a déjà posé la réserve de quota pour ce message.
+    client_message_id: Optional[str] = None
 
 
 @chatbot_router.post('/stream', tags=["chatbot"])
@@ -563,6 +568,54 @@ async def stream_chat(
     Format chunk : data: {"delta": "...", "tokens_used": N}\\n\\n
     Dernier chunk : data: [DONE]\\n\\n
     """
+    # Partie 8.8 / 8.10 — défense en profondeur, indépendante de l'exposition
+    # réseau du port FastAPI. Lecture seule (le décompte reste écrit par .NET,
+    # 8.9). Seul un message portant une réserve .NET valide (ligne non
+    # finalisée et récente, voir services/ai_quota.py) est servi : un
+    # identifiant rejoué, finalisé ou absent n'ouvre plus de message gratuit.
+    # En cas d'erreur de lecture (base, table absente), on refuse
+    # (fail-closed) : c'est un contrôle de sécurité.
+    quota_session = Database().SessionLocal()
+    try:
+        # Point E, même règle que le proxy .NET : la conversation fournie doit
+        # appartenir à l'utilisateur authentifié (sinon on écrirait la réponse
+        # assistant dans la conversation d'un autre).
+        if body.conversation_id:
+            owned = quota_session.execute(
+                sql_text('SELECT 1 FROM "Conversations" WHERE "Id" = :cid AND "UserId" = :uid AND "IsDeleted" = FALSE LIMIT 1'),
+                {"cid": body.conversation_id, "uid": current_user.user_id},
+            ).first()
+            if not owned:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+        quota = check_quota(quota_session, current_user.user_id, body.client_message_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Contrôle de quota WinAI impossible pour {current_user.user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "quota_unavailable", "message": "WinAI est momentanément indisponible. Réessayez dans quelques minutes."},
+        )
+    finally:
+        quota_session.close()
+    if not quota.allowed:
+        if quota.reason == "limit_reached":
+            logger.info(f"Stream WinAI refusé côté Python (limite {quota.limit}) pour {current_user.user_id}")
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail={
+                    "error": "quota_exceeded",
+                    "limit": quota.limit,
+                    "resetsAt": quota.resets_at.isoformat() if quota.resets_at else None,
+                    "message": quota.message,
+                },
+            )
+        logger.warning(f"Stream WinAI refusé côté Python (aucune réserve valide) pour {current_user.user_id}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "reservation_required", "message": quota.message},
+        )
+
     conv_id = body.conversation_id
     messages = body.messages
 
@@ -610,13 +663,18 @@ async def stream_chat(
                 messages=messages,
                 system_prompt=system_prompt,
                 max_tokens=body.max_tokens,
-                temperature=body.temperature
+                temperature=body.temperature,
+                # 8.1 : événement d'usage réel en fin de flux, consommé par le
+                # proxy .NET pour le décompte (et non relayé au client, 8.3).
+                emit_usage=True,
             ):
                 if chunk.startswith("data: ") and chunk.strip() != "data: [DONE]":
                     try:
                         data = json.loads(chunk[6:].strip())
-                        full_content += data.get("delta", "")
-                        tokens_used = max(tokens_used, data.get("tokens_used", 0))
+                        if data.get("usage_final"):
+                            tokens_used = int(data.get("tokens_used") or 0)
+                        else:
+                            full_content += data.get("delta", "")
                     except Exception:
                         pass
                 yield chunk

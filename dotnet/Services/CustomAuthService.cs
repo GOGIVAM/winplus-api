@@ -299,14 +299,14 @@ public class CustomAuthService : ICustomAuthService
             var device = await _deviceTrackingService.TrackDeviceAsync(user.Id, request, rememberMe);
 
             // Create session
-            // Derrière nginx : X-Forwarded-For = "client, proxy1, proxy2"  on veut le premier.
-            var ipAddress =
-                (request.Headers["X-Forwarded-For"].FirstOrDefault() ?? "")
-                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .FirstOrDefault(ip => ip != "127.0.0.1" && ip != "::1")
-                ?? request.Headers["X-Real-IP"].FirstOrDefault()
-                ?? request.HttpContext.Connection.RemoteIpAddress?.MapToIPv4().ToString()
-                ?? "Unknown";
+            // Passe de clôture du lot 0 : l'en-tête X-Forwarded-For (et
+            // X-Real-IP) n'est plus relu ici. UseForwardedHeaders (Program.cs)
+            // l'a déjà appliqué à RemoteIpAddress, uniquement si la connexion
+            // vient d'un relais de confiance ; le relire brut laissait tout
+            // client inscrire l'adresse de son choix dans la session.
+            var ipAddress = request.HttpContext.Connection.RemoteIpAddress is { } remoteIp
+                ? (remoteIp.IsIPv4MappedToIPv6 ? remoteIp.MapToIPv4() : remoteIp).ToString()
+                : "Unknown";
             var userAgent = request.Headers["User-Agent"].ToString();
             var deviceType = userAgent.Contains("Mobile", StringComparison.OrdinalIgnoreCase) ? "mobile"
                 : userAgent.Contains("Tablet", StringComparison.OrdinalIgnoreCase) ? "tablet"

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Services;
@@ -18,6 +19,8 @@ public class UsersController : ControllerBase
     private readonly ISettingsService _settingsService;
     private readonly ISessionService _sessionService;
     private readonly ITwoFactorService _twoFactorService;
+    private readonly IEmailService _emailService;
+    private readonly Microsoft.Extensions.Caching.Memory.IMemoryCache _cache;
     private readonly ApplicationDbContext _db;
     private readonly ILogger<UsersController> _logger;
 
@@ -27,6 +30,8 @@ public class UsersController : ControllerBase
         ISettingsService settingsService,
         ISessionService sessionService,
         ITwoFactorService twoFactorService,
+        IEmailService emailService,
+        Microsoft.Extensions.Caching.Memory.IMemoryCache cache,
         ApplicationDbContext db,
         ILogger<UsersController> logger)
     {
@@ -35,6 +40,8 @@ public class UsersController : ControllerBase
         _settingsService = settingsService;
         _sessionService = sessionService;
         _twoFactorService = twoFactorService;
+        _emailService = emailService;
+        _cache = cache;
         _db = db;
         _logger = logger;
     }
@@ -559,6 +566,27 @@ public class UsersController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Nombre de codes erronés tolérés avant d'exiger un nouvel envoi
+    /// (Module 20). Le compteur vit en mémoire plutôt qu'en base : aucune
+    /// colonne n'existe pour le porter, et le projet présente déjà une dérive
+    /// connue entre le modèle déclaré et le schéma déployé qu'une nouvelle
+    /// migration aggraverait. Conséquence assumée : le compteur repart à zéro
+    /// au redémarrage du service et n'est pas partagé entre instances.
+    /// </summary>
+    private const int MaxEmailChangeAttempts = 5;
+
+    private static string EmailChangeAttemptsKey(int userId) => $"email-change-attempts:{userId}";
+
+    /// <summary>
+    /// Code numérique à 6 chiffres tiré d'une source cryptographique, sans
+    /// biais modulo.
+    /// </summary>
+    private static string GenerateSecureNumericCode() =>
+        System.Security.Cryptography.RandomNumberGenerator
+            .GetInt32(0, 1_000_000)
+            .ToString("D6");
+
     [HttpPost("change-email")]
     [Authorize]
     public async Task<IActionResult> ChangeEmail([FromBody] ChangeEmailRequest request)
@@ -573,10 +601,27 @@ public class UsersController : ControllerBase
             if (existing != null && existing.Id != userId)
                 return BadRequest(new { error = "Email already in use" });
 
+            // Module 20 : le jeton généré ici était un GUID de 36 caractères,
+            // que le corps de confirmation n'accepte pas (code de 6 à 10
+            // caractères), et qui n'était de toute façon envoyé à personne.
+            // On génère un vrai code numérique, cryptographiquement aléatoire
+            // (le reste du projet utilise System.Random, non cryptographique),
+            // et on l'envoie réellement à l'adresse cible : sans cet envoi, la
+            // vérification du code rendrait la fonctionnalité inutilisable.
+            var code = GenerateSecureNumericCode();
+
             user.PendingEmail = request.NewEmail;
-            user.EmailChangeToken = Guid.NewGuid().ToString();
+            user.EmailChangeToken = code;
             user.EmailChangeTokenExpiry = DateTime.UtcNow.AddMinutes(15);
             await _userService.UpdateUserAsync(user);
+
+            // Les tentatives précédentes ne doivent pas peser sur un nouveau code.
+            _cache.Remove(EmailChangeAttemptsKey(userId));
+
+            // L'échec d'envoi ne doit pas masquer l'enregistrement du code :
+            // l'utilisateur peut redemander un envoi.
+            await _emailService.SendEmailChangeVerificationAsync(
+                request.NewEmail, user.FirstName ?? "", code);
 
             return Ok(new { success = true, message = "Verification code sent to new email", newEmail = request.NewEmail, expiresIn = 15 });
         }
@@ -602,6 +647,47 @@ public class UsersController : ControllerBase
 
             if (!user.EmailChangeTokenExpiry.HasValue || user.EmailChangeTokenExpiry < DateTime.UtcNow)
                 return BadRequest(new { error = "Verification code expired" });
+
+            // Module 20 : le code reçu n'était jamais lu. Seule l'expiration
+            // était testée, si bien que deux appels suffisaient à s'approprier
+            // une adresse non possédée, avec l'indicateur « vérifié » posé.
+            var attemptsKey = EmailChangeAttemptsKey(userId);
+            var attempts = _cache.Get<int?>(attemptsKey) ?? 0;
+            if (attempts >= MaxEmailChangeAttempts)
+            {
+                _logger.LogWarning("Trop de tentatives de confirmation de changement d'adresse pour l'utilisateur {UserId}", userId);
+                return StatusCode(429, new { error = "Too many attempts. Request a new code." });
+            }
+
+            // Comparaison à temps constant : le code est un secret court, une
+            // comparaison de chaîne ordinaire fuit sa longueur commune.
+            var expected = user.EmailChangeToken ?? "";
+            var provided = request.VerificationCode ?? "";
+            var codeMatches = expected.Length > 0 &&
+                System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+                    System.Text.Encoding.UTF8.GetBytes(expected.PadRight(32)[..32]),
+                    System.Text.Encoding.UTF8.GetBytes(provided.PadRight(32)[..32]));
+
+            if (!codeMatches)
+            {
+                // La fenêtre de comptage suit celle du code lui-même.
+                _cache.Set(attemptsKey, attempts + 1, TimeSpan.FromMinutes(15));
+                return BadRequest(new { error = "Invalid verification code" });
+            }
+
+            // L'adresse cible a pu être prise par un autre compte entre la
+            // demande et la confirmation : le contrôle initial ne suffit pas.
+            var conflicting = await _userService.GetUserByEmailAsync(user.PendingEmail);
+            if (conflicting != null && conflicting.Id != userId)
+            {
+                user.PendingEmail = null;
+                user.EmailChangeToken = null;
+                user.EmailChangeTokenExpiry = null;
+                await _userService.UpdateUserAsync(user);
+                return BadRequest(new { error = "Email already in use" });
+            }
+
+            _cache.Remove(attemptsKey);
 
             user.Email = user.PendingEmail;
             user.PendingEmail = null;

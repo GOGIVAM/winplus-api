@@ -180,7 +180,11 @@ public class ChatbotService : IChatbotService
             ConversationId = conversation.Id,
             UserMessage = MapToMessageResponse(userMessage),
             AssistantMessage = MapToMessageResponse(assistantMessage),
-            TotalTokensUsed = fastapiResponse.TokensUsed
+            TotalTokensUsed = fastapiResponse.TokensUsed,
+            // CallFastApiServiceAsync ne lève pas : il renvoie un contenu de
+            // repli avec Success = false. Le contrôleur s'en sert pour libérer
+            // la réserve de quota (point D, passe 8.10).
+            AiServiceSucceeded = fastapiResponse.Success,
         };
     }
 

@@ -62,7 +62,10 @@ public class PaymentsController : ControllerBase
 
     /// <summary>POST /api/payments/initiate  Initier un paiement NotchPay (max 5 / 10 min)</summary>
     [HttpPost("initiate")]
-    [AllowAnonymous]
+    // Décision 9.2 du suivi : un compte est obligatoire pour acheter. L'accès
+    // anonyme ne servait qu'au parcours de commande invité, supprimé ; les
+    // commandes invité historiques ne sont pas migrées.
+    [Authorize]
     public async Task<IActionResult> Initiate([FromBody] InitiatePaymentRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);

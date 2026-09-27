@@ -36,8 +36,9 @@ public class HomeService : IHomeService
                 .CountAsync();
 
             // Compter les révisions disponibles
+            // Brouillons exclus du compteur public (passe de clôture du lot 0).
             var totalRevisions = await _context.Revisions
-                .Where(r => !r.IsDeleted)
+                .Where(r => !r.IsDeleted && r.IsPublished)
                 .CountAsync();
 
             // Calculer le taux de réussite moyen

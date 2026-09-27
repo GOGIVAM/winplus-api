@@ -34,7 +34,11 @@ public class PurchaseForChildRequest
 /// </summary>
 [ApiController]
 [Route("api/parent")]
-[Authorize]
+// Module 20 : la politique "ParentOnly" était déclarée sans jamais être
+// utilisée. Ce contrôleur gère les crédits d'un parent et l'achat pour son
+// enfant : un simple [Authorize] laissait un compte élève appeler ces routes
+// (la propriété métier est vérifiée ensuite, mais le rôle ne l'était pas).
+[Authorize(Policy = "ParentOnly")]
 public class ParentCreditsController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
@@ -255,7 +259,13 @@ public class ParentCreditsController : ControllerBase
     [HttpPost("purchase-for-child")]
     public async Task<IActionResult> PurchaseForChild([FromBody] PurchaseForChildRequest request)
     {
-        await using var tx = await _db.Database.BeginTransactionAsync();
+        // Module 19 : la transaction existait mais sans isolation suffisante,
+        // et le solde de crédits est lui aussi recalculé par sommation du
+        // journal. Deux achats concurrents pouvaient donc consommer deux fois
+        // les mêmes crédits. Même traitement que le paiement par solde
+        // professeur et que la réservation de tutorat : Serializable, limité
+        // à ce chemin.
+        await using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
         try
         {
             var parentId = User.GetUserId();
@@ -271,6 +281,51 @@ public class ParentCreditsController : ControllerBase
                 .FirstOrDefaultAsync();
             if (subject == null)
                 return NotFound(new { success = false, error = "Épreuve introuvable." });
+
+            // Idempotence dérivée côté serveur (passe de clôture du lot 0), sur
+            // le modèle du paiement par solde professeur : même parent, même
+            // enfant, même ensemble de contenus, fenêtre courte. Aucun client
+            // n'envoie de jeton d'idempotence, l'exiger casserait le web. Un
+            // rejeu renvoie la commande d'origine au lieu d'échouer sur
+            // « déjà accès » (voie crédits) ou de créer une seconde commande en
+            // attente (voie Mobile Money). L'enfant est reconnu par le marqueur
+            // posé dans Notes, ou par l'écriture de consommation de crédits
+            // pour les commandes antérieures à ce marqueur.
+            var since = DateTime.UtcNow.Subtract(PurchaseForChildIdempotencyWindow);
+            var childMarker = ChildPurchaseMarker(request.ChildId);
+            var duplicate = await _db.Orders.AsNoTracking()
+                .Where(o => o.UserId == parentId
+                         && o.CreatedAt >= since
+                         && (o.PaymentMethod == "parent_credits" || o.PaymentMethod == "mobile_money")
+                         && o.Items.Count == 1
+                         && o.Items.Any(i => i.SubjectId == request.SubjectId)
+                         && (o.Notes == childMarker
+                             || _db.ParentCreditLedgers.Any(l => l.OrderId == o.Id && l.ChildId == request.ChildId)))
+                .OrderByDescending(o => o.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (duplicate != null)
+            {
+                await tx.CommitAsync();
+                _logger.LogWarning(
+                    "Double soumission détectée sur l'achat pour enfant : parent {ParentId}, enfant {ChildId}, contenu {SubjectId}, commande {OrderId} renvoyée",
+                    parentId, request.ChildId, request.SubjectId, duplicate.Id);
+
+                return Ok(new
+                {
+                    data = new
+                    {
+                        orderId         = duplicate.Id,
+                        orderNumber     = duplicate.OrderNumber,
+                        status          = duplicate.Status,
+                        paidWithCredits = duplicate.PaymentMethod == "parent_credits",
+                        amount          = duplicate.TotalAmount,
+                    },
+                    success   = true,
+                    duplicate = true,
+                    message   = $"Cet achat a déjà été enregistré (commande {duplicate.OrderNumber}). Aucun second débit n'a été effectué.",
+                });
+            }
 
             var alreadyEnrolled = await _db.Enrollments
                 .AnyAsync(e => e.UserId == request.ChildId && e.SubjectId == request.SubjectId);
@@ -304,7 +359,9 @@ public class ParentCreditsController : ControllerBase
                 OrderNumber   = $"WP-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString("N")[..6].ToUpperInvariant()}",
                 TotalAmount   = subject.Price,
                 Status        = payWithCredits ? "paid" : "pending",
-                PaymentMethod = payWithCredits ? "parent_credits" : "mobile_money"
+                PaymentMethod = payWithCredits ? "parent_credits" : "mobile_money",
+                // Bénéficiaire de l'achat, relu par la détection de doublon.
+                Notes         = childMarker,
             };
             _db.Orders.Add(order);
             await _db.SaveChangesAsync();
@@ -366,6 +423,20 @@ public class ParentCreditsController : ControllerBase
                 success = true
             });
         }
+        catch (Exception ex) when (DbConcurrency.IsSerializationFailure(ex))
+        {
+            // Collision de sérialisation (40001) ou interblocage (40P01) :
+            // un autre achat du même parent consommait les mêmes crédits en
+            // parallèle. Même traitement que le paiement par solde
+            // (OrdersController) : 409 actionnable au lieu d'un 500. La
+            // transaction est annulée par `await using` à la sortie.
+            _logger.LogWarning(ex, "Collision de sérialisation sur l'achat pour enfant");
+            return StatusCode(409, new
+            {
+                success = false,
+                error = "Un autre achat sur vos crédits est en cours de traitement. Réessayez dans un instant."
+            });
+        }
         catch (Exception ex)
         {
             await tx.RollbackAsync();
@@ -373,4 +444,10 @@ public class ParentCreditsController : ControllerBase
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }
+
+    /// <summary>Fenêtre de détection d'une double soumission de l'achat pour enfant.</summary>
+    private static readonly TimeSpan PurchaseForChildIdempotencyWindow = TimeSpan.FromSeconds(60);
+
+    /// <summary>Marqueur du bénéficiaire, écrit dans Order.Notes.</summary>
+    private static string ChildPurchaseMarker(int childId) => $"purchase-for-child:{childId}";
 }

@@ -2,29 +2,81 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Backend.Services;
 using Backend.Extensions;
+using Backend.Models.DTOs;
 using Backend.Models.Entities;
 
 namespace Backend.Controllers;
 
 [ApiController]
 [Route("api/enrollments")]
+// Module 17 : ce contrôleur était entièrement ouvert. POST /api/enrollments
+// acceptait un UserId et un SubjectId arbitraires sans vérifier ni
+// l'authentification ni le paiement, et GET /user/{userId} exposait
+// anonymement les inscriptions de n'importe qui.
+[Authorize]
 public class EnrollmentsController : ControllerBase
 {
     private readonly IEnrollmentService _enrollmentService;
+    private readonly ISubjectService _subjectService;
+    private readonly IContentAccessService _contentAccess;
     private readonly ILogger<EnrollmentsController> _logger;
 
-    public EnrollmentsController(IEnrollmentService enrollmentService, ILogger<EnrollmentsController> logger)
+    public EnrollmentsController(
+        IEnrollmentService enrollmentService,
+        ISubjectService subjectService,
+        IContentAccessService contentAccess,
+        ILogger<EnrollmentsController> logger)
     {
         _enrollmentService = enrollmentService;
+        _subjectService = subjectService;
+        _contentAccess = contentAccess;
         _logger = logger;
     }
 
+    /// <summary>
+    /// Un utilisateur ne consulte que ses propres inscriptions ;
+    /// l'administrateur conserve la vue complète.
+    /// </summary>
+    private bool CanActOnBehalfOf(int userId) => userId == User.GetUserId() || User.IsAdmin();
+
+    /// <summary>
+    /// Inscription à un contenu (Module 17).
+    ///
+    /// L'identifiant d'utilisateur n'est plus accepté depuis le corps de la
+    /// requête : il est déduit du jeton. Une inscription à un contenu payant
+    /// doit découler d'un droit d'accès réel (achat confirmé, abonnement en
+    /// cours, assignation via une classe) et non d'un simple appel : c'est
+    /// exactement la règle appliquée à la consultation et au téléchargement,
+    /// portée par le même service.
+    /// </summary>
     [HttpPost]
-    public async Task<IActionResult> Enroll([FromBody] Enrollment enrollment)
+    public async Task<IActionResult> Enroll([FromBody] EnrollRequest request)
     {
         try
         {
-            var result = await _enrollmentService.EnrollUserAsync(enrollment.UserId, enrollment.SubjectId);
+            var userId = User.GetUserId();
+
+            var subject = await _subjectService.GetSubjectByIdAsync(request.SubjectId);
+            if (subject == null)
+                return NotFound(new { error = "Contenu introuvable." });
+
+            // Un brouillon ne s'inscrit pas : seul son auteur ou un
+            // administrateur peut y toucher avant publication.
+            if (!subject.IsPublished && !User.IsAdmin() && subject.AuthorUserId != userId)
+                return NotFound(new { error = "Contenu introuvable." });
+
+            // Un contenu gratuit reste librement accessible : le nouveau test
+            // ne doit pas le bloquer par excès de zèle.
+            if (subject.Price > 0 &&
+                !await _contentAccess.HasPaidContentAccessAsync(userId, subject, User.IsAdmin()))
+            {
+                return StatusCode(403, new
+                {
+                    error = "Veuillez acheter ce contenu pour pouvoir vous y inscrire."
+                });
+            }
+
+            var result = await _enrollmentService.EnrollUserAsync(userId, request.SubjectId);
             return Ok(result);
         }
         catch (Exception ex)
@@ -39,6 +91,9 @@ public class EnrollmentsController : ControllerBase
     {
         try
         {
+            if (!CanActOnBehalfOf(userId))
+                return StatusCode(403, new { error = "Accès refusé." });
+
             var enrollments = await _enrollmentService.GetUserEnrollmentsAsync(userId);
             return Ok(enrollments);
         }
@@ -54,6 +109,9 @@ public class EnrollmentsController : ControllerBase
     {
         try
         {
+            if (!CanActOnBehalfOf(userId))
+                return StatusCode(403, new { error = "Accès refusé." });
+
             var enrollment = await _enrollmentService.GetEnrollmentAsync(userId, subjectId);
             if (enrollment == null)
                 return NotFound();
@@ -107,11 +165,21 @@ public class EnrollmentsController : ControllerBase
         {
             var userId = User.GetUserId();
             
-            var enrollment = await _enrollmentService.GetEnrollmentAsync(userId, enrollmentId);
-            
+            // Module 20 : l'appel passait `enrollmentId` là où la signature
+            // attend un `subjectId`, si bien que le contrôle de propriété
+            // portait sur la mauvaise ligne (ou aucune). On lit désormais
+            // l'inscription par son identifiant propre, et on vérifie
+            // explicitement qu'elle appartient bien à l'appelant.
+            var enrollment = await _enrollmentService.GetEnrollmentByIdAsync(enrollmentId);
+
             if (enrollment == null)
             {
                 return NotFound(new { error = "Enrollment not found" });
+            }
+
+            if (enrollment.UserId != userId && !User.IsAdmin())
+            {
+                return StatusCode(403, new { error = "Accès refusé." });
             }
 
             var result = await _enrollmentService.UnenrollAsync(enrollmentId);

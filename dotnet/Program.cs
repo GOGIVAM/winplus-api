@@ -15,6 +15,7 @@ using Backend.Repositories;
 using Backend.Services;
 using Backend.Utilities;
 using Backend.Middlewares;
+using Backend.Extensions;
 using Backend.Models.Entities;
 using Microsoft.AspNetCore.HttpOverrides;
 using Serilog;
@@ -293,24 +294,36 @@ builder.Services.AddAuthorization(options =>
         policy.RequireRole("parent", "admin");
     });
 
-    // Politique pour les étudiants
-    options.AddPolicy("StudentOnly", policy =>
-    {
-        policy.RequireAuthenticatedUser();
-        policy.RequireRole("student", "teacher", "parent", "admin");
-    });
-    
+    // Module 20 : la politique "StudentOnly" est retirée plutôt qu'appliquée.
+    // Elle autorisait student, teacher, parent ET admin, c'est-à-dire tous les
+    // rôles que la plateforme crée : elle était donc strictement équivalente à
+    // "AuthenticatedUser" ci-dessous, sous un nom trompeur qui suggérait un
+    // filtrage de rôle inexistant. Aucun endpoint ne l'utilisait.
+
     // Politique pour les utilisateurs authentifiés
     options.AddPolicy("AuthenticatedUser", policy => 
         policy.RequireAuthenticatedUser());
     
-    // Politique pour les utilisateurs avec email vérifié
-    options.AddPolicy("VerifiedEmailOnly", policy => 
+    // Politique pour les utilisateurs avec email vérifié.
+    //
+    // Module 20 : elle n'exigeait pas explicitement un utilisateur
+    // authentifié (l'assertion seule suffisait à refuser un anonyme, mais le
+    // contrat était implicite), et elle ne prévoyait aucune sortie pour
+    // l'administrateur. Appliquée à un flux d'administration, elle aurait
+    // verrouillé l'administrateur lui-même si son adresse n'est pas marquée
+    // vérifiée en base — exactement le type de fonctionnalité morte que ce
+    // projet a déjà produit plusieurs fois.
+    options.AddPolicy("VerifiedEmailOnly", policy =>
+    {
+        policy.RequireAuthenticatedUser();
         policy.RequireAssertion(context =>
         {
+            if (context.User.IsAdmin()) return true;
+
             var emailVerified = context.User.FindFirst("email_verified")?.Value;
-            return emailVerified == "True" || emailVerified == "true";
-        }));
+            return string.Equals(emailVerified, "true", StringComparison.OrdinalIgnoreCase);
+        });
+    });
 });
 
 // ============ CUSTOM AUTH SERVICES ============
@@ -339,6 +352,22 @@ builder.Services.AddScoped<ISubjectService, SubjectService>();
 builder.Services.AddScoped<ICartService, CartService>();
 builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<IEnrollmentService, EnrollmentService>();
+// Règle d'accès unique aux contenus payants (Module 17) : partagée par la
+// consultation, le téléchargement présigné et l'inscription.
+builder.Services.AddScoped<IContentAccessService, ContentAccessService>();
+
+// Règle unique du quota mensuel WinAI : partagée par l'affichage
+// (GET /api/subscriptions/me) et par l'application réelle du quota
+// (POST /api/chatbot/message et POST /api/chatbot/stream).
+builder.Services.AddScoped<IAiQuotaService, AiQuotaService>();
+// Recharge de quota WinAI (décision 8.5) : point d'extension seulement — la
+// recharge réelle dépend du wallet du Module 1/14, pas encore construit.
+builder.Services.AddScoped<ITokenTopUpService, UnavailableTokenTopUpService>();
+
+// Création réelle de l'abonnement à la confirmation du paiement (Module 18,
+// correction §7.3) : sans elle, un client qui payait un abonnement n'obtenait
+// aucune ligne Subscriptions, et le mur payant du Module 17 le bloquait.
+builder.Services.AddScoped<ISubscriptionActivationService, SubscriptionActivationService>();
 builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<IHistoryService, HistoryService>();
 builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
@@ -519,12 +548,31 @@ if (app.Environment.IsDevelopment())
 
 // Derrière nginx : on fait confiance aux en-têtes X-Forwarded-For / X-Real-IP
 // pour récupérer la vraie IP du client au lieu de l'adresse de loopback nginx.
+// Module 20 : les listes de confiance étaient vidées, ce qui faisait accepter
+// l'en-tête X-Forwarded-For de n'importe quel appelant. Combiné à la
+// limitation de débit indexée sur l'adresse du client, cela rendait la force
+// brute sur la connexion illimitée : il suffisait de changer l'en-tête à
+// chaque requête pour repartir d'un compteur neuf.
+//
+// On conserve la confiance dans le relais réel (nginx, sur la même machine :
+// boucle locale) et on autorise en plus les adresses déclarées sous
+// Security:TrustedProxies pour un déploiement où le relais est ailleurs.
+// Aucune valeur de configuration n'est lue ici, seulement une clé.
 var fwdOpts = new ForwardedHeadersOptions
 {
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+    // Le relais n'ajoute qu'un maillon : au-delà, c'est le client qui écrit.
+    ForwardLimit = 1,
 };
 fwdOpts.KnownProxies.Clear();
 fwdOpts.KnownNetworks.Clear();
+fwdOpts.KnownProxies.Add(System.Net.IPAddress.Loopback);
+fwdOpts.KnownProxies.Add(System.Net.IPAddress.IPv6Loopback);
+foreach (var proxy in builder.Configuration.GetSection("Security:TrustedProxies").Get<string[]>() ?? Array.Empty<string>())
+{
+    if (System.Net.IPAddress.TryParse(proxy, out var parsed))
+        fwdOpts.KnownProxies.Add(parsed);
+}
 app.UseForwardedHeaders(fwdOpts);
 
 // app.UseHttpsRedirection();
@@ -539,6 +587,13 @@ app.UseRateLimiting();
 
 // IMPORTANT: L'ordre est crucial !
 app.UseAuthentication();  // Doit être avant UseAuthorization
+
+// Module 20 : revalidation de l'état du compte à chaque requête authentifiée.
+// Placée juste après l'authentification (les revendications sont lues) et
+// avant l'autorisation, pour qu'une suspension prenne effet dès la requête
+// suivante au lieu d'attendre l'expiration naturelle du jeton d'accès.
+app.UseAccountStatusRevalidation();
+
 app.UseAuthorization();
 
 // Suivi de présence : met à jour UserSessions.LastActivityAt à chaque requête

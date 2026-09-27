@@ -15,6 +15,11 @@ class UserRole(str, Enum):
     teacher = "teacher"
     parent = "parent"
     admin = "admin"
+    # Rôle officiel des comptes établissement (§7.5 du suivi). "organization"
+    # est conservé le temps de la migration des comptes historiques en base :
+    # les deux valeurs ont coexisté, et le rejeter ferait échouer la validation
+    # d'un jeton encore porteur de l'ancienne valeur.
+    institution = "institution"
     organization = "organization"
 
 

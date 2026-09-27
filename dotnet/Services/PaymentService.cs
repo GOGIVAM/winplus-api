@@ -39,6 +39,7 @@ public class PaymentService : IPaymentService
     private readonly INtfyService _ntfy;
     private readonly IEmailService _email;
     private readonly IAffiliateService _affiliate;
+    private readonly ISubscriptionActivationService _subscriptionActivation;
     private readonly ApplicationDbContext _db;
     private readonly ILogger<PaymentService> _logger;
 
@@ -50,9 +51,11 @@ public class PaymentService : IPaymentService
         INtfyService ntfy,
         IEmailService email,
         IAffiliateService affiliate,
+        ISubscriptionActivationService subscriptionActivation,
         ApplicationDbContext db,
         ILogger<PaymentService> logger)
     {
+        _subscriptionActivation = subscriptionActivation;
         _repository = repository;
         _orderService = orderService;
         _notchPay = notchPay;
@@ -156,6 +159,39 @@ public class PaymentService : IPaymentService
             return false;
         }
 
+        // Module 17, défense en profondeur : le montant annoncé par le
+        // provider n'était jamais comparé ni au montant du paiement initié,
+        // ni au montant de la commande. Un écart signale soit une commande
+        // dont le montant a été forgé côté client, soit une notification
+        // falsifiée : dans les deux cas la commande ne doit pas être
+        // confirmée, et un administrateur doit le savoir.
+        var mismatch = await DetectAmountMismatchAsync(payment, transaction);
+        if (mismatch != null)
+        {
+            _logger.LogError(
+                "Webhook NotchPay {EventId} rejeté : {Reason} (paiement {PaymentId}, commande {OrderId})",
+                eventId, mismatch, payment.Id, payment.OrderId);
+
+            await _repository.MarkWebhookEventProcessedAsync(eventId, "notchpay", eventType);
+
+            try
+            {
+                await _ntfy.PublishAdminAsync(
+                    title: "Écart de montant sur un paiement",
+                    message: $"Paiement #{payment.Id} (commande #{payment.OrderId}) : {mismatch}. " +
+                             "La commande n'a pas été confirmée, vérification manuelle requise.",
+                    priority: "urgent",
+                    tags: new[] { "rotating_light", "moneybag" });
+            }
+            catch (Exception ex)
+            {
+                // L'alerte ne doit jamais masquer le rejet lui-même.
+                _logger.LogError(ex, "Échec de l'alerte administrateur pour l'écart de montant du paiement {PaymentId}", payment.Id);
+            }
+
+            return false;
+        }
+
         payment.Status = MapNotchPayStatus(transaction.Status) ?? payment.Status;
         payment.Operator = transaction.Operator;
 
@@ -173,11 +209,13 @@ public class PaymentService : IPaymentService
         await _repository.UpdateAsync(payment);
         await _repository.MarkWebhookEventProcessedAsync(eventId, "notchpay", eventType);
 
+        // Module 19 : seul le cas confirmé était propagé à la commande, si
+        // bien qu'un paiement échoué, annulé ou expiré laissait sa commande
+        // "pending" à vie. Tous les cas terminaux sont désormais propagés.
+        await PropagatePaymentStatusToOrderAsync(payment);
+
         if (payment.Status == "completed")
         {
-            // Mettre à jour le statut de la commande
-            try { await _orderService.UpdateOrderStatusAsync(payment.OrderId, "completed"); }
-            catch (Exception ex) { _logger.LogError(ex, "Impossible de mettre à jour le statut de la commande {OrderId}", payment.OrderId); }
 
             // Programme d'affiliation : attribue une commission si la commande
             // porte un code de parrainage (voir Order.ReferralCode). Ne doit
@@ -216,6 +254,144 @@ public class PaymentService : IPaymentService
 
         _logger.LogInformation("Webhook NotchPay {EventId} traité → statut {Status}", eventId, payment.Status);
         return true;
+    }
+
+    /// <summary>
+    /// Statut de commande correspondant à un statut de paiement terminal
+    /// (Module 19), ou null si le paiement n'est pas encore terminal.
+    ///
+    /// Un paiement expiré n'a pas de statut de commande dédié dans la liste
+    /// blanche de OrderService : il partage l'état final « échoué », la
+    /// distinction restant portée par le paiement lui-même. Une commande dans
+    /// cet état n'est pas un cul-de-sac : la relance de paiement la ramène en
+    /// attente (voir RetryPaymentAsync).
+    /// </summary>
+    private static string? MapPaymentStatusToOrderStatus(string paymentStatus) => paymentStatus switch
+    {
+        "completed" => "completed",
+        "failed" => "failed",
+        "expired" => "failed",
+        "cancelled" => "cancelled",
+        _ => null,
+    };
+
+    /// <summary>
+    /// Propage l'état terminal d'un paiement à sa commande, par la voie
+    /// contrôlée à liste blanche plutôt que par une écriture directe.
+    /// N'échoue jamais l'opération appelante : la commande peut être
+    /// rattrapée, perdre la confirmation du paiement non.
+    /// </summary>
+    private async Task PropagatePaymentStatusToOrderAsync(Payment payment)
+    {
+        var orderStatus = MapPaymentStatusToOrderStatus(payment.Status);
+        if (orderStatus == null) return;
+
+        try
+        {
+            // Cas de course signalé plutôt qu'écrasé silencieusement : un
+            // paiement confirmé après que sa commande a déjà été marquée
+            // échouée doit laisser une trace exploitable.
+            var current = await _db.Orders.AsNoTracking()
+                .FirstOrDefaultAsync(o => o.Id == payment.OrderId);
+
+            if (current != null &&
+                string.Equals(current.Status, "failed", StringComparison.OrdinalIgnoreCase) &&
+                orderStatus == "completed")
+            {
+                _logger.LogWarning(
+                    "Commande {OrderId} déjà marquée échouée alors que le paiement {PaymentId} est confirmé : " +
+                    "cas de course, la commande est repassée à confirmée et doit être vérifiée.",
+                    payment.OrderId, payment.Id);
+            }
+
+            await _orderService.UpdateOrderStatusAsync(payment.OrderId, orderStatus);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Impossible de mettre à jour le statut de la commande {OrderId} vers {Status}",
+                payment.OrderId, orderStatus);
+            return;
+        }
+
+        if (orderStatus != "completed") return;
+
+        // Module 18 (correction §7.3 du suivi) : une commande d'abonnement
+        // confirmée doit produire une vraie ligne Subscriptions. C'était le
+        // chaînon manquant du point 3.1.11 — le paiement aboutissait, et
+        // l'abonnement n'existait nulle part, ce qui laissait le mur payant du
+        // Module 17 bloquer un client qui venait de payer.
+        //
+        // Placé ici plutôt que dans la seule branche du webhook : les deux
+        // chemins de confirmation (notification NotchPay et synchronisation
+        // par consultation de statut) passent par cette méthode, et le second
+        // est le filet de secours quand la notification ne parvient pas.
+        // L'activation est idempotente, un rejeu n'empile pas les abonnements.
+        try
+        {
+            await _subscriptionActivation.ActivateFromOrderAsync(payment.OrderId);
+        }
+        catch (Exception ex)
+        {
+            // Ne fait jamais échouer la confirmation du paiement : l'argent est
+            // encaissé, et un abonnement manquant est rattrapable, alors que
+            // rejeter la notification ferait reperdre la confirmation.
+            _logger.LogError(ex,
+                "Paiement {PaymentId} confirmé mais activation de l'abonnement de la commande {OrderId} en échec",
+                payment.Id, payment.OrderId);
+        }
+    }
+
+    /// <summary>
+    /// Décrit l'écart de montant constaté sur une notification de paiement,
+    /// ou null si tout concorde (Module 17, point 4).
+    ///
+    /// Deux comparaisons distinctes, car elles détectent deux fraudes
+    /// différentes : le montant notifié face au montant réellement initié
+    /// (notification falsifiée ou paiement partiel accepté par le provider),
+    /// et le montant du paiement face au total de la commande (montant forgé
+    /// côté client au moment de la commande).
+    ///
+    /// Le contrôle ne s'applique qu'aux notifications qui confirment un
+    /// encaissement : un échec, une annulation ou une expiration doivent
+    /// continuer d'être propagés même si le provider ne renvoie pas de
+    /// montant, sans quoi la correction figerait à nouveau des commandes en
+    /// attente. XAF étant sans sous-unité, la comparaison se fait à
+    /// l'unité près.
+    /// </summary>
+    private async Task<string?> DetectAmountMismatchAsync(Payment payment, NotchPayWebhookTransaction transaction)
+    {
+        if (MapNotchPayStatus(transaction.Status) != "completed")
+            return null;
+
+        static decimal Xaf(decimal value) => decimal.Round(value, 0, MidpointRounding.AwayFromZero);
+
+        if (transaction.Amount.HasValue && Xaf(transaction.Amount.Value) != Xaf(payment.Amount))
+        {
+            return $"montant notifié {Xaf(transaction.Amount.Value)} XAF ≠ montant du paiement {Xaf(payment.Amount)} XAF";
+        }
+
+        if (!string.IsNullOrWhiteSpace(transaction.Currency) &&
+            !string.Equals(transaction.Currency, payment.Currency, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"devise notifiée {transaction.Currency} ≠ devise du paiement {payment.Currency}";
+        }
+
+        var order = await _db.Orders.AsNoTracking()
+            .FirstOrDefaultAsync(o => o.Id == payment.OrderId);
+
+        if (order == null)
+            return $"commande {payment.OrderId} introuvable";
+
+        // Le total de la commande est le montant net attendu : la remise est
+        // déjà déduite de TotalAmount au moment de la création (voir
+        // OrderService). Aucune tolérance n'est acceptée, le XAF n'ayant pas
+        // de sous-unité.
+        if (Xaf(payment.Amount) != Xaf(order.TotalAmount))
+        {
+            return $"montant du paiement {Xaf(payment.Amount)} XAF ≠ total de la commande {Xaf(order.TotalAmount)} XAF";
+        }
+
+        return null;
     }
 
     private async Task SendConfirmationEmailAsync(Payment payment)
@@ -297,6 +473,12 @@ public class PaymentService : IPaymentService
                         payment.ErrorMessage = tx.FailureMessage;
                     }
                     await _repository.UpdateAsync(payment);
+
+                    // Module 19 : ce chemin de synchronisation (consultation
+                    // du statut, utilisé quand le webhook ne parvient pas)
+                    // ne touchait pas non plus la commande, laissant la même
+                    // commande bloquée en attente.
+                    await PropagatePaymentStatusToOrderAsync(payment);
                 }
             }
             catch (Exception ex)
@@ -359,8 +541,15 @@ public class PaymentService : IPaymentService
         if (payment.UserId != requestingUserId)
             throw new UnauthorizedAccessException("Accès refusé");
 
-        if (payment.Status != "failed")
-            throw new InvalidOperationException("Seuls les paiements échoués peuvent être réessayés");
+        // Module 19 : la condition n'acceptait que "failed", ce qui faisait
+        // d'"expired" un cul-de-sac : le service d'expiration passe un
+        // paiement en attente à expiré au bout d'une heure, et plus rien ne
+        // pouvait alors le relancer, laissant la commande bloquée. Les deux
+        // états terminaux non confirmés sont désormais relançables ; un
+        // paiement annulé reste volontairement exclu, c'est une décision
+        // explicite de l'utilisateur.
+        if (payment.Status != "failed" && payment.Status != "expired")
+            throw new InvalidOperationException("Seuls les paiements échoués ou expirés peuvent être réessayés");
 
         if ((payment.RetryCount ?? 0) >= 3)
             throw new InvalidOperationException("Nombre maximum de tentatives atteint");
@@ -387,6 +576,20 @@ public class PaymentService : IPaymentService
             payment.NotchpayReference = result.Transaction?.Reference;
             payment.Status = MapNotchPayStatus(result.Transaction?.Status) ?? "pending";
             await _repository.UpdateAsync(payment);
+
+            // La commande avait été marquée échouée par la propagation de
+            // l'échec ou de l'expiration : une relance en cours la ramène en
+            // attente, sans quoi elle resterait échouée même après une
+            // confirmation réussie (Module 19).
+            if (payment.Status == "pending")
+            {
+                try { await _orderService.UpdateOrderStatusAsync(payment.OrderId, "pending"); }
+                catch (Exception ex) { _logger.LogError(ex, "Impossible de rouvrir la commande {OrderId} lors de la relance", payment.OrderId); }
+            }
+            else
+            {
+                await PropagatePaymentStatusToOrderAsync(payment);
+            }
 
             return new InitiatePaymentResponse
             {

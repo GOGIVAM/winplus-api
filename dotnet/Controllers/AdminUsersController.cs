@@ -173,21 +173,39 @@ public class AdminUsersController : ControllerBase
     /// </summary>
     private static readonly DateTime MaxSortableDate = DateTime.SpecifyKind(DateTime.MaxValue, DateTimeKind.Utc);
 
-    private static readonly string[] AllowedRoles = { "student", "teacher", "parent", "admin" };
+    /// <summary>
+    /// Rôles que l'administration peut attribuer (création, modification,
+    /// changement de rôle). Décision 9.3 du suivi : <c>institution</c> est
+    /// attribuable par l'administrateur uniquement ; l'inscription publique
+    /// reste limitée à élève, professeur et parent.
+    /// </summary>
+    private static readonly string[] AllowedRoles = { "student", "teacher", "parent", "institution", "admin" };
 
     private readonly ApplicationDbContext _db;
     private readonly IEmailService _email;
+    private readonly Microsoft.Extensions.Caching.Memory.IMemoryCache _cache;
     private readonly ILogger<AdminUsersController> _logger;
 
     public AdminUsersController(
         ApplicationDbContext db,
         IEmailService email,
+        Microsoft.Extensions.Caching.Memory.IMemoryCache cache,
         ILogger<AdminUsersController> logger)
     {
         _db = db;
         _email = email;
+        _cache = cache;
         _logger = logger;
     }
+
+    /// <summary>
+    /// Fait prendre effet immédiatement un changement d'état de compte
+    /// (Module 20) : la revalidation par requête s'appuie sur un cache court,
+    /// que l'on invalide ici pour ne pas laisser jusqu'à 30 secondes d'accès
+    /// à un compte que l'administrateur vient de suspendre ou de supprimer.
+    /// </summary>
+    private void InvalidateAccountStatus(int userId) =>
+        Backend.Middlewares.AccountStatusMiddleware.Invalidate(_cache, userId);
 
     private int? CurrentAdminId()
     {
@@ -362,7 +380,12 @@ public class AdminUsersController : ControllerBase
             pageSize = Math.Clamp(pageSize, 1, 200);
             var now = DateTime.UtcNow;
 
-            var query = _db.Users.AsNoTracking().AsQueryable();
+            // Module 19 : le filtre de requête global masque les comptes
+            // soft-deleted, donc le filtre "supprimés" ne renvoyait jamais
+            // rien. On lève le filtre ici et on le réapplique explicitement
+            // ci-dessous, statut par statut : le comportement par défaut
+            // (sans statut demandé) reste inchangé.
+            var query = _db.Users.AsNoTracking().IgnoreQueryFilters().AsQueryable();
 
             // Les comptes supprimés ne remontent que si on les demande.
             if (status == "deleted") query = query.Where(u => u.IsDeleted);
@@ -525,7 +548,9 @@ public class AdminUsersController : ControllerBase
     // ── Helpers rôles ─────────────────────────────────────────────────────
     private IQueryable<User> RoleQuery(string role, string? status, string? q)
     {
-        var query = _db.Users.AsNoTracking().Where(u => u.Role == role);
+        // Même correction que la liste générale (Module 19) : sans lever le
+        // filtre global, l'onglet "supprimés" des vues par rôle restait vide.
+        var query = _db.Users.AsNoTracking().IgnoreQueryFilters().Where(u => u.Role == role);
         query = status switch
         {
             "active"    => query.Where(u => !u.IsDeleted && u.IsActive),
@@ -1191,6 +1216,8 @@ public class AdminUsersController : ControllerBase
         await RevokeAllSessionsAsync(id);
         await _db.SaveChangesAsync();
 
+        InvalidateAccountStatus(id);
+
         _logger.LogInformation("Admin {AdminId} suspended user {UserId}. Reason: {Reason}",
             CurrentAdminId(), id, req?.Reason ?? "");
         return Ok(new { message = "Compte suspendu" });
@@ -1199,13 +1226,18 @@ public class AdminUsersController : ControllerBase
     [HttpPost("{id:int}/reactivate")]
     public async Task<IActionResult> Reactivate(int id)
     {
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
+        // Module 19 : un filtre de requête global exclut les comptes
+        // soft-deleted de toute requête EF. Sans IgnoreQueryFilters, cette
+        // lecture ne trouvait jamais le compte qu'elle est précisément censée
+        // restaurer, et la réactivation renvoyait 404 à vie.
+        var user = await _db.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound(new { error = "Utilisateur introuvable" });
 
         user.IsActive = true;
         user.IsDeleted = false;
         user.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+        InvalidateAccountStatus(id);
         return Ok(new { message = "Compte réactivé" });
     }
 
@@ -1232,6 +1264,8 @@ public class AdminUsersController : ControllerBase
         await RevokeAllSessionsAsync(id);
         await _db.SaveChangesAsync();
 
+        InvalidateAccountStatus(id);
+
         _logger.LogInformation("Admin {AdminId} soft-deleted user {UserId}", CurrentAdminId(), id);
         return Ok(new { message = "Compte supprimé" });
     }
@@ -1244,7 +1278,10 @@ public class AdminUsersController : ControllerBase
     [HttpDelete("{id:int}/hard")]
     public async Task<IActionResult> HardDelete(int id)
     {
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
+        // Même cause que Reactivate (Module 19) : un compte déjà soft-deleted
+        // était invisible ici, donc impossible à supprimer définitivement, y
+        // compris face à une demande d'effacement.
+        var user = await _db.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound(new { error = "Utilisateur introuvable" });
         if (user.Id == CurrentAdminId())
             return BadRequest(new { error = "Vous ne pouvez pas supprimer votre propre compte" });
@@ -1264,6 +1301,8 @@ public class AdminUsersController : ControllerBase
             _db.Users.Remove(user);
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
+
+            InvalidateAccountStatus(id);
 
             _logger.LogWarning("Admin {AdminId} hard-deleted user {UserId}", CurrentAdminId(), id);
             return Ok(new { message = "Compte supprimé définitivement" });
@@ -1482,17 +1521,53 @@ public class AdminUsersController : ControllerBase
         var months = Math.Clamp(req.Months, 1, 36);
         var now = DateTime.UtcNow;
 
+        // Plan par défaut quand l'admin n'en précise aucun.
+        //
+        // ⚠ Deux régressions corrigées ici :
+        //  1. `OrderBy(p => p.Price)` sans filtre tombait sur le plan GRATUIT.
+        //     Un octroi « X mois offerts » n'ouvrait donc plus aucun accès
+        //     payant depuis le contrôle de palier de ContentAccessService.
+        //     On retient désormais le moins cher des plans PAYANTS (Price > 0).
+        //  2. `!p.IsArchived` référençait une propriété [NotMapped] de
+        //     PricingPlan : EF Core ne pouvait pas la traduire et la requête
+        //     échouait à l'exécution. Seul `!p.IsDeleted` est réellement mappé.
         var planId = req.PlanId ?? await _db.PricingPlans
-            .Where(p => !p.IsDeleted && !p.IsArchived)
+            .Where(p => !p.IsDeleted && p.Price > 0)
             .OrderBy(p => p.Price)
             .Select(p => p.Id)
             .FirstOrDefaultAsync();
 
         if (planId == 0)
-            return BadRequest(new { error = "Aucun plan tarifaire disponible" });
+            return BadRequest(new { error = "Aucun plan tarifaire payant disponible" });
+
+        // Le nom du plan est recopié sur l'abonnement, comme le fait
+        // SubscriptionActivationService pour les abonnements payés : sans lui,
+        // l'abonnement offert s'affichait sans nom de plan et le quota de
+        // tokens IA (résolu à défaut par le nom) retombait sur le palier le
+        // plus bas.
+        var plan = await _db.PricingPlans
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(p => p.Id == planId);
+
+        if (plan == null)
+            return BadRequest(new { error = "Plan tarifaire introuvable" });
+
+        // Passe de clôture du lot 0 : un planId explicite n'était pas validé.
+        // Un plan archivé ou gratuit produisait un abonnement « actif » qui
+        // n'ouvrait aucun accès payant (ContentAccessService exige Price > 0).
+        if (req.PlanId.HasValue)
+        {
+            if (plan.IsDeleted)
+                return BadRequest(new { error = $"Le plan {plan.Name} est archivé : choisissez un plan actif." });
+            if (plan.Price <= 0)
+                return BadRequest(new { error = $"Le plan {plan.Name} est gratuit : un octroi d'abonnement doit porter sur un plan payant." });
+        }
 
         var existing = await _db.Subscriptions
-            .Where(s => s.UserId == id && !s.IsDeleted && s.Status == "active")
+            // Casse normalisée (§7.2) : sans ça, une ligne héritée en "Active"
+            // n'était pas vue et l'octroi créait un second abonnement actif au
+            // lieu de prolonger celui en cours.
+            .Where(s => s.UserId == id && !s.IsDeleted && s.Status.ToLower() == "active")
             .OrderByDescending(s => s.EndDate ?? MaxSortableDate)
             .FirstOrDefaultAsync();
 
@@ -1502,6 +1577,10 @@ public class AdminUsersController : ControllerBase
             var from = existing.EndDate.HasValue && existing.EndDate > now ? existing.EndDate.Value : now;
             existing.EndDate = from.AddMonths(months);
             existing.PricingPlanId = planId;
+            // Le plan pouvant changer à la prolongation, le nom et l'indicateur
+            // d'activité sont réalignés explicitement sur le plan retenu.
+            existing.PlanName = plan.Name;
+            existing.IsActive = true;
             existing.RenewalCount += 1;
             existing.UpdatedAt = now;
         }
@@ -1511,9 +1590,11 @@ public class AdminUsersController : ControllerBase
             {
                 UserId = id,
                 PricingPlanId = planId,
+                PlanName = plan.Name,
                 StartDate = now,
                 EndDate = now.AddMonths(months),
                 Status = "active",
+                IsActive = true,
                 CreatedAt = now,
             });
         }

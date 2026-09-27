@@ -88,6 +88,9 @@ public partial class ApplicationDbContext : DbContext
     public DbSet<HomePageFeature> HomePageFeatures => Set<HomePageFeature>();
     public DbSet<Page> Pages => Set<Page>();
 
+    // Journal de consommation WinAI en tokens LLM réels (Partie 8 du suivi).
+    public DbSet<AiTokenUsage> AiTokenUsages => Set<AiTokenUsage>();
+
     // Liaison parent-enfant, classes enseignant, messagerie directe
     public DbSet<ParentStudentLink> ParentStudentLinks => Set<ParentStudentLink>();
     public DbSet<TeacherStudentLink> TeacherStudentLinks => Set<TeacherStudentLink>();
@@ -1231,6 +1234,22 @@ modelBuilder.Entity<Exam>(entity =>
         });
 
         // Liaison parent-enfant
+        // Journal de consommation WinAI (Partie 8.1/8.7). L'index unique
+        // (UserId, ClientMessageId) EST la garantie d'idempotence : deux
+        // chemins concurrents pour le même message utilisateur ne peuvent pas
+        // créer deux lignes, la seconde insertion échoue en base.
+        modelBuilder.Entity<AiTokenUsage>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.UserId, e.ClientMessageId }).IsUnique();
+            entity.HasIndex(e => new { e.UserId, e.CreatedAt });
+            entity.Property(e => e.AttemptId).HasMaxLength(32);
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         modelBuilder.Entity<ParentStudentLink>(entity =>
         {
             entity.HasKey(e => e.Id);

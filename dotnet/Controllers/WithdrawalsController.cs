@@ -21,7 +21,16 @@ public record CreateWithdrawalRequest(string Operator, string Phone, decimal Amo
 /// </summary>
 [ApiController]
 [Route("api/withdrawals")]
-[Authorize]
+// Module 20 : la politique "VerifiedEmailOnly" était déclarée sans usage, si
+// bien que la vérification d'adresse n'était imposée nulle part. Elle est
+// appliquée ici, sur le seul flux qui fait sortir de l'argent réel de la
+// plateforme : une demande de retrait exige une adresse vérifiée, standard
+// du marché et périmètre volontairement étroit.
+//
+// ⚠ Décision à confirmer côté produit : l'appliquer plus largement (par
+// exemple à tout achat) couperait l'accès aux comptes existants non vérifiés,
+// dont le volume n'a pas pu être mesuré depuis cet environnement.
+[Authorize(Policy = "VerifiedEmailOnly")]
 public class WithdrawalsController : ControllerBase
 {
     private readonly ApplicationDbContext _db;

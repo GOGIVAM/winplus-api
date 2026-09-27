@@ -9,6 +9,17 @@ public interface IEnrollmentService
     Task<Enrollment> EnrollUserAsync(int userId, int subjectId);
     Task<IEnumerable<Enrollment>> GetUserEnrollmentsAsync(int userId);
     Task<Enrollment?> GetEnrollmentAsync(int userId, int subjectId);
+
+    /// <summary>
+    /// Inscription retrouvée par son identifiant propre (Module 20).
+    ///
+    /// Le contrôleur appelait GetEnrollmentAsync(userId, enrollmentId), qui
+    /// attend un identifiant de contenu en second argument : la vérification
+    /// de propriété avant désinscription comparait donc un identifiant
+    /// d'inscription à un identifiant de matière, et renvoyait « introuvable »
+    /// ou la mauvaise ligne selon les identifiants en présence.
+    /// </summary>
+    Task<Enrollment?> GetEnrollmentByIdAsync(int enrollmentId);
     Task<Enrollment> UpdateProgressAsync(int enrollmentId, decimal progressPercentage);
     Task<Enrollment> CompleteEnrollmentAsync(int enrollmentId, string? certificateUrl = null);
     Task<bool> UnenrollAsync(int enrollmentId);
@@ -124,6 +135,19 @@ public class EnrollmentService : IEnrollmentService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting enrollment for user {UserId} and subject {SubjectId}", userId, subjectId);
+            return null;
+        }
+    }
+
+    public async Task<Enrollment?> GetEnrollmentByIdAsync(int enrollmentId)
+    {
+        try
+        {
+            return await _enrollmentRepository.GetByIdAsync(enrollmentId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting enrollment {EnrollmentId}", enrollmentId);
             return null;
         }
     }

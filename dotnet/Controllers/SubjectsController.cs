@@ -22,6 +22,7 @@ public class SubjectsController : ControllerBase
     private readonly IFastApiClient _fastApiClient;
     private readonly IConfiguration _configuration;
     private readonly IStorageService _storage;
+    private readonly IContentAccessService _contentAccess;
 
     public SubjectsController(
         ISubjectService subjectService,
@@ -29,7 +30,8 @@ public class SubjectsController : ControllerBase
         ILogger<SubjectsController> logger,
         IFastApiClient fastApiClient,
         IConfiguration configuration,
-        IStorageService storage)
+        IStorageService storage,
+        IContentAccessService contentAccess)
     {
         _subjectService = subjectService;
         _context = context;
@@ -37,6 +39,7 @@ public class SubjectsController : ControllerBase
         _fastApiClient = fastApiClient;
         _configuration = configuration;
         _storage = storage;
+        _contentAccess = contentAccess;
     }
 
     private class PythonRecsResponse { public List<object>? Recommendations { get; set; } }
@@ -104,6 +107,49 @@ public class SubjectsController : ControllerBase
         hasCorrection = !string.IsNullOrEmpty(exam?.CorrectionUrl),
     };
 
+    /// <summary>
+    /// Identité de l'appelant pour le filtrage des brouillons : null si
+    /// anonyme. Les endpoints de catalogue sont volontairement ouverts (la
+    /// vitrine publique doit rester consultable sans compte), on ne peut donc
+    /// pas s'appuyer sur [Authorize] pour lire l'utilisateur.
+    /// </summary>
+    private (int? userId, bool isAdmin) CurrentViewer()
+    {
+        try
+        {
+            if (User?.Identity?.IsAuthenticated != true) return (null, false);
+            return (User.GetUserId(), User.IsAdmin());
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return (null, false);
+        }
+    }
+
+    /// <summary>
+    /// Un contenu non publié ne doit apparaître dans aucune liste publique
+    /// (Module 17) : seul son auteur et un administrateur voient leurs
+    /// brouillons. Sans ce filtre, protéger la publication ne sert à rien
+    /// puisque les brouillons sont déjà exposés.
+    /// </summary>
+    private bool IsVisibleToViewer(Subject s, int? userId, bool isAdmin) =>
+        s.IsPublished || isAdmin || (userId.HasValue && s.AuthorUserId == userId.Value);
+
+    /// <summary>
+    /// Même règle que <see cref="IsVisibleToViewer"/>, appliquée dans la
+    /// requête SQL (passe de clôture du lot 0) : les listes publiques
+    /// (populaires, vedettes, récents) filtraient après avoir pris les N
+    /// premiers contenus, et renvoyaient donc moins d'éléments que demandé
+    /// dès qu'un brouillon figurait parmi eux.
+    /// </summary>
+    private IQueryable<Subject> VisibleSubjectsQuery(int? userId, bool isAdmin) =>
+        _context.Subjects
+            .WhereNotDeleted()
+            .AsNoTracking()
+            .Where(s => s.IsPublished || isAdmin || (userId != null && s.AuthorUserId == userId));
+
+    private static int ClampListLimit(int limit) => limit < 1 || limit > 100 ? 20 : limit;
+
     [HttpGet]
     [ProducesResponseType(typeof(PaginationResponse<Subject>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll(
@@ -121,8 +167,12 @@ public class SubjectsController : ControllerBase
             if (page < 1) page = 1;
             pageSize = Math.Clamp(pageSize, 1, 500);
 
+            var (viewerId, viewerIsAdmin) = CurrentViewer();
             var query = _context.Subjects
                 .Where(s => !s.IsDeleted)
+                // Module 17 : les brouillons ne sortent jamais du catalogue
+                // public  seul leur auteur, ou un administrateur, les voit.
+                .Where(s => s.IsPublished || viewerIsAdmin || (viewerId != null && s.AuthorUserId == viewerId))
                 .AsQueryable();
 
             if (verifiedAuthorOnly)
@@ -219,6 +269,11 @@ public class SubjectsController : ControllerBase
             var subject = await _subjectService.GetSubjectByIdAsync(id);
             if (subject == null)
                 return NotFound();
+
+            var (viewerId, viewerIsAdmin) = CurrentViewer();
+            if (!IsVisibleToViewer(subject, viewerId, viewerIsAdmin))
+                return NotFound();
+
             var examMap = await GetPrimaryExamsAsync(new[] { id });
             var isAuthorVerified = subject.AuthorUserId.HasValue &&
                 await _context.TutorProfiles.AnyAsync(tp => tp.UserId == subject.AuthorUserId && tp.IsDiplomaVerified);
@@ -262,11 +317,40 @@ public class SubjectsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Création d'une matière  réservée au professeur et à l'administrateur
+    /// (Module 17 : cet endpoint n'exigeait aucune authentification et liait
+    /// directement l'entité au corps de la requête).
+    /// </summary>
     [HttpPost]
-    public async Task<IActionResult> Create([FromBody] Subject subject)
+    [Authorize(Policy = "InstructorOnly")]
+    public async Task<IActionResult> Create([FromBody] SubjectCreateRequest request)
     {
         try
         {
+            var userId = User.GetUserId();
+            var isAdmin = User.IsAdmin();
+
+            var subject = new Subject
+            {
+                Title = request.Title.Trim(),
+                Description = request.Description,
+                Category = request.Category,
+                Level = request.Level,
+                ThumbnailUrl = request.ThumbnailUrl,
+                // FCFA : devise sans sous-unité, jamais de montant fractionnaire.
+                Price = decimal.Round(request.Price, 0, MidpointRounding.AwayFromZero),
+                // La publication reste une décision humaine passant par
+                // l'endpoint d'approbation administrateur.
+                IsPublished = false,
+                // L'auteur détermine à qui revient le revenu de la vente : il
+                // est déduit du jeton, jamais accepté depuis la requête. Le
+                // contenu créé par un administrateur reste sans auteur, comme
+                // le contenu historique, pour ne pas créditer un compte
+                // d'administration des revenus d'une vente.
+                AuthorUserId = isAdmin ? null : userId,
+            };
+
             var created = await _subjectService.CreateSubjectAsync(subject);
             return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
         }
@@ -277,13 +361,33 @@ public class SubjectsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Mise à jour d'une matière  réservée à l'auteur du contenu et à
+    /// l'administrateur, sur une liste blanche de champs (Module 17).
+    /// </summary>
     [HttpPut("{id}")]
-    public async Task<IActionResult> Update(int id, [FromBody] Subject subject)
+    [Authorize(Policy = "InstructorOnly")]
+    public async Task<IActionResult> Update(int id, [FromBody] SubjectUpdateRequest request)
     {
         try
         {
-            subject.Id = id;
-            var updated = await _subjectService.UpdateSubjectAsync(subject);
+            var existing = await _subjectService.GetSubjectByIdAsync(id);
+            if (existing == null) return NotFound();
+
+            if (!User.IsAdmin() && existing.AuthorUserId != User.GetUserId())
+                return StatusCode(403, new { error = "Vous ne pouvez modifier que vos propres contenus." });
+
+            if (!string.IsNullOrWhiteSpace(request.Title)) existing.Title = request.Title.Trim();
+            if (request.Price.HasValue)
+                existing.Price = decimal.Round(request.Price.Value, 0, MidpointRounding.AwayFromZero);
+
+            existing.Description = request.Description;
+            existing.Category = request.Category;
+            existing.Level = request.Level;
+            existing.ThumbnailUrl = request.ThumbnailUrl;
+            existing.UpdatedAt = DateTime.UtcNow;
+
+            var updated = await _subjectService.UpdateSubjectAsync(existing);
             return Ok(updated);
         }
         catch (Exception ex)
@@ -293,11 +397,22 @@ public class SubjectsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Suppression d'une matière  réservée à l'auteur du contenu et à
+    /// l'administrateur (Module 17).
+    /// </summary>
     [HttpDelete("{id}")]
+    [Authorize(Policy = "InstructorOnly")]
     public async Task<IActionResult> Delete(int id)
     {
         try
         {
+            var existing = await _subjectService.GetSubjectByIdAsync(id);
+            if (existing == null) return NotFound();
+
+            if (!User.IsAdmin() && existing.AuthorUserId != User.GetUserId())
+                return StatusCode(403, new { error = "Vous ne pouvez supprimer que vos propres contenus." });
+
             var result = await _subjectService.DeleteSubjectAsync(id);
             if (!result)
                 return NotFound();
@@ -320,6 +435,9 @@ public class SubjectsController : ControllerBase
         try
         {
             var results = await _subjectService.SearchSubjectsAsync(q ?? "");
+
+            var (viewerId, viewerIsAdmin) = CurrentViewer();
+            results = results.Where(s => IsVisibleToViewer(s, viewerId, viewerIsAdmin));
             
             // ✅ AJOUTÉ: Filtre par isFree (prix = 0)
             if (isFree.HasValue && isFree.Value)
@@ -367,8 +485,12 @@ public class SubjectsController : ControllerBase
         {
             _logger.LogInformation("Récupération des {Limit} cours populaires", limit);
             
-            var subjects = await _subjectService.GetAllSubjectsAsync(1, limit);
-            var popular = subjects.OrderByDescending(s => s.EnrollmentCount).Take(limit).ToList();
+            var (viewerId, viewerIsAdmin) = CurrentViewer();
+            limit = ClampListLimit(limit);
+            var popular = await VisibleSubjectsQuery(viewerId, viewerIsAdmin)
+                .OrderByDescending(s => s.EnrollmentCount)
+                .Take(limit)
+                .ToListAsync();
 
             // Enrichir avec viewCount calculé depuis LearningHistories
             var enrichedSubjects = new List<dynamic>();
@@ -416,8 +538,14 @@ public class SubjectsController : ControllerBase
         try
         {
             _logger.LogInformation("Récupération des {Limit} cours en vedette", limit);
-            var subjects = await _subjectService.GetAllSubjectsAsync(1, limit);
-            return Ok(subjects.Where(s => s.IsFeatured).Take(limit).ToList());
+            var (viewerId, viewerIsAdmin) = CurrentViewer();
+            limit = ClampListLimit(limit);
+            return Ok(await VisibleSubjectsQuery(viewerId, viewerIsAdmin)
+                .Where(s => s.IsFeatured)
+                .Include(s => s.Contents)
+                .OrderByDescending(s => s.CreatedAt)
+                .Take(limit)
+                .ToListAsync());
         }
         catch (Exception ex)
         {
@@ -437,8 +565,13 @@ public class SubjectsController : ControllerBase
         try
         {
             _logger.LogInformation("Récupération des {Limit} cours récents", limit);
-            var subjects = await _subjectService.GetAllSubjectsAsync(1, limit);
-            return Ok(subjects.OrderByDescending(s => s.CreatedAt).Take(limit).ToList());
+            var (viewerId, viewerIsAdmin) = CurrentViewer();
+            limit = ClampListLimit(limit);
+            return Ok(await VisibleSubjectsQuery(viewerId, viewerIsAdmin)
+                .Include(s => s.Contents)
+                .OrderByDescending(s => s.CreatedAt)
+                .Take(limit)
+                .ToListAsync());
         }
         catch (Exception ex)
         {
@@ -462,7 +595,10 @@ public class SubjectsController : ControllerBase
         {
             _logger.LogInformation("Récupération des cours pour la catégorie {Category}", name);
             var results = await _subjectService.GetSubjectsByCategoryAsync(name);
-            
+
+            var (viewerId, viewerIsAdmin) = CurrentViewer();
+            results = results.Where(s => IsVisibleToViewer(s, viewerId, viewerIsAdmin));
+
             var paginated = results
                 .OrderByDescending(s => s.CreatedAt)
                 .Skip((page - 1) * pageSize)
@@ -502,10 +638,12 @@ public class SubjectsController : ControllerBase
             if (page < 1) page = 1;
             pageSize = Math.Clamp(pageSize, 1, 500);
 
+            var (viewerId, viewerIsAdmin) = CurrentViewer();
             var query = _context.Subjects
                 .Where(s => !s.IsDeleted && _context.Exams.Any(e =>
                     e.SubjectId == s.Id && !e.IsDeleted &&
                     e.ExamType.ToLower() == examType.ToLower()))
+                .Where(s => s.IsPublished || viewerIsAdmin || (viewerId != null && s.AuthorUserId == viewerId))
                 .OrderByDescending(s => s.CreatedAt);
 
             var totalCount = await query.CountAsync();
@@ -581,35 +719,21 @@ public class SubjectsController : ControllerBase
     /// </summary>
     private async Task<(Subject? subject, Exam? exam, IActionResult? error)> ResolveAccessibleExamAsync(int id)
     {
-        var role = User.FindFirst(ClaimTypes.Role)?.Value
-                   ?? User.FindFirst("role")?.Value
-                   ?? "free";
-
         var subject = await _subjectService.GetSubjectByIdAsync(id);
         if (subject == null)
             return (null, null, NotFound(new { error = "Épreuve introuvable." }));
 
         if (subject.Price > 0)
         {
-            bool hasSubscription = !string.Equals(role, "free", StringComparison.OrdinalIgnoreCase);
-            if (!hasSubscription)
+            int userId;
+            try { userId = User.GetUserId(); }
+            catch (UnauthorizedAccessException)
             {
-                var userId = User.GetUserId();
-                bool hasPurchased = await _context.OrderItems
-                    .AnyAsync(oi => oi.SubjectId == id
-                                 && oi.Order.UserId == userId
-                                 && oi.Order.Status == "completed");
-
-                // Contenu assigné par un professeur à une classe dont l'élève
-                // est membre (Module 2, US-CAT-04) : WinPlus a déjà débité le
-                // professeur une seule fois, l'élève n'a rien à payer.
-                bool assignedViaClass = !hasPurchased && await _context.TeacherClassContents
-                    .AnyAsync(tcc => tcc.SubjectId == id &&
-                        _context.TeacherClassStudents.Any(cs => cs.TeacherClassId == tcc.TeacherClassId && cs.StudentId == userId));
-
-                if (!hasPurchased && !assignedViaClass)
-                    return (subject, null, StatusCode(403, new { error = "Veuillez acheter cette épreuve pour pouvoir y accéder." }));
+                return (subject, null, StatusCode(401, new { error = "Veuillez vous connecter pour accéder à cette épreuve." }));
             }
+
+            if (!await _contentAccess.HasPaidContentAccessAsync(userId, subject, User.IsAdmin()))
+                return (subject, null, StatusCode(403, new { error = "Veuillez acheter cette épreuve pour pouvoir y accéder." }));
         }
 
         var exam = await _context.Exams
@@ -700,42 +824,17 @@ public class SubjectsController : ControllerBase
     [Authorize]
     public async Task<IActionResult> Download(int id)
     {
-        var role = User.FindFirst(ClaimTypes.Role)?.Value
-                   ?? User.FindFirst("role")?.Value
-                   ?? "free";
-
-        var subject = await _subjectService.GetSubjectByIdAsync(id);
-        if (subject == null)
-            return NotFound(new { error = "Épreuve introuvable." });
-
-        if (subject.Price > 0)
-        {
-            bool hasSubscription = !string.Equals(role, "free", StringComparison.OrdinalIgnoreCase);
-            if (!hasSubscription)
-            {
-                var userId = User.GetUserId();
-                bool hasPurchased = await _context.OrderItems
-                    .AnyAsync(oi => oi.SubjectId == id
-                                 && oi.Order.UserId == userId
-                                 && oi.Order.Status == "completed");
-                if (!hasPurchased)
-                    return StatusCode(403, new { error = "Veuillez acheter cette épreuve pour pouvoir la télécharger." });
-            }
-        }
-
-        var exam = await _context.Exams
-            .Where(e => e.SubjectId == id && !e.IsDeleted && e.DocumentUrl != null)
-            .OrderByDescending(e => e.CreatedAt)
-            .FirstOrDefaultAsync();
-
-        if (exam == null || string.IsNullOrEmpty(exam.DocumentUrl))
-            return NotFound(new { error = "Le fichier PDF n'est pas encore disponible pour cette épreuve." });
+        // Même règle d'accès que la consultation en flux, via le même
+        // resolver : le téléchargement réimplémentait la sienne et y perdait
+        // l'exemption "contenu assigné via une classe" (Module 17).
+        var (subject, exam, error) = await ResolveAccessibleExamAsync(id);
+        if (error != null) return error;
 
         string downloadUrl;
         try
         {
             var bucket = _storage.Bucket;
-            var s3Key = ExtractS3Key(exam.DocumentUrl, bucket);
+            var s3Key = ExtractS3Key(exam!.DocumentUrl!, bucket);
 
             using var s3 = _storage.CreateS3Client();
             var request = new GetPreSignedUrlRequest
@@ -750,10 +849,10 @@ public class SubjectsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Impossible de générer une URL presignée pour l'épreuve {Id}, retour URL directe", id);
-            downloadUrl = exam.DocumentUrl;
+            downloadUrl = exam!.DocumentUrl!;
         }
 
-        exam.DownloadCount += 1;
+        exam!.DownloadCount += 1;
 
         // Historique du téléchargement : statistiques hebdomadaires,
         // historique élève et rapports parents.
@@ -762,13 +861,13 @@ public class SubjectsController : ControllerBase
             UserId = User.GetUserId(),
             SubjectId = id,
             ExamId = exam.Id,
-            FileName = $"{subject.Title}.pdf",
+            FileName = $"{subject!.Title}.pdf",
             CreatedAt = DateTime.UtcNow
         });
 
         await _context.SaveChangesAsync();
 
-        var filename = $"{subject.Title}.pdf";
+        var filename = $"{subject!.Title}.pdf";
         return Ok(new { downloadUrl, filename });
     }
 

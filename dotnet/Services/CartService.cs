@@ -6,7 +6,11 @@ namespace Backend.Services;
 public interface ICartService
 {
     Task<IEnumerable<CartItem>> GetUserCartAsync(int userId);
-    Task<CartItem> AddToCartAsync(int userId, int subjectId, decimal price);
+    /// <summary>
+    /// Ajoute un contenu au panier. Le prix n'est jamais fourni par
+    /// l'appelant : il est relu en base (Module 17).
+    /// </summary>
+    Task<CartItem> AddToCartAsync(int userId, int subjectId);
     Task<bool> RemoveFromCartAsync(int userId, int subjectId);
     Task<bool> RemoveCartItemAsync(int cartItemId);
     Task<bool> ClearCartAsync(int userId);
@@ -16,7 +20,7 @@ public interface ICartService
 
     // ── Panier anonyme (avant connexion), persisté en base par DeviceId ──────
     Task<IEnumerable<CartItem>> GetAnonymousCartAsync(string deviceId);
-    Task<CartItem> AddToAnonymousCartAsync(string deviceId, int subjectId, decimal price);
+    Task<CartItem> AddToAnonymousCartAsync(string deviceId, int subjectId);
     Task<bool> RemoveFromAnonymousCartAsync(string deviceId, int subjectId);
     Task<bool> ClearAnonymousCartAsync(string deviceId);
     Task<decimal> GetAnonymousCartTotalAsync(string deviceId);
@@ -85,7 +89,7 @@ public class CartService : ICartService
         }
     }
 
-    public async Task<CartItem> AddToCartAsync(int userId, int subjectId, decimal price)
+    public async Task<CartItem> AddToCartAsync(int userId, int subjectId)
     {
         try
         {
@@ -111,7 +115,11 @@ public class CartService : ICartService
             {
                 UserId = userId,
                 SubjectId = subjectId,
-                Price = price > 0 ? price : subject.Price,
+                // Module 17 : le prix vient exclusivement de la base. Il était
+                // auparavant pris dans le corps de la requête (seule
+                // validation : non négatif), ce qui laissait le client
+                // imposer son propre prix d'achat.
+                Price = decimal.Round(subject.Price, 0, MidpointRounding.AwayFromZero),
                 User = user,
                 Subject = subject
             };
@@ -219,7 +227,7 @@ public class CartService : ICartService
         }
     }
 
-    public async Task<CartItem> AddToAnonymousCartAsync(string deviceId, int subjectId, decimal price)
+    public async Task<CartItem> AddToAnonymousCartAsync(string deviceId, int subjectId)
     {
         try
         {
@@ -238,7 +246,8 @@ public class CartService : ICartService
             {
                 DeviceId = deviceId,
                 SubjectId = subjectId,
-                Price = price > 0 ? price : subject.Price,
+                // Module 17 : prix relu en base, jamais celui du client.
+                Price = decimal.Round(subject.Price, 0, MidpointRounding.AwayFromZero),
                 Subject = subject
             };
 

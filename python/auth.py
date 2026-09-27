@@ -17,7 +17,26 @@ logger = logging.getLogger(__name__)
 
 # Configuration JWT (même que .NET)
 # La valeur doit être identique à JWT:SecretKey côté .NET (appsettings.json).
-JWT_SECRET = os.getenv('JWT_SECRET_KEY', 'your-secret-key-must-match-dotnet')
+#
+# Module 20 : la valeur par défaut « your-secret-key-must-match-dotnet » a été
+# retirée. Elle est publique (elle vit dans ce dépôt) : si la variable n'était
+# pas positionnée en production, n'importe qui pouvait forger un jeton
+# role=admin accepté par tous les endpoints WinAI, sans que rien ne le signale.
+# Le service refuse désormais de démarrer bruyamment plutôt que de démarrer
+# avec un secret connu, sur le modèle du .NET qui lève déjà une erreur.
+#
+# Aucune valeur de secret n'est écrite ni lue ici : côté déploiement, la
+# variable d'environnement JWT_SECRET_KEY doit être positionnée, avec
+# exactement la même valeur que JWT:SecretKey côté .NET.
+JWT_SECRET = os.getenv('JWT_SECRET_KEY')
+if not JWT_SECRET:
+    raise RuntimeError(
+        "JWT_SECRET_KEY n'est pas positionnée. Le service WinAI refuse de "
+        "démarrer sans secret de signature : sans elle, tout jeton forgé "
+        "serait accepté. Positionnez la variable d'environnement "
+        "JWT_SECRET_KEY avec la même valeur que JWT:SecretKey côté .NET."
+    )
+
 JWT_ALGORITHM = 'HS256'
 
 # Issuer et audience émis par .NET (JwtService : WinPlusApp / WinPlusUsers).
@@ -65,13 +84,25 @@ XMLDSIG_HMAC_SHA256 = 'http://www.w3.org/2001/04/xmldsig-more#hmac-sha256'
 
 LEGACY_ALG_WINDOW_HOURS = int(os.getenv('JWT_LEGACY_ALG_WINDOW_HOURS', '48'))
 
-# Fichier d'ancrage de l'échéance. /tmp est volontaire : si la machine
-# redémarre, le fichier disparaît et la fenêtre se réarme  un redémarrage
-# machine implique de toute façon une coupure, donc des tokens à renouveler.
-_DEADLINE_FILE = os.getenv(
-    'JWT_LEGACY_ALG_DEADLINE_FILE',
-    '/tmp/winplus_jwt_legacy_alg_deadline',
+# Fichier d'ancrage de l'échéance.
+#
+# Module 20 : l'emplacement était /tmp, présenté comme volontaire. Dans un
+# conteneur, /tmp appartient au système de fichiers éphémère de l'instance :
+# chaque redémarrage du conteneur — et non seulement de la machine — effaçait
+# le fichier et RÉARMAIT la fenêtre pour 48 heures de plus. Une tolérance
+# censée se fermer d'elle-même ne se fermait donc jamais, et un algorithme de
+# signature non standard restait accepté indéfiniment.
+#
+# L'échéance vit maintenant à côté du code, dans un répertoire de données qui
+# survit au redémarrage du conteneur (JWT_LEGACY_ALG_DEADLINE_FILE reste
+# surchargeable pour pointer un volume persistant en déploiement).
+_DEFAULT_DEADLINE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'data',
+    'jwt_legacy_alg_deadline',
 )
+
+_DEADLINE_FILE = os.getenv('JWT_LEGACY_ALG_DEADLINE_FILE', _DEFAULT_DEADLINE_FILE)
 
 
 def _resolve_legacy_deadline() -> datetime:
@@ -94,6 +125,7 @@ def _resolve_legacy_deadline() -> datetime:
 
     deadline = datetime.now(timezone.utc) + timedelta(hours=LEGACY_ALG_WINDOW_HOURS)
     try:
+        os.makedirs(os.path.dirname(_DEADLINE_FILE) or '.', exist_ok=True)
         with open(_DEADLINE_FILE, 'w', encoding='utf-8') as handle:
             handle.write(deadline.isoformat())
     except OSError as exc:
@@ -257,8 +289,16 @@ def require_role(*allowed_roles: str):
         async def protected_endpoint(user: UserTokenData = Depends(require_role('admin', 'teacher'))):
             ...
     """
+    # Module 20 : comparaison insensible à la casse. Les rôles sont normalisés
+    # en minuscules côté .NET, mais ce projet a déjà produit des endpoints
+    # morts en comparant un rôle en casse capitalisée (voir la correction de
+    # [Authorize(Roles = "Admin")]). Un contrôle de rôle qui échoue sur la
+    # casse est un refus silencieux, pas une faille : on l'évite ici plutôt
+    # que de le découvrir en production.
+    normalized = {role.lower() for role in allowed_roles}
+
     async def role_checker(user: UserTokenData = Depends(verify_token)) -> UserTokenData:
-        if user.role not in allowed_roles:
+        if (user.role or '').lower() not in normalized:
             logger.warning(f"Access forbidden for user {user.user_id}. Required roles: {allowed_roles}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

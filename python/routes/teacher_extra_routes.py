@@ -20,7 +20,20 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func
 
-from auth import verify_token, UserTokenData
+# Module 20 : la vérification d'authentification était présente partout, la
+# vérification de RÔLE nulle part, alors que l'assistant require_role existe
+# déjà et est utilisé dans admin_routes.py. Un élève authentifié pouvait donc
+# appeler la génération de corrigé, l'analyse de soumission ou le rapport de
+# coaching de n'importe quel professeur.
+#
+# Exception documentée : /messaging/quick-replies et /messaging/generate-reply
+# restent ouverts à tout compte authentifié. Ce sont des aides à la rédaction
+# de message génériques, appelées par la messagerie web pour TOUS les rôles
+# (MessagesPage les déclenche au chargement d'une conversation, sans condition
+# de rôle) : les restreindre au professeur casserait la messagerie de l'élève
+# et du parent. Seul /messaging/parent-report, réservé au professeur dans
+# l'interface, est passé sous contrôle de rôle.
+from auth import verify_token, require_role, UserTokenData
 from database import (
     Database, QuizAttempt, DailyScore, Enrollment, Subject, User,
     TutorProfile, TutorSubject, TutorLevel, CourseContent, Order, OrderItem,
@@ -111,7 +124,7 @@ class GenerateQuizResponse(BaseModel):
 @teacher_ai_router.post("/ai/generate-quiz-questions", response_model=GenerateQuizResponse)
 async def generate_quiz_questions(
     body: GenerateQuizRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     topic_str = body.topic or (", ".join(body.topics) if body.topics else "")
     subject_str = body.subject or ""
@@ -181,7 +194,7 @@ class OptimizeTitleResponse(BaseModel):
 @teacher_ai_router.post("/ai/optimize-title", response_model=OptimizeTitleResponse)
 async def optimize_title(
     body: OptimizeTitleRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     type_labels = {
         "epreuve": "Épreuve", "correction": "Corrigé", "quiz": "Quiz",
@@ -236,7 +249,7 @@ class GenerateDescriptionResponse(BaseModel):
 @teacher_ai_router.post("/ai/generate-description", response_model=GenerateDescriptionResponse)
 async def generate_description(
     body: GenerateDescriptionRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     type_labels = {
         "epreuve": "épreuve", "correction": "corrigé", "quiz": "quiz",
@@ -298,7 +311,7 @@ class ClassAnalysisResponse(BaseModel):
 @teacher_ai_router.post("/teacher/class-analysis", response_model=ClassAnalysisResponse)
 async def get_class_analysis(
     body: ClassAnalysisRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     db = Database()
     session = db.SessionLocal()
@@ -452,7 +465,7 @@ class ContentImpactResponse(BaseModel):
 @teacher_ai_router.get("/teacher/content-impact/{content_id}", response_model=ContentImpactResponse)
 async def get_content_impact(
     content_id: int,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     db = Database()
     session = db.SessionLocal()
@@ -581,7 +594,7 @@ class GenerateCorrectionResponse(BaseModel):
 @teacher_ai_router.post("/teacher/generate-correction", response_model=GenerateCorrectionResponse)
 async def generate_correction(
     body: GenerateCorrectionRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     prompt = (
         f"Voici une épreuve de {body.subject or 'mathématiques'} niveau {body.level or 'BAC'}.\n\n"
@@ -643,7 +656,7 @@ class PredictPopularityResponse(BaseModel):
 @teacher_ai_router.post("/teacher/predict-popularity", response_model=PredictPopularityResponse)
 async def predict_popularity(
     body: PredictPopularityRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     db = Database()
     session = db.SessionLocal()
@@ -764,7 +777,7 @@ class AnalyzeSubmissionResponse(BaseModel):
 @teacher_ai_router.post("/teacher/analyze-submission", response_model=AnalyzeSubmissionResponse)
 async def analyze_submission(
     body: AnalyzeSubmissionRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     # QCM : correction mécanique, pas d'appel IA (US-COR-06 "notation
     # automatique directe"). is_correct vient de la comparaison faite par
@@ -876,7 +889,7 @@ MIN_SAMPLE_FOR_MARKET_DATA = 3
 @teacher_ai_router.post("/teacher/suggest-tutor-rate", response_model=SuggestTutorRateResponse)
 async def suggest_tutor_rate(
     body: SuggestTutorRateRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     db = Database()
     session = db.SessionLocal()
@@ -981,7 +994,7 @@ class AnalyzeTutorProfileResponse(BaseModel):
 @teacher_ai_router.post("/teacher/analyze-tutor-profile", response_model=AnalyzeTutorProfileResponse)
 async def analyze_tutor_profile(
     body: AnalyzeTutorProfileRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     missing_line = f"Champs structurels manquants : {', '.join(body.missing_fields)}.\n" if body.missing_fields else "Tous les champs structurels sont remplis.\n"
     prompt = (
@@ -1041,7 +1054,7 @@ class RecommendedPurchasesResponse(BaseModel):
 
 
 @teacher_ai_router.get("/teacher/recommended-purchases", response_model=RecommendedPurchasesResponse)
-async def get_recommended_purchases(current_user: UserTokenData = Depends(verify_token)):
+async def get_recommended_purchases(current_user: UserTokenData = Depends(require_role("teacher", "admin"))):
     db = Database()
     session = db.SessionLocal()
     try:
@@ -1111,7 +1124,7 @@ class EditorialWatchResponse(BaseModel):
 
 
 @teacher_ai_router.get("/teacher/editorial-watch", response_model=EditorialWatchResponse)
-async def get_editorial_watch(current_user: UserTokenData = Depends(verify_token)):
+async def get_editorial_watch(current_user: UserTokenData = Depends(require_role("teacher", "admin"))):
     db = Database()
     session = db.SessionLocal()
     try:
@@ -1183,7 +1196,7 @@ class SessionSummaryResponse(BaseModel):
 @teacher_ai_router.post("/teacher/session-summary", response_model=SessionSummaryResponse)
 async def generate_session_summary(
     body: SessionSummaryRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     if len(body.transcript_text.strip()) < 30:
         raise HTTPException(status_code=422, detail="Transcription trop courte pour être résumée.")
@@ -1241,7 +1254,7 @@ class RevisionSheetResponse(BaseModel):
 @teacher_ai_router.post("/teacher/student-revision-sheet", response_model=RevisionSheetResponse)
 async def generate_revision_sheet(
     body: RevisionSheetRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     if not body.session_summaries:
         raise HTTPException(status_code=422, detail="Aucun compte-rendu de séance disponible pour cet élève.")
@@ -1299,7 +1312,7 @@ class CoachingReportResponse(BaseModel):
 @teacher_ai_router.post("/teacher/coaching-report", response_model=CoachingReportResponse)
 async def generate_coaching_report(
     body: CoachingReportRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     if not body.reviews and body.sessions_count == 0:
         raise HTTPException(status_code=422, detail="Pas assez de données pour générer un rapport ce mois-ci.")
@@ -1413,7 +1426,7 @@ class ParentReportResponse(BaseModel):
 @teacher_ai_router.post("/messaging/parent-report", response_model=ParentReportResponse)
 async def generate_parent_report(
     body: ParentReportRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     if len(body.summary_text.strip()) < 10:
         raise HTTPException(status_code=422, detail="Résumé trop court pour générer un rapport.")
@@ -1448,7 +1461,7 @@ class InactivityRelaunchResponse(BaseModel):
 @teacher_ai_router.post("/teacher/inactivity-relaunch-message", response_model=InactivityRelaunchResponse)
 async def generate_inactivity_relaunch_message(
     body: InactivityRelaunchRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     prompt = (
         f"Un élève n'a pas repris sa formation « {body.course_title} » depuis plusieurs jours. "
@@ -1554,7 +1567,7 @@ class GenerateSyllabusResponse(BaseModel):
 @teacher_ai_router.post("/teacher/generate-syllabus", response_model=GenerateSyllabusResponse)
 async def generate_syllabus(
     body: GenerateSyllabusRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     weeks = max(1, min(body.duration_weeks, 24))
     prompt = (

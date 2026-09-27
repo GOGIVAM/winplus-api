@@ -185,15 +185,17 @@ public class DeviceTrackingService : IDeviceTrackingService
 
     // ============ Private Helper Methods ============
 
+    /// <summary>
+    /// Adresse du client telle que résolue par UseForwardedHeaders
+    /// (Program.cs), qui n'applique X-Forwarded-For que pour un relais de
+    /// confiance. L'en-tête n'est plus relu brut ici (passe de clôture du
+    /// lot 0) : n'importe quel client pouvait s'y attribuer une adresse.
+    /// </summary>
     private string GetClientIpAddress(HttpRequest request)
     {
-        if (request.Headers.TryGetValue("X-Forwarded-For", out var forwardedFor))
-        {
-            var ips = forwardedFor.ToString().Split(',');
-            return ips[0].Trim();
-        }
-
-        return request.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
+        var remoteIp = request.HttpContext.Connection.RemoteIpAddress;
+        if (remoteIp == null) return "Unknown";
+        return (remoteIp.IsIPv4MappedToIPv6 ? remoteIp.MapToIPv4() : remoteIp).ToString();
     }
 
     private string GetDeviceFingerprint(HttpRequest request, string userAgent)

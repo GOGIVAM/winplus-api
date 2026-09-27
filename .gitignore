@@ -18,6 +18,11 @@
 **/.env
 **/.env.*
 
+# Données d'exécution du service WinAI (Module 20) : python/data/ porte
+# l'ancrage de l'échéance de la fenêtre de compatibilité JWT, écrit au
+# démarrage. C'est un état local de l'instance, pas du code.
+python/data/
+
 # Logs
 *.log
 

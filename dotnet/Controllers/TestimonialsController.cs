@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Backend.Models.Entities;
 using Backend.Data;
@@ -70,6 +71,13 @@ public class TestimonialsController : ControllerBase
     /// POST /api/testimonials
     /// </summary>
     [HttpPost]
+    // Module 17 : l'endpoint ne portait aucune exigence d'authentification.
+    // Il lisait bien la revendication d'identité (et refusait donc un appel
+    // sans jeton), mais sans [Authorize] aucun échec d'authentification
+    // n'était signalé comme tel : un jeton expiré ou invalide donnait une
+    // réponse indiscernable d'un oubli de jeton. L'attribut rend le contrat
+    // explicite et aligne cet endpoint sur le reste du projet.
+    [Authorize]
     [ProducesResponseType(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]

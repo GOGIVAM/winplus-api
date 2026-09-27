@@ -169,9 +169,9 @@ public class AdminOverviewAnalyticsController : ControllerBase
 
             var totalOrders     = await _db.Orders.CountAsync(o => !o.IsDeleted);
             var completedOrders = await _db.Orders
-                .CountAsync(o => !o.IsDeleted && o.Status == "Completed");
+                .CountAsync(o => !o.IsDeleted && o.Status.ToLower() == "completed");
             var uniqueBuyers    = await _db.Orders
-                .Where(o => !o.IsDeleted && o.Status == "Completed")
+                .Where(o => !o.IsDeleted && o.Status.ToLower() == "completed")
                 .Select(o => o.UserId)
                 .Distinct()
                 .CountAsync();

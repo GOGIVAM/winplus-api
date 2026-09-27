@@ -20,7 +20,10 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from auth import verify_token, UserTokenData
+# Module 20 : même absence de contrôle de rôle que côté professeur. Cet
+# endpoint compare les résultats des enfants d'un parent : il est réservé au
+# rôle parent (l'administrateur reste autorisé pour le support).
+from auth import verify_token, require_role, UserTokenData
 from database import Database, QuizAttempt, DailyScore, User, ParentStudentLink
 from services.deepseek_client import get_deepseek_client
 
@@ -54,7 +57,7 @@ class ChildrenInsightsResponse(BaseModel):
 @parent_extra_router.get("/parent/children-insights", response_model=ChildrenInsightsResponse)
 async def get_children_insights(
     child_ids: str = Query(..., description="Comma-separated child user IDs"),
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("parent", "admin")),
 ):
     """
     Comparaison bienveillante inter-enfants  jamais un classement, toujours des insights.

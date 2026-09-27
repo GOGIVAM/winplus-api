@@ -31,6 +31,15 @@ public class SendMessageRequest
     /// Inclure le contexte utilisateur dans la requête
     /// </summary>
     public bool IncludeContext { get; set; } = true;
+
+    /// <summary>
+    /// Identifiant du message utilisateur généré côté client (UUID), identique
+    /// sur le flux SSE, le repli REST et « Réessayer » pour un même message
+    /// (Partie 8.7) : le serveur ne le décompte qu'une fois. Optionnel pour
+    /// les clients hérités (le mobile ne l'envoie pas encore).
+    /// </summary>
+    [MaxLength(64)]
+    public string? ClientMessageId { get; set; }
 }
 
 /// <summary>
@@ -95,6 +104,10 @@ public class StreamChatRequest
     public string? ForceLanguage { get; set; }
 
     public List<StreamAttachment>? Attachments { get; set; }
+
+    /// <summary>Voir <see cref="SendMessageRequest.ClientMessageId"/> (Partie 8.7).</summary>
+    [MaxLength(64)]
+    public string? ClientMessageId { get; set; }
 }
 
 /// <summary>
@@ -306,6 +319,15 @@ public class ChatResponse
     /// Tokens totaux utilisés
     /// </summary>
     public int TotalTokensUsed { get; set; }
+
+    /// <summary>
+    /// Faux quand FastAPI/DeepSeek a échoué et que le contenu assistant n'est
+    /// qu'un message de repli (« service indisponible »). Interne : sert au
+    /// contrôleur à libérer la réserve de quota au lieu de facturer une
+    /// réponse qui n'a pas eu lieu (point D, passe 8.10). Jamais sérialisé.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool AiServiceSucceeded { get; set; } = true;
 }
 
 /// <summary>

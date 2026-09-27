@@ -175,7 +175,12 @@ public class AffiliateService : IAffiliateService
                 return;
             }
 
-            var commissionAmount = Math.Round(order.TotalAmount * account.CommissionRate / 100m, 2);
+            // Module 19 / décision §4.E : le XAF n'a pas de sous-unité. Cette
+            // commission était arrondie à deux décimales alors que le tutorat
+            // arrondit à zéro, dans le même portefeuille : le solde devenait
+            // fractionnaire et un virement Mobile Money sur un tel montant est
+            // rejeté ou tronqué. Zéro décimale partout.
+            var commissionAmount = Math.Round(order.TotalAmount * account.CommissionRate / 100m, 0, MidpointRounding.AwayFromZero);
             if (commissionAmount <= 0) return;
 
             _db.AffiliateCommissions.Add(new AffiliateCommission

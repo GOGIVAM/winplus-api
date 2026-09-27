@@ -17,7 +17,14 @@ namespace Backend.Services;
 
 /// <summary>
 /// Service hébergé qui génère et envoie le 1er de chaque mois un rapport mensuel
-/// de pilotage aux institutions (Role = "organization") actives.
+/// de pilotage aux institutions (Role = "institution") actives.
+///
+/// ⚠ Correction §7.5 du suivi : ce service cherchait <c>Role == "organization"</c>.
+/// Deux valeurs de rôle coexistaient pour le même type de compte, et le rôle
+/// officiel retenu est <c>"institution"</c> — c'est celui que produit
+/// l'inscription, celui que teste le frontend web (RoleAwareShell) et celui que
+/// connaît l'administration. Le rapport mensuel ne trouvait donc aucune
+/// institution et ne partait jamais.
 /// </summary>
 public sealed class MonthlyInstitutionReportService : BackgroundService
 {
@@ -86,9 +93,10 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var email = scope.ServiceProvider.GetRequiredService<IEmailService>();
 
-        // Find all active institution users (Role = "organization")
+        // Find all active institution users (Role = "institution", §7.5)
         var institutions = await db.Users
-            .Where(u => u.Role == "organization" && u.IsActive && !u.IsDeleted && u.IsEmailVerified)
+            .Where(u => u.Role.ToLower() == "institution"
+                     && u.IsActive && !u.IsDeleted && u.IsEmailVerified)
             .ToListAsync(ct);
 
         _logger.LogInformation("Found {Count} institution users for monthly report.", institutions.Count);

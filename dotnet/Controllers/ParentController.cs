@@ -20,7 +20,10 @@ public record AddChildRequest(string Email);
 [ApiController]
 [Route("api/parent")]
 [Produces("application/json")]
-[Authorize]
+// Module 20 : application de la politique "ParentOnly", jusqu'ici déclarée
+// sans usage. Toutes les routes de ce contrôleur portent sur les enfants
+// rattachés au compte parent.
+[Authorize(Policy = "ParentOnly")]
 public class ParentController : ControllerBase
 {
     private readonly IParentService _parentService;

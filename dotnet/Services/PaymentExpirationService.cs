@@ -42,6 +42,7 @@ public class PaymentExpirationService : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var repository = scope.ServiceProvider.GetRequiredService<IPaymentRepository>();
+        var orderService = scope.ServiceProvider.GetRequiredService<IOrderService>();
 
         var expiryThreshold = DateTime.UtcNow.Subtract(PendingThreshold);
         var stalePayments = await repository.GetExpiredPendingPaymentsAsync(expiryThreshold);
@@ -55,6 +56,20 @@ public class PaymentExpirationService : BackgroundService
             payment.Status = "expired";
             payment.ErrorMessage = "Paiement expiré après 1 heure sans confirmation";
             await repository.UpdateAsync(payment);
+
+            // Module 19 : ce service laissait la commande en attente à vie.
+            // Une commande dont le paiement a expiré passe à l'état final
+            // « échoué » ; la relance du paiement la ramènera en attente si
+            // l'utilisateur reprend son achat (PaymentService.RetryPaymentAsync).
+            try
+            {
+                await orderService.UpdateOrderStatusAsync(payment.OrderId, "failed");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Impossible de marquer la commande {OrderId} comme échouée après expiration du paiement {PaymentId}",
+                    payment.OrderId, payment.Id);
+            }
         }
 
         _logger.LogInformation("{Count} paiement(s) expiré(s) après dépassement du délai d'1 heure", stalePayments.Count);

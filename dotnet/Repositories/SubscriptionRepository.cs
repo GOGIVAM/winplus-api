@@ -88,7 +88,7 @@ public class SubscriptionRepository : ISubscriptionRepository
         {
             var now = DateTime.UtcNow;
             return await _context.Subscriptions
-                .Where(s => s.StartDate <= now && s.EndDate >= now && s.Status == "Active")
+                .Where(s => s.StartDate <= now && s.EndDate >= now && s.Status.ToLower() == "active")
                 .AsNoTracking()
                 .OrderByDescending(s => s.CreatedAt)
                 .ToListAsync();
@@ -122,7 +122,7 @@ public class SubscriptionRepository : ISubscriptionRepository
         try
         {
             return await _context.Subscriptions
-                .Where(s => s.EndDate <= beforeDate && s.Status == "Active")
+                .Where(s => s.EndDate <= beforeDate && s.Status.ToLower() == "active")
                 .AsNoTracking()
                 .OrderBy(s => s.EndDate)
                 .ToListAsync();
@@ -141,7 +141,7 @@ public class SubscriptionRepository : ISubscriptionRepository
             var now = DateTime.UtcNow;
             return await _context.Subscriptions
                 .Where(s => s.UserId == userId && s.PricingPlanId == planId && 
-                           s.StartDate <= now && s.EndDate >= now && s.Status == "Active")
+                           s.StartDate <= now && s.EndDate >= now && s.Status.ToLower() == "active")
                 .AsNoTracking()
                 .FirstOrDefaultAsync();
         }

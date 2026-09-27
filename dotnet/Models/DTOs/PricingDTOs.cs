@@ -14,7 +14,14 @@ public class PricingPlanResponse
     public string? Icon { get; set; }
     public string? Description { get; set; }
     public int? MaxDownloads { get; set; }
+    /// <summary>
+    /// Obsolète depuis la Partie 8 (la colonne porte des tokens) : toujours
+    /// null. Utiliser <see cref="AiUsageMultiplier"/>.
+    /// </summary>
     public int? MaxChatMessages { get; set; }
+
+    /// <summary>Usage WinAI relatif au plan gratuit (1 = gratuit). Partie 8.3.</summary>
+    public int AiUsageMultiplier { get; set; } = 1;
 }
 
 public class PromotionResponse

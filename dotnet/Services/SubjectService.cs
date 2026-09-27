@@ -261,9 +261,12 @@ public class SubjectService : ISubjectService
             // Récupérer les sujets de la même catégorie
             var similar = await _subjectRepository.GetByCategoryAsync(subject.Category ?? "");
             
-            // Exclure le sujet courant et limiter les résultats
+            // Exclure le sujet courant et les contenus non publiés ou
+            // supprimés (passe de clôture du lot 0 : les brouillons sortaient
+            // dans GET /api/subjects/{id}/similar), avant la limitation pour
+            // ne pas renvoyer moins d'éléments que demandé.
             return similar
-                .Where(s => s.Id != subjectId)
+                .Where(s => s.Id != subjectId && s.IsPublished && !s.IsDeleted)
                 .OrderByDescending(s => s.AverageRating)
                 .Take(limit);
         }

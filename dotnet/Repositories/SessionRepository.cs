@@ -71,7 +71,7 @@ public class SessionRepository : ISessionRepository
         {
             var now = DateTime.UtcNow;
             return await _context.Sessions
-                .Where(s => s.StartDate >= now && s.Status == "Scheduled")
+                .Where(s => s.StartDate >= now && s.Status.ToLower() == "scheduled")
                 .AsNoTracking()
                 .OrderBy(s => s.StartDate)
                 .ToListAsync();

@@ -164,7 +164,15 @@ public class PricingController : ControllerBase
             Icon = plan.Icon,
             Description = plan.Description,
             MaxDownloads = plan.MaxDownloads,
-            MaxChatMessages = plan.MaxChatMessages
+            // Partie 8.3 : la colonne MaxChatMessages porte désormais un quota
+            // en TOKENS ; l'exposer tel quel afficherait un chiffre technique
+            // trompeur (« 800 000 messages »). Le champ est conservé dans le
+            // contrat pour compatibilité mais n'est plus renseigné ; la
+            // grandeur publique est le multiplicateur relatif au plan gratuit.
+            // Vérifié : aucun client web ni mobile ne lisait maxChatMessages.
+            MaxChatMessages = null,
+            AiUsageMultiplier = Backend.Services.AiQuotaService.MultiplierFor(
+                Backend.Services.AiQuotaService.ReferenceTokensForPlan(plan, plan.Name)),
         };
     }
 }

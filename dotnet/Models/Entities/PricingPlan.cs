@@ -46,7 +46,39 @@ public class PricingPlan
     public string Currency { get; set; } = "XAF";
     public string? BillingPeriod { get; set; }
     public int? MaxDownloads { get; set; }
+
+    /// <summary>
+    /// ⚠ <b>Réinterprétée par la Partie 8 du suivi</b> : cette colonne porte
+    /// désormais le <b>quota mensuel WinAI en tokens LLM réels</b>, et non plus
+    /// un nombre de messages. Le modèle « 1 message = 1 unité » ne reflétait
+    /// pas le coût réel (un message avec pièce jointe ou audio coûte bien plus
+    /// qu'un message texte court) — décision 8.1.
+    ///
+    /// La colonne n'a délibérément pas été renommée : elle est lue par des
+    /// sauvegardes, des scripts d'exploitation et l'administration existants.
+    /// Utiliser <see cref="MonthlyAiTokenQuota"/> dans le code neuf.
+    ///
+    /// Valeurs posées par <c>Migrations/SQL_SeedPricingPlanTokenQuotas.sql</c>
+    /// et répliquées en repli dans <c>Services/AiUsagePolicy.cs</c>.
+    ///
+    /// ⚠ <b>Depuis 8.10</b>, cette valeur n'est plus un plafond mensuel
+    /// appliqué : c'est le quota de RÉFÉRENCE du plan, dont sont dérivées la
+    /// limite hebdomadaire (÷ 4) et la limite de session (÷ 3 de la semaine),
+    /// voir <c>AiUsagePolicy</c>.
+    /// </summary>
     public int? MaxChatMessages { get; set; }
+
+    /// <summary>
+    /// Nom juste de <see cref="MaxChatMessages"/> depuis la Partie 8 : quota
+    /// mensuel WinAI en tokens. Non mappé — même colonne, pas de redondance
+    /// en base.
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public int? MonthlyAiTokenQuota
+    {
+        get => MaxChatMessages;
+        set => MaxChatMessages = value;
+    }
 
     /// <summary>
     /// Dotation de crédits mensuels en XAF pour les plans parents

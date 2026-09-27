@@ -227,13 +227,21 @@ public class UserRepository : IUserRepository
     {
         try
         {
-            var user = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId && u.IsDeleted);
+            // Module 19, double négation : le filtre de requête global impose
+            // déjà `!IsDeleted`, et cette condition ajoutait `IsDeleted`. La
+            // requête ne pouvait donc jamais renvoyer une ligne, et la
+            // restauration échouait systématiquement. AsNoTracking est retiré
+            // au passage : la ligne doit être suivie pour que la modification
+            // soit enregistrée sans réattachement manuel.
+            var user = await _context.Users
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(u => u.Id == userId && u.IsDeleted);
             if (user == null) return false;
 
             user.IsDeleted = false;
             user.DeletedBy = null;
-            
-            _context.Users.Update(user);
+            user.DeletedByUserId = null;
+
             await _context.SaveChangesAsync();
             
             _logger.LogInformation("User {UserId} restored", userId);
@@ -250,7 +258,12 @@ public class UserRepository : IUserRepository
     {
         try
         {
-            var user = await _context.Users.FindAsync(userId);
+            // FindAsync applique le filtre de requête global : un compte déjà
+            // soft-deleted était donc introuvable, et sa suppression
+            // définitive impossible à vie (Module 19).
+            var user = await _context.Users
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(u => u.Id == userId);
             if (user == null) return false;
 
             _context.Users.Remove(user);

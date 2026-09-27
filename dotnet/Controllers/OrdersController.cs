@@ -9,11 +9,14 @@ using Backend.Models.DTOs;
 
 namespace Backend.Controllers;
 
+/// <summary>
+/// Corps de création de commande. Les anciens champs du parcours invité
+/// (guestEmail, guestName, items) ne sont plus lus : décision 9.2 du suivi,
+/// un compte est obligatoire pour commander. Un client qui les envoie encore
+/// n'est pas rejeté, ils sont simplement ignorés à la désérialisation.
+/// </summary>
 public record CreateOrderRequest(
     string PaymentMethod,
-    string? GuestEmail,
-    string? GuestName,
-    List<GuestOrderItem>? Items,
     string? ReferralCode = null
 );
 
@@ -55,6 +58,34 @@ public class OrdersController : ControllerBase
     /// si le solde ne couvre pas tout le panier, on refuse plutôt que de
     /// facturer partiellement sans intégration de paiement complémentaire.
     /// </summary>
+    /// <summary>
+    /// Fenêtre pendant laquelle deux appels identiques de paiement par solde
+    /// sont considérés comme une double soumission réseau du même achat, et
+    /// non comme deux achats distincts (Module 19).
+    ///
+    /// Le jeton d'idempotence est dérivé côté serveur et non demandé au
+    /// client : ni le web ni le mobile n'envoient aujourd'hui d'en-tête
+    /// d'idempotence, et exiger ce jeton casserait les deux clients déjà
+    /// déployés.
+    ///
+    /// La clé a d'abord été (utilisateur, méthode « solde », montant total,
+    /// fenêtre de temps), ce qui avalait un second achat légitime : deux
+    /// contenus différents au même prix, à moins d'une minute d'intervalle,
+    /// étaient pris pour le même achat, l'argent n'était pas débité, et le
+    /// panier n'était même pas vidé — l'utilisateur repartait sans rien, sans
+    /// message. La clé compare désormais aussi le contenu du panier à celui
+    /// de la commande candidate : un rejeu porte exactement les mêmes
+    /// contenus, deux achats distincts non.
+    /// </summary>
+    private static readonly TimeSpan BalancePaymentIdempotencyWindow = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Voir <see cref="DbConcurrency.IsSerializationFailure"/> (aide partagée
+    /// avec l'achat parent pour un enfant).
+    /// </summary>
+    private static bool IsSerializationFailure(Exception exception) =>
+        DbConcurrency.IsSerializationFailure(exception);
+
     [HttpPost("pay-with-balance")]
     [Authorize]
     public async Task<IActionResult> PayWithBalance()
@@ -66,37 +97,140 @@ public class OrdersController : ControllerBase
             if (!string.Equals(role, "teacher", StringComparison.OrdinalIgnoreCase))
                 return StatusCode(403, new { success = false, error = "Seul un compte professeur dispose d'un solde WinPlus." });
 
-            var cartTotal = await _db.CartItems.AsNoTracking()
-                .Where(c => c.UserId == userId)
-                .SumAsync(c => (decimal?)c.Price) ?? 0m;
-            if (cartTotal <= 0)
-                return BadRequest(new { success = false, error = "Panier vide." });
+            // Module 19, double dépense : le solde était lu puis la commande
+            // créée sans transaction, sans verrou et sans idempotence. Le solde
+            // étant recalculé par sommation à chaque appel, deux requêtes
+            // concurrentes passaient toutes deux le test et créaient deux
+            // commandes confirmées, dépensant deux fois le même argent.
+            //
+            // Le modèle reproduit ici est celui de la réservation de tutorat
+            // (TutorBookingService) : une transaction Serializable, dont
+            // Postgres détecte la collision au COMMIT (erreur 40001) plutôt
+            // que d'écrire silencieusement les deux débits. L'isolation est
+            // volontairement limitée à ce chemin, elle n'est pas globale.
+            // La transaction est annulée automatiquement à la sortie du bloc
+            // si elle n'a pas été validée (`await using`) : aucun chemin de
+            // retour anticipé ne peut laisser un débit à moitié appliqué.
+            await using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
 
-            var balance = await _teacherService.GetSpendableBalanceAsync(userId);
-            if (balance < cartTotal)
-                return StatusCode(402, new
-                {
-                    success = false,
-                    error = $"Solde insuffisant : {balance:0} XAF disponibles, {cartTotal:0} XAF requis.",
-                    balanceXaf = balance,
-                    requiredXaf = cartTotal,
-                });
-
-            var order = await _orderService.CreateOrderAsync(userId, "balance");
-
-            var entity = await _db.Orders.FirstOrDefaultAsync(o => o.Id == order.Id);
-            if (entity != null)
             {
-                entity.Status = "completed";
-                entity.CompletedDate = DateTime.UtcNow;
-                await _db.SaveChangesAsync();
-                await _affiliate.RecordCommissionForOrderAsync(entity.Id);
+                // Passe de clôture du lot 0 : le contrôle de solde et la clé de
+                // doublon portaient sur le prix stocké au panier, alors que la
+                // commande est créée au prix relu en base. Si le prix avait
+                // monté, la commande dépassait le solde. Le total est désormais
+                // calculé par la même règle que la création de commande
+                // (OrderService.PriceUserCartAsync), sans la dupliquer.
+                var pricing = await _orderService.PriceUserCartAsync(userId);
+                var serverTotal = pricing.Total;
+                if (pricing.IsEmpty || serverTotal <= 0)
+                    return BadRequest(new { success = false, error = "Panier vide." });
+
+                // Idempotence : une commande identique tout juste payée est
+                // renvoyée telle quelle, au lieu d'en créer une seconde. La
+                // comparaison porte sur le montant serveur ET sur l'ensemble
+                // des contenus, pour ne pas confondre deux achats distincts de
+                // même prix (voir le commentaire de la fenêtre ci-dessus).
+                // Seule une commande réellement payée compte : une commande
+                // restée en attente n'a rien débité et ne doit pas masquer un
+                // nouvel achat.
+                var since = DateTime.UtcNow.Subtract(BalancePaymentIdempotencyWindow);
+                var cartSubjectIds = pricing.Items.Select(i => i.SubjectId).OrderBy(id => id).ToList();
+
+                var candidates = await _db.Orders.AsNoTracking()
+                    .Include(o => o.Items)
+                    .Where(o => o.UserId == userId
+                             && o.PaymentMethod == "balance"
+                             && PaidOrderStatus.All.Contains(o.Status.ToLower())
+                             && o.TotalAmount == serverTotal
+                             && o.CreatedAt >= since)
+                    .OrderByDescending(o => o.CreatedAt)
+                    .ToListAsync();
+
+                var duplicate = candidates.FirstOrDefault(o =>
+                    o.Items.Select(i => i.SubjectId).OrderBy(id => id).SequenceEqual(cartSubjectIds));
+
+                if (duplicate != null)
+                {
+                    // Comportement aligné sur le chemin normal, où
+                    // CreateOrderAsync vide le panier : un rejeu laissait
+                    // sinon le panier plein alors que la commande était déjà
+                    // passée, et le client réessayait indéfiniment.
+                    var cartItems = await _db.CartItems.Where(c => c.UserId == userId).ToListAsync();
+                    _db.CartItems.RemoveRange(cartItems);
+                    await _db.SaveChangesAsync();
+
+                    await tx.CommitAsync();
+                    _logger.LogWarning(
+                        "Double soumission détectée sur le paiement par solde du professeur {UserId} : commande {OrderId} renvoyée",
+                        userId, duplicate.Id);
+
+                    return Ok(new
+                    {
+                        data = duplicate,
+                        success = true,
+                        duplicate = true,
+                        // Permet au client de distinguer « déjà payé » d'un
+                        // nouvel achat : sans ce message, les deux cas
+                        // arrivaient sous une réponse identique.
+                        message = $"Cette commande a déjà été payée avec votre solde "
+                                + $"(commande {duplicate.OrderNumber}). Aucun second débit n'a été effectué.",
+                    });
+                }
+
+                var balance = await _teacherService.GetSpendableBalanceAsync(userId);
+                if (balance < serverTotal)
+                    return StatusCode(402, new
+                    {
+                        success = false,
+                        error = $"Solde insuffisant : {balance:0} XAF disponibles, {serverTotal:0} XAF requis.",
+                        balanceXaf = balance,
+                        requiredXaf = serverTotal,
+                        priceAdjustments = pricing.Adjustments,
+                    });
+
+                var order = await _orderService.CreateOrderAsync(userId, "balance");
+
+                // Le statut passe par la voie contrôlée à liste blanche plutôt
+                // que par une écriture directe sur l'entité (Module 19) : elle
+                // valide la valeur, la normalise en minuscules et pose la date
+                // de complétion.
+                await _orderService.UpdateOrderStatusAsync(order.Id, "completed");
+
+                await tx.CommitAsync();
+
+                // Hors transaction : la commission d'affiliation ne doit pas
+                // pouvoir faire échouer ni rejouer le débit déjà validé.
+                await _affiliate.RecordCommissionForOrderAsync(order.Id);
+
+                _logger.LogInformation("Professeur {UserId} a payé sa commande {OrderId} avec son solde WinPlus ({Amount} XAF)",
+                    userId, order.Id, order.TotalAmount);
+
+                return Ok(new { data = order, success = true });
             }
-
-            _logger.LogInformation("Professeur {UserId} a payé sa commande {OrderId} avec son solde WinPlus ({Amount} XAF)",
-                userId, order.Id, cartTotal);
-
-            return Ok(new { data = order, success = true });
+        }
+        catch (ContentNotPurchasableException ex)
+        {
+            return BadRequest(new { success = false, error = ex.Message, subjectId = ex.SubjectId });
+        }
+        catch (Exception ex) when (IsSerializationFailure(ex))
+        {
+            // Collision de sérialisation Postgres (40001) ou interblocage
+            // (40P01) : une autre requête du même professeur a dépensé le
+            // même solde en parallèle.
+            //
+            // La capture ne portait que sur DbUpdateException, alors que le
+            // conflit d'une transaction Serializable est levé par Postgres au
+            // moment du COMMIT : ce n'est pas une écriture EF, donc
+            // `tx.CommitAsync()` remonte une Npgsql.PostgresException nue, qui
+            // passait à travers et retombait en 500 générique. La détection
+            // porte donc sur le code SQL, où qu'il se trouve dans la chaîne
+            // d'exceptions internes.
+            _logger.LogWarning(ex, "Collision de sérialisation sur le paiement par solde");
+            return StatusCode(409, new
+            {
+                success = false,
+                error = "Un autre paiement sur votre solde est en cours de traitement. Réessayez dans un instant."
+            });
         }
         catch (Exception ex)
         {
@@ -105,33 +239,33 @@ public class OrdersController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Création de commande depuis le panier serveur de l'utilisateur.
+    ///
+    /// Décision 9.2 du suivi : le parcours de commande invité est supprimé, un
+    /// compte est obligatoire. Il produisait une commande sans utilisateur
+    /// (UserId nul), donc un achat payé qui n'ouvrait aucun accès. Le panier
+    /// anonyme reste (il ne crée ni commande ni paiement) et est fusionné à la
+    /// connexion. Les commandes invité historiques ne sont pas migrées.
+    ///
+    /// La réponse porte <c>priceAdjustments</c> : la liste des contenus dont
+    /// le prix serveur diffère du prix vu au panier (vide sinon).
+    /// </summary>
     [HttpPost]
+    [Authorize]
     public async Task<IActionResult> CreateOrder([FromBody] CreateOrderRequest request)
     {
         try
         {
-            var isAuth = User.Identity?.IsAuthenticated == true;
-
-            if (isAuth)
-            {
-                var userId = User.GetUserId();
-                var order = await _orderService.CreateOrderAsync(userId, request.PaymentMethod, request.ReferralCode);
-                return Ok(order);
-            }
-            else
-            {
-                if (request.Items == null || !request.Items.Any())
-                    return BadRequest("Les articles du panier sont requis pour une commande anonyme.");
-
-                var order = await _orderService.CreateGuestOrderAsync(
-                    request.GuestEmail,
-                    request.GuestName,
-                    request.PaymentMethod,
-                    request.Items,
-                    request.ReferralCode
-                );
-                return Ok(order);
-            }
+            var userId = User.GetUserId();
+            var order = await _orderService.CreateOrderAsync(userId, request.PaymentMethod, request.ReferralCode);
+            return Ok(order);
+        }
+        // Contenu supprimé, retiré de la vente ou non publié : erreur de
+        // l'utilisateur, pas une panne (auparavant un 500 générique).
+        catch (ContentNotPurchasableException ex)
+        {
+            return BadRequest(new { error = ex.Message, subjectId = ex.SubjectId });
         }
         // Panier vide côté serveur au moment de payer : arrive typiquement quand
         // le panier n'a été rempli qu'en local (deviceId) avant une connexion
@@ -140,9 +274,6 @@ public class OrdersController : ControllerBase
         // cause et empêchait le frontend d'afficher un message actionnable.
         catch (InvalidOperationException ex) when (ex.Message == "Cart is empty")
         {
-            // Cette branche n'est atteinte que depuis le chemin authentifié
-            // (le chemin invité valide request.Items avant d'appeler le
-            // service), donc User.GetUserId() est toujours disponible ici.
             _logger.LogWarning("Tentative de création de commande avec un panier vide pour l'utilisateur {UserId}", User.GetUserId());
             return BadRequest(new { error = "Votre panier est vide. Ajoutez des articles avant de commander." });
         }
@@ -178,6 +309,21 @@ public class OrdersController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Vrai si l'appelant a le droit d'agir sur cette commande (Module 20).
+    ///
+    /// Ces endpoints exigeaient une authentification mais ne filtraient
+    /// jamais sur le propriétaire : n'importe quel compte authentifié pouvait
+    /// lire, annuler et facturer la commande d'un autre en devinant son
+    /// identifiant. L'administrateur conserve l'accès complet, explicitement.
+    ///
+    /// Une commande invité (UserId nul) n'appartient à aucun compte : elle
+    /// n'est accessible qu'à l'administrateur par ces routes, le parcours
+    /// invité passant par la consultation de statut de paiement.
+    /// </summary>
+    private bool CanAccessOrder(int? orderUserId) =>
+        User.IsAdmin() || (orderUserId.HasValue && orderUserId.Value == User.GetUserId());
+
     [HttpGet("{id}")]
     [Authorize]
     public async Task<IActionResult> GetOrderById(int id)
@@ -187,6 +333,8 @@ public class OrdersController : ControllerBase
             var order = await _orderService.GetOrderByIdAsync(id);
             if (order == null)
                 return NotFound();
+            if (!CanAccessOrder(order.UserId))
+                return StatusCode(403, new { success = false, error = "Accès refusé." });
             return Ok(order);
         }
         catch (Exception ex)
@@ -205,6 +353,9 @@ public class OrdersController : ControllerBase
             var order = await _orderService.GetOrderByIdAsync(id);
             if (order == null)
                 return NotFound(new { success = false, error = "Commande introuvable" });
+
+            if (!CanAccessOrder(order.UserId))
+                return StatusCode(403, new { success = false, error = "Accès refusé." });
 
             if (order.Status.Equals("completed", StringComparison.OrdinalIgnoreCase))
                 return BadRequest(new { success = false, error = "Impossible d'annuler une commande déjà complétée" });
@@ -265,6 +416,9 @@ public class OrdersController : ControllerBase
             if (order == null)
                 return NotFound(new { success = false, error = "Commande introuvable" });
 
+            if (!CanAccessOrder(order.UserId))
+                return StatusCode(403, new { success = false, error = "Accès refusé." });
+
             User? user = null;
             if (order.UserId.HasValue)
                 user = await _db.Users.FindAsync(order.UserId.Value);
@@ -290,6 +444,9 @@ public class OrdersController : ControllerBase
             var order = await _orderService.GetOrderByIdAsync(id);
             if (order == null)
                 return NotFound(new { success = false, error = "Commande introuvable" });
+
+            if (!CanAccessOrder(order.UserId))
+                return StatusCode(403, new { success = false, error = "Accès refusé." });
 
             return Ok(new { data = new { order.Id, order.Status, order.CreatedAt }, success = true });
         }

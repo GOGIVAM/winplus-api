@@ -100,7 +100,9 @@ public class CategoryService : ICategoryService
                     Name = category?.ToLower().Replace(" ", "-") ?? $"subject-{index}",
                     DisplayName = category ?? $"Matière {index}",
                     Description = $"Tous les cours et épreuves de {category}",
-                    Count = _context.Subjects.Count(s => s.Category == category && !s.IsDeleted)
+                    // Brouillons exclus du compteur public, comme de la liste
+                    // des catégories ci-dessus (passe de clôture du lot 0).
+                    Count = _context.Subjects.Count(s => s.Category == category && !s.IsDeleted && s.IsPublished)
                 })
                 .ToList();
 

@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Extensions;
 using Backend.Models.Entities;
+using Backend.Services;
 
 namespace Backend.Controllers;
 
@@ -18,11 +19,16 @@ public class CourseEnrollmentController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
     private readonly ILogger<CourseEnrollmentController> _logger;
+    private readonly Backend.Services.IContentAccessService _contentAccess;
 
-    public CourseEnrollmentController(ApplicationDbContext db, ILogger<CourseEnrollmentController> logger)
+    public CourseEnrollmentController(
+        ApplicationDbContext db,
+        ILogger<CourseEnrollmentController> logger,
+        Backend.Services.IContentAccessService contentAccess)
     {
         _db = db;
         _logger = logger;
+        _contentAccess = contentAccess;
     }
 
     [HttpPost("api/courses/{id}/enroll")]
@@ -50,8 +56,12 @@ public class CourseEnrollmentController : ControllerBase
             }
             else if (course.IsIncludedInSub)
             {
-                var hasSub = await _db.Subscriptions.AnyAsync(
-                    s => s.UserId == userId && s.IsActive);
+                // Règle unique (ContentAccessService) : abonnement non
+                // supprimé, actif, de statut "active", et surtout porté par un
+                // plan payant. Le test local précédent ne regardait que
+                // IsActive : un abonnement sur un plan gratuit — créable sans
+                // paiement — ouvrait donc les formations réservées aux abonnés.
+                var hasSub = await _contentAccess.HasActiveSubscriptionAsync(userId);
                 if (!hasSub)
                     return BadRequest(new { error = "Abonnement Premium requis pour accéder à cette formation" });
                 accessType = "subscription";
@@ -62,7 +72,7 @@ public class CourseEnrollmentController : ControllerBase
                 var paid = await _db.OrderItems
                     .AnyAsync(oi => oi.CourseId == id &&
                               oi.Order!.UserId == userId &&
-                              oi.Order.Status == "completed");
+                              PaidOrderStatus.All.Contains(oi.Order.Status.ToLower()));
                 if (!paid)
                     return BadRequest(new { error = "Veuillez acheter cette formation avant de vous inscrire" });
                 accessType = "purchase";

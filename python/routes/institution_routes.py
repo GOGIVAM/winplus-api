@@ -16,7 +16,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func
 
-from auth import verify_token, UserTokenData
+# Module 20 : contrôle de rôle ajouté sur les endpoints destinés à
+# l'institution, jusqu'ici protégés par la seule authentification — n'importe
+# quel compte authentifié pouvait lire le benchmark ou la liste des élèves à
+# risque d'un établissement.
+#
+# Le rôle "institution" existe bien : il est comparé explicitement côté .NET
+# (InstitutionNetworkController) et filtrable dans l'administration des
+# comptes. Il n'est en revanche PAS créable à l'inscription (la liste blanche
+# se limite à student/teacher/parent) : il est attribué par un administrateur.
+# Vérification faite avant d'écrire ce contrôle, précisément pour ne pas
+# répéter la confusion rôle / palier qui rendait le mur payant inerte.
+from auth import verify_token, require_role, UserTokenData
 from database import Database, DailyScore, Enrollment, QuizAttempt, Subject, User
 from services.deepseek_client import get_deepseek_client
 
@@ -108,7 +119,7 @@ class PredictionRequest(BaseModel):
 @institution_router.post("/institution/class-prediction")
 async def class_prediction(
     body: PredictionRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("institution", "admin")),
 ):
     session = _db.SessionLocal()
     try:
@@ -200,7 +211,7 @@ async def class_prediction(
 async def benchmark(
     institution_id: int,
     student_ids: Optional[str] = Query(None, description="IDs séparés par virgule"),
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("institution", "admin")),
 ):
     session = _db.SessionLocal()
     try:
@@ -297,7 +308,7 @@ class ActionPlanRequest(BaseModel):
 @institution_router.post("/institution/action-plan")
 async def action_plan(
     body: ActionPlanRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("institution", "admin")),
 ):
     session = _db.SessionLocal()
     try:
@@ -380,7 +391,7 @@ async def action_plan(
 async def at_risk_students(
     institution_id: int,
     student_ids: Optional[str] = Query(None, description="IDs séparés par virgule"),
-    current_user: UserTokenData = Depends(verify_token),
+    current_user: UserTokenData = Depends(require_role("institution", "admin")),
 ):
     session = _db.SessionLocal()
     try:

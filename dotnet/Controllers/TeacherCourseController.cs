@@ -466,7 +466,8 @@ public class TeacherCourseController : ControllerBase
             var owns = subject.Price <= 0
                 || subject.AuthorUserId == teacherId
                 || await _db.OrderItems.AnyAsync(oi => oi.SubjectId == subject.Id
-                    && oi.Order.UserId == teacherId && oi.Order.Status == "completed");
+                    && oi.Order.UserId == teacherId
+                    && PaidOrderStatus.All.Contains(oi.Order.Status.ToLower()));
             if (!owns)
                 return StatusCode(403, new { error = "Achète ce contenu avant de l'ajouter à une formation." });
 

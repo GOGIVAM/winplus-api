@@ -26,7 +26,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from auth import verify_token, UserTokenData
+from auth import require_role, UserTokenData
 from database import Database, QuizAttempt, User, ExamCoachPlanAI, ParentAlertDB, ParentStudentLink
 from services.deepseek_client import get_deepseek_client
 
@@ -198,7 +198,12 @@ def _fallback_message(alert_type: str, child_name: str) -> str:
 @parent_alert_router.get("/{child_id}", response_model=ParentAlertsResponse)
 async def get_parent_alerts(
     child_id: int,
-    current_user: UserTokenData = Depends(verify_token),
+    # Passe de clôture du lot 0 : contrôle de rôle aligné sur la politique
+    # .NET « ParentOnly » (parent, admin) du seul appelant réel, le proxy
+    # GET /api/parent/ai-alerts/{childId} (ParentController) utilisé par le
+    # web. Le mobile ne lit que les alertes persistées côté .NET. Le lien
+    # parent-enfant reste vérifié par _assert_can_access_child.
+    current_user: UserTokenData = Depends(require_role("parent", "admin")),
 ):
     """
     Détecte des anomalies dans les 14 derniers jours d'activité de l'enfant.

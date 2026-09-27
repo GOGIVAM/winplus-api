@@ -3,6 +3,21 @@ using System.ComponentModel.DataAnnotations;
 namespace Backend.Models.DTOs;
 
 /// <summary>
+/// Corps autorisé pour POST /api/enrollments (Module 17).
+///
+/// L'endpoint liait auparavant directement l'entité `Enrollment`, ce qui
+/// permettait de fournir un `UserId` arbitraire (inscription au nom d'un
+/// autre compte) et d'écrire au passage la progression, l'achèvement ou
+/// l'adresse du certificat. Seul le contenu visé est désormais accepté :
+/// l'utilisateur est déduit du jeton.
+/// </summary>
+public class EnrollRequest
+{
+    [Range(1, int.MaxValue)]
+    public int SubjectId { get; set; }
+}
+
+/// <summary>
 /// DTO for enrollment progress response
 /// </summary>
 public class EnrollmentProgressDto

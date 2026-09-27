@@ -161,7 +161,7 @@ public class CartController : ControllerBase
                         ? item.Subject.Title
                         : $"Article #{item.SubjectId}",
                     Description = item.Subject?.Description,
-                    Price = item.Price > 0 ? item.Price : (item.Subject?.Price ?? 0),
+                    Price = item.Subject?.Price ?? item.Price,
                     Image = item.Subject?.ThumbnailUrl,
                     Quantity = 1,
                     AddedAt = item.AddedAt
@@ -266,10 +266,10 @@ public class CartController : ControllerBase
                 return BadRequest(new { error = "Invalid subject ID" });
             }
 
-            if (request.Price < 0)
-            {
-                return BadRequest(new { error = "Invalid price" });
-            }
+            // Module 17 : le prix transmis par le client est explicitement
+            // ignoré  il est relu en base par le service. Le champ est
+            // conservé dans le DTO pour ne pas casser les clients web et
+            // mobile déjà déployés qui l'envoient encore.
 
             // ✅ Handle both authenticated users and anonymous users
             int userId = 0;
@@ -308,7 +308,7 @@ public class CartController : ControllerBase
             // Both paths return CartResponseDto (unified format  audit section 8.4 ✅)
             if (isAuthenticated && userId > 0)
             {
-                var added = await _cartService.AddToCartAsync(userId, request.SubjectId, request.Price);
+                var added = await _cartService.AddToCartAsync(userId, request.SubjectId);
                 if (added == null)
                 {
                     return BadRequest(new { error = "Failed to add item to cart" });
@@ -321,7 +321,7 @@ public class CartController : ControllerBase
                         SubjectId = item.SubjectId,
                         Title = item.Subject?.Title ?? $"Subject #{item.SubjectId}",
                         Description = item.Subject?.Description,
-                        Price = item.Price > 0 ? item.Price : (item.Subject?.Price ?? 0),
+                        Price = item.Subject?.Price ?? item.Price,
                         Image = item.Subject?.ThumbnailUrl,
                         Quantity = 1,
                         AddedAt = item.AddedAt
@@ -347,7 +347,7 @@ public class CartController : ControllerBase
             {
                 // ✅ Anonymous user: persisté en base par deviceId (survit à un
                 // redémarrage du service  voir CartItem.cs)
-                await _cartService.AddToAnonymousCartAsync(request.DeviceId, request.SubjectId, request.Price);
+                await _cartService.AddToAnonymousCartAsync(request.DeviceId, request.SubjectId);
 
                 var anonymousList = await _cartService.GetAnonymousCartAsync(request.DeviceId);
                 var anonymousItems = anonymousList
@@ -357,7 +357,7 @@ public class CartController : ControllerBase
                         SubjectId = item.SubjectId,
                         Title = item.Subject?.Title ?? string.Empty,
                         Description = item.Subject?.Description,
-                        Price = item.Price,
+                        Price = item.Subject?.Price ?? item.Price,
                         Image = item.Subject?.ThumbnailUrl,
                         Quantity = 1,
                         AddedAt = item.AddedAt
@@ -675,7 +675,7 @@ public class CartController : ControllerBase
             {
                 try
                 {
-                    await _cartService.AddToCartAsync(userId, localItem.SubjectId, localItem.Price);
+                    await _cartService.AddToCartAsync(userId, localItem.SubjectId);
                 }
                 catch (Exception ex)
                 {
@@ -693,7 +693,7 @@ public class CartController : ControllerBase
                     SubjectId = item.SubjectId,
                     Title = item.Subject?.Title ?? "",
                     Description = item.Subject?.Description,
-                    Price = item.Price,
+                    Price = item.Subject?.Price ?? item.Price,
                     Image = item.Subject?.ThumbnailUrl,
                     Quantity = 1,
                     AddedAt = item.AddedAt

@@ -6,6 +6,7 @@ using Backend.Data;
 using Backend.Extensions;
 using Backend.Models.DTOs;
 using Backend.Models.Entities;
+using Backend.Services;
 
 namespace Backend.Controllers;
 
@@ -71,7 +72,8 @@ public class LibraryController : ControllerBase
         var organizedSubjectIds = items.Select(i => i.SubjectId).ToHashSet();
 
         var purchases = await _db.OrderItems.AsNoTracking()
-            .Where(oi => oi.Order.UserId == userId && oi.Order.Status == "completed"
+            .Where(oi => oi.Order.UserId == userId
+                && PaidOrderStatus.All.Contains(oi.Order.Status.ToLower())
                 && !organizedSubjectIds.Contains(oi.SubjectId))
             .Select(oi => new { oi.SubjectId, oi.Order.CreatedAt })
             .ToListAsync();

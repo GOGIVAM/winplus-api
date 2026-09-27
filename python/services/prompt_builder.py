@@ -340,6 +340,11 @@ _ROLE_BUILDERS = {
     "teacher":      _teacher_prompt,
     "parent":       _parent_prompt,
     "admin":        _admin_prompt,
+    # §7.5 : "institution" est le rôle officiel des comptes établissement.
+    # Il n'était pas dans cette table, donc une institution retombait sur le
+    # prompt élève. "organization" reste accepté le temps que les comptes
+    # historiques soient migrés en base.
+    "institution":  _organization_prompt,
     "organization": _organization_prompt,
 }
 

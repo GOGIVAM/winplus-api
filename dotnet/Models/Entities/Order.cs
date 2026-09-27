@@ -62,4 +62,21 @@ public class Order
     public ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
 
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
+
+    /// <summary>
+    /// Écarts entre le prix vu au panier et le prix serveur facturé, constatés
+    /// à la création de la commande (passe de clôture du lot 0). Non persisté :
+    /// renseigné uniquement sur la réponse de création, vide à la relecture.
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public List<OrderPriceAdjustment> PriceAdjustments { get; set; } = new();
+}
+
+/// <summary>Contenu dont le prix a changé entre le panier et la commande.</summary>
+public class OrderPriceAdjustment
+{
+    public int SubjectId { get; set; }
+    public string? Title { get; set; }
+    public decimal OldPrice { get; set; }
+    public decimal NewPrice { get; set; }
 }

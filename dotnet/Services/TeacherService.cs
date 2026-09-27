@@ -245,7 +245,7 @@ public class TeacherService : ITeacherService
             // plutôt que faussement à tout le monde.
             var myItems = _context.OrderItems
                 .AsNoTracking()
-                .Where(oi => oi.Order.Status == "completed" && oi.Subject != null && oi.Subject.AuthorUserId == teacherId);
+                .Where(oi => PaidOrderStatus.All.Contains(oi.Order.Status.ToLower()) && oi.Subject != null && oi.Subject.AuthorUserId == teacherId);
 
             var totalRevenue = await myItems.SumAsync(oi => (decimal?)oi.PriceAtPurchase) ?? 0m;
 
@@ -274,7 +274,7 @@ public class TeacherService : ITeacherService
     {
         var totalRevenue = await _context.OrderItems
             .AsNoTracking()
-            .Where(oi => oi.Order.Status == "completed" && oi.Subject != null && oi.Subject.AuthorUserId == teacherId)
+            .Where(oi => PaidOrderStatus.All.Contains(oi.Order.Status.ToLower()) && oi.Subject != null && oi.Subject.AuthorUserId == teacherId)
             .SumAsync(oi => (decimal?)oi.PriceAtPurchase) ?? 0m;
 
         var spentOnClassAssignments = await _context.TeacherClassContents
@@ -284,17 +284,25 @@ public class TeacherService : ITeacherService
 
         var spentOnBalancePurchases = await _context.Orders
             .AsNoTracking()
-            .Where(o => o.UserId == teacherId && o.Status == "completed" && o.PaymentMethod == "balance")
+            .Where(o => o.UserId == teacherId && PaidOrderStatus.All.Contains(o.Status.ToLower()) && o.PaymentMethod == "balance")
             .SumAsync(o => (decimal?)o.TotalAmount) ?? 0m;
 
         // Cours particuliers (Module 6) : fonds crédités dès la libération de
         // l'escrow simulé (TutorBookingLifecycleService), à la même part
         // enseignant que le catalogue  voir TeacherContentController.GetRevenueShareAsync.
         var revenueShare = await GetRevenueShareAsync(teacherId) ?? 0.80m;
-        var tutoringRevenue = await _context.TutorBookings
+        // Module 19 : la part enseignant était appliquée à la SOMME brute des
+        // séances, sans arrondi, ce qui produisait un solde fractionnaire
+        // qu'un virement Mobile Money ne sait pas honorer, et un solde
+        // différent de la somme des lignes affichées dans l'historique. Le net
+        // est désormais calculé séance par séance, avec exactement la même
+        // décomposition que l'historique.
+        var tutoringGross = await _context.TutorBookings
             .AsNoTracking()
             .Where(b => b.EscrowReleasedAt != null && b.TutorProfile!.UserId == teacherId)
-            .SumAsync(b => (decimal?)b.PriceXaf) ?? 0m;
+            .Select(b => b.PriceXaf)
+            .ToListAsync();
+        var tutoringNet = tutoringGross.Sum(p => NetXaf(p, revenueShare));
 
         // Programme d'affiliation (2026-09-11) : seules les commissions déjà
         // "confirmed" (délai de rétractation commande écoulé, voir
@@ -313,8 +321,31 @@ public class TeacherService : ITeacherService
             .Where(w => w.UserId == teacherId && (w.Status == "pending" || w.Status == "completed"))
             .SumAsync(w => (decimal?)w.AmountXaf) ?? 0m;
 
-        return Math.Max(0, totalRevenue - spentOnClassAssignments - spentOnBalancePurchases + tutoringRevenue * revenueShare + affiliateEarnings - withdrawn);
+        // Arrondi final de sécurité : aucune fraction ne doit sortir d'ici,
+        // même si une ligne historique en porte encore une (dette de données
+        // connue, voir le compte rendu du Module 19).
+        return Math.Max(0, Math.Round(
+            totalRevenue - spentOnClassAssignments - spentOnBalancePurchases
+            + tutoringNet + affiliateEarnings - withdrawn,
+            0, MidpointRounding.AwayFromZero));
     }
+
+    /// <summary>
+    /// Décomposition d'un montant en part plateforme et part enseignant
+    /// (Module 19, décision §4.E).
+    ///
+    /// Le XAF n'a pas de sous-unité : un seul des deux montants est arrondi,
+    /// l'autre s'obtient par soustraction, de sorte que leur somme retombe
+    /// exactement sur le prix payé. Arrondir les deux indépendamment, comme
+    /// c'était le cas, laisse un écart d'une unité qui se retrouve dans le
+    /// solde retirable puis dans un virement Mobile Money.
+    /// </summary>
+    private static decimal CommissionXaf(decimal grossXaf, decimal revenueShare) =>
+        Math.Round(grossXaf * (1 - revenueShare), 0, MidpointRounding.AwayFromZero);
+
+    /// <summary>Part enseignant, déduite par soustraction de la commission arrondie.</summary>
+    private static decimal NetXaf(decimal grossXaf, decimal revenueShare) =>
+        grossXaf - CommissionXaf(grossXaf, revenueShare);
 
     /// <summary>Part enseignant lue sur le plan actif (dupliqué de TeacherContentController  même formule, contexte différent).</summary>
     private async Task<decimal?> GetRevenueShareAsync(int teacherId) =>
@@ -331,7 +362,7 @@ public class TeacherService : ITeacherService
 
         var catalogRows = await _context.OrderItems
             .AsNoTracking()
-            .Where(oi => oi.Order.Status == "completed" && oi.Subject != null && oi.Subject.AuthorUserId == teacherId
+            .Where(oi => PaidOrderStatus.All.Contains(oi.Order.Status.ToLower()) && oi.Subject != null && oi.Subject.AuthorUserId == teacherId
                 && oi.Order.CreatedAt >= since)
             .Select(oi => new { oi.Order.CreatedAt, oi.PriceAtPurchase })
             .ToListAsync();
@@ -363,7 +394,7 @@ public class TeacherService : ITeacherService
 
         var items = await _context.OrderItems
             .AsNoTracking()
-            .Where(oi => oi.Order.Status == "completed" && oi.Subject != null && oi.Subject.AuthorUserId == teacherId)
+            .Where(oi => PaidOrderStatus.All.Contains(oi.Order.Status.ToLower()) && oi.Subject != null && oi.Subject.AuthorUserId == teacherId)
             .Select(oi => new { oi.SubjectId, Title = oi.Subject!.Title, oi.PriceAtPurchase, oi.Order.CreatedAt })
             .ToListAsync();
 
@@ -419,7 +450,13 @@ public class TeacherService : ITeacherService
             durationMinutes = (int)(b.EndTime - b.StartTime).TotalMinutes,
             grossAmountXaf = b.PriceXaf,
             commissionPercent = Math.Round((1 - revenueShare) * 100, 1),
-            netAmountXaf = Math.Round(b.PriceXaf * revenueShare, 0),
+            // Même décomposition qu'en historique unifié (Module 19) : seule
+            // la commission est arrondie, le net s'en déduit par soustraction,
+            // pour que net + commission retombe exactement sur le prix payé.
+            // Les deux endroits arrondissaient auparavant chacun leur part,
+            // et pouvaient annoncer un net différent de 1 XAF pour la même
+            // séance.
+            netAmountXaf = NetXaf(b.PriceXaf, revenueShare),
             date = b.EscrowReleasedAt,
         }).ToList();
     }
@@ -435,7 +472,7 @@ public class TeacherService : ITeacherService
         // particuliers). Affiché tel quel plutôt que d'inventer une commission.
         var catalogSales = await _context.OrderItems
             .AsNoTracking()
-            .Where(oi => oi.Order.Status == "completed" && oi.Subject != null && oi.Subject.AuthorUserId == teacherId)
+            .Where(oi => PaidOrderStatus.All.Contains(oi.Order.Status.ToLower()) && oi.Subject != null && oi.Subject.AuthorUserId == teacherId)
             .Select(oi => new { oi.Order.CreatedAt, Title = oi.Subject!.Title, oi.PriceAtPurchase })
             .ToListAsync();
         rows.AddRange(catalogSales.Select(s => (s.CreatedAt, "credit", "catalogue", s.Title, s.PriceAtPurchase, 0m, s.PriceAtPurchase, "completed")));
@@ -450,7 +487,7 @@ public class TeacherService : ITeacherService
         {
             var studentName = b.Student != null ? $"{b.Student.FirstName} {b.Student.LastName}".Trim() : "Élève";
             var label = string.IsNullOrWhiteSpace(b.Subject) ? $"Séance avec {studentName}" : $"{b.Subject}  {studentName}";
-            var commission = Math.Round(b.PriceXaf * (1 - revenueShare), 0);
+            var commission = CommissionXaf(b.PriceXaf, revenueShare);
             return (b.EscrowReleasedAt!.Value, "credit", "cours_particulier", label, b.PriceXaf, commission, b.PriceXaf - commission, "completed");
         }));
 
@@ -465,7 +502,7 @@ public class TeacherService : ITeacherService
         // Achat catalogue  payé sur le solde WinPlus (débit)
         var balancePurchases = await _context.Orders
             .AsNoTracking()
-            .Where(o => o.UserId == teacherId && o.Status == "completed" && o.PaymentMethod == "balance")
+            .Where(o => o.UserId == teacherId && PaidOrderStatus.All.Contains(o.Status.ToLower()) && o.PaymentMethod == "balance")
             .Select(o => new { o.CreatedAt, o.OrderNumber, o.TotalAmount })
             .ToListAsync();
         rows.AddRange(balancePurchases.Select(o => (o.CreatedAt, "debit", "achat", $"Achat panier {o.OrderNumber}", o.TotalAmount, 0m, o.TotalAmount, "completed")));

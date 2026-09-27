@@ -282,7 +282,7 @@ public class AdminController : ControllerBase
                         o.CreatedAt,
                         $"Commande #{o.OrderNumber}",
                         o.GuestEmail ?? "",
-                        o.Status == "Completed" ? "success" : o.Status == "Failed" ? "failure" : "warning",
+                        o.Status.ToLower() == "completed" ? "success" : o.Status.ToLower() == "failed" ? "failure" : "warning",
                         o.GuestName ?? "Anonyme",
                         o.GuestEmail ?? "",
                         $"Commande #{o.OrderNumber} · {o.TotalAmount:N0} XAF"
@@ -303,7 +303,7 @@ public class AdminController : ControllerBase
                         o.CreatedAt,
                         $"Commande #{o.OrderNumber}",
                         "",
-                        o.Status == "Completed" ? "success" : o.Status == "Failed" ? "failure" : "warning",
+                        o.Status.ToLower() == "completed" ? "success" : o.Status.ToLower() == "failed" ? "failure" : "warning",
                         "Anonyme",
                         "",
                         $"Commande #{o.OrderNumber} · {o.TotalAmount:N0} XAF"
@@ -594,8 +594,19 @@ public class AdminController : ControllerBase
             var pendingSubjects   = await _db.Subjects.CountAsync(s => !s.IsPublished && !s.IsDeleted);
 
             var totalOrders       = await _db.Orders.CountAsync(o => !o.IsDeleted);
-            var pendingOrders     = await _db.Orders.CountAsync(o => !o.IsDeleted && o.Status == "Pending");
-            var completedOrders   = await _db.Orders.CountAsync(o => !o.IsDeleted && o.Status == "Completed");
+            // Module 19 : ces compteurs valaient tous zéro. Le code écrit les
+            // statuts en minuscules partout et les comparait ici en casse
+            // capitalisée, avec une comparaison sensible à la casse en SQL.
+            //
+            // ⚠ Dette assumée : on corrige la COMPARAISON (insensible à la
+            // casse) plutôt que de migrer les données. Le volume réel en base
+            // n'a pas pu être mesuré depuis cet environnement, et une
+            // migration de statuts touche le calcul des revenus et les accès
+            // au contenu : elle doit être décidée et mesurée à part. Tant
+            // qu'elle n'a pas eu lieu, toute nouvelle comparaison de statut
+            // doit rester insensible à la casse.
+            var pendingOrders     = await _db.Orders.CountAsync(o => !o.IsDeleted && o.Status.ToLower() == "pending");
+            var completedOrders   = await _db.Orders.CountAsync(o => !o.IsDeleted && o.Status.ToLower() == "completed");
 
             decimal revenue = 0m, thisMonthRevenue = 0m, lastMonthRevenue = 0m;
             double revenueGrowth = 0.0;

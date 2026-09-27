@@ -197,7 +197,7 @@ public class RevisionsController : ControllerBase
     /// <summary>
     /// Crée une nouvelle révision (Admin only)
     /// </summary>
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "admin")]
     [HttpPost]
     [ProducesResponseType(typeof(RevisionDto), 201)]
     [ProducesResponseType(400)]
@@ -213,7 +213,7 @@ public class RevisionsController : ControllerBase
     /// <summary>
     /// Met à jour une révision (Admin only)
     /// </summary>
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "admin")]
     [HttpPut("{id}")]
     [ProducesResponseType(typeof(RevisionDto), 200)]
     [ProducesResponseType(404)]
@@ -236,7 +236,7 @@ public class RevisionsController : ControllerBase
     /// <summary>
     /// Publie une révision (Admin only)
     /// </summary>
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "admin")]
     [HttpPost("{id}/publish")]
     [ProducesResponseType(typeof(RevisionDto), 200)]
     [ProducesResponseType(404)]
@@ -256,7 +256,7 @@ public class RevisionsController : ControllerBase
     /// <summary>
     /// Dépublie une révision (Admin only)
     /// </summary>
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "admin")]
     [HttpPost("{id}/unpublish")]
     [ProducesResponseType(typeof(RevisionDto), 200)]
     [ProducesResponseType(404)]
@@ -276,7 +276,7 @@ public class RevisionsController : ControllerBase
     /// <summary>
     /// Supprime une révision (Admin only)
     /// </summary>
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "admin")]
     [HttpDelete("{id}")]
     [ProducesResponseType(204)]
     [ProducesResponseType(404)]

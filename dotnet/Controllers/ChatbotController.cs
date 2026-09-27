@@ -22,65 +22,75 @@ public class ChatbotController : ControllerBase
 {
     private readonly IChatbotService _chatbotService;
     private readonly ApplicationDbContext _dbContext;
+    private readonly IAiQuotaService _aiQuota;
+    private readonly ITokenTopUpService _topUp;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ChatbotController> _logger;
 
     public ChatbotController(
         IChatbotService chatbotService,
         ApplicationDbContext dbContext,
+        IAiQuotaService aiQuota,
+        ITokenTopUpService topUp,
         IHttpClientFactory httpClientFactory,
         ILogger<ChatbotController> logger)
     {
         _chatbotService = chatbotService;
         _dbContext = dbContext;
+        _aiQuota = aiQuota;
+        _topUp = topUp;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
     /// <summary>
-    /// Vérifie si l'utilisateur a encore des tokens disponibles et en déduit un.
-    /// Retourne (allowed: bool, tokensLeft: int).
+    /// Corps de la réponse 402 (décisions 8.5 et 8.10), partagé par le chemin
+    /// REST (<see cref="SendMessage"/>) et le chemin streaming
+    /// (<see cref="StreamChat"/>) : même structure dans les deux cas.
+    ///
+    /// - <c>limit</c> : « session » (5 h glissantes) ou « week » (7 jours
+    ///   glissants) — quelle limite bloque.
+    /// - <c>resetsAt</c> : horodatage UTC ISO-8601 auquel l'utilisateur peut
+    ///   de nouveau écrire ; <c>message</c> le reprend en toutes lettres.
+    /// - Jamais de nombre de tokens (8.3). <c>tokensLeft</c> reste à 0 pour
+    ///   compatibilité de forme avec les anciens clients.
+    /// - <c>topUpAvailable</c> reste faux tant que le wallet du Module 1/14
+    ///   n'existe pas (voir <see cref="ITokenTopUpService"/>).
     /// </summary>
-    private async Task<(bool Allowed, int TokensLeft)> CheckAndDeductTokenAsync(int userId)
+    private object QuotaExceededBody(AiQuotaDecision decision)
     {
-        const int LibreMonthlyTokens = 0;
-        const int StandardMonthlyTokens = 500;
-        const int PremiumMonthlyTokens = 2000;
-        const int FamilleMonthlyTokens = 3000;
-
-        var sub = await _dbContext.Subscriptions
-            .FirstOrDefaultAsync(s => s.UserId == userId && s.IsActive);
-
-        if (sub == null)
-            return (false, 0); // Pas d'abonnement actif
-
-        // Réinitialisation mensuelle
-        var now = DateTime.UtcNow;
-        if (sub.TokensResetAt == null || sub.TokensResetAt < now.AddMonths(-1))
+        var kind = decision.LimitKind ?? AiLimitKind.Week;
+        return new
         {
-            sub.TokensUsedThisMonth = 0;
-            sub.TokensResetAt = now;
-        }
-
-        int monthlyLimit = sub.PlanName?.ToLower() switch
-        {
-            var p when p != null && p.Contains("famille") => FamilleMonthlyTokens,
-            var p when p != null && p.Contains("premium") => PremiumMonthlyTokens,
-            var p when p != null && p.Contains("standard") => StandardMonthlyTokens,
-            _ => LibreMonthlyTokens,
+            error = "quota_exceeded",
+            limit = kind == AiLimitKind.Session ? "session" : "week",
+            resetsAt = decision.ResetsAt,
+            message = AiUsagePolicy.LimitMessage(kind, decision.ResetsAt),
+            tokensLeft = 0,
+            topUpAvailable = _topUp.IsAvailable,
+            topUpMessage = _topUp.IsAvailable ? null : _topUp.UnavailableReason,
         };
-
-        if (monthlyLimit == 0)
-            return (false, 0); // Plan libre → pas d'accès IA
-
-        if (sub.TokensUsedThisMonth >= monthlyLimit)
-            return (false, 0); // Quota épuisé
-
-        sub.TokensUsedThisMonth += 1;
-        await _dbContext.SaveChangesAsync();
-
-        return (true, monthlyLimit - sub.TokensUsedThisMonth);
     }
+
+    /// <summary>
+    /// Corps 503 quand le journal de quota est indisponible (table absente :
+    /// script SQL non exécuté). Refus propre au lieu d'un 500 opaque (point C).
+    /// </summary>
+    private static object QuotaUnavailableBody() => new
+    {
+        error = "quota_unavailable",
+        message = "WinAI est momentanément indisponible (maintenance en cours). Réessayez dans quelques minutes.",
+    };
+
+    /// <summary>
+    /// Point E : une conversation fournie par le client n'est utilisable que
+    /// si elle appartient à l'utilisateur authentifié et n'est pas supprimée
+    /// (même règle que <c>ChatbotRepository.GetConversationByIdForUserAsync</c>).
+    /// </summary>
+    private Task<bool> ConversationBelongsToUserAsync(int conversationId, int userId, CancellationToken ct) =>
+        _dbContext.Conversations
+            .AsNoTracking()
+            .AnyAsync(c => c.Id == conversationId && c.UserId == userId && !c.IsDeleted, ct);
 
     /// <summary>
     /// Récupère l'ID utilisateur depuis les claims JWT
@@ -115,21 +125,50 @@ public class ChatbotController : ControllerBase
 
             var userId = GetCurrentUserId();
 
-            var (allowed, tokensLeft) = await CheckAndDeductTokenAsync(userId);
-            if (!allowed)
+            // Point E : la conversation doit appartenir à l'utilisateur, et
+            // c'est vérifié AVANT toute réserve de quota.
+            if (request.ConversationId is int requestedConvId
+                && !await ConversationBelongsToUserAsync(requestedConvId, userId, HttpContext.RequestAborted))
+                return NotFound(new { error = "Conversation not found" });
+
+            // 8.7 : même ClientMessageId que le flux SSE quand ce POST est le
+            // repli REST (ou un « Réessayer ») du même message utilisateur —
+            // la réserve encore ouverte est rattachée, sans second décompte.
+            var quota = await _aiQuota.CheckAndReserveAsync(userId, request.ClientMessageId, "rest");
+            if (quota.Outcome == AiQuotaOutcome.Unavailable)
+                return StatusCode(503, QuotaUnavailableBody());
+            if (!quota.Allowed)
+                return StatusCode(402, QuotaExceededBody(quota));
+
+            // Point D : quoi qu'il arrive entre la réserve et la fin du
+            // traitement (exception, FastAPI en échec), le bloc finally décide
+            // de la finaliser ou de la libérer — jamais de réserve orpheline.
+            ChatResponse? response = null;
+            try
             {
-                return StatusCode(402, new
-                {
-                    error = "quota_exceeded",
-                    message = "Votre quota de tokens IA est épuisé pour ce mois. Passez à un plan supérieur.",
-                    tokensLeft = 0,
-                });
+                response = await _chatbotService.SendMessageAsync(userId, request);
+                return Ok(response);
             }
-
-            var response = await _chatbotService.SendMessageAsync(userId, request);
-
-            Response.Headers.Append("X-Tokens-Left", tokensLeft.ToString());
-            return Ok(response);
+            finally
+            {
+                if (response is not null && response.AiServiceSucceeded)
+                {
+                    // 8.1 : coût réel remonté par le fournisseur ; à défaut
+                    // (usage absent), estimation sur la réponse servie.
+                    var tokens = response.TotalTokensUsed > 0
+                        ? response.TotalTokensUsed
+                        : AiUsagePolicy.EstimateServedTokens(response.AssistantMessage?.Content?.Length ?? 0);
+                    await _aiQuota.FinalizeUsageAsync(userId, quota.ReservationId, tokens, CancellationToken.None);
+                }
+                else
+                {
+                    // Aucune réponse réelle servie (exception, ou FastAPI en
+                    // échec : ChatbotService renvoie alors un contenu de
+                    // repli sans lever). La réserve est rendue — seulement si
+                    // CETTE tentative la détient encore.
+                    await _aiQuota.ReleaseReservationAsync(userId, quota.ReservationId, quota.AttemptId, CancellationToken.None);
+                }
+            }
         }
         catch (InvalidOperationException ex)
         {
@@ -515,133 +554,192 @@ public class ChatbotController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Message))
             request.Message = "Analyse le document ci-joint.";
 
-        // Create or retrieve conversation
+        // Point E (sécurité) : le ConversationId fourni par le client n'est
+        // utilisé que s'il appartient à l'utilisateur authentifié. Sans ce
+        // contrôle, on pouvait faire lire à WinAI les 20 derniers messages de
+        // la conversation d'un autre utilisateur (historique ci-dessous) et y
+        // écrire. Vérifié AVANT la réserve de quota et avant tout octet de flux.
+        if (request.ConversationId is int requestedConvId && requestedConvId != 0
+            && !await ConversationBelongsToUserAsync(requestedConvId, userId, cancellationToken))
+        {
+            Response.StatusCode = 404;
+            Response.ContentType = "application/json; charset=utf-8";
+            await Response.WriteAsync(JsonSerializer.Serialize(new { error = "Conversation not found" }), cancellationToken);
+            return;
+        }
+
+        // ⚠ Mur de quota WinAI (session 5 h + semaine 7 jours, décision 8.10).
+        //
+        // Cet endpoint est le chemin principal du frontend web (chat principal,
+        // session d'étude, onglet WinAI parent, prédiction de réussite).
+        // La vérification est faite ICI, avant toute écriture en base (aucune
+        // conversation ni message n'est créé pour une requête refusée) et avant
+        // le moindre octet de flux : les en-têtes SSE ne sont pas encore posés,
+        // on peut donc répondre un vrai 402 (ou 503) application/json, avec la
+        // même structure que SendMessage.
+        //
+        // Le mur réserve un forfait pour CE message (ClientMessageId, 8.7), puis
+        // le coût réel le remplace en fin de flux (8.1, bloc finally).
+        var quota = await _aiQuota.CheckAndReserveAsync(userId, request.ClientMessageId, "stream", cancellationToken);
+        if (quota.Outcome == AiQuotaOutcome.Unavailable)
+        {
+            Response.StatusCode = 503;
+            Response.ContentType = "application/json; charset=utf-8";
+            await Response.WriteAsync(JsonSerializer.Serialize(QuotaUnavailableBody()), cancellationToken);
+            return;
+        }
+        if (!quota.Allowed)
+        {
+            _logger.LogInformation("Stream WinAI refusé (limite {Limit} atteinte) pour l'utilisateur {UserId}", quota.LimitKind, userId);
+            Response.StatusCode = 402;
+            Response.ContentType = "application/json; charset=utf-8";
+            await Response.WriteAsync(JsonSerializer.Serialize(QuotaExceededBody(quota)), cancellationToken);
+            return;
+        }
+
+        // Coût réel observé dans le flux (événement d'usage final émis par
+        // FastAPI). 0 = inconnu.
+        int observedTokens = 0;
+        // Vrai dès qu'un fragment de réponse du modèle a été relayé au client.
+        bool servedContent = false;
+        int relayedChars = 0;
+
         int conversationId = request.ConversationId ?? 0;
         bool isNew = conversationId == 0;
 
-        if (isNew)
-        {
-            var title = request.Message.Length > 50 ? request.Message[..50] + "…" : request.Message;
-            var conv = new Conversation
-            {
-                UserId = userId,
-                Title = title,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
-            _dbContext.Conversations.Add(conv);
-            await _dbContext.SaveChangesAsync(cancellationToken);
-            conversationId = conv.Id;
-        }
-
-        // Save user message (text only in DB; images stay in-memory for this request)
-        var userMsg = new Message
-        {
-            ConversationId = conversationId,
-            Role = "user",
-            Content = request.Message,
-            CreatedAt = DateTime.UtcNow
-        };
-        _dbContext.Messages.Add(userMsg);
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        var savedMsgId = userMsg.Id;
-
-        // Setup SSE response headers
-        Response.ContentType = "text/event-stream";
-        Response.Headers["Cache-Control"] = "no-cache";
-        Response.Headers["X-Accel-Buffering"] = "no";
-
-        // Emit conversationId to frontend on new conversation
-        if (isNew)
-        {
-            await Response.WriteAsync($"data: {{\"conversationId\": {conversationId}}}\n\n", cancellationToken);
-            await Response.Body.FlushAsync(cancellationToken);
-        }
-
-        // Fetch last 20 messages for conversation context
-        var historyRaw = await _dbContext.Messages
-            .Where(m => m.ConversationId == conversationId && !m.IsDeleted)
-            .OrderByDescending(m => m.CreatedAt)
-            .Take(20)
-            .OrderBy(m => m.CreatedAt)
-            .Select(m => new { m.Id, role = m.Role, content = m.Content })
-            .ToListAsync(cancellationToken);
-
-        // Injection des pièces jointes dans le message utilisateur courant.
-        //
-        // Avant : seules les pièces de type "image" étaient transmises. Le
-        // composer du front crée des pièces de type "document" pour tout ce qui
-        // n'est pas une image (PDF, docx, csv…) : elles étaient donc jetées
-        // silencieusement et le modèle répondait comme si aucun fichier n'avait
-        // été envoyé  c'est le « le chatbot n'upload pas les fichiers ».
-        var images    = request.Attachments?.Where(a => a.Type == "image").ToList()    ?? new();
-        var documents = request.Attachments?.Where(a => a.Type != "image").ToList()    ?? new();
-        var hasAny    = images.Count > 0 || documents.Count > 0;
-
-        // Pré-calculé hors de la lambda .Select (synchrone, ne peut pas
-        // await) : une seule pièce jointe document appelle RAG, pas une
-        // par message d'historique.
-        var documentDescriptions = new List<string>();
-        foreach (var att in documents)
-            documentDescriptions.Add(await DescribeDocumentAsync(att));
-
-        var history = historyRaw.Select<dynamic, object>(h =>
-        {
-            if ((int)h.Id != savedMsgId || !hasAny)
-                return new { role = (string)h.role, content = (object)(string)h.content };
-
-            var parts = new List<object>();
-            if (!string.IsNullOrEmpty((string)h.content))
-                parts.Add(new { type = "text", text = (string)h.content });
-
-            foreach (var att in images)
-                parts.Add(new { type = "image_url", image_url = new { url = att.Data } });
-
-            foreach (var description in documentDescriptions)
-                parts.Add(new { type = "text", text = description });
-
-            return new { role = (string)h.role, content = (object)parts };
-        }).ToList();
-
-        // Profil réel (niveau + inscriptions), recalculé en direct à chaque
-        // message  jamais depuis ChatbotContext (table de synchronisation
-        // jamais alimentée en pratique par le frontend, voir
-        // IChatbotService.GetLiveProfileContextAsync). Absent auparavant sur
-        // ce chemin streaming (seul force_language était transmis), ce qui
-        // faisait répondre WinAI comme si l'élève n'avait aucun profil.
-        var liveProfile = await _chatbotService.GetLiveProfileContextAsync(userId);
-
-        // Forward request to FastAPI stream endpoint
-        var fastApiBody = new
-        {
-            messages = history,
-            conversation_id = conversationId,
-            max_tokens = 2000,
-            temperature = 0.7,
-            user_context = new
-            {
-                grade = liveProfile.Grade,
-                enrolled_subjects = liveProfile.EnrolledSubjects.Select(s => new { id = s.SubjectId, title = s.Title }),
-                enrolled_courses = liveProfile.EnrolledCourses.Select(c => new { id = c.CourseId, title = c.Title }),
-                force_language = string.IsNullOrEmpty(request.ForceLanguage) ? null : request.ForceLanguage,
-            }
-        };
-
-        var httpClient = _httpClientFactory.CreateClient("FastApiClient");
-        using var fastApiReq = new HttpRequestMessage(HttpMethod.Post, "/api/chatbot/stream");
-        fastApiReq.Content = JsonContent.Create(fastApiBody);
-
-        var authHeader = HttpContext.Request.Headers["Authorization"].ToString();
-        if (!string.IsNullOrEmpty(authHeader))
-            fastApiReq.Headers.TryAddWithoutValidation("Authorization", authHeader);
-
+        // Point D : TOUT ce qui suit la réserve est dans ce try, dont le
+        // finally décide de la finaliser ou de la libérer. Une exception entre
+        // la réserve et le début du flux (écriture de la conversation, du
+        // message, extraction de pièce jointe…) ne laisse plus de réserve
+        // orpheline.
         try
         {
+            if (isNew)
+            {
+                var title = request.Message.Length > 50 ? request.Message[..50] + "…" : request.Message;
+                var conv = new Conversation
+                {
+                    UserId = userId,
+                    Title = title,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                _dbContext.Conversations.Add(conv);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                conversationId = conv.Id;
+            }
+
+            // Save user message (text only in DB; images stay in-memory for this request)
+            var userMsg = new Message
+            {
+                ConversationId = conversationId,
+                Role = "user",
+                Content = request.Message,
+                CreatedAt = DateTime.UtcNow
+            };
+            _dbContext.Messages.Add(userMsg);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            var savedMsgId = userMsg.Id;
+
+            // Setup SSE response headers
+            Response.ContentType = "text/event-stream";
+            Response.Headers["Cache-Control"] = "no-cache";
+            Response.Headers["X-Accel-Buffering"] = "no";
+            // Pas d'en-tête X-Tokens-Left : aucun compteur brut exposé (8.3).
+
+            // Emit conversationId to frontend on new conversation
+            if (isNew)
+            {
+                await Response.WriteAsync($"data: {{\"conversationId\": {conversationId}}}\n\n", cancellationToken);
+                await Response.Body.FlushAsync(cancellationToken);
+            }
+
+            // Last 20 messages for conversation context — conversationId est
+            // soit créée ci-dessus pour cet utilisateur, soit vérifiée comme
+            // lui appartenant (point E).
+            var historyRaw = await _dbContext.Messages
+                .Where(m => m.ConversationId == conversationId && !m.IsDeleted)
+                .OrderByDescending(m => m.CreatedAt)
+                .Take(20)
+                .OrderBy(m => m.CreatedAt)
+                .Select(m => new { m.Id, role = m.Role, content = m.Content })
+                .ToListAsync(cancellationToken);
+
+            // Injection des pièces jointes dans le message utilisateur courant.
+            //
+            // Avant : seules les pièces de type "image" étaient transmises. Le
+            // composer du front crée des pièces de type "document" pour tout ce qui
+            // n'est pas une image (PDF, docx, csv…) : elles étaient donc jetées
+            // silencieusement et le modèle répondait comme si aucun fichier n'avait
+            // été envoyé — c'est le « le chatbot n'upload pas les fichiers ».
+            var images    = request.Attachments?.Where(a => a.Type == "image").ToList()    ?? new();
+            var documents = request.Attachments?.Where(a => a.Type != "image").ToList()    ?? new();
+            var hasAny    = images.Count > 0 || documents.Count > 0;
+
+            // Pré-calculé hors de la lambda .Select (synchrone, ne peut pas
+            // await) : une seule pièce jointe document appelle RAG, pas une
+            // par message d'historique.
+            var documentDescriptions = new List<string>();
+            foreach (var att in documents)
+                documentDescriptions.Add(await DescribeDocumentAsync(att));
+
+            var history = historyRaw.Select<dynamic, object>(h =>
+            {
+                if ((int)h.Id != savedMsgId || !hasAny)
+                    return new { role = (string)h.role, content = (object)(string)h.content };
+
+                var parts = new List<object>();
+                if (!string.IsNullOrEmpty((string)h.content))
+                    parts.Add(new { type = "text", text = (string)h.content });
+
+                foreach (var att in images)
+                    parts.Add(new { type = "image_url", image_url = new { url = att.Data } });
+
+                foreach (var description in documentDescriptions)
+                    parts.Add(new { type = "text", text = description });
+
+                return new { role = (string)h.role, content = (object)parts };
+            }).ToList();
+
+            // Profil réel (niveau + inscriptions), recalculé en direct à chaque
+            // message — jamais depuis ChatbotContext (table de synchronisation
+            // jamais alimentée en pratique par le frontend, voir
+            // IChatbotService.GetLiveProfileContextAsync).
+            var liveProfile = await _chatbotService.GetLiveProfileContextAsync(userId);
+
+            // Forward request to FastAPI stream endpoint
+            var fastApiBody = new
+            {
+                messages = history,
+                conversation_id = conversationId,
+                // 8.7/8.8 : transmis à FastAPI pour que son propre contrôle de
+                // quota reconnaisse la réserve posée ou rattachée ici.
+                client_message_id = quota.ReservationId,
+                max_tokens = 2000,
+                temperature = 0.7,
+                user_context = new
+                {
+                    grade = liveProfile.Grade,
+                    enrolled_subjects = liveProfile.EnrolledSubjects.Select(s => new { id = s.SubjectId, title = s.Title }),
+                    enrolled_courses = liveProfile.EnrolledCourses.Select(c => new { id = c.CourseId, title = c.Title }),
+                    force_language = string.IsNullOrEmpty(request.ForceLanguage) ? null : request.ForceLanguage,
+                }
+            };
+
+            var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+            using var fastApiReq = new HttpRequestMessage(HttpMethod.Post, "/api/chatbot/stream");
+            fastApiReq.Content = JsonContent.Create(fastApiBody);
+
+            var authHeader = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(authHeader))
+                fastApiReq.Headers.TryAddWithoutValidation("Authorization", authHeader);
+
             using var fastApiRes = await httpClient.SendAsync(
                 fastApiReq, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
             if (!fastApiRes.IsSuccessStatusCode)
             {
+                // Rien servi : le finally libère la réserve.
                 _logger.LogError("FastAPI stream returned {Status} for user {UserId}", fastApiRes.StatusCode, userId);
                 await Response.WriteAsync("data: {\"error\": \"AI service unavailable\"}\n\ndata: [DONE]\n\n", cancellationToken);
                 await Response.Body.FlushAsync(cancellationToken);
@@ -658,10 +756,33 @@ public class ChatbotController : ControllerBase
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 if (!line.StartsWith("data: ")) continue;
 
+                // 8.1 : événement d'usage final émis par FastAPI
+                // ({"usage_final": true, "tokens_used": N}). Il sert au
+                // décompte et n'est PAS relayé au client (8.3).
+                if (line.Contains("\"usage_final\""))
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(line[6..]);
+                        if (doc.RootElement.TryGetProperty("tokens_used", out var t) && t.TryGetInt32(out var n))
+                            observedTokens = Math.Max(observedTokens, n);
+                    }
+                    catch (JsonException) { /* événement illisible : estimation au finally */ }
+                    continue;
+                }
+
                 await Response.WriteAsync(line + "\n\n", cancellationToken);
                 await Response.Body.FlushAsync(cancellationToken);
 
                 if (line[6..] == "[DONE]") break;
+
+                // Un fragment de réponse du modèle a atteint le client : la
+                // réserve ne peut plus être rendue (voir finally).
+                if (line.Contains("\"delta\""))
+                {
+                    servedContent = true;
+                    relayedChars += line.Length - 6;
+                }
             }
         }
         catch (OperationCanceledException)
@@ -673,6 +794,11 @@ public class ChatbotController : ControllerBase
             _logger.LogError(ex, "Stream proxy error for user {UserId}", userId);
             try
             {
+                if (!Response.HasStarted)
+                {
+                    Response.StatusCode = 500;
+                    Response.ContentType = "text/event-stream";
+                }
                 await Response.WriteAsync("data: {\"error\": \"Stream error\"}\n\ndata: [DONE]\n\n");
                 await Response.Body.FlushAsync(CancellationToken.None);
             }
@@ -680,20 +806,41 @@ public class ChatbotController : ControllerBase
         }
         finally
         {
+            // Décompte, dans cet ordre (CancellationToken.None : le client a pu
+            // se déconnecter, le coût fournisseur est engagé) :
+            //  1. coût réel remonté par FastAPI → finalisé ;
+            //  2. réponse servie mais usage absent (flux coupé avant
+            //     l'événement final) → finalisé sur estimation : l'identifiant
+            //     est consommé, il ne rouvrira pas de message gratuit (point A) ;
+            //  3. rien servi (FastAPI en échec, exception avant le flux, flux
+            //     abandonné avant le premier fragment, y compris l'abandon à
+            //     8 s du client) → réserve libérée, si CETTE tentative la
+            //     détient encore (un repli REST qui l'a rattachée la garde).
+            if (observedTokens > 0)
+                await _aiQuota.FinalizeUsageAsync(userId, quota.ReservationId, observedTokens, CancellationToken.None);
+            else if (servedContent)
+                await _aiQuota.FinalizeUsageAsync(userId, quota.ReservationId,
+                    AiUsagePolicy.EstimateServedTokens(relayedChars), CancellationToken.None);
+            else
+                await _aiQuota.ReleaseReservationAsync(userId, quota.ReservationId, quota.AttemptId, CancellationToken.None);
+
             // Update conversation metadata
-            try
+            if (conversationId != 0)
             {
-                var conv = await _dbContext.Conversations.FindAsync(new object[] { conversationId }, CancellationToken.None);
-                if (conv != null)
+                try
                 {
-                    conv.LastMessageAt = DateTime.UtcNow;
-                    conv.UpdatedAt = DateTime.UtcNow;
-                    await _dbContext.SaveChangesAsync(CancellationToken.None);
+                    var conv = await _dbContext.Conversations.FindAsync(new object[] { conversationId }, CancellationToken.None);
+                    if (conv != null)
+                    {
+                        conv.LastMessageAt = DateTime.UtcNow;
+                        conv.UpdatedAt = DateTime.UtcNow;
+                        await _dbContext.SaveChangesAsync(CancellationToken.None);
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to update conversation metadata for conv {ConvId}", conversationId);
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to update conversation metadata for conv {ConvId}", conversationId);
+                }
             }
         }
     }

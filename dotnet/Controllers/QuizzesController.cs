@@ -255,7 +255,7 @@ public class QuizzesController : ControllerBase
     /// <summary>
     /// Crée un nouveau quiz (Admin only)
     /// </summary>
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "admin")]
     [HttpPost]
     [ProducesResponseType(typeof(QuizDto), 201)]
     [ProducesResponseType(400)]
@@ -271,7 +271,7 @@ public class QuizzesController : ControllerBase
     /// <summary>
     /// Met à jour un quiz (Admin only)
     /// </summary>
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "admin")]
     [HttpPut("{id}")]
     [ProducesResponseType(typeof(QuizDto), 200)]
     [ProducesResponseType(404)]
@@ -294,7 +294,7 @@ public class QuizzesController : ControllerBase
     /// <summary>
     /// Publie un quiz (Admin only)
     /// </summary>
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "admin")]
     [HttpPost("{id}/publish")]
     [ProducesResponseType(typeof(QuizDto), 200)]
     [ProducesResponseType(404)]
@@ -314,7 +314,7 @@ public class QuizzesController : ControllerBase
     /// <summary>
     /// Dépublie un quiz (Admin only)
     /// </summary>
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "admin")]
     [HttpPost("{id}/unpublish")]
     [ProducesResponseType(typeof(QuizDto), 200)]
     [ProducesResponseType(404)]
@@ -334,7 +334,7 @@ public class QuizzesController : ControllerBase
     /// <summary>
     /// Supprime un quiz (Admin only)
     /// </summary>
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "admin")]
     [HttpDelete("{id}")]
     [ProducesResponseType(204)]
     [ProducesResponseType(404)]
