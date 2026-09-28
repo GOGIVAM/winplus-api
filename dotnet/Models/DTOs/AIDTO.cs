@@ -167,39 +167,45 @@ namespace Backend.Models.DTOs
         public int AvailableHoursPerWeek { get; set; } = 10;
     }
 
-    /// <summary>
-    /// Single week in learning path
-    /// </summary>
-    public class LearningPathWeek
+    // Module 23 : l'ancien objet (Weeks/WeekNumber/Topics/Resources, PathId,
+    // GoalSubject, CompletionEstimate) ne correspondait à aucun champ produit
+    // par Python (GET /api/learning-path/{user_id}, schemas.py::LearningPathResponse),
+    // qui renvoie des PHASES. La désérialisation laissait donc Weeks vide :
+    // « succès » avec zéro semaine. Les objets ci-dessous reprennent exactement
+    // les champs Python (désérialisés en snake_case, voir
+    // FastApiClient.SnakeCaseJson) et sont renvoyés aux clients en camelCase.
+
+    /// <summary>Phase d'un parcours (schemas.py::LearningPathPhase).</summary>
+    public class LearningPathPhase
     {
-        public int WeekNumber { get; set; }
-        public List<string> Topics { get; set; } = new();
-        public int EstimatedHours { get; set; }
-        public List<LearningResource> Resources { get; set; } = new();
+        public int Phase { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public int DurationDays { get; set; }
+        public List<string> FocusAreas { get; set; } = new();
+        public string Difficulty { get; set; } = string.Empty;
+        public double TargetCompletion { get; set; }
+        public List<string> Actions { get; set; } = new();
     }
 
-    /// <summary>
-    /// Learning resource for path
-    /// </summary>
-    public class LearningResource
+    /// <summary>Recommandations globales du parcours (schemas.py::LearningPathRecommendations).</summary>
+    public class LearningPathRecommendations
     {
-        public int ResourceId { get; set; }
-        public string ResourceName { get; set; }
-        public string Type { get; set; } // video, article, exercise, project
-        public string Url { get; set; }
+        public string DailyStudyTime { get; set; } = string.Empty;
+        public List<string> FocusAreas { get; set; } = new();
+        public List<string> GrowthAreas { get; set; } = new();
     }
 
-    /// <summary>
-    /// Response containing personalized learning path
-    /// </summary>
+    /// <summary>Parcours personnalisé (schemas.py::LearningPathResponse).</summary>
     public class LearningPathResponse
     {
+        public bool Success { get; set; }
         public int UserId { get; set; }
-        public int PathId { get; set; }
-        public string GoalSubject { get; set; }
-        public List<LearningPathWeek> Weeks { get; set; } = new();
-        public DateTime CompletionEstimate { get; set; }
-        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public double LearningVelocity { get; set; }
+        public int TotalDurationDays { get; set; }
+        public string EstimatedEndDate { get; set; } = string.Empty;
+        public List<LearningPathPhase> Phases { get; set; } = new();
+        public LearningPathRecommendations? Recommendations { get; set; }
+        public string GeneratedAt { get; set; } = string.Empty;
     }
 
     #endregion

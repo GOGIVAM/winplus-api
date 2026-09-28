@@ -35,6 +35,7 @@ from routes.smart_ai_routes import smart_ai_router
 from routes.exam_quiz_routes import exam_quiz_router
 from routes.canal_qa_routes import canal_qa_router
 from routes.winai_memory_routes import winai_memory_router
+from routes.goal_suggestions import router as goal_suggestions_router
 from RAG.router import rag_router
 import json
 from schemas import (
@@ -132,6 +133,10 @@ app.include_router(winai_memory_router, prefix="/api", tags=["winai-memory"])
 # RAG (self_hosted / api)  branché pour test, voir RAG/README.md et
 # RAG/DEPLOYMENT.md. Expose /api/rag/query, /api/rag/ingest, /api/rag/health.
 app.include_router(rag_router, prefix="/api", tags=["rag"])
+# Module 23 : suggestions d'objectifs hebdomadaires. Le routeur existait mais
+# n'était jamais monté : WeeklyGoalSuggestionsController (.NET) recevait 404
+# et affichait toujours le calcul local. Préfixe /api/ai porté par le routeur.
+app.include_router(goal_suggestions_router)
 
 
 # ==================== HEALTH CHECK (Public) ====================

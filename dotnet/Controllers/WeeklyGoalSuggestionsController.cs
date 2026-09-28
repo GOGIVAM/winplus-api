@@ -97,13 +97,23 @@ public class WeeklyGoalSuggestionsController : ControllerBase
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(6));
 
-            var res = await client.PostAsJsonAsync("/api/ai/goal-suggestions", new
+            // Module 23 : la route Python est désormais montée et authentifiée
+            // comme les autres routes IA : on relaie le jeton de l'élève.
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/ai/goal-suggestions")
             {
-                user_id = userId,
-                level,
-                weak_subjects = weak,
-                done_this_week = done,
-            }, cts.Token);
+                Content = JsonContent.Create(new
+                {
+                    user_id = userId,
+                    level,
+                    weak_subjects = weak,
+                    done_this_week = done,
+                }),
+            };
+            var auth = Request.Headers.Authorization.ToString();
+            if (!string.IsNullOrWhiteSpace(auth))
+                req.Headers.TryAddWithoutValidation("Authorization", auth);
+
+            var res = await client.SendAsync(req, cts.Token);
 
             if (res.IsSuccessStatusCode)
             {
@@ -120,12 +130,15 @@ public class WeeklyGoalSuggestionsController : ControllerBase
             }
             else
             {
-                _logger.LogInformation("WinAI goal-suggestions a répondu {Code}, repli local.", (int)res.StatusCode);
+                // Warning et non Information : un échec entre les deux backends
+                // doit être visible (Module 23). Le repli reste signalé à
+                // l'écran par aiPowered = false.
+                _logger.LogWarning("WinAI goal-suggestions a répondu {Code}, repli local.", (int)res.StatusCode);
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            _logger.LogInformation(ex, "WinAI goal-suggestions indisponible, repli local.");
+            _logger.LogWarning(ex, "WinAI goal-suggestions indisponible, repli local.");
         }
 
         // 2. Repli déterministe, mêmes champs.

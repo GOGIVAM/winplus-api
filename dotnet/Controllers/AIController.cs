@@ -44,65 +44,92 @@ namespace Backend.Controllers;
             return id;
         }
 
-        [HttpPost("recommend")]
-        [ProducesResponseType(typeof(RecommendationResponse), 200)]
-        [ProducesResponseType(400)]
-        [ProducesResponseType(401)]
-        [ProducesResponseType(500)]
-        public async Task<IActionResult> GetRecommendations([FromBody] RecommendationRequest request)
+        /// <summary>
+        /// Module 23 : l'utilisateur ciblé vient du corps de la requête. Tant que
+        /// ces proxys renvoyaient un objet vide, cela restait sans effet ; ils
+        /// relaient désormais des données réelles, donc on vérifie le droit de
+        /// lecture : soi-même, un administrateur, ou un parent lié (lien accepté),
+        /// cas de l'onglet enfant du tableau de bord parent (Parent.tsx).
+        /// </summary>
+        private async Task<bool> CanReadUserDataAsync(int targetUserId)
         {
-            try
-            {
-                if (!ModelState.IsValid)
-                    return BadRequest(ModelState);
+            int me;
+            try { me = GetCurrentUserId(); }
+            catch (UnauthorizedAccessException) { return false; }
 
-                var response = await _aiService.GetRecommendationsAsync(
-                    request.UserId,
-                    request.NumberOfRecommendations,
-                    request.PreferenceLevel,
-                    request.SubjectCategory);
+            if (me == targetUserId) return true;
+            if (User.IsInRole("admin") || string.Equals(User.FindFirst("role")?.Value, "admin", StringComparison.OrdinalIgnoreCase))
+                return true;
 
-                return Ok(response);
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error: {ex.Message}");
-                return StatusCode(500, new { message = "An error occurred" });
-            }
+            return await _db.ParentStudentLinks.AnyAsync(l =>
+                l.ParentId == me && l.StudentId == targetUserId && l.Status == "accepted");
         }
 
-        [HttpPost("analyze-progress")]
-        [ProducesResponseType(typeof(ProgressAnalysisResponse), 200)]
+        /// <summary>Relaie tel quel le code et le corps JSON renvoyés par Python.</summary>
+        private IActionResult RelayPython(int statusCode, string? body)
+        {
+            if (body == null)
+                return StatusCode(statusCode, new { message = "Service IA indisponible" });
+            return new ContentResult { Content = body, ContentType = "application/json", StatusCode = statusCode };
+        }
+
+        /// <summary>
+        /// POST /api/ai/recommend  recommandations personnalisées (StudentRecommendations.tsx).
+        /// Module 23 : Python (app.py::recommend_subjects) attend user_id et limit
+        /// en PARAMÈTRES D'URL ; .NET les envoyait dans le corps, d'où un 422
+        /// permanent masqué par une liste vide. La réponse Python (subject_id,
+        /// title, category…) est celle que lit déjà le front : elle est relayée
+        /// brute, comme GET /api/ai/learning-path/{userId}.
+        /// </summary>
+        [HttpPost("recommend")]
+        [ProducesResponseType(200)]
         [ProducesResponseType(400)]
         [ProducesResponseType(401)]
-        [ProducesResponseType(500)]
+        [ProducesResponseType(403)]
+        public async Task<IActionResult> GetRecommendations([FromBody] RecommendationRequest request)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+            if (request.UserId <= 0)
+                return BadRequest(new { message = "Invalid user ID" });
+            if (!await CanReadUserDataAsync(request.UserId))
+                return StatusCode(403, new { message = "Accès refusé à ces données." });
+
+            var (statusCode, body) = await _fastApiClient.PostRawJsonAsync(
+                $"/api/recommend?user_id={request.UserId}&limit={request.NumberOfRecommendations}", null);
+            if (statusCode is < 200 or >= 300)
+                _logger.LogWarning("Recommandations WinAI en échec pour {UserId} : HTTP {Status} {Body}", request.UserId, statusCode, body);
+            return RelayPython(statusCode, body);
+        }
+
+        /// <summary>
+        /// POST /api/ai/analyze-progress  analyse de progression (StudentProgress,
+        /// AnalysisChart, onglet enfant du parent). Module 23 : même défaut de
+        /// transport que /recommend (user_id attendu en paramètre d'URL). Python
+        /// répond 404 avec un message quand l'élève n'a encore aucune inscription :
+        /// ce 404 est relayé tel quel, les écrans l'affichent en état d'échec au
+        /// lieu d'une analyse vide présentée comme réelle.
+        /// </summary>
+        [HttpPost("analyze-progress")]
+        [ProducesResponseType(200)]
+        [ProducesResponseType(400)]
+        [ProducesResponseType(401)]
+        [ProducesResponseType(403)]
+        [ProducesResponseType(404)]
         public async Task<IActionResult> AnalyzeProgress([FromBody] ProgressAnalysisRequest request)
         {
-            try
-            {
-                if (!ModelState.IsValid)
-                    return BadRequest(ModelState);
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+            if (request.UserId <= 0)
+                return BadRequest(new { message = "Invalid user ID" });
+            if (!await CanReadUserDataAsync(request.UserId))
+                return StatusCode(403, new { message = "Accès refusé à ces données." });
 
-                var response = await _aiService.AnalyzeProgressAsync(
-                    request.UserId,
-                    request.SubjectId,
-                    request.AnalysisDepth);
-
-                return Ok(response);
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error: {ex.Message}");
-                return StatusCode(500, new { message = "An error occurred" });
-            }
+            var (statusCode, body) = await _fastApiClient.PostRawJsonAsync(
+                $"/api/analyze-progress?user_id={request.UserId}", null);
+            if (statusCode is < 200 or >= 300 && statusCode != 404)
+                _logger.LogWarning("Analyse de progression WinAI en échec pour {UserId} : HTTP {Status} {Body}", request.UserId, statusCode, body);
+            return RelayPython(statusCode, body);
         }
 
         // "generate-quiz" a été retiré : chemin non branché à l'UI (ni
@@ -111,63 +138,46 @@ namespace Backend.Controllers;
         // qui persiste le quiz, le rend rejouable/notable, et personnalise via
         // les vraies erreurs récentes de l'élève plutôt qu'un simple subjectId.
 
-        [HttpGet("performance")]
-        [ProducesResponseType(typeof(PerformanceMetricsResponse), 200)]
-        [ProducesResponseType(400)]
-        [ProducesResponseType(401)]
-        [ProducesResponseType(500)]
-        public async Task<IActionResult> GetPerformance(
-            [FromQuery] int userId,
-            [FromQuery] string timePeriod = "7days")
-        {
-            try
-            {
-                if (userId <= 0)
-                    return BadRequest(new { message = "User ID must be > 0" });
+        // Module 23 : GET /api/ai/performance a été retiré. Il appelait
+        // /api/get-performance, route qui n'existe pas côté Python (404
+        // permanent masqué par des métriques à zéro), et aucun écran web ni
+        // mobile ne l'appelait (seules deux méthodes de service jamais utilisées).
 
-                var response = await _aiService.GetPerformanceMetricsAsync(userId, timePeriod);
-
-                return Ok(response);
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error: {ex.Message}");
-                return StatusCode(500, new { message = "An error occurred" });
-            }
-        }
-
+        /// <summary>
+        /// POST /api/ai/personalized-path. Module 23 : renvoyait un succès avec
+        /// zéro semaine (objet .NET sans correspondance avec la réponse Python).
+        /// Renvoie désormais les phases réellement calculées, ou une erreur
+        /// explicite si Python n'a pas pu produire de parcours.
+        /// </summary>
         [HttpPost("personalized-path")]
         [ProducesResponseType(typeof(LearningPathResponse), 200)]
         [ProducesResponseType(400)]
         [ProducesResponseType(401)]
-        [ProducesResponseType(500)]
+        [ProducesResponseType(403)]
+        [ProducesResponseType(502)]
         public async Task<IActionResult> GeneratePersonalizedPath([FromBody] LearningPathRequest request)
         {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+            if (!await CanReadUserDataAsync(request.UserId))
+                return StatusCode(403, new { message = "Accès refusé à ces données." });
+
             try
             {
-                if (!ModelState.IsValid)
-                    return BadRequest(ModelState);
-
                 var response = await _aiService.GeneratePersonalizedPathAsync(
                     request.UserId,
                     request.GoalSubject,
                     request.TimeframeWeeks,
                     request.AvailableHoursPerWeek);
 
+                if (response == null)
+                    return StatusCode(502, new { message = "WinAI n'a pas pu calculer de parcours pour le moment (données insuffisantes ou service indisponible)." });
+
                 return Ok(response);
             }
             catch (ArgumentException ex)
             {
                 return BadRequest(new { message = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error: {ex.Message}");
-                return StatusCode(500, new { message = "An error occurred" });
             }
         }
 
@@ -200,37 +210,30 @@ namespace Backend.Controllers;
         }
 
         /// <summary>
-        /// GET /api/ai/recommendations/{id}
-        /// Récupérer les recommandations IA pour un sujet spécifique
+        /// GET /api/ai/recommendations/{id}  contenus proches d'un sujet
+        /// (SubjectDetailsPage, « Sujets similaires »).
+        /// Module 23 : l'identifiant du SUJET était passé comme identifiant
+        /// d'UTILISATEUR à la recommandation personnalisée. On appelle désormais
+        /// la route Python prévue pour ce cas, GET /api/recommendations/{subject_id}.
+        /// Python exige un jeton : pour un visiteur anonyme, l'échec est relayé et
+        /// la page (Promise.allSettled) garde les sujets similaires calculés par .NET.
         /// </summary>
         [HttpGet("recommendations/{id}")]
         [AllowAnonymous]
-        [ProducesResponseType(typeof(RecommendationResponse), 200)]
+        [ProducesResponseType(200)]
         [ProducesResponseType(400)]
-        [ProducesResponseType(500)]
         public async Task<IActionResult> GetRecommendationsById(
             [FromRoute] int id,
-            [FromQuery] int count = 5,
-            [FromQuery] string preferenceLevel = "intermediate",
-            [FromQuery] string category = "all")
+            [FromQuery] int count = 5)
         {
-            try
-            {
-                if (id <= 0)
-                    return BadRequest(new { message = "Invalid subject ID" });
+            if (id <= 0)
+                return BadRequest(new { message = "Invalid subject ID" });
 
-                var response = await _aiService.GetRecommendationsAsync(id, count, preferenceLevel, category);
-                return Ok(response);
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error: {ex.Message}");
-                return StatusCode(500, new { message = "An error occurred" });
-            }
+            var limit = Math.Clamp(count, 1, 20);
+            var (statusCode, body) = await _fastApiClient.GetRawJsonAsync($"/api/recommendations/{id}?limit={limit}");
+            if (statusCode is < 200 or >= 300 && statusCode is not (401 or 403))
+                _logger.LogWarning("Recommandations par sujet WinAI en échec pour {SubjectId} : HTTP {Status} {Body}", id, statusCode, body);
+            return RelayPython(statusCode, body);
         }
 
         /// <summary>
@@ -323,11 +326,18 @@ namespace Backend.Controllers;
                 if (!ModelState.IsValid)
                     return BadRequest(ModelState);
 
+                if (!await CanReadUserDataAsync(request.UserId))
+                    return StatusCode(403, new { message = "Accès refusé à ces données." });
+
                 var response = await _aiService.GeneratePersonalizedPathAsync(
                     request.UserId,
                     request.SubjectName,
                     request.DurationWeeks,
                     request.HoursPerWeek);
+
+                // Module 23 : plus de parcours vide présenté comme un succès.
+                if (response == null)
+                    return StatusCode(502, new { message = "WinAI n'a pas pu calculer de plan d'étude pour le moment (données insuffisantes ou service indisponible)." });
 
                 return Ok(response);
             }

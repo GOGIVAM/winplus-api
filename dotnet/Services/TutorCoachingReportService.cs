@@ -15,15 +15,18 @@ public sealed class TutorCoachingReportService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TutorCoachingReportService> _logger;
     private readonly IHttpClientFactory _httpFactory;
+    private readonly IServiceTokenProvider _serviceToken;
 
     public TutorCoachingReportService(
         IServiceScopeFactory scopeFactory,
         ILogger<TutorCoachingReportService> logger,
-        IHttpClientFactory httpFactory)
+        IHttpClientFactory httpFactory,
+        IServiceTokenProvider serviceToken)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _httpFactory = httpFactory;
+        _serviceToken = serviceToken;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -85,18 +88,30 @@ public sealed class TutorCoachingReportService : BackgroundService
             return; // Rien à rapporter pour ce répétiteur ce mois-ci.
 
         var client = _httpFactory.CreateClient("FastApiClient");
-        var response = await client.PostAsJsonAsync("/api/teacher/coaching-report", new
+        // Module 23 : aucune requête HTTP entrante ici, donc aucun jeton
+        // utilisateur à relayer. L'appel partait sans Authorization et
+        // recevait 401 (require_role côté Python) à chaque exécution.
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/coaching-report")
         {
-            month_label = monthLabel,
-            reviews,
-            subjects_taught = subjects,
-            sessions_count = sessionsCount,
-            average_rating = avgRating,
-        }, ct);
+            Content = JsonContent.Create(new
+            {
+                month_label = monthLabel,
+                reviews,
+                subjects_taught = subjects,
+                sessions_count = sessionsCount,
+                average_rating = avgRating,
+            }),
+        };
+        request.Headers.TryAddWithoutValidation("Authorization", _serviceToken.CreateAuthorizationHeader(ServiceScopes.CoachingReport));
+        var response = await client.SendAsync(request, ct);
 
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogWarning("Coaching report generation failed for tutor {TutorUserId}: {Status}", tutorUserId, response.StatusCode);
+            var errorBody = await response.Content.ReadAsStringAsync(ct);
+            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+                _logger.LogError("Coaching report : authentification service à service refusée par Python ({Status}) pour le répétiteur {TutorUserId} : {Body}", (int)response.StatusCode, tutorUserId, errorBody);
+            else
+                _logger.LogWarning("Coaching report generation failed for tutor {TutorUserId}: {Status} {Body}", tutorUserId, (int)response.StatusCode, errorBody);
             return;
         }
 

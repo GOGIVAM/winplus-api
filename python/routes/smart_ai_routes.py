@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timedelta
 
 from services.deepseek_client import get_deepseek_client
-from auth import verify_token, UserTokenData
+from auth import verify_token, require_user_or_service, UserTokenData
 from database import Database, User, QuizAttempt, DailyScore, Subject, DownloadHistory, Goal, QuizMistake
 
 logger = logging.getLogger(__name__)
@@ -104,7 +104,9 @@ class QuizContentRequest(BaseModel):
 @smart_ai_router.post("/ai/generate-notification")
 async def generate_notification(
     body: GenerateNotificationRequest,
-    current_user: UserTokenData = Depends(verify_token),
+    # Module 23 : SmartNotificationService (.NET) appelle cette route depuis des
+    # tâches de fond, sans jeton utilisateur : jeton technique « ai.notification ».
+    current_user: UserTokenData = Depends(require_user_or_service("ai.notification")),
 ):
     """
     Génère un titre + corps de notification personnalisés via DeepSeek.

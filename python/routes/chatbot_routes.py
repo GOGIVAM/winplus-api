@@ -19,7 +19,7 @@ from services.rag_chat_bridge import build_rag_context_block
 from services.attachment_processor import process_chat_attachment_async
 from services.ai_quota import check_quota
 from sqlalchemy import text as sql_text
-from auth import verify_token, UserTokenData
+from auth import verify_token, require_user_or_service, UserTokenData
 from schemas import ChatRequest, ChatResponse, ChatbotHealthResponse, ChatMessage, ChatbotContextRequest
 from database import Database, Conversation, ChatMessage as ChatMessageDB, UserAIMemory, User, QuizAttempt, DailyScore, QuizMistake, ExamCoachPlanNet
 
@@ -517,7 +517,11 @@ async def health():
 @chatbot_router.post('/chat', response_model=ChatResponse, tags=["chatbot"])
 async def chat(
     chat_request: ChatRequest,
-    current_user: UserTokenData = Depends(verify_token)
+    # Module 23 : WeeklyParentReportService (tâche de fond .NET, sans jeton
+    # utilisateur) appelle aussi cette route, avec un jeton technique de
+    # périmètre « ai.parent-report ». Les jetons utilisateurs restent validés
+    # exactement comme avant (verify_token).
+    current_user: UserTokenData = Depends(require_user_or_service("ai.parent-report"))
 ):
     """
     Endpoint principal pour le chat
@@ -546,6 +550,33 @@ async def chat(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Messages are required"
             )
+
+        if current_user.is_service:
+            # Génération interne de la plateforme (rapport parent hebdomadaire) :
+            # aucun utilisateur n'est à l'origine du message, il n'y a donc
+            # aucun quota personnel à débiter ni de réserve .NET possible. Le
+            # jeton technique ne donne accès qu'à cette génération encadrée :
+            # prompt système obligatoire, pas de contexte personnel ni RAG.
+            if not chat_request.system_prompt:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="system_prompt is required for service calls",
+                )
+            deepseek_client = get_deepseek_client()
+            result = deepseek_client.chat(
+                messages=[{"role": m.role, "content": m.content} for m in chat_request.messages],
+                system_prompt=chat_request.system_prompt,
+                max_tokens=chat_request.max_tokens,
+                temperature=chat_request.temperature,
+            )
+            logger.info(f"Chat service (scopes={current_user.scopes}): success={result.get('success')}")
+            return {
+                "content": result.get('content', ''),
+                "tokens_used": result.get('tokens_used', 0),
+                "generation_time_ms": result.get('generation_time_ms', 0),
+                "success": result.get('success', False),
+                "error": result.get('error'),
+            }
 
         # Décision 10.4 : même mur de quota que /stream (réserve .NET exigée).
         _enforce_ai_quota(current_user, chat_request.client_message_id, "Chat")

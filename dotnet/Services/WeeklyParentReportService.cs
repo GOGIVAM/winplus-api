@@ -24,15 +24,53 @@ public sealed class WeeklyParentReportService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<WeeklyParentReportService> _logger;
     private readonly IHttpClientFactory _httpFactory;
+    private readonly IServiceTokenProvider _serviceToken;
 
     public WeeklyParentReportService(
         IServiceScopeFactory scopeFactory,
         ILogger<WeeklyParentReportService> logger,
-        IHttpClientFactory httpFactory)
+        IHttpClientFactory httpFactory,
+        IServiceTokenProvider serviceToken)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _httpFactory = httpFactory;
+        _serviceToken = serviceToken;
+    }
+
+    /// <summary>
+    /// Appel de génération WinAI (Module 23). Cette tâche de fond n'a aucun jeton
+    /// utilisateur : ses appels partaient sans Authorization et recevaient 401,
+    /// avalé par le repli sur un texte générique. Elle utilise désormais le jeton
+    /// technique de périmètre « ai.parent-report », que /api/chatbot/chat accepte
+    /// sans débiter de quota personnel (aucun utilisateur n'est à l'origine du
+    /// message). Renvoie null (et journalise la cause) en cas d'échec.
+    /// </summary>
+    private async Task<string?> CallWinAiAsync(object prompt, string purpose, CancellationToken ct)
+    {
+        var client = _httpFactory.CreateClient("FastApiClient");
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/chatbot/chat")
+        {
+            Content = JsonContent.Create(prompt),
+        };
+        req.Headers.TryAddWithoutValidation("Authorization", _serviceToken.CreateAuthorizationHeader(ServiceScopes.ParentReport));
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(15));
+
+        var res = await client.SendAsync(req, cts.Token);
+        var body = await res.Content.ReadAsStringAsync(cts.Token);
+        if (!res.IsSuccessStatusCode)
+        {
+            if (res.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+                _logger.LogError("Rapport parent ({Purpose}) : authentification service à service refusée par Python ({Status}) : {Body}", purpose, (int)res.StatusCode, body);
+            else
+                _logger.LogWarning("Rapport parent ({Purpose}) : WinAI a répondu {Status} : {Body}", purpose, (int)res.StatusCode, body);
+            return null;
+        }
+
+        var doc = JsonSerializer.Deserialize<JsonElement>(body);
+        return doc.TryGetProperty("content", out var contentProp) ? contentProp.GetString() : null;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -295,7 +333,6 @@ public sealed class WeeklyParentReportService : BackgroundService
 
         try
         {
-            var client = _httpFactory.CreateClient("FastApiClient");
             var prompt = new
             {
                 messages = new[]
@@ -310,24 +347,14 @@ public sealed class WeeklyParentReportService : BackgroundService
                     }
                 },
                 system_prompt = "Tu es WinAI, conseiller pédagogique familial de WinPlus. Réponds en français, une phrase courte, ton chaleureux et factuel.",
-                max_tokens = 80,
+                // Module 23 : 80 était refusé en 422 (ChatRequest.max_tokens ≥ 100
+                // côté Python). La consigne « une phrase courte » borne la longueur.
+                max_tokens = 100,
                 temperature = 0.6
             };
 
-            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/chatbot/chat");
-            req.Content = JsonContent.Create(prompt);
-
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(15));
-
-            var res = await client.SendAsync(req, cts.Token);
-            var body = await res.Content.ReadAsStringAsync(cts.Token);
-            var doc = JsonSerializer.Deserialize<JsonElement>(body);
-            if (doc.TryGetProperty("content", out var contentProp))
-            {
-                var text = contentProp.GetString();
-                if (!string.IsNullOrWhiteSpace(text)) return text.Trim();
-            }
+            var text = await CallWinAiAsync(prompt, "capsule", ct);
+            if (!string.IsNullOrWhiteSpace(text)) return text.Trim();
         }
         catch (Exception ex)
         {
@@ -341,7 +368,6 @@ public sealed class WeeklyParentReportService : BackgroundService
     {
         try
         {
-            var client = _httpFactory.CreateClient("FastApiClient");
             var prompt = new
             {
                 messages = new[]
@@ -359,17 +385,8 @@ public sealed class WeeklyParentReportService : BackgroundService
                 temperature = 0.7
             };
 
-            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/chatbot/chat");
-            req.Content = JsonContent.Create(prompt);
-
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(15));
-
-            var res = await client.SendAsync(req, cts.Token);
-            var body = await res.Content.ReadAsStringAsync(cts.Token);
-            var doc = JsonSerializer.Deserialize<JsonElement>(body);
-            if (doc.TryGetProperty("content", out var contentProp))
-                return contentProp.GetString() ?? FallbackSynthesis(childSummaries);
+            var text = await CallWinAiAsync(prompt, "synthèse", ct);
+            if (!string.IsNullOrWhiteSpace(text)) return text;
         }
         catch (Exception ex)
         {

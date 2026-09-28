@@ -135,10 +135,15 @@ public class AiAliasController : ControllerBase
                 weeks,
                 hoursPerWeek);
 
-            // Un parcours sans semaine n'apporte rien à l'écran : on préfère un
+            // Un parcours sans phase n'apporte rien à l'écran : on préfère un
             // 204 explicite, que le frontend traite comme « pas encore de plan ».
-            if (response?.Weeks == null || response.Weeks.Count == 0)
+            // Module 23 : l'ancien test portait sur Weeks, champ qui n'existait
+            // pas dans la réponse Python : cette route renvoyait donc toujours 204.
+            if (response == null || response.Phases.Count == 0)
+            {
+                _logger.LogInformation("learning-path (alias) : aucun parcours calculable pour {UserId}", effectiveUserId);
                 return NoContent();
+            }
 
             return Ok(response);
         }

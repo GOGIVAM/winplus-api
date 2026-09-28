@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+﻿using System.Net.Http.Json;
 using System.Text.Json;
 
 namespace Backend.Services;
@@ -27,17 +27,20 @@ public class SmartNotificationService : ISmartNotificationService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<SmartNotificationService> _logger;
     private readonly IConfiguration _configuration;
+    private readonly IServiceTokenProvider _serviceToken;
 
     public SmartNotificationService(
         INtfyService ntfy,
         IHttpClientFactory httpClientFactory,
         ILogger<SmartNotificationService> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IServiceTokenProvider serviceToken)
     {
         _ntfy = ntfy;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _configuration = configuration;
+        _serviceToken = serviceToken;
     }
 
     public async Task PublishSmartAsync(
@@ -67,8 +70,14 @@ public class SmartNotificationService : ISmartNotificationService
                 context_data      = contextData ?? new Dictionary<string, object>()
             };
 
-            var response = await httpClient.PostAsJsonAsync(
-                $"{aiBaseUrl}/api/ai/generate-notification", payload);
+            // Module 23 : l'appel partait sans Authorization (service appelé hors
+            // requête HTTP), FastAPI répondait 401 à chaque fois.
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{aiBaseUrl}/api/ai/generate-notification")
+            {
+                Content = JsonContent.Create(payload),
+            };
+            request.Headers.TryAddWithoutValidation("Authorization", _serviceToken.CreateAuthorizationHeader(ServiceScopes.Notification));
+            var response = await httpClient.SendAsync(request);
 
             if (response.IsSuccessStatusCode)
             {
@@ -87,7 +96,11 @@ public class SmartNotificationService : ISmartNotificationService
             }
             else
             {
-                _logger.LogWarning("[SmartNotif] Python returned {Status}  using fallback", response.StatusCode);
+                var errorBody = await response.Content.ReadAsStringAsync();
+                if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+                    _logger.LogError("[SmartNotif] Authentification service à service refusée par Python ({Status}) : {Body}", (int)response.StatusCode, errorBody);
+                else
+                    _logger.LogWarning("[SmartNotif] Python returned {Status} ({Body})  using fallback", (int)response.StatusCode, errorBody);
             }
         }
         catch (Exception ex)

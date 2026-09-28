@@ -31,15 +31,18 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<MonthlyInstitutionReportService> _logger;
     private readonly IHttpClientFactory _httpFactory;
+    private readonly IServiceTokenProvider _serviceToken;
 
     public MonthlyInstitutionReportService(
         IServiceScopeFactory scopeFactory,
         ILogger<MonthlyInstitutionReportService> logger,
-        IHttpClientFactory httpFactory)
+        IHttpClientFactory httpFactory,
+        IServiceTokenProvider serviceToken)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _httpFactory = httpFactory;
+        _serviceToken = serviceToken;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -159,6 +162,13 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
 
         // Build AI narrative via Python (optional  fire-and-forget)
         string aiNarrative;
+        // Sans élève rattaché, Python retomberait sur « tous les élèves de la
+        // plateforme » (repli de test de _resolve_student_ids) : on n'appelle pas.
+        if (studentIds.Count == 0)
+        {
+            aiNarrative = "Aucun élève rattaché à votre établissement ce mois-ci : pas de plan d'action WinAI.";
+        }
+        else
         try
         {
             var pyClient = _httpFactory.CreateClient("FastApiClient");
@@ -168,20 +178,46 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
                 student_ids = studentIds,
                 institution_name = directorName,
             };
-            var response = await pyClient.PostAsJsonAsync("/api/institution/action-plan", payload, ct);
+            // Module 23 : tâche de fond sans jeton utilisateur. L'appel partait
+            // sans Authorization, Python (require_role) répondait 401, et le
+            // catch muet ci-dessous remplaçait l'analyse par un texte générique.
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/institution/action-plan")
+            {
+                Content = JsonContent.Create(payload),
+            };
+            request.Headers.TryAddWithoutValidation("Authorization", _serviceToken.CreateAuthorizationHeader(ServiceScopes.InstitutionReport));
+            var response = await pyClient.SendAsync(request, ct);
             if (response.IsSuccessStatusCode)
             {
                 var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
-                var actions = json.TryGetProperty("actions", out var a) ? a.ToString() : "";
-                aiNarrative = $"WinAI recommande pour {monthLabel} :\n{actions}";
+                var lines = new List<string>();
+                if (json.TryGetProperty("actions", out var a) && a.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var action in a.EnumerateArray())
+                    {
+                        var text = action.TryGetProperty("action", out var t) ? t.GetString() : null;
+                        var effort = action.TryGetProperty("effort", out var e) ? e.GetString() : null;
+                        if (!string.IsNullOrWhiteSpace(text))
+                            lines.Add($"{lines.Count + 1}. {text}" + (string.IsNullOrWhiteSpace(effort) ? "" : $" ({effort})"));
+                    }
+                }
+                aiNarrative = lines.Count > 0
+                    ? $"WinAI recommande pour {monthLabel} :\n{string.Join("\n", lines)}"
+                    : "Analyse WinAI indisponible pour ce rapport.";
             }
             else
             {
+                var errorBody = await response.Content.ReadAsStringAsync(ct);
+                if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+                    _logger.LogError("Rapport institution : authentification service à service refusée par Python ({Status}) : {Body}", (int)response.StatusCode, errorBody);
+                else
+                    _logger.LogWarning("Rapport institution : plan d'action WinAI en échec ({Status}) : {Body}", (int)response.StatusCode, errorBody);
                 aiNarrative = "Analyse WinAI indisponible pour ce rapport.";
             }
         }
-        catch
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            _logger.LogWarning(ex, "Rapport institution : appel du plan d'action WinAI impossible pour {InstitutionUserId}", institutionUserId);
             aiNarrative = "Analyse WinAI indisponible pour ce rapport.";
         }
 

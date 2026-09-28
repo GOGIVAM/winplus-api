@@ -329,6 +329,9 @@ builder.Services.AddAuthorization(options =>
 // ============ CUSTOM AUTH SERVICES ============
 // Register custom authentication services (MAIN AUTH SYSTEM)
 builder.Services.AddScoped<IJwtService, JwtService>();
+// Modules 23/36 : jeton technique des tâches de fond vers FastAPI (audience et
+// périmètre dédiés, même secret que les jetons utilisateurs).
+builder.Services.AddSingleton<IServiceTokenProvider, ServiceTokenProvider>();
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IDeviceTrackingService, DeviceTrackingService>();
 builder.Services.AddScoped<ICustomAuthService, CustomAuthService>();

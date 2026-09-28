@@ -27,7 +27,7 @@ from sqlalchemy import func
 # se limite à student/teacher/parent) : il est attribué par un administrateur.
 # Vérification faite avant d'écrire ce contrôle, précisément pour ne pas
 # répéter la confusion rôle / palier qui rendait le mur payant inerte.
-from auth import verify_token, require_role, UserTokenData
+from auth import verify_token, require_role, require_user_or_service, UserTokenData
 from database import Database, DailyScore, Enrollment, QuizAttempt, Subject, User
 from services.deepseek_client import get_deepseek_client
 
@@ -308,7 +308,10 @@ class ActionPlanRequest(BaseModel):
 @institution_router.post("/institution/action-plan")
 async def action_plan(
     body: ActionPlanRequest,
-    current_user: UserTokenData = Depends(require_role("institution", "admin")),
+    # Module 23 : MonthlyInstitutionReportService (.NET, tâche mensuelle) appelle
+    # cette route sans utilisateur connecté : jeton technique « ai.institution-report ».
+    current_user: UserTokenData = Depends(
+        require_user_or_service("ai.institution-report", roles=("institution", "admin"))),
 ):
     session = _db.SessionLocal()
     try:

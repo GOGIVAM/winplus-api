@@ -23,16 +23,31 @@ Le backend .NET fonctionne sans cette route : il possède un repli déterministe
 et marque alors la réponse `aiPowered: false`. Cette route sert à passer les
 suggestions en langage naturel, calibrées par le modèle.
 
-Enregistrement dans app.py :
+Enregistrement dans app.py (Module 23 : ce routeur n'avait jamais été monté,
+l'appel .NET recevait donc 404 et retombait toujours sur le calcul local) :
 
     from routes import goal_suggestions
     app.include_router(goal_suggestions.router)
 """
 
+import asyncio
+import json
+import logging
+import re
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+
+from auth import verify_token, UserTokenData
+# Module 23 : l'import visait « services.deepseek_service.chat_completion »,
+# module inexistant. L'ImportError était avalée par un « except Exception:
+# pass » : même monté, le routeur n'aurait jamais appelé le modèle. L'import
+# est désormais fait au chargement du module, pour qu'une erreur de ce type
+# fasse échouer le démarrage au lieu de disparaître silencieusement.
+from services.deepseek_client import get_deepseek_client
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -119,7 +134,13 @@ def _rule_based(req: GoalSuggestionRequest) -> GoalSuggestionResponse:
 
 
 @router.post("/goal-suggestions", response_model=GoalSuggestionResponse)
-async def goal_suggestions(req: GoalSuggestionRequest) -> GoalSuggestionResponse:
+async def goal_suggestions(
+    req: GoalSuggestionRequest,
+    # Authentifiée comme les autres routes IA : une fois montée, une route
+    # publique aurait ouvert un appel LLM payant à n'importe qui. Le contrôleur
+    # .NET relaie le jeton de l'élève connecté.
+    current_user: UserTokenData = Depends(verify_token),
+) -> GoalSuggestionResponse:
     """
     Renvoie trois objectifs proposés.
 
@@ -132,8 +153,6 @@ async def goal_suggestions(req: GoalSuggestionRequest) -> GoalSuggestionResponse
     base = _rule_based(req)
 
     try:
-        from services.deepseek_service import chat_completion  # type: ignore
-
         prompt = (
             "Réécris chaque justification en une phrase courte, adressée à l'élève, "
             "en français, ton direct et bienveillant. Ne change aucun chiffre. "
@@ -147,19 +166,28 @@ async def goal_suggestions(req: GoalSuggestionRequest) -> GoalSuggestionResponse
             )
         )
 
-        raw = await chat_completion(prompt, max_tokens=300)
+        # DeepSeekClient.chat est synchrone : exécuté hors de la boucle asyncio.
+        result = await asyncio.to_thread(
+            get_deepseek_client().chat,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+        )
+        if not result.get("success"):
+            logger.warning(f"[goal-suggestions] génération WinAI en échec : {result.get('error')}  base déterministe conservée")
+            return base
 
-        import json
-        import re
-
-        match = re.search(r"\[.*\]", raw or "", re.S)
-        if match:
-            reasons = json.loads(match.group(0))
-            for suggestion, reason in zip(base.suggestions, reasons):
-                if isinstance(reason, str) and 10 < len(reason) < 240:
-                    suggestion.reason = reason.strip()
-    except Exception:
-        # Modèle absent, quota épuisé, réponse non parsable : on garde la base.
-        pass
+        raw = result.get("content") or ""
+        match = re.search(r"\[.*\]", raw, re.S)
+        if not match:
+            logger.warning("[goal-suggestions] réponse WinAI sans liste JSON  base déterministe conservée")
+            return base
+        reasons = json.loads(match.group(0))
+        for suggestion, reason in zip(base.suggestions, reasons):
+            if isinstance(reason, str) and 10 < len(reason) < 240:
+                suggestion.reason = reason.strip()
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        # Réponse du modèle non exploitable : les chiffres déterministes
+        # restent valides, seule la reformulation est perdue. Journalisé.
+        logger.warning(f"[goal-suggestions] réponse WinAI illisible ({e})  base déterministe conservée")
 
     return base

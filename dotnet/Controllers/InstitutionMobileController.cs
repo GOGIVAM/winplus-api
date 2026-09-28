@@ -292,36 +292,49 @@ public class InstitutionMobileController : ControllerBase
 
     // ── Élèves à risque ───────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Élèves suivis par l'utilisateur institution : ceux rattachés à son
+    /// InstitutionId, ou à défaut les membres de ses groupes. Partagé par
+    /// at-risk et action-plan.
+    /// </summary>
+    private async Task<(int UserId, int? InstitutionId, string? Name, List<int> StudentIds)> ResolveStudentsAsync()
+    {
+        var userId = User.GetUserId();
+        var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+        var institutionId = user?.InstitutionId;
+
+        List<int> studentIds;
+        if (institutionId.HasValue)
+        {
+            studentIds = await _db.InstitutionStudents
+                .Where(s => s.InstitutionId == institutionId.Value && s.IsActive)
+                .Select(s => s.StudentId)
+                .ToListAsync();
+        }
+        else
+        {
+            var groupIds = await _db.StudyGroups
+                .Where(g => g.OwnerId == userId && g.IsActive)
+                .Select(g => g.Id)
+                .ToListAsync();
+            studentIds = await _db.StudyGroupMembers
+                .Where(m => groupIds.Contains(m.StudyGroupId) && m.UserId != userId)
+                .Select(m => m.UserId)
+                .Distinct()
+                .ToListAsync();
+        }
+
+        var name = string.Join(" ", new[] { user?.FirstName, user?.LastName }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        return (userId, institutionId, string.IsNullOrWhiteSpace(name) ? null : name, studentIds);
+    }
+
     /// <summary>GET /api/institution/at-risk  élèves à risque de décrochage.</summary>
     [HttpGet("at-risk")]
     public async Task<IActionResult> GetAtRisk()
     {
         try
         {
-            var userId = User.GetUserId();
-            var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
-            var institutionId = user?.InstitutionId;
-
-            List<int> studentIds;
-            if (institutionId.HasValue)
-            {
-                studentIds = await _db.InstitutionStudents
-                    .Where(s => s.InstitutionId == institutionId.Value && s.IsActive)
-                    .Select(s => s.StudentId)
-                    .ToListAsync();
-            }
-            else
-            {
-                var groupIds = await _db.StudyGroups
-                    .Where(g => g.OwnerId == userId && g.IsActive)
-                    .Select(g => g.Id)
-                    .ToListAsync();
-                studentIds = await _db.StudyGroupMembers
-                    .Where(m => groupIds.Contains(m.StudyGroupId) && m.UserId != userId)
-                    .Select(m => m.UserId)
-                    .Distinct()
-                    .ToListAsync();
-            }
+            var (_, _, _, studentIds) = await ResolveStudentsAsync();
 
             if (!studentIds.Any()) return Ok(new List<object>());
 
@@ -366,28 +379,67 @@ public class InstitutionMobileController : ControllerBase
 
     // ── Plan d'action ─────────────────────────────────────────────────────────
 
-    /// <summary>GET /api/institution/action-plan  plan d'action IA pour l'institution.</summary>
+    /// <summary>
+    /// GET /api/institution/action-plan  plan d'action IA pour l'institution.
+    ///
+    /// Module 23 : l'appel Python partait SANS CORPS alors que
+    /// POST /api/institution/action-plan exige { institution_id, student_ids,
+    /// institution_name } : 422 systématique, masqué par un 200
+    /// « Plan d'action non disponible ». La réponse Python (actions[],
+    /// week_label, context) est désormais relayée telle quelle, et un échec
+    /// renvoie un vrai code d'erreur que l'écran mobile affiche comme tel.
+    ///
+    /// Sans élève suivi, on n'appelle pas Python : avec une liste vide, il
+    /// retomberait sur « tous les élèves de la plateforme » (repli de test
+    /// de _resolve_student_ids), et l'institution recevrait un plan calculé
+    /// sur les élèves d'autres établissements.
+    /// </summary>
     [HttpGet("action-plan")]
     public async Task<IActionResult> GetActionPlan(CancellationToken ct)
     {
         try
         {
+            var (userId, institutionId, name, studentIds) = await ResolveStudentsAsync();
+            if (studentIds.Count == 0)
+            {
+                return Ok(new
+                {
+                    actions = Array.Empty<object>(),
+                    week_label = (string?)null,
+                    context = new { student_count = 0 },
+                    message = "Aucun élève n'est encore rattaché à votre établissement : WinAI ne peut pas proposer de plan.",
+                });
+            }
+
             var client = _httpClientFactory.CreateClient("FastApiClient");
-            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/institution/action-plan");
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/institution/action-plan")
+            {
+                Content = System.Net.Http.Json.JsonContent.Create(new
+                {
+                    institution_id = institutionId ?? userId,
+                    student_ids = studentIds,
+                    institution_name = name,
+                }),
+            };
             var auth = HttpContext.Request.Headers["Authorization"].ToString();
             if (!string.IsNullOrEmpty(auth))
                 req.Headers.TryAddWithoutValidation("Authorization", auth);
 
             var res = await client.SendAsync(req, ct);
-            if (!res.IsSuccessStatusCode)
-                return Ok(new { plan = "Plan d'action non disponible pour le moment." });
-
             var content = await res.Content.ReadAsStringAsync(ct);
+            if (!res.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Plan d'action WinAI en échec pour l'institution {UserId} : HTTP {Status} {Body}", userId, (int)res.StatusCode, content);
+                return StatusCode(res.StatusCode == System.Net.HttpStatusCode.Forbidden ? 403 : 502,
+                    new { message = "Plan d'action WinAI indisponible pour le moment." });
+            }
+
             return Content(content, "application/json");
         }
-        catch
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return Ok(new { plan = "Plan d'action non disponible pour le moment." });
+            _logger.LogError(ex, "Plan d'action WinAI : appel impossible");
+            return StatusCode(502, new { message = "Plan d'action WinAI indisponible pour le moment." });
         }
     }
 }

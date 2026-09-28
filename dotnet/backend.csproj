@@ -68,27 +68,18 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="7.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="7.0.0" />
     
-    <!-- Testing (optionnel) -->
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.7.2" />
-    <PackageReference Include="xunit" Version="2.5.3" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3">
-      <PrivateAssets>all</PrivateAssets>
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-    </PackageReference>
-    <PackageReference Include="Moq" Version="4.20.69" />
-    
+    <!-- Les dépendances de test (xunit, Moq, Test.Sdk) vivent dans les projets
+         de test séparés (backend/tests/dotnet/*), pas ici : elles ne doivent
+         pas partir en publication. -->
+
     <!-- Custom Auth Services -->
     <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
   </ItemGroup>
 
-  <!-- Exclude auto-generated files and test projects from compilation -->
+  <!-- Exclude auto-generated files from compilation -->
   <ItemGroup>
     <!-- Exclude all auto-generated assembly attribute files in /obj directories -->
     <Compile Remove="obj/**/*.cs" />
-    <Compile Remove="AITests/obj/**/*.cs" />
-    <!-- Exclude test projects (schema mismatches) -->
-    <Compile Remove="AITests/**/*.cs" />
-    <Compile Remove="Tests/**/*.cs" />
   </ItemGroup>
 
 </Project>

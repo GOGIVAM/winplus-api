@@ -20,8 +20,21 @@ namespace Backend.Services;
 public interface IFastApiClient
 {
     // Méthodes génériques
-    Task<T?> GetAsync<T>(string endpoint) where T : class;
-    Task<T?> PostAsync<T>(string endpoint, object data) where T : class;
+    // Module 23 : `jsonOptions` choisit explicitement la convention de nommage
+    // de la réponse Python. FastAPI n'est pas homogène : certaines routes
+    // répondent en snake_case (user_id, weak_areas…), d'autres en camelCase
+    // (correctAnswer des quiz). Par défaut : insensible à la casse seulement,
+    // comportement historique. Pour une route snake_case, passer
+    // FastApiClient.SnakeCaseJson (patron de ChatbotService).
+    Task<T?> GetAsync<T>(string endpoint, JsonSerializerOptions? jsonOptions = null) where T : class;
+    Task<T?> PostAsync<T>(string endpoint, object data, JsonSerializerOptions? jsonOptions = null) where T : class;
+
+    /// <summary>
+    /// POST brut : code HTTP et corps tels quels (pas d'EnsureSuccessStatusCode).
+    /// Sert aux proxys qui relaient la réponse Python sans la retyper
+    /// (voir AIController : recommend, analyze-progress).
+    /// </summary>
+    Task<(int StatusCode, string? Body)> PostRawJsonAsync(string endpoint, object? data);
 
     /// <summary>
     /// GET brut : renvoie le code HTTP et le corps JSON tels quels, sans
@@ -34,10 +47,20 @@ public interface IFastApiClient
     Task<bool> HealthCheckAsync();
     
     // Méthodes métier
-    Task<RecommendationResponse> GetRecommendationsAsync(int userId, string preferenceLevel, string category);
-    Task<ProgressAnalysisResponse> AnalyzeProgressAsync(int userId, int subjectId, string depth);
-    Task<PerformanceMetricsResponse> GetPerformanceAsync(int userId, string timePeriod);
-    Task<LearningPathResponse> GenerateLearningPathAsync(int userId, string goalSubject, int weeks, int hoursPerWeek);
+    // Module 23 : GetRecommendationsAsync, AnalyzeProgressAsync et
+    // GetPerformanceAsync ont été retirées. Les deux premières envoyaient en
+    // corps ce que Python attend en paramètre d'URL (422 permanent masqué par
+    // un repli vide) et désérialisaient dans des objets sans correspondance
+    // avec la réponse Python ; AIController relaie désormais la réponse brute.
+    // La troisième appelait /api/get-performance, route inexistante côté Python.
+
+    /// <summary>
+    /// Parcours personnalisé calculé par Python depuis les performances réelles
+    /// (GET /api/learning-path/{userId}). Renvoie null si Python refuse
+    /// (404 « données insuffisantes ») ou est indisponible : plus de repli
+    /// silencieux vers un parcours vide présenté comme un succès.
+    /// </summary>
+    Task<LearningPathResponse?> GenerateLearningPathAsync(int userId);
 
     /// <summary>
     /// Génère les questions du "mode évaluation" à partir du contenu réel du
@@ -85,6 +108,21 @@ public interface IFastApiClient
 
 public class FastApiClient : IFastApiClient
 {
+    /// <summary>Comportement historique : insensible à la casse, sans politique de nommage.</summary>
+    public static readonly JsonSerializerOptions DefaultJson = new() { PropertyNameCaseInsensitive = true };
+
+    /// <summary>
+    /// Routes Python en snake_case (Pydantic sans alias). Même politique que
+    /// ChatbotService._fastApiJsonOptions, le patron de référence : sans elle,
+    /// « user_id » ne se lie jamais à UserId et la valeur par défaut remplace
+    /// silencieusement la donnée réelle.
+    /// </summary>
+    public static readonly JsonSerializerOptions SnakeCaseJson = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        PropertyNameCaseInsensitive = true,
+    };
+
     private readonly HttpClient _httpClient;
     private readonly ILogger<FastApiClient> _logger;
     private readonly IConfiguration _configuration;
@@ -205,7 +243,7 @@ public class FastApiClient : IFastApiClient
     /// <summary>
     /// GET request avec retry + circuit breaker
     /// </summary>
-    public async Task<T?> GetAsync<T>(string endpoint) where T : class
+    public async Task<T?> GetAsync<T>(string endpoint, JsonSerializerOptions? jsonOptions = null) where T : class
     {
         try
         {
@@ -221,10 +259,7 @@ public class FastApiClient : IFastApiClient
                     response.EnsureSuccessStatusCode();
 
                     var content = await response.Content.ReadAsStringAsync();
-                    var result = JsonSerializer.Deserialize<T>(content, new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true
-                    });
+                    var result = JsonSerializer.Deserialize<T>(content, jsonOptions ?? DefaultJson);
 
                     _logger.LogDebug(" GET {Endpoint} réussi", endpoint);
                     return result;
@@ -283,7 +318,7 @@ public class FastApiClient : IFastApiClient
     /// (ex: "PDF scanné, contenu illisible") n'atteignait jamais l'appelant
     /// ni les logs  seul un null générique remontait.
     /// </summary>
-    private async Task<(int StatusCode, string? Body)> PostRawJsonAsync(string endpoint, object data)
+    public async Task<(int StatusCode, string? Body)> PostRawJsonAsync(string endpoint, object? data)
     {
         try
         {
@@ -292,7 +327,7 @@ public class FastApiClient : IFastApiClient
                 {
                     using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
                     {
-                        Content = new StringContent(JsonSerializer.Serialize(data), Encoding.UTF8, "application/json")
+                        Content = new StringContent(JsonSerializer.Serialize(data ?? new { }), Encoding.UTF8, "application/json")
                     };
                     AttachAuthorization(request);
 
@@ -316,7 +351,7 @@ public class FastApiClient : IFastApiClient
     /// <summary>
     /// POST request avec retry + circuit breaker
     /// </summary>
-    public async Task<T?> PostAsync<T>(string endpoint, object data) where T : class
+    public async Task<T?> PostAsync<T>(string endpoint, object data, JsonSerializerOptions? jsonOptions = null) where T : class
     {
         try
         {
@@ -337,10 +372,7 @@ public class FastApiClient : IFastApiClient
                     response.EnsureSuccessStatusCode();
 
                     var responseContent = await response.Content.ReadAsStringAsync();
-                    var result = JsonSerializer.Deserialize<T>(responseContent, new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true
-                    });
+                    var result = JsonSerializer.Deserialize<T>(responseContent, jsonOptions ?? DefaultJson);
 
                     _logger.LogDebug(" POST {Endpoint} réussi", endpoint);
                     return result;
@@ -385,80 +417,6 @@ public class FastApiClient : IFastApiClient
     }
 
     #region Méthodes Métier
-
-    /// <summary>
-    /// Obtenir les recommandations de cours
-    /// </summary>
-    public async Task<RecommendationResponse> GetRecommendationsAsync(
-        int userId,
-        string preferenceLevel,
-        string category)
-    {
-        try
-        {
-            _logger.LogInformation("Récupération des recommandations pour l'utilisateur {UserId}", userId);
-
-            var request = new
-            {
-                user_id = userId,
-                preference_level = preferenceLevel,
-                category = category
-            };
-
-            var response = await PostAsync<RecommendationResponse>("/api/recommend", request);
-            
-            if (response == null)
-            {
-                _logger.LogWarning("Aucune recommandation retournée, utilisation fallback");
-                return GetDefaultRecommendationResponse(userId);
-            }
-
-            _logger.LogInformation("✓ {Count} recommandations récupérées", response.Recommendations?.Count ?? 0);
-            return response;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erreur lors de la récupération des recommandations");
-            return GetDefaultRecommendationResponse(userId);
-        }
-    }
-
-    /// <summary>
-    /// Analyser la progression de l'étudiant
-    /// </summary>
-    public async Task<ProgressAnalysisResponse> AnalyzeProgressAsync(
-        int userId,
-        int subjectId,
-        string depth)
-    {
-        try
-        {
-            _logger.LogInformation("Analyse de la progression pour l'utilisateur {UserId}, sujet {SubjectId}", userId, subjectId);
-
-            var request = new
-            {
-                user_id = userId,
-                subject_id = subjectId,
-                analysis_depth = depth
-            };
-
-            var response = await PostAsync<ProgressAnalysisResponse>("/api/analyze-progress", request);
-            
-            if (response == null)
-            {
-                _logger.LogWarning("Analyse non retournée, utilisation fallback");
-                return GetDefaultProgressAnalysis(userId, subjectId);
-            }
-
-            _logger.LogInformation("✓ Analyse complétée pour l'utilisateur {UserId}", userId);
-            return response;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erreur lors de l'analyse de la progression");
-            return GetDefaultProgressAnalysis(userId, subjectId);
-        }
-    }
 
     private class ExamQuizGenerationResult
     {
@@ -582,72 +540,36 @@ public class FastApiClient : IFastApiClient
     }
 
     /// <summary>
-    /// Obtenir les métriques de performance
+    /// Parcours d'apprentissage personnalisé  voir IFastApiClient.GenerateLearningPathAsync.
     /// </summary>
-    public async Task<PerformanceMetricsResponse> GetPerformanceAsync(
-        int userId,
-        string timePeriod)
+    public async Task<LearningPathResponse?> GenerateLearningPathAsync(int userId)
     {
+        // Le service Python calcule le parcours depuis les performances réelles
+        // en base : il n'attend ni matière ni volume horaire. Réponse en
+        // snake_case (schemas.py::LearningPathResponse) : SnakeCaseJson obligatoire,
+        // sans quoi phases/learning_velocity restaient vides (Module 23).
+        var (statusCode, body) = await GetRawJsonAsync($"/api/learning-path/{userId}");
+        if (statusCode is < 200 or >= 300 || body == null)
+        {
+            _logger.LogWarning("Parcours d'apprentissage non généré pour {UserId} : HTTP {Status}  {Body}", userId, statusCode, body);
+            return null;
+        }
+
         try
         {
-            _logger.LogInformation("Récupération des métriques de performance pour l'utilisateur {UserId}", userId);
-
-            var endpoint = $"/api/get-performance?user_id={userId}&time_period={timePeriod}";
-            var response = await GetAsync<PerformanceMetricsResponse>(endpoint);
-            
-            if (response == null)
+            var response = JsonSerializer.Deserialize<LearningPathResponse>(body, SnakeCaseJson);
+            if (response == null || !response.Success)
             {
-                _logger.LogWarning("Métriques non retournées, utilisation fallback");
-                return GetDefaultPerformanceMetrics(userId);
+                _logger.LogWarning("Parcours d'apprentissage : réponse Python sans succès pour {UserId} : {Body}", userId, body);
+                return null;
             }
-
-            _logger.LogInformation("✓ Métriques récupérées pour l'utilisateur {UserId}", userId);
+            _logger.LogInformation("Parcours généré pour {UserId} : {Count} phases", userId, response.Phases.Count);
             return response;
         }
-        catch (Exception ex)
+        catch (JsonException ex)
         {
-            _logger.LogError(ex, "Erreur lors de la récupération des métriques");
-            return GetDefaultPerformanceMetrics(userId);
-        }
-    }
-
-    /// <summary>
-    /// Générer un parcours d'apprentissage personnalisé
-    /// </summary>
-    public async Task<LearningPathResponse> GenerateLearningPathAsync(
-        int userId,
-        string goalSubject,
-        int weeks,
-        int hoursPerWeek)
-    {
-        try
-        {
-            _logger.LogInformation("Génération du parcours d'apprentissage pour l'utilisateur {UserId}", userId);
-
-            // ⚠ Route corrigée : le POST /api/generate-learning-path n'existe
-            // pas côté FastAPI, qui expose GET /api/learning-path/{user_id}
-            // (app.py). Chaque appel enchaînait 3 tentatives à 2, 4 puis 8
-            // secondes avant de retomber sur le fallback  14 secondes perdues,
-            // répétées à chaque chargement du tableau de bord.
-            //
-            // Le service Python calcule le parcours depuis les performances
-            // réelles en base : il n'attend ni matière ni volume horaire, ces
-            // paramètres ne sont donc plus transmis.
-            var response = await GetAsync<LearningPathResponse>($"/api/learning-path/{userId}");
-            
-            if (response == null)
-            {
-                _logger.LogWarning("Parcours non généré, utilisation fallback");
-                return GetDefaultLearningPath(userId, goalSubject, weeks);
-            }
-
-            _logger.LogInformation("✓ Parcours généré avec {Count} semaines", response.Weeks?.Count ?? 0);
-            return response;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erreur lors de la génération du parcours");
-            return GetDefaultLearningPath(userId, goalSubject, weeks);
+            _logger.LogError(ex, "Parcours d'apprentissage : réponse Python illisible pour {UserId} : {Body}", userId, body);
+            return null;
         }
     }
 
@@ -706,67 +628,6 @@ public class FastApiClient : IFastApiClient
                     docId);
             }
         });
-    }
-
-    #endregion
-
-    #region Méthodes Fallback (par défaut)
-
-    private RecommendationResponse GetDefaultRecommendationResponse(int userId)
-    {
-        return new RecommendationResponse
-        {
-            UserId = userId,
-            Recommendations = new List<RecommendationItem>(),
-            GeneratedAt = DateTime.UtcNow
-        };
-    }
-
-    private ProgressAnalysisResponse GetDefaultProgressAnalysis(int userId, int subjectId)
-    {
-        return new ProgressAnalysisResponse
-        {
-            UserId = userId,
-            SubjectId = subjectId,
-            CompletionPercentage = 0,
-            ProgressTrend = "unknown",
-            EstimatedCompletionDate = DateTime.UtcNow.AddMonths(3),
-            WeakAreas = new List<string>(),
-            Strengths = new List<string>(),
-            Recommendations = new List<string> { "Veuillez réessayer plus tard" }
-        };
-    }
-
-    private PerformanceMetricsResponse GetDefaultPerformanceMetrics(int userId)
-    {
-        return new PerformanceMetricsResponse
-        {
-            UserId = userId,
-            PerformanceScore = 0,
-            LearningRate = 0,
-            CompletionRate = 0,
-            EngagementScore = 0,
-            CompareToAverage = new ClassComparison
-            {
-                YourScore = 0,
-                ClassAverage = 0,
-                Percentile = 0
-            },
-            CalculatedAt = DateTime.UtcNow
-        };
-    }
-
-    private LearningPathResponse GetDefaultLearningPath(int userId, string goalSubject, int weeks)
-    {
-        return new LearningPathResponse
-        {
-            UserId = userId,
-            PathId = 0,
-            GoalSubject = goalSubject,
-            Weeks = new List<LearningPathWeek>(),
-            CompletionEstimate = DateTime.UtcNow.AddDays(weeks * 7),
-            CreatedAt = DateTime.UtcNow
-        };
     }
 
     #endregion

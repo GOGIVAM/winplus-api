@@ -33,7 +33,7 @@ from sqlalchemy import func
 # de rôle) : les restreindre au professeur casserait la messagerie de l'élève
 # et du parent. Seul /messaging/parent-report, réservé au professeur dans
 # l'interface, est passé sous contrôle de rôle.
-from auth import verify_token, require_role, UserTokenData
+from auth import verify_token, require_role, require_user_or_service, UserTokenData
 from database import (
     Database, QuizAttempt, DailyScore, Enrollment, Subject, User,
     TutorProfile, TutorSubject, TutorLevel, CourseContent, Order, OrderItem,
@@ -1312,7 +1312,10 @@ class CoachingReportResponse(BaseModel):
 @teacher_ai_router.post("/teacher/coaching-report", response_model=CoachingReportResponse)
 async def generate_coaching_report(
     body: CoachingReportRequest,
-    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
+    # Module 23 : TutorCoachingReportService (.NET, tâche mensuelle) appelle
+    # cette route sans utilisateur connecté : jeton technique « ai.coaching-report ».
+    current_user: UserTokenData = Depends(
+        require_user_or_service("ai.coaching-report", roles=("teacher", "admin"))),
 ):
     if not body.reviews and body.sessions_count == 0:
         raise HTTPException(status_code=422, detail="Pas assez de données pour générer un rapport ce mois-ci.")
@@ -1518,7 +1521,14 @@ def _score_en_baisse(scores: List[float]) -> bool:
 
 
 @teacher_ai_router.post("/winai/detection-decrochage", response_model=DetectionDecrochageResponse)
-async def detection_decrochage(body: DetectionDecrochageRequest):
+async def detection_decrochage(
+    body: DetectionDecrochageRequest,
+    # Module 36 : la route était publique (aucune dépendance d'authentification),
+    # faute de jeton disponible en tâche de fond. Elle n'accepte plus que le
+    # jeton technique « ai.decrochage » de CourseInactivityAlertService : seul
+    # appelant connu, aucun écran ne l'appelle directement (roles=()).
+    current_user: UserTokenData = Depends(require_user_or_service("ai.decrochage", roles=())),
+):
     alerts: List[DecrochageAlert] = []
     for eleve in body.students:
         declining = _score_en_baisse(eleve.recent_quiz_scores)

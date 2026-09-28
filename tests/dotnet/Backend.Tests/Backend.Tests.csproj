@@ -1,9 +1,20 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!--
+    Tests unitaires du backend .NET (code de production réel, via ProjectReference).
+    Lancer depuis backend/ :
+      dotnet test tests/dotnet/Backend.Tests/Backend.Tests.csproj
+    Aucune base de données ni service Python n'est requis : les appels HTTP
+    sont simulés par un HttpMessageHandler, les dépendances par Moq.
+  -->
+
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
     <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Backend.Tests</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,13 +25,11 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Moq" Version="4.20.69" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
-    <PackageReference Include="Microsoft.AspNetCore.Mvc.Core" Version="2.2.5" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\backend.csproj" />
+    <ProjectReference Include="..\..\..\dotnet\backend.csproj" />
   </ItemGroup>
 
 </Project>

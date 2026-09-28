@@ -15,20 +15,11 @@ This document explains why certain files are excluded from the .NET build and th
 - **Status:** MUST REMAIN EXCLUDED
 - **Solution:** Controlled via `<GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>`
 
-#### 2. **`AITests/obj/**/*.cs`** - AITests auto-generated files
-- **Reason:** Same as above, but specific to AITests project
-- **Status:** MUST REMAIN EXCLUDED
-- **Impact:** Prevents CS0579 errors in test assembly generation
-
-#### 3. **`AITests/**/*.cs`** - AITests project code
-- **Reason:** Schema mismatches - test entities don't match production database context
-- **Status:** EXCLUDED (deferred - tests need schema alignment)
-- **Action:** Can be re-enabled after updating test entity schemas to match ApplicationDbContext
-
-#### 4. **`Tests/**/*.cs`** - Tests project code
-- **Reason:** Schema mismatches - test entities don't match production database context
-- **Status:** EXCLUDED (deferred - tests need schema alignment)
-- **Action:** Can be re-enabled after updating test entity schemas to match ApplicationDbContext
+#### 2. Test projects (Module 26, 2026-09-28)
+- The former `Tests/**` and `AITests/**` exclusions have been removed.
+- The two test projects now live outside the web project folder: `backend/tests/dotnet/Backend.Tests` (tests the real production code through a ProjectReference) and `backend/tests/dotnet/AITests` (standalone).
+- Test packages (xunit, Moq, Test.Sdk) are no longer referenced by `backend.csproj` and no longer ship in the publish output.
+- Run from `backend/`: `dotnet test tests/dotnet/Backend.Tests/Backend.Tests.csproj` then `dotnet test tests/dotnet/AITests/AITests.csproj`. No database or Python service is required.
 
 ---
 

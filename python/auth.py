@@ -173,10 +173,14 @@ security = HTTPBearer()
 
 class UserTokenData:
     """Container pour les données utilisateur extraites du token"""
-    def __init__(self, user_id: int, email: str, role: str):
+    def __init__(self, user_id: int, email: str, role: str,
+                 is_service: bool = False, scopes: Optional[List[str]] = None):
         self.user_id = user_id
         self.email = email
         self.role = role
+        # Jeton technique d'une tâche de fond .NET (voir require_user_or_service).
+        self.is_service = is_service
+        self.scopes = scopes or []
 
 
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UserTokenData:
@@ -305,5 +309,106 @@ def require_role(*allowed_roles: str):
                 detail=f"Access forbidden. Required roles: {', '.join(allowed_roles)}"
             )
         return user
-    
+
     return role_checker
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Authentification service à service (Modules 23 et 36)
+#
+#  Les tâches de fond .NET (BackgroundService) n'ont aucun jeton utilisateur à
+#  relayer : leurs appels partaient sans en-tête Authorization et recevaient
+#  401, avalé par un repli silencieux. .NET signe désormais un jeton technique
+#  (Services/ServiceTokenProvider.cs) :
+#    - même secret que les jetons utilisateurs (JWT_SECRET_KEY, déjà requis) :
+#      aucun nouveau secret à positionner en déploiement ;
+#    - audience DISTINCTE (SERVICE_AUDIENCE) : verify_token, qui exige
+#      JWT_AUDIENCE, le refuse, et le JwtBearer .NET aussi. Un jeton technique
+#      ne peut donc appeler QUE les routes qui déclarent explicitement
+#      require_user_or_service ;
+#    - claim « scope » : chaque route n'accepte que le périmètre de la tâche
+#      qui l'appelle (droits restreints, pas un jeton passe-partout) ;
+#    - durée de vie courte (5 minutes), émis juste avant l'appel.
+# ══════════════════════════════════════════════════════════════════════════════
+
+SERVICE_AUDIENCE = 'WinPlusAIService'
+SERVICE_TOKEN_USE = 'service'
+
+
+def _peek_audience(token: str) -> Optional[str]:
+    """Lit l'audience SANS vérifier la signature, uniquement pour aiguiller
+    vers la bonne validation. La signature est toujours vérifiée ensuite."""
+    try:
+        aud = jwt.decode(token, options={"verify_signature": False}).get('aud')
+    except jwt.InvalidTokenError:
+        return None
+    if isinstance(aud, list):
+        return SERVICE_AUDIENCE if SERVICE_AUDIENCE in aud else (aud[0] if aud else None)
+    return aud
+
+
+def _verify_service_token(token: str, allowed_scopes: set) -> UserTokenData:
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=[JWT_ALGORITHM],
+            audience=SERVICE_AUDIENCE,
+            issuer=JWT_ISSUER,
+        )
+    except jwt.ExpiredSignatureError:
+        logger.error("Jeton technique expiré : la tâche de fond .NET doit en émettre un par appel.")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Service token expired",
+                            headers={"WWW-Authenticate": "Bearer"})
+    except jwt.InvalidTokenError as e:
+        logger.error(f"Jeton technique invalide : {e}")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Service token is invalid",
+                            headers={"WWW-Authenticate": "Bearer"})
+
+    if payload.get('token_use') != SERVICE_TOKEN_USE:
+        logger.error("Jeton à l'audience technique sans token_use=service : refusé.")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Service token is invalid",
+                            headers={"WWW-Authenticate": "Bearer"})
+
+    scopes = [s for s in str(payload.get('scope', '')).split() if s]
+    if not allowed_scopes.intersection(scopes):
+        logger.warning(f"Jeton technique hors périmètre : scopes={scopes}, attendus={sorted(allowed_scopes)}")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Service token scope not allowed for this endpoint")
+
+    logger.info(f"✅ Appel service à service authentifié (scopes={scopes}, sub={payload.get('sub')})")
+    return UserTokenData(user_id=0, email='', role='service', is_service=True, scopes=scopes)
+
+
+def require_user_or_service(*service_scopes: str, roles: Optional[tuple] = None):
+    """
+    Dépendance pour une route appelée À LA FOIS par des utilisateurs et par une
+    tâche de fond .NET.
+
+    - Jeton utilisateur : validé comme verify_token, puis contrôle de rôle si
+      `roles` est fourni (même règle, insensible à la casse, que require_role).
+    - Jeton technique : accepté seulement si son scope figure dans
+      `service_scopes`.
+
+    Passer `roles=()` (tuple vide) interdit tout jeton utilisateur : la route
+    n'est alors ouverte qu'à la tâche de fond.
+    """
+    allowed_scopes = set(service_scopes)
+    normalized_roles = None if roles is None else {r.lower() for r in roles}
+
+    async def checker(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UserTokenData:
+        token = credentials.credentials
+        if _peek_audience(token) == SERVICE_AUDIENCE:
+            return _verify_service_token(token, allowed_scopes)
+
+        user = await verify_token(credentials)
+        if normalized_roles is not None and (user.role or '').lower() not in normalized_roles:
+            logger.warning(f"Access forbidden for user {user.user_id}. Required roles: {sorted(normalized_roles)}")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                                detail="Access forbidden for this role")
+        return user
+
+    return checker

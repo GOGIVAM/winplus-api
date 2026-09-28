@@ -12,10 +12,18 @@ namespace Backend.Services;
 /// </summary>
     public interface IAIService
     {
-        Task<RecommendationResponse> GetRecommendationsAsync(int userId, int count, string preferenceLevel, string category);
-        Task<ProgressAnalysisResponse> AnalyzeProgressAsync(int userId, int subjectId, string depth);
-        Task<PerformanceMetricsResponse> GetPerformanceMetricsAsync(int userId, string timePeriod = "7days");
-        Task<LearningPathResponse> GeneratePersonalizedPathAsync(int userId, string goalSubject, int weeks, int hoursPerWeek);
+        // Module 23 : GetRecommendationsAsync, AnalyzeProgressAsync et
+        // GetPerformanceMetricsAsync ont été retirées avec leurs équivalents de
+        // FastApiClient (transport de paramètre erroné, objets sans
+        // correspondance avec Python, route de performance inexistante).
+        // AIController relaie désormais directement la réponse Python.
+
+        /// <summary>
+        /// Parcours personnalisé. Renvoie null si Python n'a pas pu le calculer
+        /// (données insuffisantes, service indisponible) : l'appelant doit
+        /// présenter un état d'erreur, pas un parcours vide.
+        /// </summary>
+        Task<LearningPathResponse?> GeneratePersonalizedPathAsync(int userId, string goalSubject, int weeks, int hoursPerWeek);
     }
 
     /// <summary>
@@ -35,33 +43,16 @@ namespace Backend.Services;
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        public async Task<RecommendationResponse> GetRecommendationsAsync(int userId, int count, string preferenceLevel, string category)
-        {
-            if (userId <= 0) throw new ArgumentException("Invalid user ID");
-            _logger.LogInformation($"Getting {count} recommendations for user {userId}");
-            return await _fastapiClient.GetRecommendationsAsync(userId, preferenceLevel, category);
-        }
-
-        public async Task<ProgressAnalysisResponse> AnalyzeProgressAsync(int userId, int subjectId, string depth)
-        {
-            if (userId <= 0) throw new ArgumentException("Invalid user ID");
-            _logger.LogInformation($"Analyzing progress for user {userId}, subject {subjectId}");
-            return await _fastapiClient.AnalyzeProgressAsync(userId, subjectId, depth);
-        }
-
-        public async Task<PerformanceMetricsResponse> GetPerformanceMetricsAsync(int userId, string timePeriod = "7days")
-        {
-            if (userId <= 0) throw new ArgumentException("Invalid user ID");
-            _logger.LogInformation($"Getting performance metrics for user {userId}");
-            return await _fastapiClient.GetPerformanceAsync(userId, timePeriod);
-        }
-
-        public async Task<LearningPathResponse> GeneratePersonalizedPathAsync(int userId, string goalSubject, int weeks, int hoursPerWeek)
+        public async Task<LearningPathResponse?> GeneratePersonalizedPathAsync(int userId, string goalSubject, int weeks, int hoursPerWeek)
         {
             if (userId <= 0) throw new ArgumentException("Invalid user ID");
             if (weeks <= 0 || weeks > 52) throw new ArgumentException("Weeks must be between 1 and 52");
             if (hoursPerWeek <= 0 || hoursPerWeek > 168) throw new ArgumentException("Hours per week must be between 1 and 168");
-            _logger.LogInformation($"Generating learning path for user {userId}: {weeks} weeks, {hoursPerWeek} hours/week");
-            return await _fastapiClient.GenerateLearningPathAsync(userId, goalSubject, weeks, hoursPerWeek);
+            // goalSubject, weeks et hoursPerWeek restent validés (contrat des
+            // routes /ai/personalized-path et /ai/study-plan) mais ne sont pas
+            // transmis : le calcul Python ne s'appuie que sur les performances
+            // réelles de l'élève (GET /api/learning-path/{user_id}).
+            _logger.LogInformation("Generating learning path for user {UserId}", userId);
+            return await _fastapiClient.GenerateLearningPathAsync(userId);
         }
     }
