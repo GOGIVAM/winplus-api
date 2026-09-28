@@ -23,6 +23,7 @@ public class SubjectsController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly IStorageService _storage;
     private readonly IContentAccessService _contentAccess;
+    private readonly IDocumentWatermarkService _watermark;
 
     public SubjectsController(
         ISubjectService subjectService,
@@ -31,7 +32,8 @@ public class SubjectsController : ControllerBase
         IFastApiClient fastApiClient,
         IConfiguration configuration,
         IStorageService storage,
-        IContentAccessService contentAccess)
+        IContentAccessService contentAccess,
+        IDocumentWatermarkService watermark)
     {
         _subjectService = subjectService;
         _context = context;
@@ -40,6 +42,7 @@ public class SubjectsController : ControllerBase
         _configuration = configuration;
         _storage = storage;
         _contentAccess = contentAccess;
+        _watermark = watermark;
     }
 
     private class PythonRecsResponse { public List<object>? Recommendations { get; set; } }
@@ -707,21 +710,38 @@ public class SubjectsController : ControllerBase
     }
 
     /// <summary>
-    /// Télécharger le PDF d'une épreuve via URL S3 presignée (15 min)
-    /// GET /api/subjects/{id}/download
-    /// Retourne { downloadUrl, filename } ou 403 / 404
+    /// Document que la visionneuse peut afficher pour un sujet du catalogue
+    /// (Module 44, décision §11.1) : l'énoncé d'une épreuve, son corrigé, ou
+    /// le fichier d'un livre. Les leçons de formation (Course/CourseLesson,
+    /// Module 6/27) ne passent jamais par ici.
     /// </summary>
+    private enum ViewerDocumentKind { Document, Correction }
+
+    private sealed record ViewerDocument(Subject Subject, Exam? Exam, string StorageUrl, ViewerDocumentKind Kind);
+
     /// <summary>
-    /// Vérifie qu'un utilisateur a le droit d'accéder au PDF d'un sujet
-    /// (gratuit, abonné, ou acheté), et retrouve l'Exam le plus récent qui
-    /// porte le fichier. Partagé par Download et ViewStream : les deux
-    /// routes doivent appliquer exactement la même règle d'accès.
+    /// Vérifie qu'un utilisateur a le droit de consulter un sujet (gratuit,
+    /// abonné, acheté ou assigné via une classe  Module 17) et retrouve le
+    /// fichier demandé. Seul point d'entrée de la visionneuse : aucune route
+    /// ne renvoie plus l'adresse du fichier au client.
+    ///
+    /// Sources, dans l'ordre :
+    ///   - énoncé : Exam.DocumentUrl de l'épreuve la plus récente, sinon le
+    ///     CourseContent.DocumentUrl du sujet (livre du catalogue, créé par
+    ///     AdminLibraryController) ;
+    ///   - corrigé : Exam.CorrectionUrl de l'épreuve la plus récente qui en a un.
     /// </summary>
-    private async Task<(Subject? subject, Exam? exam, IActionResult? error)> ResolveAccessibleExamAsync(int id)
+    private async Task<(ViewerDocument? doc, IActionResult? error)> ResolveViewerDocumentAsync(int id, ViewerDocumentKind kind)
     {
         var subject = await _subjectService.GetSubjectByIdAsync(id);
         if (subject == null)
-            return (null, null, NotFound(new { error = "Épreuve introuvable." }));
+            return (null, NotFound(new { error = "Document introuvable." }));
+
+        // Un brouillon n'est consultable que par son auteur ou un
+        // administrateur, comme dans le catalogue (Module 17).
+        var (viewerId, viewerIsAdmin) = CurrentViewer();
+        if (!IsVisibleToViewer(subject, viewerId, viewerIsAdmin))
+            return (null, NotFound(new { error = "Document introuvable." }));
 
         if (subject.Price > 0)
         {
@@ -729,147 +749,183 @@ public class SubjectsController : ControllerBase
             try { userId = User.GetUserId(); }
             catch (UnauthorizedAccessException)
             {
-                return (subject, null, StatusCode(401, new { error = "Veuillez vous connecter pour accéder à cette épreuve." }));
+                return (null, StatusCode(401, new { error = "Veuillez vous connecter pour accéder à ce document." }));
             }
 
             if (!await _contentAccess.HasPaidContentAccessAsync(userId, subject, User.IsAdmin()))
-                return (subject, null, StatusCode(403, new { error = "Veuillez acheter cette épreuve pour pouvoir y accéder." }));
+                return (null, StatusCode(403, new { error = "Veuillez acheter ce contenu pour pouvoir y accéder." }));
+        }
+
+        if (kind == ViewerDocumentKind.Correction)
+        {
+            var examWithCorrection = await _context.Exams
+                .Where(e => e.SubjectId == id && !e.IsDeleted && e.CorrectionUrl != null && e.CorrectionUrl != "")
+                .OrderByDescending(e => e.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (examWithCorrection == null)
+                return (null, NotFound(new { error = "Le corrigé n'est pas encore disponible pour cette épreuve." }));
+
+            return (new ViewerDocument(subject, examWithCorrection, examWithCorrection.CorrectionUrl!, kind), null);
         }
 
         var exam = await _context.Exams
-            .Where(e => e.SubjectId == id && !e.IsDeleted && e.DocumentUrl != null)
+            .Where(e => e.SubjectId == id && !e.IsDeleted && e.DocumentUrl != null && e.DocumentUrl != "")
             .OrderByDescending(e => e.CreatedAt)
             .FirstOrDefaultAsync();
 
-        if (exam == null || string.IsNullOrEmpty(exam.DocumentUrl))
-            return (subject, null, NotFound(new { error = "Le fichier PDF n'est pas encore disponible pour cette épreuve." }));
+        if (exam != null)
+            return (new ViewerDocument(subject, exam, exam.DocumentUrl!, kind), null);
 
-        return (subject, exam, null);
+        // Livre du catalogue : pas d'Exam, le fichier vit sur le CourseContent.
+        var bookUrl = await _context.CourseContents.AsNoTracking()
+            .Where(c => c.SubjectId == id && c.DocumentUrl != null && c.DocumentUrl != "")
+            .OrderBy(c => c.OrderIndex).ThenBy(c => c.Id)
+            .Select(c => c.DocumentUrl)
+            .FirstOrDefaultAsync();
+
+        if (!string.IsNullOrEmpty(bookUrl))
+            return (new ViewerDocument(subject, null, bookUrl, kind), null);
+
+        return (null, NotFound(new { error = "Le fichier n'est pas encore disponible pour ce contenu." }));
     }
 
     /// <summary>
-    /// Sert le PDF d'une épreuve en flux, sans jamais exposer d'URL de
-    /// téléchargement direct côté client : le front le récupère via une
-    /// requête authentifiée (fetch + Bearer token) et le rend dans une
-    /// visionneuse pdf.js intégrée, au lieu d'un lien "Enregistrer sous".
-    /// Ce n'est pas une protection absolue (un utilisateur déterminé peut
-    /// toujours capturer l'écran ou intercepter la requête), mais ça retire
-    /// le geste "clic droit → enregistrer" et le lien copiable/partageable
-    /// qu'offrait l'URL S3 présignée de /download.
-    /// GET /api/subjects/{id}/view
+    /// Libellé du filigrane : identité du compte connecté, lue en base (jamais
+    /// fournie par le client), plus la date de consultation. L'identifiant
+    /// interne permet de retrouver le compte même si le nom a été recadré.
+    /// </summary>
+    private async Task<string> BuildWatermarkLabelAsync(int userId)
+    {
+        var user = await _context.Users.AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => new { u.FirstName, u.LastName, u.Email })
+            .FirstOrDefaultAsync();
+
+        var name = $"{user?.FirstName} {user?.LastName}".Trim();
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(name)) parts.Add(name);
+        if (!string.IsNullOrWhiteSpace(user?.Email)) parts.Add(user!.Email);
+        parts.Add($"#{userId}");
+        parts.Add(DateTime.UtcNow.ToString("dd/MM/yyyy HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture));
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// Sert le PDF d'une épreuve, de son corrigé ou d'un livre à la
+    /// visionneuse intégrée (web : pdf.js, mobile : lecteur embarqué), avec un
+    /// filigrane nominatif incrusté côté serveur sur chaque page (Module 44,
+    /// décisions §11.3/§11.4). Aucune adresse de fichier n'est jamais exposée :
+    /// le client reçoit les octets via une requête authentifiée, pas un lien
+    /// enregistrable ou partageable. Ce n'est pas un verrou absolu (capture
+    /// d'écran toujours possible) : le filigrane en trace alors l'origine.
+    ///
+    /// GET /api/subjects/{id}/view?kind=document|correction&amp;preview=true|false
     /// </summary>
     [HttpGet("{id}/view")]
     [Authorize]
-    public async Task<IActionResult> ViewStream(int id, [FromQuery] bool preview = false)
+    public async Task<IActionResult> ViewStream(int id, [FromQuery] bool preview = false, [FromQuery] string? kind = null)
     {
-        var (subject, exam, error) = await ResolveAccessibleExamAsync(id);
+        var docKind = string.Equals(kind, "correction", StringComparison.OrdinalIgnoreCase)
+            ? ViewerDocumentKind.Correction
+            : ViewerDocumentKind.Document;
+
+        var (doc, error) = await ResolveViewerDocumentAsync(id, docKind);
         if (error != null) return error;
 
+        var userId = User.GetUserId();
+
+        byte[] stamped;
         try
         {
             var bucket = _storage.Bucket;
-            var s3Key = ExtractS3Key(exam!.DocumentUrl!, bucket);
+            var s3Key = ExtractS3Key(doc!.StorageUrl, bucket);
 
             using var s3 = _storage.CreateS3Client();
-            using var obj = await s3.GetObjectAsync(bucket, s3Key);
+            using var obj = await s3.GetObjectAsync(bucket, s3Key, HttpContext.RequestAborted);
 
-            var buffer = new MemoryStream();
-            await obj.ResponseStream.CopyToAsync(buffer);
-            buffer.Position = 0;
+            // Le filigrane est obligatoire : si l'incrustation échoue, on
+            // refuse la consultation plutôt que de servir le fichier d'origine.
+            var label = await BuildWatermarkLabelAsync(userId);
+            stamped = await _watermark.StampAsync(obj.ResponseStream, label, HttpContext.RequestAborted);
+        }
+        catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            return new EmptyResult();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur lors de la préparation du document {Kind} du sujet {SubjectId}", docKind, id);
+            return StatusCode(500, new { error = "Impossible de charger le document pour le moment." });
+        }
 
-            // Une ligne par (utilisateur, épreuve), pas par consultation :
-            // rouvrir la visionneuse plusieurs fois gonflait l'historique et
-            // le compteur « Épreuves téléchargées » à l'infini. C'est aussi
-            // l'hypothèse déjà faite ailleurs (GetExamsRecommended exclut les
-            // épreuves « déjà téléchargées » par un simple test d'existence).
-            //
-            // preview=true : appel silencieux de génération de vignette
-            // (RealPagePreview du catalogue charge les 2 premières pages de
-            // chaque épreuve gratuite dès l'affichage de la carte, sans que
-            // l'élève n'ait rien demandé)  ça ne doit jamais compter comme un
-            // téléchargement ni apparaître dans l'historique.
-            var userId = User.GetUserId();
-            if (!preview)
+        // Une ligne par (utilisateur, épreuve), pas par consultation :
+        // rouvrir la visionneuse plusieurs fois gonflait l'historique et
+        // le compteur « Épreuves téléchargées » à l'infini. C'est aussi
+        // l'hypothèse déjà faite ailleurs (GetExamsRecommended exclut les
+        // épreuves « déjà téléchargées » par un simple test d'existence).
+        //
+        // preview=true : appel silencieux de génération de vignette
+        // (RealPagePreview du catalogue charge les 2 premières pages de
+        // chaque épreuve gratuite dès l'affichage de la carte, sans que
+        // l'élève n'ait rien demandé)  ça ne doit jamais compter comme une
+        // consultation ni apparaître dans l'historique. Le corrigé n'est
+        // pas compté non plus : il accompagne une épreuve déjà comptée.
+        if (!preview && docKind == ViewerDocumentKind.Document)
+        {
+            try
             {
+                var examId = doc!.Exam?.Id;
                 var alreadyLogged = await _context.DownloadHistories
-                    .AnyAsync(d => d.UserId == userId && d.ExamId == exam.Id);
+                    .AnyAsync(d => d.UserId == userId && d.SubjectId == id && d.ExamId == examId);
                 if (!alreadyLogged)
                 {
-                    exam.DownloadCount += 1;
+                    if (doc.Exam != null) doc.Exam.DownloadCount += 1;
                     _context.DownloadHistories.Add(new DownloadHistory
                     {
                         UserId = userId,
                         SubjectId = id,
-                        ExamId = exam.Id,
-                        FileName = $"{subject!.Title}.pdf",
+                        ExamId = examId,
+                        FileName = $"{doc.Subject.Title}.pdf",
                         CreatedAt = DateTime.UtcNow,
                     });
                     await _context.SaveChangesAsync();
                 }
             }
-
-            // Pas de Content-Disposition: attachment  le fichier reste "en
-            // ligne", cohérent avec un rendu dans la visionneuse plutôt
-            // qu'un téléchargement de fichier.
-            return File(buffer, "application/pdf");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erreur lors du streaming de l'épreuve {SubjectId}", id);
-            return StatusCode(500, new { error = "Impossible de charger le fichier pour le moment." });
-        }
-    }
-
-    [HttpGet("{id}/download")]
-    [Authorize]
-    public async Task<IActionResult> Download(int id)
-    {
-        // Même règle d'accès que la consultation en flux, via le même
-        // resolver : le téléchargement réimplémentait la sienne et y perdait
-        // l'exemption "contenu assigné via une classe" (Module 17).
-        var (subject, exam, error) = await ResolveAccessibleExamAsync(id);
-        if (error != null) return error;
-
-        string downloadUrl;
-        try
-        {
-            var bucket = _storage.Bucket;
-            var s3Key = ExtractS3Key(exam!.DocumentUrl!, bucket);
-
-            using var s3 = _storage.CreateS3Client();
-            var request = new GetPreSignedUrlRequest
+            catch (Exception ex)
             {
-                BucketName = bucket,
-                Key = s3Key,
-                Expires = DateTime.UtcNow.AddMinutes(15),
-                Verb = HttpVerb.GET
-            };
-            downloadUrl = s3.GetPreSignedURL(request);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Impossible de générer une URL presignée pour l'épreuve {Id}, retour URL directe", id);
-            downloadUrl = exam!.DocumentUrl!;
+                // L'historique est une statistique : son échec ne doit pas
+                // priver l'utilisateur d'un document auquel il a droit.
+                _logger.LogWarning(ex, "Historique de consultation non enregistré pour le sujet {SubjectId}", id);
+            }
         }
 
-        exam!.DownloadCount += 1;
-
-        // Historique du téléchargement : statistiques hebdomadaires,
-        // historique élève et rapports parents.
-        _context.DownloadHistories.Add(new DownloadHistory
-        {
-            UserId = User.GetUserId(),
-            SubjectId = id,
-            ExamId = exam.Id,
-            FileName = $"{subject!.Title}.pdf",
-            CreatedAt = DateTime.UtcNow
-        });
-
-        await _context.SaveChangesAsync();
-
-        var filename = $"{subject!.Title}.pdf";
-        return Ok(new { downloadUrl, filename });
+        // Pas de Content-Disposition: attachment ni de nom de fichier : le
+        // document reste « en ligne », destiné à la visionneuse. no-store :
+        // aucune copie en cache HTTP (navigateur, proxy) au-delà de
+        // l'affichage en cours.
+        Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private";
+        Response.Headers["Pragma"] = "no-cache";
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+        return File(stamped, "application/pdf");
     }
+
+    /// <summary>
+    /// Ancienne route de téléchargement (URL S3 présignée de 15 min, avec
+    /// repli sur l'URL brute du fichier). Retirée par la décision §11.4 :
+    /// épreuves, corrigés et livres ne sont plus jamais téléchargeables, pour
+    /// personne, y compris les abonnés. Conservée uniquement pour répondre
+    /// explicitement aux anciennes versions des applications au lieu d'une
+    /// 404/405 muette  elle ne renvoie jamais d'adresse de fichier.
+    /// GET|POST /api/subjects/{id}/download → 410
+    /// </summary>
+    [AcceptVerbs("GET", "POST", Route = "{id}/download")]
+    public IActionResult Download(int id) =>
+        StatusCode(StatusCodes.Status410Gone, new
+        {
+            error = "Le téléchargement des épreuves, corrigés et livres n'est plus disponible. Ouvrez le document dans la visionneuse de l'application.",
+            viewerAvailable = true,
+        });
 
     private static string ExtractS3Key(string documentUrl, string bucket)
     {

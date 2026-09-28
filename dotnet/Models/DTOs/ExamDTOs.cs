@@ -12,8 +12,11 @@ public class ExamDto
     public string? Level { get; set; }
     public string? Difficulty { get; set; }
     public int? DurationMinutes { get; set; }
-    public string? DocumentUrl { get; set; }
-    public string? CorrectionUrl { get; set; }
+    // Module 44 (décision §11.4) : la réponse publique ne porte plus jamais
+    // l'adresse du fichier de l'épreuve ni de son corrigé  seulement leur
+    // disponibilité. Le document se consulte via GET /api/subjects/{id}/view.
+    public bool HasDocument { get; set; }
+    public bool HasCorrection { get; set; }
     public int DownloadCount { get; set; }
     public bool IsPublished { get; set; }
     public int? SubjectId { get; set; }

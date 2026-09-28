@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
 
 namespace Backend.Models.Entities;
 
@@ -36,11 +37,17 @@ public class Exam
     [Column("Duration")]
     public int? DurationMinutes { get; set; }
 
+    // Module 44 (décision §11.4) : l'adresse du fichier de l'épreuve et de
+    // son corrigé ne doit sortir dans aucune réponse d'API, même si l'entité
+    // venait à être sérialisée telle quelle par une route oubliée. Les
+    // écrans d'administration la projettent explicitement (AdminExamsController).
     [Column("DocumentUrl")]
     [StringLength(500)]
+    [JsonIgnore]
     public string? DocumentUrl { get; set; }
 
     [StringLength(500)]
+    [JsonIgnore]
     public string? CorrectionUrl { get; set; }
 
     /// <summary>

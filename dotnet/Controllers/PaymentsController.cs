@@ -98,6 +98,18 @@ public class PaymentsController : ControllerBase
         {
             return BadRequest(new { error = ex.Message });
         }
+        catch (UnauthorizedAccessException)
+        {
+            // Décision 10.5 : commande d'un autre compte.
+            return StatusCode(403, new { error = "Accès refusé." });
+        }
+        catch (OrderNotPayableException ex)
+        {
+            // Décision 10.5 : état de commande incompatible avec un nouveau
+            // paiement (remboursement en cours, commande déjà réglée). Motif
+            // renvoyé tel quel, lu par le web dans `error` sur un 400.
+            return BadRequest(new { error = ex.Message, message = ex.Message });
+        }
         catch (InvalidOperationException ex)
         {
             _logger.LogError(ex, "NotchPay a refusé la demande de paiement");

@@ -424,6 +424,76 @@ async def format_messages_for_deepseek(messages: List[ChatMessage], user_id: Opt
     return formatted
 
 
+def _enforce_ai_quota(
+    current_user: UserTokenData,
+    client_message_id: Optional[str],
+    endpoint_label: str,
+    conversation_id: Optional[int] = None,
+) -> None:
+    """Mur de quota WinAI côté Python, commun à /stream, /chat et /complete.
+
+    Partie 8.8 / 8.10 défense en profondeur, indépendante de l'exposition
+    réseau du port FastAPI. Lecture seule (le décompte reste écrit par .NET,
+    8.9). Seul un message portant une réserve .NET valide (ligne non
+    finalisée et récente, voir services/ai_quota.py) est servi : un
+    identifiant rejoué, finalisé ou absent n'ouvre plus de message gratuit.
+    En cas d'erreur de lecture (base, table absente), on refuse
+    (fail-closed) : c'est un contrôle de sécurité.
+
+    Décision 10.4 : /chat et /complete n'avaient aucun contrôle, un appel
+    direct au port Python avec un jeton utilisateur valide donnait donc
+    WinAI gratuit et illimité. Même règle et mêmes fenêtres que /stream :
+    - /chat : appelé par .NET (ChatbotService, repli REST /api/chatbot/message)
+      APRÈS la réserve posée par AiQuotaService.CheckAndReserveAsync ; .NET
+      transmet désormais l'identifiant de cette réserve (client_message_id).
+    - /complete : aucun appelant connu (web, mobile, .NET) ; tout appel sans
+      réserve valide est refusé.
+
+    Lève HTTPException (404 conversation d'un autre, 402 limite atteinte,
+    403 réserve absente, 503 base illisible). Ne renvoie rien si autorisé.
+    """
+    quota_session = Database().SessionLocal()
+    try:
+        # Point E, même règle que le proxy .NET : la conversation fournie doit
+        # appartenir à l'utilisateur authentifié (sinon on écrirait la réponse
+        # assistant dans la conversation d'un autre).
+        if conversation_id:
+            owned = quota_session.execute(
+                sql_text('SELECT 1 FROM "Conversations" WHERE "Id" = :cid AND "UserId" = :uid AND "IsDeleted" = FALSE LIMIT 1'),
+                {"cid": conversation_id, "uid": current_user.user_id},
+            ).first()
+            if not owned:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+        quota = check_quota(quota_session, current_user.user_id, client_message_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Contrôle de quota WinAI impossible pour {current_user.user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "quota_unavailable", "message": "WinAI est momentanément indisponible. Réessayez dans quelques minutes."},
+        )
+    finally:
+        quota_session.close()
+    if not quota.allowed:
+        if quota.reason == "limit_reached":
+            logger.info(f"{endpoint_label} WinAI refusé côté Python (limite {quota.limit}) pour {current_user.user_id}")
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail={
+                    "error": "quota_exceeded",
+                    "limit": quota.limit,
+                    "resetsAt": quota.resets_at.isoformat() if quota.resets_at else None,
+                    "message": quota.message,
+                },
+            )
+        logger.warning(f"{endpoint_label} WinAI refusé côté Python (aucune réserve valide) pour {current_user.user_id}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "reservation_required", "message": quota.message},
+        )
+
+
 @chatbot_router.get('/health', response_model=ChatbotHealthResponse, tags=["chatbot"])
 async def health():
     """Health check pour le service chatbot"""
@@ -476,7 +546,10 @@ async def chat(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Messages are required"
             )
-        
+
+        # Décision 10.4 : même mur de quota que /stream (réserve .NET exigée).
+        _enforce_ai_quota(current_user, chat_request.client_message_id, "Chat")
+
         # Construire le prompt système différencié par rôle
         if chat_request.system_prompt:
             system_prompt = chat_request.system_prompt
@@ -568,53 +641,8 @@ async def stream_chat(
     Format chunk : data: {"delta": "...", "tokens_used": N}\\n\\n
     Dernier chunk : data: [DONE]\\n\\n
     """
-    # Partie 8.8 / 8.10 — défense en profondeur, indépendante de l'exposition
-    # réseau du port FastAPI. Lecture seule (le décompte reste écrit par .NET,
-    # 8.9). Seul un message portant une réserve .NET valide (ligne non
-    # finalisée et récente, voir services/ai_quota.py) est servi : un
-    # identifiant rejoué, finalisé ou absent n'ouvre plus de message gratuit.
-    # En cas d'erreur de lecture (base, table absente), on refuse
-    # (fail-closed) : c'est un contrôle de sécurité.
-    quota_session = Database().SessionLocal()
-    try:
-        # Point E, même règle que le proxy .NET : la conversation fournie doit
-        # appartenir à l'utilisateur authentifié (sinon on écrirait la réponse
-        # assistant dans la conversation d'un autre).
-        if body.conversation_id:
-            owned = quota_session.execute(
-                sql_text('SELECT 1 FROM "Conversations" WHERE "Id" = :cid AND "UserId" = :uid AND "IsDeleted" = FALSE LIMIT 1'),
-                {"cid": body.conversation_id, "uid": current_user.user_id},
-            ).first()
-            if not owned:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
-        quota = check_quota(quota_session, current_user.user_id, body.client_message_id)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Contrôle de quota WinAI impossible pour {current_user.user_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error": "quota_unavailable", "message": "WinAI est momentanément indisponible. Réessayez dans quelques minutes."},
-        )
-    finally:
-        quota_session.close()
-    if not quota.allowed:
-        if quota.reason == "limit_reached":
-            logger.info(f"Stream WinAI refusé côté Python (limite {quota.limit}) pour {current_user.user_id}")
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail={
-                    "error": "quota_exceeded",
-                    "limit": quota.limit,
-                    "resetsAt": quota.resets_at.isoformat() if quota.resets_at else None,
-                    "message": quota.message,
-                },
-            )
-        logger.warning(f"Stream WinAI refusé côté Python (aucune réserve valide) pour {current_user.user_id}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": "reservation_required", "message": quota.message},
-        )
+    # Partie 8.8 / 8.10 défense en profondeur, voir _enforce_ai_quota.
+    _enforce_ai_quota(current_user, body.client_message_id, "Stream", body.conversation_id)
 
     conv_id = body.conversation_id
     messages = body.messages
@@ -735,7 +763,17 @@ async def complete(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Prompt is required"
             )
-        
+
+        # Décision 10.4 : même mur de quota que /stream (réserve .NET exigée).
+        # Aucun appelant connu ne pose de réserve pour /complete : sans
+        # identifiant de réserve valide, l'appel est refusé.
+        client_message_id = request_data.get('client_message_id') or request_data.get('clientMessageId')
+        _enforce_ai_quota(
+            current_user,
+            client_message_id if isinstance(client_message_id, str) else None,
+            "Complete",
+        )
+
         max_tokens = request_data.get('maxTokens', 2000)
         temperature = request_data.get('temperature', 0.7)
         

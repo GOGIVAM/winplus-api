@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Backend.Migrations;
 
 /// <summary>
-/// Partie 8 du suivi — quota WinAI facturé au token réel.
+/// Partie 8 du suivi quota WinAI facturé au token réel.
 ///
 /// Contenu identique au script jumeau <c>Migrations/SQL_SeedPricingPlanTokenQuotas.sql</c>,
 /// qui est le chemin d'application réel : comme toutes les migrations manuelles

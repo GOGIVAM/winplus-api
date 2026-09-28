@@ -116,6 +116,23 @@ public class PdfService : IPdfService
                     {
                         t.ColumnsDefinition(c => { c.RelativeColumn(2); c.RelativeColumn(1); });
 
+                        // Décision 10.1 : le total des commandes du catalogue est
+                        // TTC. La TVA est l'écart entre ce total (remise
+                        // réintégrée) et la somme hors taxe des lignes. Les
+                        // commandes antérieures, stockées hors taxe, et les
+                        // abonnements (sans ligne) n'affichent aucune TVA.
+                        var linesExclTax = itemList.Sum(i => i.PriceAtPurchase);
+                        var vat = itemList.Count > 0
+                            ? order.TotalAmount + order.DiscountAmount - linesExclTax
+                            : 0m;
+                        if (vat > 0)
+                        {
+                            t.Cell().Padding(4).Text("Sous-total HT").FontSize(10);
+                            t.Cell().Padding(4).AlignRight().Text($"{linesExclTax:N0} XAF").FontSize(10);
+                            t.Cell().Padding(4).Text("TVA 19,25 %").FontSize(10);
+                            t.Cell().Padding(4).AlignRight().Text($"{vat:N0} XAF").FontSize(10);
+                        }
+
                         if (order.DiscountAmount > 0)
                         {
                             var subtotal = order.TotalAmount + order.DiscountAmount;

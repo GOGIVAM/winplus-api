@@ -63,6 +63,19 @@ public class PaymentExpirationService : BackgroundService
             // l'utilisateur reprend son achat (PaymentService.RetryPaymentAsync).
             try
             {
+                // Décision 10.9 : le paiement reste marqué expiré ci-dessus,
+                // mais une commande protégée (demande de remboursement, déjà
+                // réglée) ne doit pas repasser en « échoué », état annulable.
+                var order = await orderService.GetOrderByIdAsync(payment.OrderId);
+                if (order != null && OrderStatusRules.BlocksAutomaticTransition(order.Status, "failed"))
+                {
+                    _logger.LogWarning(
+                        "Commande {OrderId} en statut protégé {CurrentStatus} : passage en échoué après expiration " +
+                        "du paiement {PaymentId} ignoré (décision 10.9).",
+                        payment.OrderId, order.Status, payment.Id);
+                    continue;
+                }
+
                 await orderService.UpdateOrderStatusAsync(payment.OrderId, "failed");
             }
             catch (Exception ex)

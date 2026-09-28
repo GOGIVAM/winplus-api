@@ -264,6 +264,10 @@ class ChatRequest(BaseModel):
     user_context: Optional[ChatbotContextRequest] = None
     max_tokens: int = Field(default=2000, ge=100, le=4000)
     temperature: float = Field(default=0.7, ge=0, le=1.0)
+    # Décision 10.4 : identifiant de la réserve de quota posée par .NET pour
+    # ce message (même rôle que StreamChatBody.client_message_id sur /stream).
+    # Sans réserve valide, /chat refuse le message (services/ai_quota.py).
+    client_message_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

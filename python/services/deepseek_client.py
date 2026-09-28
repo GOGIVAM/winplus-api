@@ -187,7 +187,7 @@ class DeepSeekClient:
         `emit_usage` est vrai, un événement
         'data: {"usage_final": true, "tokens_used": N, "prompt_tokens": P,
         "completion_tokens": C, "usage_estimated": bool}' est émis juste avant
-        [DONE] — destiné au décompte (.NET le consomme sans le relayer au
+        [DONE] destiné au décompte (.NET le consomme sans le relayer au
         client, décision 8.3). Sans usage renvoyé : estimation ~4 car./token.
 
         Le nombre de tokens n'est plus inclus dans chaque delta : aucun

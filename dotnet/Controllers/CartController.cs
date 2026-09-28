@@ -11,6 +11,16 @@ namespace Backend.Controllers;
 /// <summary>
 /// Shopping cart management controller
 /// GET endpoints are public (anonymous cart), others require authentication
+///
+/// Prix affiché (défaut annexe de la décision 10.2) : chaque ligne porte le
+/// prix stocké au panier (CartItem.Price, relu en base à l'ajout), et non le
+/// prix courant du contenu. C'est ce prix que OrderService.PriceUserCartAsync
+/// compare au prix serveur pour produire les PriceAdjustments. Afficher le
+/// prix courant faisait intégrer l'écart au sous-total affiché, puis le
+/// client l'ajoutait une seconde fois à partir des PriceAdjustments. Le
+/// montant finalement dû reste celui de la commande créée (Order.TotalAmount).
+///
+/// TVA : même règle que la commande (<see cref="VatPolicy"/>, 19,25 %).
 /// </summary>
 [ApiController]
 [Route("api/cart")]
@@ -161,7 +171,7 @@ public class CartController : ControllerBase
                         ? item.Subject.Title
                         : $"Article #{item.SubjectId}",
                     Description = item.Subject?.Description,
-                    Price = item.Subject?.Price ?? item.Price,
+                    Price = item.Price, // prix stocké au panier, voir la note en tête de classe
                     Image = item.Subject?.ThumbnailUrl,
                     Quantity = 1,
                     AddedAt = item.AddedAt
@@ -184,8 +194,9 @@ public class CartController : ControllerBase
                 ItemsCount = validatedItems.Count,
                 Subtotal = validatedItems.Sum(i => i.Price),
                 Discount = 0,
-                Tax = validatedItems.Sum(i => i.Price) * 0.1m, // 10% tax
-                Total = validatedItems.Sum(i => i.Price) * 1.1m, // subtotal + tax
+                // Même TVA que la commande (décision 10.1) : 19,25 %, et non 10 %.
+                Tax = VatPolicy.TaxOn(validatedItems.Sum(i => i.Price)),
+                Total = VatPolicy.TotalInclTax(validatedItems.Sum(i => i.Price)),
                 Currency = "XAF",
                 UpdatedAt = DateTime.UtcNow
             };
@@ -321,7 +332,7 @@ public class CartController : ControllerBase
                         SubjectId = item.SubjectId,
                         Title = item.Subject?.Title ?? $"Subject #{item.SubjectId}",
                         Description = item.Subject?.Description,
-                        Price = item.Subject?.Price ?? item.Price,
+                        Price = item.Price, // prix stocké au panier, voir la note en tête de classe
                         Image = item.Subject?.ThumbnailUrl,
                         Quantity = 1,
                         AddedAt = item.AddedAt
@@ -333,8 +344,8 @@ public class CartController : ControllerBase
                     ItemsCount = updatedItems.Count,
                     Subtotal = updatedItems.Sum(i => i.Price),
                     Discount = 0,
-                    Tax = updatedItems.Sum(i => i.Price) * 0.1m,
-                    Total = updatedItems.Sum(i => i.Price) * 1.1m,
+                    Tax = VatPolicy.TaxOn(updatedItems.Sum(i => i.Price)),
+                    Total = VatPolicy.TotalInclTax(updatedItems.Sum(i => i.Price)),
                     Currency = "XAF",
                     UpdatedAt = DateTime.UtcNow
                 };
@@ -357,7 +368,7 @@ public class CartController : ControllerBase
                         SubjectId = item.SubjectId,
                         Title = item.Subject?.Title ?? string.Empty,
                         Description = item.Subject?.Description,
-                        Price = item.Subject?.Price ?? item.Price,
+                        Price = item.Price, // prix stocké au panier, voir la note en tête de classe
                         Image = item.Subject?.ThumbnailUrl,
                         Quantity = 1,
                         AddedAt = item.AddedAt
@@ -369,8 +380,8 @@ public class CartController : ControllerBase
                     ItemsCount = anonymousItems.Count,
                     Subtotal = anonymousItems.Sum(i => i.Price),
                     Discount = 0,
-                    Tax = anonymousItems.Sum(i => i.Price) * 0.1m,
-                    Total = anonymousItems.Sum(i => i.Price) * 1.1m,
+                    Tax = VatPolicy.TaxOn(anonymousItems.Sum(i => i.Price)),
+                    Total = VatPolicy.TotalInclTax(anonymousItems.Sum(i => i.Price)),
                     Currency = "XAF",
                     UpdatedAt = DateTime.UtcNow
                 };
@@ -693,7 +704,7 @@ public class CartController : ControllerBase
                     SubjectId = item.SubjectId,
                     Title = item.Subject?.Title ?? "",
                     Description = item.Subject?.Description,
-                    Price = item.Subject?.Price ?? item.Price,
+                    Price = item.Price, // prix stocké au panier, voir la note en tête de classe
                     Image = item.Subject?.ThumbnailUrl,
                     Quantity = 1,
                     AddedAt = item.AddedAt
@@ -701,8 +712,8 @@ public class CartController : ControllerBase
                 ItemsCount = serverItems.Count,
                 Subtotal = serverItems.Sum(i => i.Price),
                 Discount = 0,
-                Tax = serverItems.Sum(i => i.Price) * 0.1m,
-                Total = serverItems.Sum(i => i.Price) * 1.1m,
+                Tax = VatPolicy.TaxOn(serverItems.Sum(i => i.Price)),
+                Total = VatPolicy.TotalInclTax(serverItems.Sum(i => i.Price)),
                 Currency = "XAF",
                 UpdatedAt = DateTime.UtcNow
             };

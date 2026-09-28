@@ -375,6 +375,9 @@ builder.Services.AddScoped<IAdminService, AdminService>();
 // Stockage fichiers : bucket lu dans la configuration, vérification d'existence,
 // repli disque local. Singleton pour ne sonder le bucket qu'une seule fois.
 builder.Services.AddSingleton<IStorageService, StorageService>();
+// Filigrane nominatif incrusté dans les épreuves, corrigés et livres servis à
+// la visionneuse (Module 44) : sans état, réutilise QuestPDF/qpdf.
+builder.Services.AddSingleton<IDocumentWatermarkService, DocumentWatermarkService>();
 builder.Services.AddScoped<IFileUploadService, FileUploadService>();
 builder.Services.AddScoped<IReviewRepository, ReviewRepository>();
 builder.Services.AddScoped<IReviewService, ReviewService>();

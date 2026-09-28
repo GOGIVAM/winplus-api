@@ -410,6 +410,11 @@ public class FastApiChatRequest
     public float Temperature { get; set; } = 0.7f;
     public Dictionary<string, float>? PerformanceHistory { get; set; }
     public string? ForceLanguage { get; set; }
+    /// <summary>
+    /// Réserve de quota .NET du message (sérialisée « client_message_id »),
+    /// exigée par FastAPI /chat depuis la décision 10.4.
+    /// </summary>
+    public string? ClientMessageId { get; set; }
 }
 
 /// <summary>

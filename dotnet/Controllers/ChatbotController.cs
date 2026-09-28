@@ -49,7 +49,7 @@ public class ChatbotController : ControllerBase
     /// (<see cref="StreamChat"/>) : même structure dans les deux cas.
     ///
     /// - <c>limit</c> : « session » (5 h glissantes) ou « week » (7 jours
-    ///   glissants) — quelle limite bloque.
+    ///   glissants) quelle limite bloque.
     /// - <c>resetsAt</c> : horodatage UTC ISO-8601 auquel l'utilisateur peut
     ///   de nouveau écrire ; <c>message</c> le reprend en toutes lettres.
     /// - Jamais de nombre de tokens (8.3). <c>tokensLeft</c> reste à 0 pour
@@ -142,11 +142,11 @@ public class ChatbotController : ControllerBase
 
             // Point D : quoi qu'il arrive entre la réserve et la fin du
             // traitement (exception, FastAPI en échec), le bloc finally décide
-            // de la finaliser ou de la libérer — jamais de réserve orpheline.
+            // de la finaliser ou de la libérer jamais de réserve orpheline.
             ChatResponse? response = null;
             try
             {
-                response = await _chatbotService.SendMessageAsync(userId, request);
+                response = await _chatbotService.SendMessageAsync(userId, request, quota.ReservationId);
                 return Ok(response);
             }
             finally
@@ -164,7 +164,7 @@ public class ChatbotController : ControllerBase
                 {
                     // Aucune réponse réelle servie (exception, ou FastAPI en
                     // échec : ChatbotService renvoie alors un contenu de
-                    // repli sans lever). La réserve est rendue — seulement si
+                    // repli sans lever). La réserve est rendue seulement si
                     // CETTE tentative la détient encore.
                     await _aiQuota.ReleaseReservationAsync(userId, quota.ReservationId, quota.AttemptId, CancellationToken.None);
                 }
@@ -654,7 +654,7 @@ public class ChatbotController : ControllerBase
                 await Response.Body.FlushAsync(cancellationToken);
             }
 
-            // Last 20 messages for conversation context — conversationId est
+            // Last 20 messages for conversation context conversationId est
             // soit créée ci-dessus pour cet utilisateur, soit vérifiée comme
             // lui appartenant (point E).
             var historyRaw = await _dbContext.Messages
@@ -671,7 +671,7 @@ public class ChatbotController : ControllerBase
             // composer du front crée des pièces de type "document" pour tout ce qui
             // n'est pas une image (PDF, docx, csv…) : elles étaient donc jetées
             // silencieusement et le modèle répondait comme si aucun fichier n'avait
-            // été envoyé — c'est le « le chatbot n'upload pas les fichiers ».
+            // été envoyé c'est le « le chatbot n'upload pas les fichiers ».
             var images    = request.Attachments?.Where(a => a.Type == "image").ToList()    ?? new();
             var documents = request.Attachments?.Where(a => a.Type != "image").ToList()    ?? new();
             var hasAny    = images.Count > 0 || documents.Count > 0;
@@ -702,7 +702,7 @@ public class ChatbotController : ControllerBase
             }).ToList();
 
             // Profil réel (niveau + inscriptions), recalculé en direct à chaque
-            // message — jamais depuis ChatbotContext (table de synchronisation
+            // message jamais depuis ChatbotContext (table de synchronisation
             // jamais alimentée en pratique par le frontend, voir
             // IChatbotService.GetLiveProfileContextAsync).
             var liveProfile = await _chatbotService.GetLiveProfileContextAsync(userId);

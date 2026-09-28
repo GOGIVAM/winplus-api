@@ -1,5 +1,5 @@
 """
-Comptabilité des tokens WinAI — Partie 8 du suivi (quota au token réel).
+Comptabilité des tokens WinAI Partie 8 du suivi (quota au token réel).
 
 Source de vérité (décision 8.1) : le compte renvoyé par le fournisseur LLM
 dans le champ `usage` de sa réponse (API compatible OpenAI :
@@ -15,7 +15,7 @@ dernier chunk…) et pour les étapes qui n'ont pas de compte natif (8.2) :
     standard pour les tokenizers BPE sur du texte latin (anglais ~4, français
     un peu moins). Elle est volontairement simple et documentée comme telle.
 
-8.2 — audio et fichiers : la transcription audio, le texte OCR/vision et le
+8.2 audio et fichiers : la transcription audio, le texte OCR/vision et le
 texte extrait d'un PDF sont INJECTÉS dans le prompt (attachment_processor.py,
 rag_chat_bridge.py, ChatbotController.DescribeDocumentAsync côté .NET). Ils
 sont donc comptés tels qu'ils sont réellement envoyés au LLM : dans
@@ -51,7 +51,7 @@ def estimate_tokens(text: Optional[str]) -> int:
 
 def _content_tokens(content: Any) -> int:
     # Contenu simple (chaîne) ou liste de blocs multimodaux
-    # ({type:"text"}, {type:"image_url"}) — format produit par
+    # ({type:"text"}, {type:"image_url"}) format produit par
     # ChatbotController.StreamChat pour les pièces jointes.
     if isinstance(content, str):
         return estimate_tokens(content)

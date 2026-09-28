@@ -24,7 +24,7 @@ namespace Backend.Models.Entities;
 ///
 /// 3. <b>Coût réel (8.1)</b> : la ligne est d'abord écrite avec une réserve
 ///    forfaitaire (<see cref="IsFinalized"/> = false) AVANT l'appel au
-///    modèle — sans quoi N requêtes parallèles passeraient toutes le mur —
+///    modèle sans quoi N requêtes parallèles passeraient toutes le mur —
 ///    puis corrigée au coût réellement facturé par le fournisseur une fois
 ///    la réponse terminée.
 ///
@@ -46,7 +46,7 @@ public class AiTokenUsage
     /// <summary>
     /// Identifiant du message utilisateur, généré par le client (UUID). Pour
     /// les appelants hérités qui n'en fournissent pas, le serveur en génère un
-    /// — la ligne reste alors correcte, seule l'idempotence inter-chemins est
+    /// la ligne reste alors correcte, seule l'idempotence inter-chemins est
     /// perdue (comportement d'avant la Partie 8).
     /// </summary>
     [Required]

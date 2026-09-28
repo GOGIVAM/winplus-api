@@ -11,7 +11,7 @@ namespace Backend.Services;
 /// Une commande d'abonnement n'a pas de ligne <c>OrderItem</c> : elle ne porte
 /// aucun contenu. Le plan souscrit et la période choisie étaient donc encodés
 /// en texte libre dans <c>Order.Notes</c> (« subscription:{planId}:{billing} »),
-/// écrits d'un côté et jamais relus de l'autre — c'est la cause racine du
+/// écrits d'un côté et jamais relus de l'autre c'est la cause racine du
 /// point 3.1.11 : le paiement aboutissait sans qu'aucune ligne
 /// <c>Subscriptions</c> ne soit créée.
 ///
@@ -76,6 +76,30 @@ public readonly record struct SubscriptionOrderIntent(int PricingPlanId, string 
 
         intent = new SubscriptionOrderIntent(planId, billing);
         return true;
+    }
+}
+
+/// <summary>
+/// Fin anticipée d'un abonnement : résiliation à la date du jour, avec les
+/// mêmes écritures que le remplacement d'un abonnement actif par une nouvelle
+/// activation (ci-dessous). Partagée avec l'approbation d'un remboursement
+/// (décision 10.11, AdminRefundsController) pour qu'il n'existe qu'une seule
+/// façon de couper un abonnement avant son terme.
+///
+/// <c>IsActive</c> est remis à false en plus du statut : la règle d'accès
+/// (<see cref="ContentAccessService.HasActiveSubscriptionAsync"/>) exige les
+/// deux, et SubscriptionExpirationService ne touche que le statut.
+/// </summary>
+public static class SubscriptionTermination
+{
+    public const string CancelledStatus = "cancelled";
+
+    public static void EndNow(Subscription subscription, DateTime now)
+    {
+        subscription.Status = CancelledStatus;
+        subscription.EndDate = now;
+        subscription.IsActive = false;
+        subscription.UpdatedAt = now;
     }
 }
 
@@ -189,12 +213,7 @@ public class SubscriptionActivationService : ISubscriptionActivationService
             .ToListAsync();
 
         foreach (var previous in existing)
-        {
-            previous.Status = "cancelled";
-            previous.EndDate = now;
-            previous.IsActive = false;
-            previous.UpdatedAt = now;
-        }
+            SubscriptionTermination.EndNow(previous, now);
 
         var subscription = new Subscription
         {

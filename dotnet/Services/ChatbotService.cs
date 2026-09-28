@@ -14,7 +14,12 @@ namespace Backend.Services;
 /// </summary>
 public interface IChatbotService
 {
-    Task<ChatResponse> SendMessageAsync(int userId, SendMessageRequest request);
+    /// <param name="quotaReservationId">
+    /// Identifiant de la réserve de quota posée par l'appelant
+    /// (AiQuotaService.CheckAndReserveAsync), transmis à FastAPI /chat qui
+    /// l'exige depuis la décision 10.4.
+    /// </param>
+    Task<ChatResponse> SendMessageAsync(int userId, SendMessageRequest request, string? quotaReservationId = null);
     Task<ConversationResponse> CreateConversationAsync(int userId, CreateConversationRequest request);
     Task<PaginatedConversationsResponse> GetConversationsAsync(int userId, int page, int pageSize);
     Task<ConversationDetailResponse?> GetConversationByIdAsync(int userId, int conversationId);
@@ -123,7 +128,7 @@ public class ChatbotService : IChatbotService
     /// <summary>
     /// Envoie un message au chatbot et reçoit une réponse
     /// </summary>
-    public async Task<ChatResponse> SendMessageAsync(int userId, SendMessageRequest request)
+    public async Task<ChatResponse> SendMessageAsync(int userId, SendMessageRequest request, string? quotaReservationId = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
@@ -156,6 +161,9 @@ public class ChatbotService : IChatbotService
         // Préparer la requête pour FastAPI/DeepSeek
         var messages = await _repository.GetMessagesForConversationAsync(conversation.Id);
         var fastapiRequest = await BuildFastApiRequestAsync(userId, messages, request.IncludeContext);
+        // Décision 10.4 : FastAPI /chat n'accepte plus un message sans la
+        // réserve de quota .NET correspondante (même règle que /stream).
+        fastapiRequest.ClientMessageId = quotaReservationId;
 
         // Appeler FastAPI/DeepSeek
         var fastapiResponse = await CallFastApiServiceAsync(fastapiRequest);

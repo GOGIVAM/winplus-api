@@ -21,7 +21,7 @@ namespace Backend.Services;
 ///
 /// ⚠ Correction §7.5 du suivi : ce service cherchait <c>Role == "organization"</c>.
 /// Deux valeurs de rôle coexistaient pour le même type de compte, et le rôle
-/// officiel retenu est <c>"institution"</c> — c'est celui que produit
+/// officiel retenu est <c>"institution"</c> c'est celui que produit
 /// l'inscription, celui que teste le frontend web (RoleAwareShell) et celui que
 /// connaît l'administration. Le rapport mensuel ne trouvait donc aucune
 /// institution et ne partait jamais.

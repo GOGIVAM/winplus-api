@@ -52,7 +52,7 @@ public class PricingPlan
     /// désormais le <b>quota mensuel WinAI en tokens LLM réels</b>, et non plus
     /// un nombre de messages. Le modèle « 1 message = 1 unité » ne reflétait
     /// pas le coût réel (un message avec pièce jointe ou audio coûte bien plus
-    /// qu'un message texte court) — décision 8.1.
+    /// qu'un message texte court) décision 8.1.
     ///
     /// La colonne n'a délibérément pas été renommée : elle est lue par des
     /// sauvegardes, des scripts d'exploitation et l'administration existants.
@@ -70,7 +70,7 @@ public class PricingPlan
 
     /// <summary>
     /// Nom juste de <see cref="MaxChatMessages"/> depuis la Partie 8 : quota
-    /// mensuel WinAI en tokens. Non mappé — même colonne, pas de redondance
+    /// mensuel WinAI en tokens. Non mappé même colonne, pas de redondance
     /// en base.
     /// </summary>
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]

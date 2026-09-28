@@ -72,7 +72,7 @@ public class OrdersController : ControllerBase
     /// fenêtre de temps), ce qui avalait un second achat légitime : deux
     /// contenus différents au même prix, à moins d'une minute d'intervalle,
     /// étaient pris pour le même achat, l'argent n'était pas débité, et le
-    /// panier n'était même pas vidé — l'utilisateur repartait sans rien, sans
+    /// panier n'était même pas vidé l'utilisateur repartait sans rien, sans
     /// message. La clé compare désormais aussi le contenu du panier à celui
     /// de la commande candidate : un rejeu porte exactement les mêmes
     /// contenus, deux achats distincts non.
@@ -121,6 +121,9 @@ public class OrdersController : ControllerBase
                 // calculé par la même règle que la création de commande
                 // (OrderService.PriceUserCartAsync), sans la dupliquer.
                 var pricing = await _orderService.PriceUserCartAsync(userId);
+                // Décision 10.1 : total TTC, identique à Order.TotalAmount posé
+                // par CreateOrderAsync. Le contrôle de solde, la clé de doublon
+                // et le débit portent donc tous sur le même montant.
                 var serverTotal = pricing.Total;
                 if (pricing.IsEmpty || serverTotal <= 0)
                     return BadRequest(new { success = false, error = "Panier vide." });
@@ -357,8 +360,16 @@ public class OrdersController : ControllerBase
             if (!CanAccessOrder(order.UserId))
                 return StatusCode(403, new { success = false, error = "Accès refusé." });
 
-            if (order.Status.Equals("completed", StringComparison.OrdinalIgnoreCase))
-                return BadRequest(new { success = false, error = "Impossible d'annuler une commande déjà complétée" });
+            // Décisions 10.3 et 10.6 : une commande complétée, réglée en crédits
+            // (paid) ou en demande de remboursement n'est pas annulable par le
+            // client. POST /refund puis POST /cancel permettait d'obtenir un
+            // remboursement sans décision administrateur (décision 4.D), et
+            // annuler une commande paid retirait l'accès de l'enfant et le
+            // revenu du prof sans restituer les crédits. Règle partagée avec
+            // OrderService.CancelOrderAsync et les chemins de paiement.
+            var blockReason = OrderStatusRules.CancellationBlockReason(order.Status);
+            if (blockReason != null)
+                return BadRequest(new { success = false, error = blockReason });
 
             await _orderService.CancelOrderAsync(id);
             return Ok(new { data = new { id, status = "cancelled" }, success = true });
@@ -538,10 +549,12 @@ public class OrdersController : ControllerBase
                 .Select(s => new { s.Id, s.Title, s.Price })
                 .ToListAsync();
 
-            var subtotal = subjects.Sum(s => s.Price);
-            const decimal taxRate = 0.20m;
-            var tax   = Math.Round(subtotal * taxRate, 2);
-            var total = Math.Round(subtotal + tax, 2);
+            // Même règle de TVA que la création de commande (décision 10.1) :
+            // ce résumé annonçait 20 % alors que la commande est facturée à
+            // 19,25 %, arrondie à l'unité (XAF).
+            var subtotal = subjects.Sum(s => decimal.Round(s.Price, 0, MidpointRounding.AwayFromZero));
+            var tax   = VatPolicy.TaxOn(subtotal);
+            var total = subtotal + tax;
 
             return Ok(new
             {

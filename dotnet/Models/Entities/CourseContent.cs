@@ -17,6 +17,11 @@ public class CourseContent
     
     public string? VideoUrl { get; set; }
     
+    // Module 44 (décision §11.4) : fichier d'un livre du catalogue. Jamais
+    // sérialisé avec l'entité (les listes publiques du catalogue incluent
+    // Subject.Contents) : le livre se consulte via GET /api/subjects/{id}/view.
+    // Les écrans auteur/admin qui en ont besoin le projettent explicitement.
+    [JsonIgnore]
     public string? DocumentUrl { get; set; }
     
     public int OrderIndex { get; set; }

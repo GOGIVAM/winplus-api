@@ -30,7 +30,7 @@ public enum AiReplayVerdict
     NewMessage,
     /// <summary>
     /// Ligne non finalisée et récente : c'est le même message (repli REST
-    /// après 8 s, « Réessayer ») — on le rattache sans second décompte.
+    /// après 8 s, « Réessayer ») on le rattache sans second décompte.
     /// </summary>
     Reattach,
     /// <summary>
@@ -42,7 +42,7 @@ public enum AiReplayVerdict
 }
 
 /// <summary>
-/// Règles chiffrées du quota WinAI — <b>seul endroit côté .NET</b> où vivent la
+/// Règles chiffrées du quota WinAI <b>seul endroit côté .NET</b> où vivent la
 /// grille de référence, la grille des bonus, les ratios session/semaine et les
 /// durées. Sa copie Python est <c>backend/python/services/ai_quota.py</c>
 /// (bloc « POLICY ») ; les deux doivent rester identiques. Les blocs
@@ -176,7 +176,7 @@ public static class AiUsagePolicy
     }
 
     /// <summary>
-    /// <b>Plafond global des bonus (8.10) — hypothèse à valider par le
+    /// <b>Plafond global des bonus (8.10) hypothèse à valider par le
     /// product owner.</b>
     ///
     /// Un plan donateur n'ouvre pas son bonus en entier à un nombre illimité
@@ -227,7 +227,7 @@ public static class AiUsagePolicy
         ProvisionalTokensPerMessage + Math.Max(0, relayedChars) / CharsPerTokenEstimate;
 
     /// <summary>
-    /// Fenêtre glissante — <b>ancrage retenu et documenté</b> :
+    /// Fenêtre glissante <b>ancrage retenu et documenté</b> :
     ///
     ///  - La fenêtre à l'instant <c>now</c> couvre <c>]now − L, now]</c>.
     ///  - Son <b>ancre</b> est le premier enregistrement du journal dans cet

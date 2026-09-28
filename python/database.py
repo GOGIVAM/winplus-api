@@ -540,12 +540,16 @@ class Database:
                 CourseContent.SubjectId == subject_id
             ).order_by(CourseContent.OrderIndex).all()
             
+            # Module 44 (décision §11.4) : l'adresse du fichier d'un livre ne
+            # sort plus dans une réponse d'API ; seule sa disponibilité est
+            # indiquée. Le document se consulte via la visionneuse
+            # (GET /api/subjects/{id}/view côté .NET).
             return [{
                 'id': c.Id,
                 'title': c.Title,
                 'description': c.Description,
                 'videoUrl': c.VideoUrl,
-                'documentUrl': c.DocumentUrl,
+                'hasDocument': bool(c.DocumentUrl),
                 'orderIndex': c.OrderIndex,
                 'durationMinutes': c.DurationMinutes,
                 'isLocked': c.IsLocked

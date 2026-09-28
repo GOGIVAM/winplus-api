@@ -180,7 +180,23 @@ public class AffiliateService : IAffiliateService
             // arrondit à zéro, dans le même portefeuille : le solde devenait
             // fractionnaire et un virement Mobile Money sur un tel montant est
             // rejeté ou tronqué. Zéro décimale partout.
-            var commissionAmount = Math.Round(order.TotalAmount * account.CommissionRate / 100m, 0, MidpointRounding.AwayFromZero);
+            //
+            // Décision 10.7 : la base de la commission est le montant hors
+            // taxe. Order.TotalAmount inclut la TVA depuis la décision 10.1 :
+            // la commission se calcule sur la somme des PriceAtPurchase (prix
+            // de vente hors taxe, même base que le revenu enseignant dans
+            // TeacherService). Une commande sans ligne (abonnement) n'est pas
+            // soumise à la TVA (voir VatPolicy) : son TotalAmount est déjà
+            // hors taxe et reste la base.
+            var itemsExclTax = await _db.OrderItems.AsNoTracking()
+                .Where(oi => oi.OrderId == order.Id)
+                .Select(oi => oi.PriceAtPurchase)
+                .ToListAsync();
+            var commissionBase = itemsExclTax.Count > 0
+                ? itemsExclTax.Sum()
+                : order.TotalAmount;
+
+            var commissionAmount = Math.Round(commissionBase * account.CommissionRate / 100m, 0, MidpointRounding.AwayFromZero);
             if (commissionAmount <= 0) return;
 
             _db.AffiliateCommissions.Add(new AffiliateCommission
@@ -188,7 +204,9 @@ public class AffiliateService : IAffiliateService
                 AffiliateAccountId = account.Id,
                 OrderId = order.Id,
                 BuyerUserId = order.UserId,
-                OrderAmount = order.TotalAmount,
+                // Base réelle de la commission (hors taxe), pour que
+                // OrderAmount × taux = commission reste vrai à l'affichage.
+                OrderAmount = commissionBase,
                 CommissionRateApplied = account.CommissionRate,
                 CommissionAmount = commissionAmount,
                 Status = "pending",

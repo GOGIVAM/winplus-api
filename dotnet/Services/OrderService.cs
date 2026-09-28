@@ -22,12 +22,24 @@ public class ContentNotPurchasableException : InvalidOperationException
 public record PricedCartItem(int SubjectId, string Title, decimal CartPrice, decimal ServerPrice);
 
 /// <summary>
-/// Valorisation serveur d'un panier : lignes, total au prix serveur et liste
-/// des écarts constatés avec le prix vu au panier.
+/// Valorisation serveur d'un panier : lignes, sous-total hors taxe au prix
+/// serveur, TVA, total TTC et liste des écarts constatés avec le prix vu au
+/// panier.
+///
+/// Décision 10.1 du suivi : <see cref="Total"/> est le montant TTC, celui qui
+/// est stocké dans <c>Order.TotalAmount</c>, payé via NotchPay et débité du
+/// solde professeur. <see cref="Subtotal"/> reste la somme hors taxe des
+/// prix de vente (base des revenus vendeur, via OrderItem.PriceAtPurchase).
 /// </summary>
-public record CartPricing(IReadOnlyList<PricedCartItem> Items, decimal Total, IReadOnlyList<OrderPriceAdjustment> Adjustments)
+public record CartPricing(IReadOnlyList<PricedCartItem> Items, decimal Subtotal, IReadOnlyList<OrderPriceAdjustment> Adjustments)
 {
     public bool IsEmpty => Items.Count == 0;
+
+    /// <summary>TVA sur le sous-total (voir <see cref="VatPolicy"/>).</summary>
+    public decimal Tax => VatPolicy.TaxOn(Subtotal);
+
+    /// <summary>Total TTC : sous-total hors taxe + TVA.</summary>
+    public decimal Total => Subtotal + Tax;
 }
 
 public interface IOrderService
@@ -121,6 +133,7 @@ public class OrderService : IOrderService
             }
         }
 
+        // Sous-total hors taxe ; CartPricing.Total (TTC) en est dérivé.
         return new CartPricing(items, items.Sum(i => i.ServerPrice), adjustments);
     }
 
@@ -138,6 +151,10 @@ public class OrderService : IOrderService
             if (pricing.IsEmpty)
                 throw new InvalidOperationException("Cart is empty");
 
+            // Décision 10.1 : le total stocké est TTC (TVA calculée ici, côté
+            // serveur). Le web l'affichait et le payait déjà TTC alors que la
+            // commande restait hors taxe : le contrôle de montant du webhook
+            // rejetait tout paiement du catalogue.
             var totalAmount = pricing.Total;
 
             // Create order
@@ -296,8 +313,14 @@ public class OrderService : IOrderService
             if (order == null)
                 throw new InvalidOperationException($"Order {orderId} not found");
 
-            if (order.Status == "completed")
-                throw new InvalidOperationException("Cannot cancel a completed order");
+            // Décisions 10.3 et 10.6 : ni une commande complétée, ni une
+            // commande réglée en crédits (paid), ni une commande en demande de
+            // remboursement ne sont annulables par le client l'accès et le
+            // revenu du vendeur ne changent qu'après décision administrateur
+            // explicite (décision 4.D). Règle commune : OrderStatusRules.
+            var blockReason = OrderStatusRules.CancellationBlockReason(order.Status);
+            if (blockReason != null)
+                throw new InvalidOperationException(blockReason);
 
             order.Status = "cancelled";
 

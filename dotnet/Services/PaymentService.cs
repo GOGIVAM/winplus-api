@@ -77,6 +77,21 @@ public class PaymentService : IPaymentService
         var order = await _orderService.GetOrderByIdAsync(orderId)
             ?? throw new ArgumentException("Commande introuvable");
 
+        // Décision 10.5 : aucune vérification ne portait ici ni sur le
+        // propriétaire ni sur l'état de la commande. N'importe quel compte
+        // pouvait lancer un paiement sur la commande d'un autre, et un nouveau
+        // paiement sur une commande en demande de remboursement (ou déjà
+        // réglée) la faisait repasser en failed/pending, deux états annulables
+        // contournant le blocage de l'annulation directe (10.3, 10.6).
+        // Le seul appelant anonyme (parcours invité) a été retiré (décision
+        // 9.2) : un appelant connecté ne paie que ses propres commandes.
+        if (userId.HasValue && order.UserId != userId.Value)
+            throw new UnauthorizedAccessException("Accès refusé : cette commande ne vous appartient pas.");
+
+        var blockReason = OrderStatusRules.PaymentBlockReason(order.Status);
+        if (blockReason != null)
+            throw new OrderNotPayableException(blockReason);
+
         // Résoudre l'email et le nom : depuis le compte si connecté, depuis la requête sinon
         string email;
         string customerName;
@@ -304,6 +319,20 @@ public class PaymentService : IPaymentService
                     payment.OrderId, payment.Id);
             }
 
+            // Décision 10.9 : un paiement resté en cours pendant qu'une demande
+            // de remboursement était faite (ou sur une commande déjà réglée) ne
+            // doit pas, à son échec, expiration ou annulation tardive, ramener
+            // la commande à un état annulable. Le statut du paiement a déjà été
+            // enregistré par l'appelant ; seule la propagation est ignorée.
+            if (current != null && OrderStatusRules.BlocksAutomaticTransition(current.Status, orderStatus))
+            {
+                _logger.LogWarning(
+                    "Commande {OrderId} en statut protégé {CurrentStatus} : propagation du statut {TargetStatus} " +
+                    "du paiement {PaymentId} ignorée (décision 10.9).",
+                    payment.OrderId, current.Status, orderStatus, payment.Id);
+                return;
+            }
+
             await _orderService.UpdateOrderStatusAsync(payment.OrderId, orderStatus);
         }
         catch (Exception ex)
@@ -317,7 +346,7 @@ public class PaymentService : IPaymentService
 
         // Module 18 (correction §7.3 du suivi) : une commande d'abonnement
         // confirmée doit produire une vraie ligne Subscriptions. C'était le
-        // chaînon manquant du point 3.1.11 — le paiement aboutissait, et
+        // chaînon manquant du point 3.1.11 le paiement aboutissait, et
         // l'abonnement n'existait nulle part, ce qui laissait le mur payant du
         // Module 17 bloquer un client qui venait de payer.
         //
@@ -553,6 +582,17 @@ public class PaymentService : IPaymentService
 
         if ((payment.RetryCount ?? 0) >= 3)
             throw new InvalidOperationException("Nombre maximum de tentatives atteint");
+
+        // Décision 10.5 : la relance repasse la commande en pending (voir plus
+        // bas), état annulable. Sur une commande en demande de remboursement
+        // ou déjà réglée, c'était un contournement du blocage de l'annulation
+        // directe (10.3, 10.6). Même règle que l'initiation d'un paiement.
+        var order = await _orderService.GetOrderByIdAsync(payment.OrderId)
+            ?? throw new ArgumentException("Commande introuvable");
+
+        var blockReason = OrderStatusRules.PaymentBlockReason(order.Status);
+        if (blockReason != null)
+            throw new OrderNotPayableException(blockReason);
 
         var user = await _userService.GetUserByIdAsync(requestingUserId)
             ?? throw new ArgumentException("Utilisateur introuvable");

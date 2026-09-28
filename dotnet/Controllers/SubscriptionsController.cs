@@ -174,7 +174,7 @@ public class SubscriptionsController : ControllerBase
     /// le mur payant du Module 17 (lequel n'accorde l'accès au contenu payant
     /// qu'à l'appui, notamment, d'un abonnement actif).
     ///
-    /// Il n'a pas été supprimé parce qu'il a deux appelants réels — la modale
+    /// Il n'a pas été supprimé parce qu'il a deux appelants réels la modale
     /// d'abonnement web (<c>SubscribeModal.tsx</c>, appelée après confirmation
     /// du paiement pour « activer ») et l'écran de tarifs mobile
     /// (<c>pricing_screen.dart</c> via <c>SubscriptionService.subscribe</c>).

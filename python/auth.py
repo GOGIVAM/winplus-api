@@ -88,7 +88,7 @@ LEGACY_ALG_WINDOW_HOURS = int(os.getenv('JWT_LEGACY_ALG_WINDOW_HOURS', '48'))
 #
 # Module 20 : l'emplacement était /tmp, présenté comme volontaire. Dans un
 # conteneur, /tmp appartient au système de fichiers éphémère de l'instance :
-# chaque redémarrage du conteneur — et non seulement de la machine — effaçait
+# chaque redémarrage du conteneur et non seulement de la machine effaçait
 # le fichier et RÉARMAIT la fenêtre pour 48 heures de plus. Une tolérance
 # censée se fermer d'elle-même ne se fermait donc jamais, et un algorithme de
 # signature non standard restait accepté indéfiniment.

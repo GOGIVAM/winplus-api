@@ -70,7 +70,7 @@ public class ContentAccessService : IContentAccessService
     ///
     /// Le plan associé doit en outre être un plan <b>payant</b>
     /// (<c>PricingPlan.Price &gt; 0</c>). SubscriptionsController autorise en
-    /// effet — et c'est voulu — la création directe d'un abonnement « active »
+    /// effet et c'est voulu la création directe d'un abonnement « active »
     /// sur un plan gratuit, sans le moindre paiement. Sans ce test, un tel
     /// abonnement gratuit ouvrait à lui seul tout le catalogue payant : il
     /// suffisait de s'abonner au plan à 0 F pour contourner le mur payant.
@@ -142,7 +142,7 @@ public class ContentAccessService : IContentAccessService
         // d'inscription ouvert (fermé par le Module 17), qui a laissé en base
         // des inscriptions sans le moindre paiement. Il faut désormais les
         // deux : une inscription ET une commande payée portant ce contenu,
-        // passée par un parent réellement lié à cet utilisateur — c'est
+        // passée par un parent réellement lié à cet utilisateur c'est
         // exactement ce que produit le parcours « acheter pour mon enfant ».
         bool isEnrolled = await _context.Enrollments
             .AnyAsync(e => e.UserId == userId && e.SubjectId == subject.Id);

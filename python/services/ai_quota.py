@@ -1,11 +1,12 @@
 """
-Contrôle de quota WinAI côté Python — Partie 8.8 du suivi (défense en
+Contrôle de quota WinAI côté Python Partie 8.8 du suivi (défense en
 profondeur), révisé en 8.10 (limites de session et hebdomadaire).
 
 Le mur principal est côté .NET (Services/AiQuotaService.cs), qui réserve puis
 décompte chaque message au coût réel dans "AiTokenUsages". Ce module est en
 LECTURE SEULE (8.9 : un seul point de décompte, .NET) et applique sur
-l'endpoint FastAPI /api/chatbot/stream :
+les endpoints FastAPI /api/chatbot/stream, /chat et /complete (décision 10.4,
+voir routes/chatbot_routes.py::_enforce_ai_quota) :
 
 1. Réserve exigée (point A de la passe 8.10). L'unique appelant légitime de
    /stream est le proxy .NET, qui pose (ou rattache) une réserve pour le
@@ -224,7 +225,7 @@ def limit_message(kind: str, resets_at: Optional[datetime]) -> str:
 # ═══════════════════════════ fin POLICY ════════════════════════════════════
 
 
-# Abonnement payant en cours — même règle que AiQuotaService (.NET).
+# Abonnement payant en cours même règle que AiQuotaService (.NET).
 _ACTIVE_PAID_SUB_SQL = text('''
     SELECT p."MaxChatMessages", p."Price", COALESCE(s."PlanName", p."Name")
     FROM "Subscriptions" s

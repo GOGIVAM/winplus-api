@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════════════════════════════
--- SQL_SeedPricingPlanTokenQuotas.sql  —  Partie 8 du suivi (quota IA au token réel)
+-- SQL_SeedPricingPlanTokenQuotas.sql   Partie 8 du suivi (quota IA au token réel)
 --                                         révisé en 8.10 (limites session / semaine)
 --
 -- ⚠⚠ ORDRE DE DÉPLOIEMENT OBLIGATOIRE ⚠⚠

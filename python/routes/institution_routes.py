@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 
 # Module 20 : contrôle de rôle ajouté sur les endpoints destinés à
-# l'institution, jusqu'ici protégés par la seule authentification — n'importe
+# l'institution, jusqu'ici protégés par la seule authentification n'importe
 # quel compte authentifié pouvait lire le benchmark ou la liste des élèves à
 # risque d'un établissement.
 #

@@ -42,10 +42,17 @@ public class CourseEnrollmentController : ControllerBase
             if (course == null || course.Status != "published")
                 return NotFound(new { error = "Formation introuvable" });
 
-            // Déjà inscrit ?
-            var already = await _db.CourseEnrollments.AnyAsync(
-                e => e.UserId == userId && e.CourseId == id);
-            if (already)
+            // Déjà inscrit ? Seule une inscription active compte : depuis la
+            // décision 10.11, l'approbation d'un remboursement (ou la fin de
+            // l'abonnement remboursé) désactive l'inscription au lieu de la
+            // supprimer, pour garder la progression. Sans cette distinction, un
+            // rachat ou un réabonnement renvoyait « Déjà inscrit » sur une
+            // inscription inactive, que le lecteur refuse.
+            var existingActive = await _db.CourseEnrollments
+                .Where(e => e.UserId == userId && e.CourseId == id)
+                .Select(e => (bool?)e.IsActive)
+                .FirstOrDefaultAsync();
+            if (existingActive == true)
                 return Ok(new { message = "Déjà inscrit", alreadyEnrolled = true });
 
             // Vérifier l'accès
@@ -59,8 +66,8 @@ public class CourseEnrollmentController : ControllerBase
                 // Règle unique (ContentAccessService) : abonnement non
                 // supprimé, actif, de statut "active", et surtout porté par un
                 // plan payant. Le test local précédent ne regardait que
-                // IsActive : un abonnement sur un plan gratuit — créable sans
-                // paiement — ouvrait donc les formations réservées aux abonnés.
+                // IsActive : un abonnement sur un plan gratuit créable sans
+                // paiement ouvrait donc les formations réservées aux abonnés.
                 var hasSub = await _contentAccess.HasActiveSubscriptionAsync(userId);
                 if (!hasSub)
                     return BadRequest(new { error = "Abonnement Premium requis pour accéder à cette formation" });
@@ -76,6 +83,23 @@ public class CourseEnrollmentController : ControllerBase
                 if (!paid)
                     return BadRequest(new { error = "Veuillez acheter cette formation avant de vous inscrire" });
                 accessType = "purchase";
+            }
+
+            if (existingActive == false)
+            {
+                // Index unique (UserId, CourseId) : on réactive la ligne
+                // existante, progression conservée, avec le nouveau motif
+                // d'accès. Mise à jour ciblée, sans matérialiser l'entité.
+                await _db.CourseEnrollments
+                    .Where(e => e.UserId == userId && e.CourseId == id && !e.IsActive)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(e => e.IsActive, true)
+                        .SetProperty(e => e.AccessType, accessType));
+
+                _logger.LogInformation("User {UserId} re-enrolled in course {CourseId} ({AccessType})",
+                    userId, id, accessType);
+
+                return Ok(new { message = "Inscription réactivée", accessType });
             }
 
             _db.CourseEnrollments.Add(new CourseEnrollment

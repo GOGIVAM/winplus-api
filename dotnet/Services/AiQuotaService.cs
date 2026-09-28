@@ -6,7 +6,7 @@ using Npgsql;
 namespace Backend.Services;
 
 /// <summary>
-/// Règle unique du quota WinAI — <b>Partie 8 du suivi, révisée en 8.10</b>.
+/// Règle unique du quota WinAI <b>Partie 8 du suivi, révisée en 8.10</b>.
 ///
 /// - <b>8.1 Unité</b> : tokens LLM réels (input+output), journalisés dans
 ///   <see cref="AiTokenUsage"/> (une ligne par message utilisateur).
@@ -201,7 +201,7 @@ public class AiQuotaService : IAiQuotaService
     private async Task<(int Personal, int ParentBonus, int InstitutionBonus)> ResolveReferenceAsync(
         int userId, CancellationToken ct)
     {
-        // 1. Plan personnel — sans abonnement payant : référence gratuite (8.4).
+        // 1. Plan personnel sans abonnement payant : référence gratuite (8.4).
         var ownSub = await GetActivePaidSubscriptionAsync(userId, ct);
         int personal = ownSub is null
             ? AiUsagePolicy.FreeTierReferenceTokens
@@ -312,7 +312,7 @@ public class AiQuotaService : IAiQuotaService
         }
         catch (Exception ex) when (IsMissingSchema(ex))
         {
-            // Point C : table (ou colonne) absente — script SQL pas encore
+            // Point C : table (ou colonne) absente script SQL pas encore
             // passé. On ne fait pas tomber GET /subscriptions/me : état par
             // défaut, sans consommation, signalé par UsageUnavailable.
             _logger.LogWarning(
@@ -394,7 +394,7 @@ public class AiQuotaService : IAiQuotaService
                         if (taken > 0)
                         {
                             _logger.LogInformation(
-                                "Quota WinAI : message {MessageId} rattaché à sa réserve ouverte (utilisateur {UserId}, chemin {Source}) — pas de second décompte",
+                                "Quota WinAI : message {MessageId} rattaché à sa réserve ouverte (utilisateur {UserId}, chemin {Source}) pas de second décompte",
                                 clientId, userId, source);
                             return new AiQuotaDecision(AiQuotaOutcome.Reattached, clientId, attemptId, null, null);
                         }
@@ -406,7 +406,7 @@ public class AiQuotaService : IAiQuotaService
                         // Point A : identifiant déjà finalisé ou trop ancien. Il
                         // n'ouvre plus rien ; la requête est un nouveau message.
                         _logger.LogInformation(
-                            "Quota WinAI : identifiant {MessageId} déjà consommé (finalisé ou > {Minutes} min) pour l'utilisateur {UserId} — décompté comme nouveau message",
+                            "Quota WinAI : identifiant {MessageId} déjà consommé (finalisé ou > {Minutes} min) pour l'utilisateur {UserId} décompté comme nouveau message",
                             clientId, AiUsagePolicy.ReplayWindowMinutes, userId);
                         clientId = null;
                         messageId = NewId();
