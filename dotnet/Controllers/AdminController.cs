@@ -26,8 +26,9 @@ public class AdminController : ControllerBase
     private readonly IStorageService _storage;
     private readonly IEmailService _email;
     private readonly IFastApiClient _fastApi;
+    private readonly INotificationPreferenceService _notificationPreferences;
 
-    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ApplicationDbContext db, IConfiguration configuration, IHttpClientFactory httpClientFactory, IStorageService storage, IEmailService email, IFastApiClient fastApi)
+    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ApplicationDbContext db, IConfiguration configuration, IHttpClientFactory httpClientFactory, IStorageService storage, IEmailService email, IFastApiClient fastApi, INotificationPreferenceService notificationPreferences)
     {
         _adminService = adminService;
         _logger = logger;
@@ -37,6 +38,7 @@ public class AdminController : ControllerBase
         _storage = storage;
         _email = email;
         _fastApi = fastApi;
+        _notificationPreferences = notificationPreferences;
     }
 
     private HttpClient PyClient() => _httpClientFactory.CreateClient("FastApiClient");
@@ -127,77 +129,11 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Bloque un utilisateur
-    /// </summary>
-    /// <param name="userId">ID de l'utilisateur à bloquer</param>
-    /// <returns>Résultat de l'opération</returns>
-    /// <response code="200">Utilisateur bloqué avec succès</response>
-    /// <response code="400">Requête invalide</response>
-    /// <response code="401">Non autorisé</response>
-    /// <response code="404">Utilisateur non trouvé</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpPost("user/{userId}/block")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> BlockUser(int userId)
-    {
-        try
-        {
-            if (userId <= 0)
-                return BadRequest(new { error = "Invalid user ID" });
-
-            var result = await _adminService.BlockUserAsync(userId);
-            if (!result)
-                return NotFound(new { error = "User not found" });
-
-            return Ok(new { message = "User blocked successfully" });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error blocking user: {UserId}", userId);
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
-
-    /// <summary>
-    /// Débloque un utilisateur
-    /// </summary>
-    /// <param name="userId">ID de l'utilisateur à débloquer</param>
-    /// <returns>Résultat de l'opération</returns>
-    /// <response code="200">Utilisateur débloqué avec succès</response>
-    /// <response code="400">Requête invalide</response>
-    /// <response code="401">Non autorisé</response>
-    /// <response code="404">Utilisateur non trouvé</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpPost("user/{userId}/unblock")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> UnblockUser(int userId)
-    {
-        try
-        {
-            if (userId <= 0)
-                return BadRequest(new { error = "Invalid user ID" });
-
-            var result = await _adminService.UnblockUserAsync(userId);
-            if (!result)
-                return NotFound(new { error = "User not found" });
-
-            return Ok(new { message = "User unblocked successfully" });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error unblocking user: {UserId}", userId);
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
+    // Module 41 (décision §5.5.N) : les routes POST admin/user/{userId}/block et
+    // /unblock ont été supprimées. Sans aucun appelant (web, mobile, tests,
+    // Python), elles doublonnaient la suspension d'AdminUsersController
+    // (POST /admin/users/{id}/suspend | /reactivate), qui révoque les sessions
+    // et trace l'administrateur, ce que le blocage ne faisait pas.
 
     /// <summary>
     /// Récupère le dashboard admin
@@ -841,6 +777,7 @@ public class AdminController : ControllerBase
         try
         {
             List<string> emails;
+            var optedOut = 0;
             if (request.Target == "custom")
             {
                 if (string.IsNullOrWhiteSpace(request.CustomEmail))
@@ -857,11 +794,19 @@ public class AdminController : ControllerBase
                     _          => _db.Users.Where(u => u.IsActive && !u.IsDeleted).Select(u => u.Email),
                 };
                 emails = await emailQuery.Distinct().ToListAsync();
+
+                // Module 22 : une diffusion de masse relève de la préférence
+                // « Newsletter » (et « Notifications par e-mail »). La cible
+                // « custom » (adresse saisie par l'administrateur) n'est pas filtrée.
+                // HYPOTHÈSE À VALIDER : rattachement des diffusions à « Newsletter ».
+                var allowed = await _notificationPreferences.FilterEmailsAsync(emails, NotificationCategory.Newsletters);
+                optedOut = emails.Count - allowed.Count;
+                emails = allowed;
             }
 
             var count = emails.Count;
             if (count == 0)
-                return Ok(new { success = true, recipientCount = 0, sent = 0, failed = 0, message = "Aucun destinataire trouvé." });
+                return Ok(new { success = true, recipientCount = 0, sent = 0, failed = 0, optedOut, message = optedOut > 0 ? $"Aucun destinataire : {optedOut} utilisateur(s) ont désactivé ces e-mails." : "Aucun destinataire trouvé." });
 
             _logger.LogInformation(
                 "Admin email broadcast: target={Target}, recipients={Count}, subject={Subject}",
@@ -899,7 +844,9 @@ public class AdminController : ControllerBase
                 recipientCount = count,
                 sent,
                 failed,
-                message        = $"Email envoyé à {sent} destinataire(s)." + (failed > 0 ? $" ({failed} échec(s))" : ""),
+                optedOut,
+                message        = $"Email envoyé à {sent} destinataire(s)." + (failed > 0 ? $" ({failed} échec(s))" : "")
+                                 + (optedOut > 0 ? $" {optedOut} utilisateur(s) exclu(s) selon leurs préférences." : ""),
             });
         }
         catch (Exception ex)

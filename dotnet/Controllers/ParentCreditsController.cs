@@ -392,9 +392,18 @@ public class ParentCreditsController : ControllerBase
                     SubjectId = subject.Id
                 });
 
+            }
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            if (payWithCredits)
+            {
                 // Passe par PublishAsync (ntfy + DB) plutôt qu'un Notifications.Add direct :
                 // sans ça, aucun événement SSE n'était jamais émis, donc l'enfant ne
                 // voyait jamais ce contenu offert avant de recharger la page manuellement.
+                // Module 22 : envoyée APRÈS la validation de la transaction, pour que
+                // l'enfant ne soit jamais prévenu d'un achat finalement annulé.
                 await _ntfy.PublishAsync(
                     topic: $"winplus-user-{request.ChildId}",
                     title: "Nouveau contenu disponible",
@@ -405,9 +414,6 @@ public class ParentCreditsController : ControllerBase
                     relatedEntityType: "subject",
                     relatedEntityId: subject.Id);
             }
-
-            await _db.SaveChangesAsync();
-            await tx.CommitAsync();
 
             return Ok(new
             {

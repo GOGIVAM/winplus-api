@@ -70,17 +70,72 @@ namespace Backend.Tests
         }
 
         [Fact]
-        public async Task GetRecommendations_WithValidResponse_ParsesBody()
+        public async Task GenerateLearningPath_WithSnakeCaseResponse_ParsesPhases()
         {
+            // Forme réelle de GET /api/learning-path/{user_id} (schemas.py).
             var handler = new ScriptedHandler().Then(HttpStatusCode.OK,
-                "{\"userId\":7,\"recommendations\":[{\"subjectId\":3,\"subjectName\":\"Maths\",\"matchScore\":0.9}]}");
+                "{\"success\":true,\"user_id\":7,\"learning_velocity\":1.5,\"total_duration_days\":42," +
+                "\"estimated_end_date\":\"2026-11-10\",\"generated_at\":\"2026-09-28T10:00:00\"," +
+                "\"phases\":[{\"phase\":1,\"name\":\"Fondations\",\"duration_days\":14,\"focus_areas\":[\"Algèbre\"]," +
+                "\"difficulty\":\"facile\",\"target_completion\":30.0,\"actions\":[\"Réviser\"]}]," +
+                "\"recommendations\":{\"daily_study_time\":\"45 min\",\"focus_areas\":[],\"growth_areas\":[]}}");
             var client = CreateClient(handler);
 
-            var result = await client.GetRecommendationsAsync(7, "beginner", "math");
+            var result = await client.GenerateLearningPathAsync(7);
 
-            Assert.Equal(7, result.UserId);
-            Assert.Single(result.Recommendations);
-            Assert.Equal("Maths", result.Recommendations[0].SubjectName);
+            Assert.NotNull(result);
+            Assert.Equal(7, result!.UserId);
+            Assert.Equal(42, result.TotalDurationDays);
+            var phase = Assert.Single(result.Phases);
+            Assert.Equal(14, phase.DurationDays);
+            Assert.Equal("Algèbre", Assert.Single(phase.FocusAreas));
+            Assert.Equal("45 min", result.Recommendations!.DailyStudyTime);
+            Assert.Equal("/api/learning-path/7", handler.Requests[0].RequestUri!.AbsolutePath);
+        }
+
+        [Fact]
+        public async Task GenerateLearningPath_WhenPythonReturns404_ReturnsNullWithoutRetry()
+        {
+            var handler = new ScriptedHandler().Then(HttpStatusCode.NotFound, "{\"detail\":\"Données insuffisantes\"}");
+            var client = CreateClient(handler);
+
+            Assert.Null(await client.GenerateLearningPathAsync(7));
+            Assert.Single(handler.Requests);
+        }
+
+        [Fact]
+        public async Task GetAsync_WithSnakeCaseOptions_BindsSnakeCaseFields()
+        {
+            var handler = new ScriptedHandler().Then(HttpStatusCode.OK, "{\"user_id\":3,\"weak_areas\":[\"Physique\"]}");
+            var client = CreateClient(handler);
+
+            var withDefault = await client.GetAsync<SnakeProbe>("/x");
+            handler.Then(HttpStatusCode.OK, "{\"user_id\":3,\"weak_areas\":[\"Physique\"]}");
+            var withSnake = await client.GetAsync<SnakeProbe>("/x", FastApiClient.SnakeCaseJson);
+
+            // Défaut historique : insensible à la casse seulement, user_id ne se lie pas.
+            Assert.Equal(0, withDefault!.UserId);
+            Assert.Equal(3, withSnake!.UserId);
+            Assert.Equal("Physique", Assert.Single(withSnake.WeakAreas));
+        }
+
+        public class SnakeProbe
+        {
+            public int UserId { get; set; }
+            public List<string> WeakAreas { get; set; } = new();
+        }
+
+        [Fact]
+        public async Task PostRawJson_ReturnsStatusAndBody_ForNonSuccess()
+        {
+            var handler = new ScriptedHandler().Then(HttpStatusCode.NotFound, "{\"detail\":\"Aucun enrollment\"}");
+            var client = CreateClient(handler);
+
+            var (status, body) = await client.PostRawJsonAsync("/api/analyze-progress?user_id=1", null);
+
+            Assert.Equal(404, status);
+            Assert.Contains("Aucun enrollment", body);
+            Assert.Equal("user_id=1", handler.Requests[0].RequestUri!.Query.TrimStart('?'));
         }
 
         [Fact]

@@ -53,10 +53,10 @@ public record AdminAffiliateAccountDto(
     DateTime? LastRateUpdateAt);
 
 /// <summary>
-/// Métriques envoyées à WinAI (FastAPI, /api/affiliate/commission-rate) pour
-/// déterminer le taux de commission personnalisé d'un affilié. Voir
-/// AffiliateService.ComputeHeuristicRate pour le repli local si le service
-/// IA est indisponible.
+/// Signaux d'un affilié utilisés par AffiliateService.ComputeHeuristicRate
+/// pour recalculer son taux de commission. Module 23 : ils étaient aussi
+/// envoyés à une route WinAI (/api/affiliate/commission-rate) qui n'a jamais
+/// existé côté Python ; cet appel mort et sa réponse ont été retirés.
 /// </summary>
 public record AffiliateRateSignals(
     int AffiliateUserId,
@@ -69,4 +69,3 @@ public record AffiliateRateSignals(
     decimal CurrentRate,
     decimal CapPercent);
 
-public record AffiliateRateResponse(decimal RecommendedRatePercent, string? Reasoning);

@@ -662,6 +662,17 @@ public class ParentController : ControllerBase
         }
     }
 
+    // Module 41 : GET /api/parent/alerts et PUT /api/parent/alerts/{id}/read
+    // doublonnent ParentAlertController (GET /api/parent-alerts/{childId},
+    // PATCH /api/parent-alerts/{id}/read), seul contrôleur appelé par le web
+    // (parentExtraService) et par le mobile actuel (parent_service.dart). Ces
+    // deux routes lisent la table Notifications filtrée sur Type="ParentAlert",
+    // que plus rien n'écrit : elles renvoient une liste vide en pratique.
+    // CONSERVÉES VOLONTAIREMENT : les versions mobiles antérieures au commit
+    // mobile d0bc89f (2026-09-18) les appellent encore ; les supprimer ferait
+    // échouer l'écran d'alertes de ces versions au lieu d'afficher une liste
+    // vide. Suppression à décider une fois ces versions retirées.
+
     /// <summary>GET /api/parent/alerts  alertes WinAI pour tous les enfants du parent.</summary>
     [HttpGet("alerts")]
     public async Task<IActionResult> GetAlerts()

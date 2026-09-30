@@ -150,24 +150,3 @@ public class AdminDashboardResponse
     public string SystemHealthStatus { get; set; } = "Healthy";
     public DateTime LastUpdated { get; set; }
 }
-
-/// <summary>
-/// DTO pour bloquer/débloquer un utilisateur
-/// </summary>
-public class BlockUserRequest
-{
-    [Required]
-    public int UserId { get; set; }
-
-    [MaxLength(500)]
-    public string? Reason { get; set; }
-}
-
-/// <summary>
-/// Réponse pour l'action de blocage
-/// </summary>
-public class BlockUserResponse
-{
-    public bool Success { get; set; }
-    public string Message { get; set; } = "";
-}

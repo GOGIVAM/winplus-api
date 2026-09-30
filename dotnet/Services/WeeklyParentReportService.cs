@@ -119,6 +119,7 @@ public sealed class WeeklyParentReportService : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var email = scope.ServiceProvider.GetRequiredService<IEmailService>();
+        var preferences = scope.ServiceProvider.GetRequiredService<INotificationPreferenceService>();
 
         // Find all parents with weeklyReport enabled in their Bio JSON
         var parents = await db.Users
@@ -131,6 +132,10 @@ public sealed class WeeklyParentReportService : BackgroundService
 
             // Check if weekly report is enabled in Bio settings
             if (!IsWeeklyReportEnabled(parent.Bio)) continue;
+
+            // Module 22 : e-mail non transactionnel, soumis à la préférence
+            // « Notifications par e-mail » (vérifiée avant l'appel WinAI).
+            if (!await preferences.AllowsAsync(parent.Id, NotificationChannel.Email, NotificationCategory.General, ct)) continue;
 
             try
             {

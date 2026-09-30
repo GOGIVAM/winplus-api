@@ -32,7 +32,7 @@ public class PresenceTrackingMiddleware
         _logger = logger;
     }
 
-    public async Task InvokeAsync(HttpContext context, ApplicationDbContext db)
+    public async Task InvokeAsync(HttpContext context, IServiceScopeFactory scopeFactory)
     {
         await _next(context);
 
@@ -52,6 +52,13 @@ public class PresenceTrackingMiddleware
 
         try
         {
+            // Module 22 : contexte de données DÉDIÉ. Le SaveChangesAsync se faisait
+            // sur le contexte de la requête, après le contrôleur : toute
+            // modification laissée non enregistrée par un contrôleur (par exemple
+            // un contrôleur qui capture son erreur et renvoie 400/500 sans
+            // enregistrer) était validée ici, à son insu.
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var session = await db.UserSessions
                 .Where(s => s.UserId == userId && s.IsActive && s.UserAgent == userAgent)
                 .OrderByDescending(s => s.LastActivityAt)

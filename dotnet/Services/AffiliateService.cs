@@ -25,14 +25,12 @@ public class AffiliateService : IAffiliateService
 {
     private readonly ApplicationDbContext _db;
     private readonly IConfiguration _configuration;
-    private readonly IFastApiClient _fastApi;
     private readonly ILogger<AffiliateService> _logger;
 
-    public AffiliateService(ApplicationDbContext db, IConfiguration configuration, IFastApiClient fastApi, ILogger<AffiliateService> logger)
+    public AffiliateService(ApplicationDbContext db, IConfiguration configuration, ILogger<AffiliateService> logger)
     {
         _db = db;
         _configuration = configuration;
-        _fastApi = fastApi;
         _logger = logger;
     }
 
@@ -290,12 +288,15 @@ public class AffiliateService : IAffiliateService
     }
 
     /// <summary>
-    /// Recalcule le taux de commission de chaque affilié actif. Tente d'abord
-    /// WinAI (FastAPI, /api/affiliate/commission-rate) pour une analyse
-    /// approfondie du profil ; si le service est indisponible ou ne répond
-    /// pas encore (endpoint pas déployé côté Python), retombe sur
-    /// <see cref="ComputeHeuristicRate"/>  jamais bloquant, jamais au-dessus
-    /// du plafond admin.
+    /// Recalcule le taux de commission de chaque affilié actif avec
+    /// <see cref="ComputeHeuristicRate"/>, jamais au-dessus du plafond admin.
+    ///
+    /// Module 23 : un appel à WinAI (POST /api/affiliate/commission-rate)
+    /// précédait l'heuristique, mais cette route n'a jamais existé côté Python :
+    /// chaque exécution échouait (sans jeton, en tâche de fond) puis retombait
+    /// sur l'heuristique. L'appel mort est retiré ; le comportement réel est
+    /// inchangé. Confier le taux à WinAI reste une décision produit à prendre
+    /// (route Python à construire, et jeton technique de périmètre dédié).
     /// </summary>
     public async Task RecalculateAllRatesAsync(CancellationToken ct = default)
     {
@@ -308,11 +309,7 @@ public class AffiliateService : IAffiliateService
             try
             {
                 var signals = await BuildSignalsAsync(account, settings, ct);
-                var aiResponse = await _fastApi.PostAsync<AffiliateRateResponse>("/api/affiliate/commission-rate", signals);
-
-                var newRate = aiResponse != null
-                    ? Math.Clamp(aiResponse.RecommendedRatePercent, 0, settings.CommissionRateCapPercent)
-                    : ComputeHeuristicRate(signals);
+                var newRate = ComputeHeuristicRate(signals);
 
                 account.CommissionRate = newRate;
                 account.LastRateUpdateAt = DateTime.UtcNow;

@@ -95,6 +95,7 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var email = scope.ServiceProvider.GetRequiredService<IEmailService>();
+        var preferences = scope.ServiceProvider.GetRequiredService<INotificationPreferenceService>();
 
         // Find all active institution users (Role = "institution", §7.5)
         var institutions = await db.Users
@@ -107,6 +108,9 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
         foreach (var inst in institutions)
         {
             if (ct.IsCancellationRequested) break;
+            // Module 22 : e-mail non transactionnel, soumis à la préférence
+            // « Notifications par e-mail » (vérifiée avant l'appel WinAI).
+            if (!await preferences.AllowsAsync(inst.Id, NotificationChannel.Email, NotificationCategory.General, ct)) continue;
             try
             {
                 await SendMonthlyReportAsync(inst.Id, inst.Email, inst.FirstName ?? "Directeur", db, email, ct);

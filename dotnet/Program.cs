@@ -504,6 +504,9 @@ builder.Services.AddScoped<INotchPayService, NotchPayService>();
 
 // Forum
 builder.Services.AddScoped<IForumService, ForumService>();
+// Module 22 : point unique de lecture des préférences de notification
+// (contexte de données propre, jamais celui de l'appelant).
+builder.Services.AddSingleton<INotificationPreferenceService, NotificationPreferenceService>();
 builder.Services.AddScoped<INtfyService, NtfyService>();
 builder.Services.AddScoped<ISmartNotificationService, SmartNotificationService>();
 

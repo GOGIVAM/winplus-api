@@ -783,6 +783,49 @@ namespace Backend.Controllers;
         }
 
         /// <summary>
+        /// POST /api/ai/adaptive-quiz → Python POST /api/adaptive-quiz.
+        /// Module 25 : QuizHubMain.tsx (pythonAI.generateAdaptiveQuiz) appelait
+        /// cette route, qui n'existait pas côté .NET : 404 systématique sur le
+        /// bouton « Quiz adaptatif ». Relais brut, comme /ai/learning-path.
+        /// user_id est imposé à l'utilisateur connecté : Python s'en sert pour
+        /// lire les lacunes réelles de l'élève, il ne doit pas pouvoir viser un autre compte.
+        /// </summary>
+        [HttpPost("adaptive-quiz")]
+        [ProducesResponseType(200)]
+        [ProducesResponseType(400)]
+        [ProducesResponseType(401)]
+        public async Task<IActionResult> GenerateAdaptiveQuiz([FromBody] System.Text.Json.Nodes.JsonObject body)
+        {
+            if (body == null) return BadRequest(new { message = "Corps de requête manquant" });
+            body["user_id"] = GetCurrentUserId();
+
+            var (statusCode, content) = await _fastApiClient.PostRawJsonAsync("/api/adaptive-quiz", body);
+            if (statusCode is < 200 or >= 300)
+                _logger.LogWarning("Quiz adaptatif WinAI en échec : HTTP {Status} {Body}", statusCode, content);
+            return RelayPython(statusCode, content);
+        }
+
+        /// <summary>
+        /// POST /api/ai/learning-style → Python POST /api/learning-style.
+        /// Module 25 : LearningStyleQuiz.tsx appelait cette route inexistante et
+        /// retombait en silence sur un calcul local, qui renvoyait toujours
+        /// « lecteur/scripteur » (lettre V/A/R/K comparée à des noms de styles).
+        /// </summary>
+        [HttpPost("learning-style")]
+        [ProducesResponseType(200)]
+        [ProducesResponseType(400)]
+        [ProducesResponseType(401)]
+        public async Task<IActionResult> AnalyzeLearningStyle([FromBody] System.Text.Json.Nodes.JsonObject body)
+        {
+            if (body == null) return BadRequest(new { message = "Corps de requête manquant" });
+
+            var (statusCode, content) = await _fastApiClient.PostRawJsonAsync("/api/learning-style", body);
+            if (statusCode is < 200 or >= 300)
+                _logger.LogWarning("Analyse de style d'apprentissage WinAI en échec : HTTP {Status} {Body}", statusCode, content);
+            return RelayPython(statusCode, content);
+        }
+
+        /// <summary>
         /// POST /api/ai/study-session/generate
         /// Proxy → Python /api/study-session/generate
         /// </summary>

@@ -80,7 +80,9 @@ public class WithdrawalsController : ControllerBase
             await _ntfy.PublishAdminAsync("Retrait à traiter manuellement",
                 $"Retrait #{withdrawal.Id} : {req.Amount:0} XAF vers {req.Phone} ({op.ToUpperInvariant()} MoMo) pour l'utilisateur #{userId}. " +
                 "Effectuer le virement Mobile Money puis marquer le retrait comme traité.",
-                tags: new[] { "moneybag" });
+                tags: new[] { "moneybag" },
+                // Module 22 : trace persistée pour chaque administrateur, rattachée au retrait.
+                type: "Withdrawal", relatedEntityType: "Withdrawal", relatedEntityId: withdrawal.Id);
 
             return Ok(new { id = withdrawal.Id, status = withdrawal.Status });
         }

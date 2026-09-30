@@ -50,6 +50,7 @@ public sealed class CourseInactivityAlertService : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var ntfy = scope.ServiceProvider.GetRequiredService<INtfyService>();
         var httpFactory = scope.ServiceProvider.GetRequiredService<IHttpClientFactory>();
+        var serviceToken = scope.ServiceProvider.GetRequiredService<IServiceTokenProvider>();
 
         var courses = await db.Courses.AsNoTracking()
             .Where(c => c.Status == "published")
@@ -90,7 +91,7 @@ public sealed class CourseInactivityAlertService : BackgroundService
                         userId: course.InstructorId, type: "CourseInactivity");
                 }
 
-                await DetectDropoutAsync(db, httpFactory, course.Id, course.Title, enrollments.Select(e => (e.UserId, e.Name, e.EnrolledAt)).ToList(), lastProgressByUser, now, ct);
+                await DetectDropoutAsync(db, httpFactory, serviceToken, course.Id, course.Title, enrollments.Select(e => (e.UserId, e.Name, e.EnrolledAt)).ToList(), lastProgressByUser, now, ct);
             }
             catch (Exception ex)
             {
@@ -108,6 +109,7 @@ public sealed class CourseInactivityAlertService : BackgroundService
     private async Task DetectDropoutAsync(
         ApplicationDbContext db,
         IHttpClientFactory httpFactory,
+        IServiceTokenProvider serviceToken,
         int courseId,
         string courseTitle,
         List<(int UserId, string Name, DateTime EnrolledAt)> enrollments,
@@ -167,15 +169,29 @@ public sealed class CourseInactivityAlertService : BackgroundService
             {
                 Content = JsonContent.Create(payload),
             };
+            // Module 36 : même jeton technique que les autres tâches de fond
+            // (Module 23, ServiceTokenProvider), périmètre « ai.decrochage ».
+            // La route Python était publique faute de jeton ; elle exige
+            // désormais ce périmètre et rien d'autre.
+            req.Headers.TryAddWithoutValidation("Authorization", serviceToken.CreateAuthorizationHeader(ServiceScopes.Decrochage));
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(20));
             var res = await client.SendAsync(req, cts.Token);
-            if (!res.IsSuccessStatusCode) return;
+            if (!res.IsSuccessStatusCode)
+            {
+                // Auparavant un simple « return » muet : l'échec n'apparaissait nulle part.
+                var errorBody = await res.Content.ReadAsStringAsync(cts.Token);
+                if (res.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+                    _logger.LogError("detection-decrochage : authentification service à service refusée par Python ({Status}) pour la formation {CourseId} : {Body}", (int)res.StatusCode, courseId, errorBody);
+                else
+                    _logger.LogWarning("detection-decrochage : Python a répondu {Status} pour la formation {CourseId} : {Body}", (int)res.StatusCode, courseId, errorBody);
+                return;
+            }
             root = await res.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cts.Token);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            _logger.LogWarning(ex, "detection-decrochage call failed for course {CourseId}", courseId);
+            _logger.LogWarning(ex, "detection-decrochage : appel impossible pour la formation {CourseId}", courseId);
             return;
         }
 

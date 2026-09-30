@@ -12,8 +12,6 @@ public interface IAdminService
     Task<AdminSubjectListResponse> GetAllSubjectsAsync(int page = 1, int limit = 50);
     Task<AdminOrderListResponse> GetAllOrdersAsync(int page = 1, int limit = 50);
     Task<AdminSystemStatsResponse> GetSystemStatisticsAsync();
-    Task<bool> BlockUserAsync(int userId);
-    Task<bool> UnblockUserAsync(int userId);
     Task<AdminDashboardResponse> GetAdminDashboardAsync();
 }
 
@@ -179,62 +177,6 @@ public class AdminService : IAdminService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting system statistics");
-            throw;
-        }
-    }
-
-    /// <summary>
-    /// Bloque un utilisateur
-    /// </summary>
-    public async Task<bool> BlockUserAsync(int userId)
-    {
-        try
-        {
-            var user = await _userRepository.GetByIdAsync(userId);
-            if (user == null)
-            {
-                _logger.LogWarning("User not found for blocking: {UserId}", userId);
-                return false;
-            }
-
-            user.IsActive = false;
-            user.UpdatedAt = DateTime.UtcNow;
-            await _userRepository.UpdateAsync(user);
-            
-            _logger.LogWarning("User blocked: {UserId}", userId);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error blocking user: {UserId}", userId);
-            throw;
-        }
-    }
-
-    /// <summary>
-    /// Débloque un utilisateur
-    /// </summary>
-    public async Task<bool> UnblockUserAsync(int userId)
-    {
-        try
-        {
-            var user = await _userRepository.GetByIdAsync(userId);
-            if (user == null)
-            {
-                _logger.LogWarning("User not found for unblocking: {UserId}", userId);
-                return false;
-            }
-
-            user.IsActive = true;
-            user.UpdatedAt = DateTime.UtcNow;
-            await _userRepository.UpdateAsync(user);
-            
-            _logger.LogInformation("User unblocked: {UserId}", userId);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error unblocking user: {UserId}", userId);
             throw;
         }
     }
