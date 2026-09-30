@@ -140,7 +140,9 @@ builder.Services.AddCors(options =>
             .Get<string[]>() ?? new[]
             {
                 "http://localhost:3000",
-                "http://localhost:5173"
+                "http://localhost:5173",
+                "https://winplus.cm",
+                "https://www.winplus.cm"
             };
         
         policyBuilder
