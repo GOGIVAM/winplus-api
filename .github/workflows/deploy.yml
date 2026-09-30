@@ -1,0 +1,41 @@
+name: Deploy backend
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 56.228.79.206
+          username: ubuntu
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd ~/winplus-repo
+            git pull
+
+            echo "--- Build .NET ---"
+            cd dotnet
+            dotnet publish -c Release -o ~/winplus/dotnet/publish
+            cd ..
+
+            echo "--- Dependances Python ---"
+            cd python
+            source venv/bin/activate
+            pip install -r requirements.txt -q
+            deactivate
+            cd ..
+
+            sudo systemctl daemon-reload
+            sudo systemctl restart winplus-fastapi
+            sleep 2
+            sudo systemctl restart winplus-backend
+            sleep 2
+            sudo systemctl is-active winplus-fastapi
+            sudo systemctl is-active winplus-backend
