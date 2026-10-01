@@ -488,6 +488,31 @@ public class UsersController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Suppression de son propre compte (page Profil → Zone de danger).
+    /// Le front appelait DELETE /api/users/me, qui n'existait pas : la
+    /// suppression échouait systématiquement. Suppression douce, comme
+    /// celle de l'administration (compte désactivé, données conservées
+    /// le temps du délai de rétractation).
+    /// </summary>
+    [HttpDelete("me")]
+    [Authorize]
+    public async Task<IActionResult> DeleteMe()
+    {
+        try
+        {
+            var userId = User.GetUserId();
+            var result = await _userService.SoftDeleteUserAsync(userId, userId);
+            if (!result) return NotFound(new { error = "Compte introuvable." });
+            return Ok(new { success = true, message = "Votre compte a été supprimé." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error self-deleting user");
+            return StatusCode(500, new { error = "La suppression du compte a échoué. Réessayez plus tard." });
+        }
+    }
+
     [HttpDelete("{id:int}")]
     [Authorize(Policy = "AdminOnly")]
     public async Task<IActionResult> Delete(int id)
