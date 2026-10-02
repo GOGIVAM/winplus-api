@@ -139,6 +139,9 @@ public class StudentReportsController : ControllerBase
                     d.SubjectId,
                     title     = d.Subject != null ? d.Subject.Title : null,
                     category  = d.Subject != null ? d.Subject.Category : null,
+                    level     = d.Subject != null ? d.Subject.Level : null,
+                    // Couverture de l'épreuve : la section Téléchargements l'affiche.
+                    thumbnailUrl = d.Subject != null ? d.Subject.ThumbnailUrl : null,
                     price     = d.Subject != null ? (decimal?)d.Subject.Price : null,
                     d.CreatedAt
                 })
