@@ -110,7 +110,8 @@ public class TeachingSessionService : ITeachingSessionService
                     $"<p>Bonjour,</p><p>La session <strong>{session.Title}</strong> prévue le " +
                     $"{session.StartDate:dd/MM/yyyy à HH:mm} a été annulée par le professeur." +
                     (enrollment.PaymentStatus == "paid" ? " Le remboursement de ta place est en cours." : "") +
-                    "</p>");
+                    "</p>",
+                    NotificationCategory.Transactional);
             }
 
             if (enrollment.PaymentStatus == "paid")

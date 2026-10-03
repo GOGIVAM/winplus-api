@@ -1,3 +1,8 @@
+// ATTENTION : ces tests NE couvrent PAS le code de production (aucune reference a
+// dotnet/backend.csproj). Ils portent sur des modeles/interfaces factices definis
+// dans ce projet et verifient surtout le comportement de Moq. Voir AITests.csproj.
+// Les tests reels de production sont dans tests/dotnet/Backend.Tests.
+
 using System;
 using System.Collections.Generic;
 using System.Linq;

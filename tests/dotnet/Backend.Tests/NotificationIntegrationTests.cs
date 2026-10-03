@@ -206,6 +206,42 @@ namespace Backend.Tests
             Assert.False(await prefs.AllowsAsync(2, NotificationChannel.Email, NotificationCategory.Promotions));
         }
 
+        [Fact]
+        public async Task FilterEmails_AppliesPreferencesAndKeepsUnknownAddresses()
+        {
+            SetPreferences(1, s => s.EmailNotifications = false);
+            var prefs = _provider.GetRequiredService<INotificationPreferenceService>();
+
+            var allowed = await prefs.FilterEmailsAsync(
+                new[] { "eleve@test.local", "admin1@test.local", "inconnu@test.local" }, NotificationCategory.General);
+
+            Assert.DoesNotContain("eleve@test.local", allowed);
+            Assert.Contains("admin1@test.local", allowed);
+            Assert.Contains("inconnu@test.local", allowed);
+        }
+
+        /// <summary>
+        /// Partie 12.5 : si les préférences sont illisibles (base indisponible),
+        /// FilterEmailsAsync applique les valeurs par défaut et envoie, comme
+        /// GetSettingsAsync, au lieu de lever et de perdre l'envoi.
+        /// </summary>
+        [Fact]
+        public async Task FilterEmails_WhenPreferencesUnreadable_FallsBackToDefaults()
+        {
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddScoped<ApplicationDbContext>(_ => throw new InvalidOperationException("base indisponible"));
+            services.AddSingleton<INotificationPreferenceService, NotificationPreferenceService>();
+            using var provider = services.BuildServiceProvider();
+            var prefs = provider.GetRequiredService<INotificationPreferenceService>();
+
+            var allowed = await prefs.FilterEmailsAsync(new[] { "a@test.local", "b@test.local" }, NotificationCategory.General);
+            Assert.Equal(new[] { "a@test.local", "b@test.local" }, allowed);
+
+            // Valeurs par défaut de l'entité : Promotions désactivé.
+            Assert.Empty(await prefs.FilterEmailsAsync(new[] { "a@test.local" }, NotificationCategory.Promotions));
+        }
+
         private sealed class RecordingHandler : HttpMessageHandler
         {
             public List<string> Topics { get; } = new();

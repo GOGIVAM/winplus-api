@@ -110,6 +110,9 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
             if (ct.IsCancellationRequested) break;
             // Module 22 : e-mail non transactionnel, soumis à la préférence
             // « Notifications par e-mail » (vérifiée avant l'appel WinAI).
+            // Partie 12.3 : la règle fait foi dans EmailService.SendGenericEmailAsync ;
+            // ce pré-contrôle est conservé pour ne pas payer l'appel WinAI d'un
+            // établissement qui ne recevra pas l'e-mail.
             if (!await preferences.AllowsAsync(inst.Id, NotificationChannel.Email, NotificationCategory.General, ct)) continue;
             try
             {
@@ -233,7 +236,8 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
         await emailService.SendGenericEmailAsync(
             to: institutionEmail,
             subject: $"[WinPlus] Rapport mensuel de pilotage  {monthLabel}",
-            htmlContent: body);
+            htmlContent: body,
+            category: NotificationCategory.General);
 
         _logger.LogInformation(
             "Monthly report sent to {Email} for {Month} ({Students} students).",

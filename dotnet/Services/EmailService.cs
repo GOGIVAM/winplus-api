@@ -15,7 +15,14 @@ public interface IEmailService
     Task<bool> SendPaymentConfirmationAsync(string email, string firstName, decimal amount, string reference, DateTime completedAt, IEnumerable<(string Title, int SubjectId)>? items = null);
     Task<bool> SendSubscriptionExpiryReminderAsync(string email, string firstName, DateTime expiryDate);
     Task<bool> SendPeriodicConfirmationAsync(string email, string firstName, string code);
-    Task<bool> SendGenericEmailAsync(string to, string subject, string htmlContent);
+    /// <summary>
+    /// Envoi d'un e-mail libre. La catégorie est obligatoire : elle décide si les
+    /// préférences de notification du destinataire s'appliquent (tout sauf
+    /// <see cref="NotificationCategory.Transactional"/>). La vérification est faite ici,
+    /// une fois pour tous les émetteurs (Partie 12.3). Renvoie false si l'envoi est
+    /// refusé par les préférences ou par le fournisseur.
+    /// </summary>
+    Task<bool> SendGenericEmailAsync(string to, string subject, string htmlContent, NotificationCategory category);
 }
 
 public class EmailService : IEmailService
@@ -26,12 +33,14 @@ public class EmailService : IEmailService
     private readonly string _logoUrl;
     private readonly string _frontendUrl;
     private readonly ILogger<EmailService> _logger;
+    private readonly INotificationPreferenceService _preferences;
 
     private static readonly JsonSerializerOptions _json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public EmailService(IHttpClientFactory httpClientFactory, IConfiguration configuration, ILogger<EmailService> logger)
+    public EmailService(IHttpClientFactory httpClientFactory, IConfiguration configuration, ILogger<EmailService> logger, INotificationPreferenceService preferences)
     {
         _logger = logger;
+        _preferences = preferences;
         _fromEmail = configuration["Resend:FromEmail"] ?? "support@winplus.cm";
         _fromName  = configuration["Resend:FromName"]  ?? "WinPlus";
         // Le logo est servi par une URL publique, jamais en base64 : Gmail,
@@ -101,7 +110,7 @@ public class EmailService : IEmailService
             isEn ? "Email verification" : "Vérification d'email",
             isEn ? "Verify your email address" : "Vérifie ton adresse email",
             body, _logoUrl);
-        return await SendGenericEmailAsync(email, isEn ? "Your WinPlus verification code" : "Ton code de vérification WinPlus", html);
+        return await SendGenericEmailAsync(email, isEn ? "Your WinPlus verification code" : "Ton code de vérification WinPlus", html, NotificationCategory.Transactional);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -167,7 +176,7 @@ public class EmailService : IEmailService
             isEn ? "Account security" : "Sécurité du compte",
             isEn ? "Reset your password" : "Réinitialise ton mot de passe",
             body, _logoUrl);
-        return await SendGenericEmailAsync(email, isEn ? "Reset your WinPlus password" : "Réinitialisation de votre mot de passe WinPlus", html);
+        return await SendGenericEmailAsync(email, isEn ? "Reset your WinPlus password" : "Réinitialisation de votre mot de passe WinPlus", html, NotificationCategory.Transactional);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -193,7 +202,7 @@ public class EmailService : IEmailService
       </table>";
 
         var html = Wrapper("Sécurité du compte", "Mot de passe modifié", body, _logoUrl);
-        return await SendGenericEmailAsync(email, "Votre mot de passe WinPlus a été modifié", html);
+        return await SendGenericEmailAsync(email, "Votre mot de passe WinPlus a été modifié", html, NotificationCategory.Transactional);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -240,7 +249,7 @@ public class EmailService : IEmailService
       </table>";
 
         var html = Wrapper("Sécurité du compte", "Nouvelle connexion détectée", body, _logoUrl);
-        return await SendGenericEmailAsync(email, "Nouvelle connexion sur votre compte WinPlus", html);
+        return await SendGenericEmailAsync(email, "Nouvelle connexion sur votre compte WinPlus", html, NotificationCategory.Transactional);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -272,7 +281,7 @@ public class EmailService : IEmailService
       {InfoBox("Tu n'as pas tenté de te connecter&nbsp;? Ignore cet e-mail et vérifie la sécurité de ton compte.")}";
 
         var html = Wrapper("Double authentification", "Ton code de connexion", body, _logoUrl);
-        return await SendGenericEmailAsync(email, "Ton code de connexion WinPlus", html);
+        return await SendGenericEmailAsync(email, "Ton code de connexion WinPlus", html, NotificationCategory.Transactional);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -329,7 +338,7 @@ public class EmailService : IEmailService
             isEn ? "Email change" : "Changement d'email",
             isEn ? "Confirm your new address" : "Confirme ta nouvelle adresse",
             body, _logoUrl);
-        return await SendGenericEmailAsync(email, isEn ? "Verify your new WinPlus email" : "Vérification de votre nouvel e-mail WinPlus", html);
+        return await SendGenericEmailAsync(email, isEn ? "Verify your new WinPlus email" : "Vérification de votre nouvel e-mail WinPlus", html, NotificationCategory.Transactional);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -417,7 +426,7 @@ public class EmailService : IEmailService
       </table>";
 
         var html = Wrapper("Paiement", "Paiement confirmé", body, _logoUrl, "#1F9D6E");
-        return await SendGenericEmailAsync(email, $"Reçu de paiement  {formattedAmount} XAF", html);
+        return await SendGenericEmailAsync(email, $"Reçu de paiement  {formattedAmount} XAF", html, NotificationCategory.Transactional);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -453,14 +462,32 @@ public class EmailService : IEmailService
       </table>";
 
         var html = Wrapper("Abonnement", "Ton abonnement expire bientôt", body, _logoUrl);
-        return await SendGenericEmailAsync(email, "Votre abonnement WinPlus expire dans 3 jours", html);
+        // Partie 12.3 : rappel (pas une transaction) soumis à la préférence
+        // « Notifications par e-mail ». HYPOTHÈSE À VALIDER : catégorie General
+        // (canal e-mail seul), comme les rapports parent/institution.
+        return await SendGenericEmailAsync(email, "Votre abonnement WinPlus expire dans 3 jours", html, NotificationCategory.General);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     //  ENVOI GÉNÉRIQUE
     // ─────────────────────────────────────────────────────────────────────────
-    public async Task<bool> SendGenericEmailAsync(string to, string subject, string htmlContent)
+    public async Task<bool> SendGenericEmailAsync(string to, string subject, string htmlContent, NotificationCategory category)
     {
+        // Point unique de vérification des préférences e-mail (Partie 12.3) : tout
+        // envoi traverse cette méthode, les émetteurs n'ont qu'à déclarer la
+        // catégorie. Le transactionnel n'est jamais filtré. FilterEmailsAsync
+        // envoie par défaut si les préférences sont illisibles ou si l'adresse
+        // n'a pas de compte.
+        if (category != NotificationCategory.Transactional)
+        {
+            var allowed = await _preferences.FilterEmailsAsync(new[] { to }, category);
+            if (allowed.Count == 0)
+            {
+                _logger.LogInformation("Email non envoyé à {Email} (sujet: {Subject}) : désactivé par les préférences ({Category})", to, subject, category);
+                return false;
+            }
+        }
+
         try
         {
             var payload = new
@@ -522,7 +549,7 @@ public class EmailService : IEmailService
       </table>";
 
         var html = Wrapper("Vérification de sécurité", "Confirme ton identité", body, _logoUrl);
-        return await SendGenericEmailAsync(email, "Ton code de confirmation WinPlus", html);
+        return await SendGenericEmailAsync(email, "Ton code de confirmation WinPlus", html, NotificationCategory.Transactional);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

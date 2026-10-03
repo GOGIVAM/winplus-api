@@ -57,19 +57,24 @@ public class SubscriptionReminderService : BackgroundService
 
         if (subscriptions.Count == 0) return;
 
+        var sent = 0;
         foreach (var sub in subscriptions)
         {
             if (ct.IsCancellationRequested) break;
             if (sub.User == null) continue;
 
             var firstName = sub.User.FirstName ?? sub.User.Email;
-            await emailService.SendSubscriptionExpiryReminderAsync(
-                sub.User.Email,
-                firstName ?? "",
-                sub.EndDate!.Value);
+            // Partie 12.3 : les préférences e-mail du destinataire sont vérifiées
+            // dans EmailService (point unique) ; false = refusé par les
+            // préférences ou par le fournisseur.
+            if (await emailService.SendSubscriptionExpiryReminderAsync(
+                    sub.User.Email,
+                    firstName ?? "",
+                    sub.EndDate!.Value))
+                sent++;
         }
 
-        _logger.LogInformation("{Count} rappel(s) d'expiration envoyé(s)", subscriptions.Count);
+        _logger.LogInformation("{Sent}/{Count} rappel(s) d'expiration envoyé(s)", sent, subscriptions.Count);
     }
 
     private static TimeSpan TimeUntilNextRun()

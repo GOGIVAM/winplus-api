@@ -142,22 +142,34 @@ public sealed class NotificationPreferenceService : INotificationPreferenceServi
         var list = emails.Where(e => !string.IsNullOrWhiteSpace(e)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (category == NotificationCategory.Transactional || list.Count == 0) return list;
 
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        var lowered = list.Select(e => e.ToLower()).ToList();
-        var users = await db.Users.AsNoTracking()
-            .Where(u => lowered.Contains(u.Email.ToLower()))
-            .Select(u => new { u.Id, u.Email })
-            .ToListAsync(ct);
-        var userIds = users.Select(u => u.Id).ToList();
-        var settingsByUser = (await db.UserNotificationSettings.AsNoTracking()
-                .Where(s => userIds.Contains(s.UserId))
-                .ToListAsync(ct))
-            .GroupBy(s => s.UserId)
-            .ToDictionary(g => g.Key, g => g.First());
-        var byEmail = users
-            .GroupBy(u => u.Email.ToLowerInvariant())
-            .ToDictionary(g => g.Key, g => settingsByUser.GetValueOrDefault(g.First().Id));
+        Dictionary<string, UserNotificationSettings?> byEmail;
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var lowered = list.Select(e => e.ToLower()).ToList();
+            var users = await db.Users.AsNoTracking()
+                .Where(u => lowered.Contains(u.Email.ToLower()))
+                .Select(u => new { u.Id, u.Email })
+                .ToListAsync(ct);
+            var userIds = users.Select(u => u.Id).ToList();
+            var settingsByUser = (await db.UserNotificationSettings.AsNoTracking()
+                    .Where(s => userIds.Contains(s.UserId))
+                    .ToListAsync(ct))
+                .GroupBy(s => s.UserId)
+                .ToDictionary(g => g.Key, g => g.First());
+            byEmail = users
+                .GroupBy(u => u.Email.ToLowerInvariant())
+                .ToDictionary(g => g.Key, g => settingsByUser.GetValueOrDefault(g.First().Id));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Même repli que GetSettingsAsync (Partie 12.5) : préférences
+            // illisibles, on applique les valeurs par défaut plutôt que de perdre
+            // silencieusement l'envoi.
+            _logger.LogWarning(ex, "Préférences de notification illisibles pour un envoi e-mail en lot ({Count} adresse(s)) : valeurs par défaut appliquées", list.Count);
+            byEmail = new Dictionary<string, UserNotificationSettings?>();
+        }
 
         // Une adresse sans compte (cible saisie à la main) n'a pas de préférence :
         // valeurs par défaut.

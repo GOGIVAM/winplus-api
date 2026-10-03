@@ -1,5 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!--
+    ATTENTION : CE PROJET NE TESTE PAS LE CODE DE PRODUCTION.
+    Il n'a aucune ProjectReference vers dotnet/backend.csproj. Les tests de
+    BackendServicesTests.cs et ControllerTests.cs portent sur des modeles et
+    interfaces factices definis dans ces fichiers memes (User/Subject/... a Id int,
+    IUserRepository, etc., qui n'existent pas en production) et verifient
+    essentiellement que Moq renvoie ce qu'on lui a configure.
+    Un resultat "N/N passes" ici ne donne AUCUNE assurance sur le backend reel.
+    Les tests qui couvrent la production sont dans tests/dotnet/Backend.Tests
+    (ProjectReference vers dotnet/backend.csproj).
+    A corriger : reecrire ces tests contre les vrais services, ou supprimer le projet.
+  -->
+
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <IsTestProject>true</IsTestProject>

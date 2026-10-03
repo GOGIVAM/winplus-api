@@ -135,6 +135,9 @@ public sealed class WeeklyParentReportService : BackgroundService
 
             // Module 22 : e-mail non transactionnel, soumis à la préférence
             // « Notifications par e-mail » (vérifiée avant l'appel WinAI).
+            // Partie 12.3 : la règle fait foi dans EmailService.SendGenericEmailAsync ;
+            // ce pré-contrôle est conservé pour ne pas payer les appels WinAI
+            // (rapport + capsule) d'un parent qui ne recevra pas l'e-mail.
             if (!await preferences.AllowsAsync(parent.Id, NotificationChannel.Email, NotificationCategory.General, ct)) continue;
 
             try
@@ -266,7 +269,8 @@ public sealed class WeeklyParentReportService : BackgroundService
         await emailService.SendGenericEmailAsync(
             parentEmail,
             $"Rapport hebdomadaire WinPlus  semaine du {cutoff:dd/MM}",
-            html
+            html,
+            NotificationCategory.General
         );
 
         _logger.LogInformation("Weekly report sent to {Email} ({Children} children).", parentEmail, children.Count);

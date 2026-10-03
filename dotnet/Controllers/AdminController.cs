@@ -799,6 +799,9 @@ public class AdminController : ControllerBase
                 // « Newsletter » (et « Notifications par e-mail »). La cible
                 // « custom » (adresse saisie par l'administrateur) n'est pas filtrée.
                 // HYPOTHÈSE À VALIDER : rattachement des diffusions à « Newsletter ».
+                // Partie 12.3 : la règle fait foi dans EmailService (chaque envoi
+                // ci-dessous la revérifie) ; ce pré-filtre en lot est conservé pour
+                // renvoyer le compteur « optedOut » à l'administrateur.
                 var allowed = await _notificationPreferences.FilterEmailsAsync(emails, NotificationCategory.Newsletters);
                 optedOut = emails.Count - allowed.Count;
                 emails = allowed;
@@ -829,7 +832,7 @@ public class AdminController : ControllerBase
             for (var i = 0; i < emails.Count; i += batchSize)
             {
                 var batch = emails.Skip(i).Take(batchSize);
-                var tasks = batch.Select(addr => _email.SendGenericEmailAsync(addr, request.Subject, htmlBody));
+                var tasks = batch.Select(addr => _email.SendGenericEmailAsync(addr, request.Subject, htmlBody, NotificationCategory.Newsletters));
                 var results = await Task.WhenAll(tasks);
                 sent   += results.Count(r => r);
                 failed += results.Count(r => !r);
@@ -1689,7 +1692,8 @@ public class AdminController : ControllerBase
         {
             _ = _email.SendGenericEmailAsync(email, "Diplôme vérifié  WinPlus",
                 "<p>Bonne nouvelle : ton diplôme a été validé par l'équipe WinPlus. " +
-                "Le badge « Vérifié Diplôme » est maintenant visible sur ton profil répétiteur.</p>");
+                "Le badge « Vérifié Diplôme » est maintenant visible sur ton profil répétiteur.</p>",
+                NotificationCategory.Transactional);
         }
 
         _logger.LogInformation("Admin {AdminId} a approuvé le document de vérification {DocId}", User.GetUserId(), id);
@@ -1716,7 +1720,8 @@ public class AdminController : ControllerBase
         {
             _ = _email.SendGenericEmailAsync(email, "Diplôme non validé  WinPlus",
                 $"<p>Ton document n'a pas pu être validé : <strong>{doc.RejectionReason}</strong>. " +
-                "Tu peux déposer un nouveau document depuis ton profil répétiteur.</p>");
+                "Tu peux déposer un nouveau document depuis ton profil répétiteur.</p>",
+                NotificationCategory.Transactional);
         }
 
         _logger.LogInformation("Admin {AdminId} a rejeté le document de vérification {DocId}", User.GetUserId(), id);
