@@ -313,7 +313,7 @@ builder.Services.AddAuthorization(options =>
     // contrat était implicite), et elle ne prévoyait aucune sortie pour
     // l'administrateur. Appliquée à un flux d'administration, elle aurait
     // verrouillé l'administrateur lui-même si son adresse n'est pas marquée
-    // vérifiée en base — exactement le type de fonctionnalité morte que ce
+    // vérifiée en base exactement le type de fonctionnalité morte que ce
     // projet a déjà produit plusieurs fois.
     options.AddPolicy("VerifiedEmailOnly", policy =>
     {
@@ -365,7 +365,7 @@ builder.Services.AddScoped<IContentAccessService, ContentAccessService>();
 // (GET /api/subscriptions/me) et par l'application réelle du quota
 // (POST /api/chatbot/message et POST /api/chatbot/stream).
 builder.Services.AddScoped<IAiQuotaService, AiQuotaService>();
-// Recharge de quota WinAI (décision 8.5) : point d'extension seulement — la
+// Recharge de quota WinAI (décision 8.5) : point d'extension seulement la
 // recharge réelle dépend du wallet du Module 1/14, pas encore construit.
 builder.Services.AddScoped<ITokenTopUpService, UnavailableTokenTopUpService>();
 
