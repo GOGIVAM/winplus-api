@@ -1,5 +1,6 @@
 using Backend.Data;
 using Backend.Models.Entities;
+using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Services;
 
@@ -60,8 +61,18 @@ public class CoverGenerationService : ICoverGenerationService
                 return new(false, null, "Type de contenu inconnu.");
         }
 
-        var response = await _fastApi.PostAsync<CoverApiResponse>("/api/ai/cover/generate",
-            new { title, description, kind }, null);
+        CoverApiResponse? response;
+        try
+        {
+            response = await _fastApi.PostAsync<CoverApiResponse>("/api/ai/cover/generate",
+                new { title, description, kind }, null);
+        }
+        catch (Exception ex)
+        {
+            // WinAI renvoie 503 si la clé ou le modèle de génération d'image manque.
+            _logger.LogWarning(ex, "Pochette {Kind}/{Id} : appel WinAI échoué", kind, id);
+            response = null;
+        }
         if (response == null || string.IsNullOrEmpty(response.ImageBase64))
         {
             _logger.LogWarning("Pochette {Kind}/{Id} : réponse vide de WinAI", kind, id);
