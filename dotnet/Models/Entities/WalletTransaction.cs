@@ -120,6 +120,48 @@ public static class WalletEntryTypes
 
     /// <summary>Solde d'ouverture (réservé à une reprise par solde unique ; non utilisé par la reprise actuelle, qui rejoue les événements).</summary>
     public const string OpeningBalance = "OpeningBalance";
+
+    // ── Portefeuille parent (Module 14) ────────────────────────────────
+    //
+    // La dotation mensuelle est un crédit expirable (WalletTransaction.ExpiresAt
+    // = fin de période). Plutôt que de filtrer les crédits expirés à la lecture
+    // du solde (ce qui effacerait aussi la part déjà dépensée avant expiration,
+    // et fausserait le solde), une écriture d'expiration explicite
+    // (AllocationExpired) est postée par ParentWalletAllocationExpiryService
+    // pour exactement le reliquat non consommé au moment où la dotation
+    // expire. Le solde reste une simple somme des écritures confirmées,
+    // jamais filtrée par ExpiresAt : c'est l'écriture d'expiration qui rend ce
+    // filtrage inutile, pas une règle de lecture particulière.
+
+    /// <summary>Dotation mensuelle du parent (crédit expirable, voir <see cref="WalletTransaction.ExpiresAt"/>).</summary>
+    public const string MonthlyAllocation = "MonthlyAllocation";
+
+    /// <summary>
+    /// Débit consommant tout ou partie d'une dotation mensuelle encore valide
+    /// (<see cref="WalletTransaction.SourceType"/> = "WalletTransaction",
+    /// <see cref="WalletTransaction.SourceId"/> = identifiant de l'écriture
+    /// <see cref="MonthlyAllocation"/> consommée). Permet de calculer le
+    /// reliquat réellement encore disponible d'une dotation donnée.
+    /// </summary>
+    public const string AllocationConsumption = "AllocationConsumption";
+
+    /// <summary>
+    /// Contre-passation du reliquat non consommé d'une dotation mensuelle
+    /// arrivée à expiration, postée une seule fois par dotation (idempotence
+    /// par <see cref="WalletTransaction.IdempotencyKey"/>).
+    /// </summary>
+    public const string AllocationExpired = "AllocationExpired";
+
+    /// <summary>Achat pour un enfant réglé par la part permanente (recharge) du portefeuille parent.</summary>
+    public const string ParentWalletPurchase = "ParentWalletPurchase";
+
+    /// <summary>
+    /// Crédit à l'acheteur quand un contenu déjà vendu est retiré de la vente
+    /// (Module 21, décision §4.F/§6.4) : toujours par crédit du portefeuille,
+    /// jamais par tentative de remboursement réel vers le moyen de paiement
+    /// d'origine.
+    /// </summary>
+    public const string ContentRemovalRefund = "ContentRemovalRefund";
 }
 
 public static class WalletEntryStatus

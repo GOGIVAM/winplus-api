@@ -31,6 +31,21 @@ public class EnrollmentRepository : GenericRepository<Enrollment>, IEnrollmentRe
         }
     }
 
+    public async Task<Enrollment?> GetAnyByUserAndSubjectAsync(int userId, int subjectId)
+    {
+        try
+        {
+            return await Context.Set<Enrollment>()
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(e => e.UserId == userId && e.SubjectId == subjectId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error getting any enrollment (incl. deleted) for user {UserId} and subject {SubjectId}", userId, subjectId);
+            return null;
+        }
+    }
+
     public async Task<IEnumerable<Enrollment>> GetByUserIdAsync(int userId)
     {
         try

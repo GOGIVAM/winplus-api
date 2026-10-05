@@ -64,6 +64,29 @@ public class WalletController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Décomposition dotation expirable / part permanente (Module 14,
+    /// portefeuille parent). Renvoie un reliquat nul pour tout autre
+    /// propriétaire (professeur…) : sans effet de bord, lisible par n'importe
+    /// quel compte, mais seul le parent a une dotation mensuelle à afficher.
+    /// </summary>
+    [HttpGet("me/allocation")]
+    public async Task<IActionResult> GetAllocation()
+    {
+        var breakdown = await _wallet.GetParentBreakdownAsync(User.GetUserId());
+        return Ok(new
+        {
+            data = new
+            {
+                allocationRemainingXaf = breakdown.AllocationRemainingXaf,
+                allocationExpiresAt = breakdown.AllocationExpiresAt,
+                permanentXaf = breakdown.PermanentXaf,
+                availableXaf = breakdown.AvailableXaf,
+            },
+            success = true,
+        });
+    }
+
     [HttpGet("me/entries")]
     public async Task<IActionResult> GetEntries([FromQuery] string? source = "all", [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {

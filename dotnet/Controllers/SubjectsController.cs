@@ -24,6 +24,8 @@ public class SubjectsController : ControllerBase
     private readonly IStorageService _storage;
     private readonly IContentAccessService _contentAccess;
     private readonly IDocumentWatermarkService _watermark;
+    private readonly IWalletService _wallet;
+    private readonly INtfyService _ntfy;
 
     public SubjectsController(
         ISubjectService subjectService,
@@ -33,7 +35,9 @@ public class SubjectsController : ControllerBase
         IConfiguration configuration,
         IStorageService storage,
         IContentAccessService contentAccess,
-        IDocumentWatermarkService watermark)
+        IDocumentWatermarkService watermark,
+        IWalletService wallet,
+        INtfyService ntfy)
     {
         _subjectService = subjectService;
         _context = context;
@@ -43,6 +47,8 @@ public class SubjectsController : ControllerBase
         _storage = storage;
         _contentAccess = contentAccess;
         _watermark = watermark;
+        _wallet = wallet;
+        _ntfy = ntfy;
     }
 
     private class PythonRecsResponse { public List<object>? Recommendations { get; set; } }
@@ -415,6 +421,48 @@ public class SubjectsController : ControllerBase
 
             if (!User.IsAdmin() && existing.AuthorUserId != User.GetUserId())
                 return StatusCode(403, new { error = "Vous ne pouvez supprimer que vos propres contenus." });
+
+            // Module 21 (décision §4.F/§6.4) : la suppression coupe l'accès
+            // pour tout le monde, y compris les acheteurs passés, mais plus
+            // silencieusement. Avant de marquer le contenu supprimé (ce qui le
+            // fait sortir du filtre de la bibliothèque), chaque acheteur est
+            // remboursé par crédit de portefeuille (jamais par tentative de
+            // remboursement réel vers son moyen de paiement d'origine) et le
+            // revenu déjà compté pour l'auteur est contre-passé.
+            var paidItems = await _context.OrderItems.AsNoTracking()
+                .Where(oi => oi.SubjectId == id && PaidOrderStatus.All.Contains(oi.Order.Status.ToLower()))
+                .Select(oi => new { oi.Id, oi.PriceAtPurchase, BuyerId = oi.Order.UserId, oi.Order.OrderNumber })
+                .ToListAsync();
+
+            foreach (var item in paidItems.Where(i => i.BuyerId.HasValue))
+            {
+                try
+                {
+                    await _wallet.PostAsync(new WalletEntry(item.BuyerId, WalletEntryTypes.ContentRemovalRefund,
+                        item.PriceAtPurchase, $"content_removal_refund:orderitem:{item.Id}",
+                        $"Remboursement : « {existing.Title} » retiré de la vente", "OrderItem", item.Id));
+
+                    var saleEntry = await _wallet.FindByKeyAsync(WalletService.CatalogSaleKey(item.Id));
+                    if (saleEntry != null)
+                        await _wallet.ReverseAsync(saleEntry.Id, $"Contenu retiré de la vente : « {existing.Title} »");
+
+                    await _ntfy.PublishAsync($"winplus-user-{item.BuyerId}", "Contenu retiré de la vente",
+                        $"« {existing.Title} » n'est plus disponible sur WinPlus. Le montant payé ({item.PriceAtPurchase:0} XAF) " +
+                        "a été crédité sur votre portefeuille WinPlus.",
+                        userId: item.BuyerId, type: "ContentRemoved", relatedEntityType: "subject", relatedEntityId: id);
+                }
+                catch (Exception ex)
+                {
+                    // Un échec sur un acheteur ne doit pas empêcher la
+                    // suppression ni bloquer le traitement des autres : il est
+                    // journalisé pour reprise manuelle (pas de réconciliation
+                    // automatique dédiée à ce cas, contrairement au journal de
+                    // vente lui-même).
+                    _logger.LogError(ex,
+                        "Remboursement/contre-passation non posés pour l'acheteur {BuyerId} du contenu {SubjectId} supprimé (OrderItem {OrderItemId})",
+                        item.BuyerId, id, item.Id);
+                }
+            }
 
             var result = await _subjectService.DeleteSubjectAsync(id);
             if (!result)

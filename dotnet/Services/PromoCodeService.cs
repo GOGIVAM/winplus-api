@@ -185,10 +185,28 @@ public class PromoCodeService : IPromoCodeService
         }
     }
 
+    /// <summary>
+    /// Rattache définitivement un code promo à une commande dont le paiement
+    /// vient d'être confirmé : enregistre l'usage et décompte le quota
+    /// (Module 34, décision §5.5.O — jamais à la création de la commande).
+    ///
+    /// Ne touche plus <c>Order.TotalAmount</c>/<c>DiscountAmount</c> : la
+    /// remise a déjà été calculée et appliquée côté serveur à la création de
+    /// la commande (<see cref="OrderService.CreateOrderAsync"/>), sur le même
+    /// prix que celui réellement encaissé. La recalculer ici referait le même
+    /// calcul sur un total déjà remisé, ce qui appliquerait la remise deux
+    /// fois. Idempotent : un paiement confirmé deux fois (rejeu de webhook) ne
+    /// décompte le quota qu'une seule fois.
+    /// </summary>
     public async Task<bool> ApplyPromoCodeAsync(int userId, int orderId, string code)
     {
         try
         {
+            // Idempotence : si l'usage existe déjà pour cette commande, le
+            // code a déjà été appliqué (rejeu de confirmation de paiement).
+            var alreadyApplied = await _context.PromoCodeUsages.AnyAsync(u => u.OrderId == orderId);
+            if (alreadyApplied) return true;
+
             var promoCode = await _context.PromoCodes
                 .FirstOrDefaultAsync(p => p.Code == code.ToUpper());
 
@@ -202,44 +220,58 @@ public class PromoCodeService : IPromoCodeService
             if (order == null)
                 return false;
 
-            // Validate before applying
-            var validation = await ValidatePromoCodeAsync(userId, new ValidatePromoCodeRequest
+            // Le quota et les conditions temporelles sont revérifiés ici (un
+            // code a pu expirer ou atteindre son quota entre la création de la
+            // commande et la confirmation du paiement). Le montant, lui, n'est
+            // plus recalculé : le client a déjà payé le total remisé de la
+            // commande, revenir dessus romprait l'égalité avec ce qui a été
+            // réellement encaissé chez le prestataire de paiement. Un code
+            // épuisé entre-temps n'est donc plus décompté une seconde fois (le
+            // quota resterait négatif de sens), mais la remise déjà payée par
+            // le client reste acquise — c'est un point ouvert documenté dans le
+            // rapport du lot, aucune décision produit ne tranchant ce cas.
+            var now = DateTime.UtcNow;
+            var quotaOk = promoCode.IsActive
+                && promoCode.ValidFrom <= now
+                && (!promoCode.ValidUntil.HasValue || promoCode.ValidUntil >= now)
+                && (!promoCode.UsageLimit.HasValue || promoCode.UsageCount < promoCode.UsageLimit.Value);
+
+            if (!quotaOk)
             {
-                Code = code,
-                CartTotal = order.TotalAmount,
-                SubjectIds = order.Items?.Select(oi => oi.SubjectId).ToList()
-            });
+                _logger.LogWarning(
+                    "Code promo {Code} devenu invalide (quota ou période) entre la commande {OrderId} et la " +
+                    "confirmation du paiement : usage non décompté, remise déjà payée conservée.",
+                    code, orderId);
+            }
 
-            if (!validation.IsValid)
-                return false;
-
-            // Record usage
             var usage = new PromoCodeUsage
             {
                 PromoCodeId = promoCode.Id,
                 UserId = userId,
                 OrderId = orderId,
-                DiscountAmount = validation.DiscountAmount,
-                UsedAt = DateTime.UtcNow
+                DiscountAmount = order.DiscountAmount,
+                UsedAt = now,
             };
-
-            // Update order with discount
-            order.DiscountAmount = validation.DiscountAmount;
-            order.TotalAmount = validation.FinalAmount;
-
-            // Increment usage count
-            promoCode.UsageCount++;
-
             _context.PromoCodeUsages.Add(usage);
-            _context.Orders.Update(order);
-            _context.PromoCodes.Update(promoCode);
+
+            if (quotaOk)
+                promoCode.UsageCount++;
 
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation("Promo code {Code} applied to order {OrderId} by user {UserId}", 
+            _logger.LogInformation("Promo code {Code} applied to order {OrderId} by user {UserId}",
                 code, orderId, userId);
 
             return true;
+        }
+        catch (DbUpdateException dbEx)
+        {
+            // Rejeu concurrent (webhook + synchronisation de statut presque
+            // simultanés) : l'autre appel a déjà inséré l'usage.
+            if (await _context.PromoCodeUsages.AnyAsync(u => u.OrderId == orderId))
+                return true;
+            _logger.LogError(dbEx, "Error applying promo code");
+            return false;
         }
         catch (Exception ex)
         {

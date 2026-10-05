@@ -90,6 +90,51 @@ public interface IWalletService
     Task SyncOrderAsync(int orderId);
     Task SyncTutorBookingAsync(int bookingId);
     Task SyncAffiliateCommissionAsync(int commissionId);
+
+    /// <summary>
+    /// Module 18/30 : revenu d'une inscription à une session payante, à la
+    /// même commission que le tutorat (§6.6 du suivi). Contrairement au
+    /// tutorat, aucun escrow : confirmé dès l'inscription payée (pas
+    /// d'infrastructure de libération différée pour les sessions aujourd'hui),
+    /// contre-passé si l'inscription est ensuite remboursée.
+    /// </summary>
+    Task SyncSessionEnrollmentAsync(int sessionEnrollmentId);
+
+    // ── Portefeuille parent (Module 14) ────────────────────────────────
+
+    /// <summary>
+    /// Crée la dotation mensuelle du parent si elle n'existe pas encore pour
+    /// cette période (idempotent par <paramref name="periodStart"/>). Sans
+    /// effet si une dotation existe déjà pour cette période, quel que soit le
+    /// montant du plan au moment de l'appel (pas de recalcul au prorata).
+    /// </summary>
+    Task PostParentMonthlyAllocationAsync(int parentId, decimal amount, DateTime periodStart, DateTime expiresAt, string planName);
+
+    /// <summary>
+    /// Reliquat non expiré de la dotation mensuelle la plus récente du parent
+    /// (0 si aucune, ou si entièrement consommée ou expirée), sa date
+    /// d'expiration, et le total de la part permanente (recharges, net des
+    /// achats qui n'ont pas pu être couverts par la dotation).
+    /// </summary>
+    Task<ParentWalletBreakdown> GetParentBreakdownAsync(int parentId);
+
+    /// <summary>
+    /// Débite le portefeuille parent pour un achat, en consommant d'abord le
+    /// reliquat de dotation mensuelle encore valide, puis la part permanente
+    /// (recharges). Lève <see cref="InsufficientWalletBalanceException"/> si
+    /// le total des deux ne couvre pas <paramref name="amount"/>. À appeler
+    /// sous <see cref="RunLockedAsync{T}"/>. Idempotent sur
+    /// <paramref name="idempotencyKeyBase"/> (jusqu'à deux écritures, une par
+    /// source consommée, dérivées de cette clé).
+    /// </summary>
+    Task DebitParentWalletAsync(int parentId, decimal amount, string idempotencyKeyBase, string description, string sourceType, int sourceId);
+}
+
+/// <summary>Décomposition du portefeuille parent (Module 14) : dotation expirable + recharges permanentes.</summary>
+public sealed record ParentWalletBreakdown(decimal AllocationRemainingXaf, DateTime? AllocationExpiresAt, decimal AvailableXaf)
+{
+    /// <summary>Part permanente disponible (total disponible moins le reliquat de dotation).</summary>
+    public decimal PermanentXaf => Math.Max(0, AvailableXaf - AllocationRemainingXaf);
 }
 
 /// <summary>Ligne d'historique de portefeuille, reliée à son événement d'origine par SourceType/SourceId.</summary>
@@ -117,6 +162,8 @@ public static class WalletSources
     public const string AdminCredit = "credit_admin";
     public const string Purchase = "achat";
     public const string Withdrawal = "retrait";
+    /// <summary>Dotation mensuelle et son expiration (portefeuille parent, Module 14).</summary>
+    public const string MonthlyAllocation = "dotation_mensuelle";
     public const string Other = "autre";
 
     public static readonly IReadOnlyDictionary<string, string[]> EntryTypesBySource = new Dictionary<string, string[]>
@@ -126,8 +173,9 @@ public static class WalletSources
         [Affiliate] = new[] { WalletEntryTypes.AffiliateCommission },
         [Recharge] = new[] { WalletEntryTypes.Recharge },
         [AdminCredit] = new[] { WalletEntryTypes.AdminCredit },
-        [Purchase] = new[] { WalletEntryTypes.BalancePurchase, WalletEntryTypes.ClassAssignment },
+        [Purchase] = new[] { WalletEntryTypes.BalancePurchase, WalletEntryTypes.ClassAssignment, WalletEntryTypes.AllocationConsumption, WalletEntryTypes.ParentWalletPurchase, WalletEntryTypes.ContentRemovalRefund },
         [Withdrawal] = new[] { WalletEntryTypes.WithdrawalRequested, WalletEntryTypes.WithdrawalProcessed },
+        [MonthlyAllocation] = new[] { WalletEntryTypes.MonthlyAllocation, WalletEntryTypes.AllocationExpired },
     };
 
     public static string ForEntryType(string entryType) =>
@@ -641,6 +689,151 @@ public class WalletService : IWalletService
             // « paid » n'est écrit par aucun code et n'entrait pas dans l'ancien
             // solde : aucun effet, plutôt que d'en inventer un.
         }
+    }
+
+    public static string SessionEnrollmentKey(int sessionEnrollmentId) => $"session_enrollment:{sessionEnrollmentId}";
+
+    public async Task SyncSessionEnrollmentAsync(int sessionEnrollmentId)
+    {
+        var enrollment = await _db.SessionEnrollments.AsNoTracking()
+            .Where(e => e.Id == sessionEnrollmentId)
+            .Select(e => new { e.Id, e.PaymentStatus, e.PriceChargedXaf, TeacherId = e.Session != null ? (int?)e.Session.CreatedBy : null, Title = e.Session != null ? e.Session.Title : null, e.EnrolledAt })
+            .FirstOrDefaultAsync();
+        if (enrollment?.TeacherId == null || enrollment.PriceChargedXaf is not > 0) return;
+
+        var teacherId = enrollment.TeacherId.Value;
+        var key = SessionEnrollmentKey(enrollment.Id);
+        var commissionKey = $"session_commission:{enrollment.Id}";
+        var paid = string.Equals(enrollment.PaymentStatus, "paid", StringComparison.OrdinalIgnoreCase);
+
+        if (paid)
+        {
+            if (await FindByKeyAsync(key) != null) return;
+
+            var share = await RevenueSplit.GetTeacherShareAsync(_db, teacherId);
+            var net = RevenueSplit.NetXaf(enrollment.PriceChargedXaf.Value, share);
+            var commission = enrollment.PriceChargedXaf.Value - net;
+            var label = $"Session payante : {enrollment.Title}";
+
+            if (net > 0)
+                await PostAsync(new WalletEntry(teacherId, WalletEntryTypes.TutoringRevenue, net, key, label,
+                    "SessionEnrollment", enrollment.Id, OccurredAt: enrollment.EnrolledAt));
+            if (commission > 0)
+                await PostAsync(new WalletEntry(null, WalletEntryTypes.PlatformCommission, commission, commissionKey,
+                    $"Commission session, inscription #{enrollment.Id}", "SessionEnrollment", enrollment.Id, OccurredAt: enrollment.EnrolledAt));
+        }
+        else
+        {
+            // Remboursée, ou inscription supprimée avant paiement : le revenu
+            // déjà confirmé (s'il existe) est contre-passé.
+            var existing = await FindByKeyAsync(key);
+            if (existing is { Status: WalletEntryStatus.Confirmed })
+                await ReverseAsync(existing.Id, $"Annulation de la session : {enrollment.Title}");
+            var existingCommission = await FindByKeyAsync(commissionKey);
+            if (existingCommission is { Status: WalletEntryStatus.Confirmed })
+                await ReverseAsync(existingCommission.Id, $"Annulation de la session (commission) : {enrollment.Title}");
+        }
+    }
+
+    // ── Portefeuille parent (Module 14) ─────────────────────────────────
+
+    public static string ParentAllocationKey(int parentId, DateTime periodStart) =>
+        $"parent_allocation:{parentId}:{periodStart:yyyyMM}";
+
+    public static string ParentAllocationExpiryKey(long allocationEntryId) =>
+        $"allocation_expiry:{allocationEntryId}";
+
+    public async Task PostParentMonthlyAllocationAsync(int parentId, decimal amount, DateTime periodStart, DateTime expiresAt, string planName)
+    {
+        if (amount <= 0) return;
+        await PostAsync(new WalletEntry(parentId, WalletEntryTypes.MonthlyAllocation, amount,
+            ParentAllocationKey(parentId, periodStart), $"Dotation mensuelle — plan {planName}",
+            OwnerType: WalletOwnerTypes.Parent, OccurredAt: periodStart));
+        // ExpiresAt n'est pas porté par WalletEntry (immuable après écriture) :
+        // posé séparément, une seule fois, juste après la création.
+        var row = await _db.WalletTransactions.FirstOrDefaultAsync(t => t.IdempotencyKey == ParentAllocationKey(parentId, periodStart));
+        if (row != null && row.ExpiresAt == null)
+        {
+            row.ExpiresAt = expiresAt;
+            await _db.SaveChangesAsync();
+        }
+    }
+
+    /// <summary>Reliquat non consommé d'une écriture de dotation donnée (jamais négatif).</summary>
+    private async Task<decimal> AllocationRemainingAsync(WalletTransaction allocation)
+    {
+        var consumed = await _db.WalletTransactions.AsNoTracking()
+            .Where(t => t.SourceType == "WalletTransaction" && t.SourceId == allocation.Id
+                     && t.EntryType == WalletEntryTypes.AllocationConsumption
+                     && t.Status == WalletEntryStatus.Confirmed)
+            .SumAsync(t => (decimal?)-t.Amount) ?? 0m;
+        var expired = await _db.WalletTransactions.AsNoTracking()
+            .AnyAsync(t => t.SourceType == "WalletTransaction" && t.SourceId == allocation.Id
+                        && t.EntryType == WalletEntryTypes.AllocationExpired);
+        if (expired) return 0m;
+        return Math.Max(0, allocation.Amount - consumed);
+    }
+
+    /// <summary>La dotation mensuelle la plus récente du parent, non encore expirée (contre-passée).</summary>
+    private async Task<WalletTransaction?> LatestLiveAllocationAsync(int parentId) =>
+        await _db.WalletTransactions.AsNoTracking()
+            .Where(t => t.OwnerId == parentId && t.OwnerType == WalletOwnerTypes.Parent
+                     && t.EntryType == WalletEntryTypes.MonthlyAllocation
+                     && t.Status == WalletEntryStatus.Confirmed
+                     && !_db.WalletTransactions.Any(e => e.SourceType == "WalletTransaction" && e.SourceId == t.Id
+                                                       && e.EntryType == WalletEntryTypes.AllocationExpired))
+            .OrderByDescending(t => t.OccurredAt)
+            .FirstOrDefaultAsync();
+
+    public async Task<ParentWalletBreakdown> GetParentBreakdownAsync(int parentId)
+    {
+        var available = await GetAvailableAsync(parentId);
+        var allocation = await LatestLiveAllocationAsync(parentId);
+        if (allocation == null) return new ParentWalletBreakdown(0, null, available);
+
+        var remaining = await AllocationRemainingAsync(allocation);
+        // Le reliquat ne peut jamais dépasser le disponible total (garde-fou si
+        // une incohérence survenait) ; on ne l'expose jamais négatif non plus.
+        remaining = Math.Clamp(remaining, 0, Math.Max(0, available));
+        return new ParentWalletBreakdown(remaining, allocation.ExpiresAt, available);
+    }
+
+    public async Task DebitParentWalletAsync(int parentId, decimal amount, string idempotencyKeyBase, string description, string sourceType, int sourceId)
+    {
+        amount = RevenueSplit.Xaf(Math.Abs(amount));
+        if (amount <= 0) throw new ArgumentException("Montant de débit invalide.");
+
+        // Idempotence globale : si l'une ou l'autre écriture dérivée de cette
+        // clé existe déjà, l'opération a déjà eu lieu (rejeu de confirmation,
+        // double soumission) — ne rien refaire.
+        var allocKey = $"{idempotencyKeyBase}:alloc";
+        var permKey = $"{idempotencyKeyBase}:perm";
+        if (await FindByKeyAsync(allocKey) != null || await FindByKeyAsync(permKey) != null)
+            return;
+
+        var available = await GetAvailableAsync(parentId);
+        if (available < amount)
+            throw new InsufficientWalletBalanceException(Math.Max(0, available), amount);
+
+        var allocation = await LatestLiveAllocationAsync(parentId);
+        var fromAllocation = 0m;
+        if (allocation != null)
+        {
+            var remaining = Math.Clamp(await AllocationRemainingAsync(allocation), 0, available);
+            fromAllocation = Math.Min(remaining, amount);
+        }
+        var fromPermanent = amount - fromAllocation;
+
+        if (fromAllocation > 0)
+            // SourceId est un int : suffisant pour un identifiant de ligne de
+            // journal (volume de la table très loin de 2^31) ; cohérent avec le
+            // reste du journal, qui n'utilise que des SourceId int.
+            await PostAsync(new WalletEntry(parentId, WalletEntryTypes.AllocationConsumption, -fromAllocation, allocKey,
+                description, "WalletTransaction", checked((int)allocation!.Id), OwnerType: WalletOwnerTypes.Parent));
+
+        if (fromPermanent > 0)
+            await PostAsync(new WalletEntry(parentId, WalletEntryTypes.ParentWalletPurchase, -fromPermanent, permKey,
+                description, sourceType, sourceId, OwnerType: WalletOwnerTypes.Parent));
     }
 
     // ── Outils ──────────────────────────────────────────────────────────

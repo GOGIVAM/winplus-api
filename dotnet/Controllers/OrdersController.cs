@@ -20,7 +20,9 @@ public record PayWithBalanceComplementRequest(string Operator, string Phone);
 
 public record CreateOrderRequest(
     string PaymentMethod,
-    string? ReferralCode = null
+    string? ReferralCode = null,
+    /// <summary>Code promo validé au panier (Module 34) ; revalidé et recalculé côté serveur, jamais pris tel quel.</summary>
+    string? PromoCode = null
 );
 
 [ApiController]
@@ -425,7 +427,7 @@ public class OrdersController : ControllerBase
         try
         {
             var userId = User.GetUserId();
-            var order = await _orderService.CreateOrderAsync(userId, request.PaymentMethod, request.ReferralCode);
+            var order = await _orderService.CreateOrderAsync(userId, request.PaymentMethod, request.ReferralCode, request.PromoCode);
             return Ok(order);
         }
         // Contenu supprimé, retiré de la vente ou non publié : erreur de

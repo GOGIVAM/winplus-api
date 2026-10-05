@@ -15,4 +15,13 @@ public interface ITeachingSessionService
     Task<TeachingSessionDto> CancelAsync(int teacherId, int sessionId, CancelSessionRequestDto request);
     Task<TeachingSessionDto> EnrollAsync(int studentId, int sessionId, EnrollSessionRequestDto request);
     Task SetSummaryAsync(int teacherId, int sessionId, string summaryText);
+
+    /// <summary>
+    /// Module 18 : traite une notification NotchPay dont la référence porte le
+    /// préfixe "SESS-" (inscription à une session payante), sur le modèle de
+    /// <c>TutorBookingService.TryHandleNotchPayWebhookAsync</c>. Renvoie faux
+    /// si la référence n'est pas celle d'une inscription de session (laisse la
+    /// chaîne de traitement du webhook essayer les autres gestionnaires).
+    /// </summary>
+    Task<bool> TryHandleNotchPayWebhookAsync(string eventId, string eventType, NotchPayWebhookTransaction transaction);
 }

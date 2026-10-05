@@ -53,6 +53,12 @@ public class SubscriptionExpirationService : BackgroundService
         foreach (var sub in expired)
         {
             sub.Status = "expired";
+            // Module 21 (reste signalé §9.4) : IsActive n'était jamais remis à
+            // faux à l'expiration. Sans effet sur ContentAccessService (qui
+            // exige déjà Status == "active" en plus de IsActive), mais c'est
+            // une des sept définitions divergentes d'« abonnement actif » —
+            // tout code qui ne teste que IsActive doit désormais voir juste.
+            sub.IsActive = false;
             sub.UpdatedAt = now;
         }
 

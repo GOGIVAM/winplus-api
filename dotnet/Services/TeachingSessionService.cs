@@ -14,18 +14,23 @@ namespace Backend.Services;
 /// </summary>
 public class TeachingSessionService : ITeachingSessionService
 {
+    /// <summary>Préfixe de référence NotchPay des inscriptions à une session payante (Module 18).</summary>
+    private const string ReferencePrefix = "SESS";
+
     private readonly ApplicationDbContext _context;
     private readonly INotchPayService _notchPay;
     private readonly INtfyService _ntfy;
     private readonly IEmailService _email;
+    private readonly IWalletService _wallet;
     private readonly ILogger<TeachingSessionService> _logger;
 
-    public TeachingSessionService(ApplicationDbContext context, INotchPayService notchPay, INtfyService ntfy, IEmailService email, ILogger<TeachingSessionService> logger)
+    public TeachingSessionService(ApplicationDbContext context, INotchPayService notchPay, INtfyService ntfy, IEmailService email, IWalletService wallet, ILogger<TeachingSessionService> logger)
     {
         _context = context;
         _notchPay = notchPay;
         _ntfy = ntfy;
         _email = email;
+        _wallet = wallet;
         _logger = logger;
     }
 
@@ -125,6 +130,11 @@ public class TeachingSessionService : ITeachingSessionService
         }
         await _context.SaveChangesAsync();
 
+        // Module 18/30 : le revenu déjà compté pour le professeur (inscriptions
+        // payées) doit être contre-passé, la vente étant annulée rétroactivement.
+        foreach (var enrollment in session.Enrollments)
+            await SyncWalletAsync(enrollment.Id);
+
         _logger.LogInformation("Session {SessionId} annulée par {TeacherId}, {Count} inscrit(s) notifié(s)", sessionId, teacherId, session.Enrollments.Count);
         return await MapToDtoAsync(session);
     }
@@ -166,7 +176,7 @@ public class TeachingSessionService : ITeachingSessionService
             {
                 var result = await _notchPay.InitiatePaymentAsync(
                     e164Phone, session.PriceXaf!.Value, sessionId,
-                    $"WinPlus  {session.Title}", email, name, channel, "SESS");
+                    $"WinPlus  {session.Title}", email, name, channel, ReferencePrefix);
                 enrollment.NotchpayReference = result.Transaction?.Reference;
                 enrollment.PaymentStatus = "pending";
                 enrollment.PriceChargedXaf = session.PriceXaf;
@@ -189,6 +199,79 @@ public class TeachingSessionService : ITeachingSessionService
             ?? throw new KeyNotFoundException("Session introuvable ou non autorisée.");
         session.SummaryText = summaryText;
         await _context.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Module 18 : avant cette correction, aucune notification de paiement ne
+    /// traitait les références "SESS-" — l'inscription restait indéfiniment
+    /// en attente de paiement, quel que soit le résultat réel chez NotchPay.
+    /// Même patron que TutorBookingService.TryHandleNotchPayWebhookAsync.
+    /// </summary>
+    public async Task<bool> TryHandleNotchPayWebhookAsync(string eventId, string eventType, NotchPayWebhookTransaction transaction)
+    {
+        if (string.IsNullOrEmpty(transaction.Reference) || !transaction.Reference.StartsWith($"{ReferencePrefix}-"))
+            return false;
+
+        var enrollment = await _context.SessionEnrollments
+            .Include(e => e.Session)
+            .FirstOrDefaultAsync(e => e.NotchpayReference == transaction.Reference);
+        if (enrollment == null)
+        {
+            _logger.LogWarning("Inscription de session introuvable pour référence {Ref}", transaction.Reference);
+            return true;
+        }
+
+        var wasAlreadyFinal = enrollment.PaymentStatus is "paid" or "refunded";
+        var mapped = MapNotchPayStatus(transaction.Status);
+
+        if (!wasAlreadyFinal && mapped == "paid")
+        {
+            enrollment.PaymentStatus = "paid";
+            await _context.SaveChangesAsync();
+
+            await _ntfy.PublishAsync($"winplus-user-{enrollment.StudentId}", "Inscription confirmée",
+                $"Ton inscription à la session « {enrollment.Session?.Title} » est confirmée.",
+                userId: enrollment.StudentId, type: "SessionEnrollment");
+
+            if (enrollment.Session != null)
+                await _ntfy.PublishAsync($"winplus-user-{enrollment.Session.CreatedBy}", "Nouvelle inscription payante",
+                    $"Un élève s'est inscrit et a payé pour « {enrollment.Session.Title} ».",
+                    userId: enrollment.Session.CreatedBy, type: "SessionEnrollment");
+        }
+        else if (!wasAlreadyFinal && mapped == "failed")
+        {
+            // Paiement échoué ou expiré : la place réservée est libérée
+            // (Module 30, cas limite "paiement abandonné").
+            _context.SessionEnrollments.Remove(enrollment);
+            await _context.SaveChangesAsync();
+            return true;
+        }
+        else
+        {
+            return true;
+        }
+
+        await SyncWalletAsync(enrollment.Id);
+        return true;
+    }
+
+    /// <summary>Même mapping de statut NotchPay que TutorBookingService, dupliqué (classe interne, pas de dépendance croisée).</summary>
+    private static string? MapNotchPayStatus(string? status) => (status ?? string.Empty).ToLowerInvariant() switch
+    {
+        "complete" or "completed" or "success" or "successful" => "paid",
+        "failed" or "failure" or "canceled" or "cancelled" or "rejected" or "expired" => "failed",
+        _ => null,
+    };
+
+    /// <summary>
+    /// Lot 2, Module 1 : traduit le statut de l'inscription en écritures du
+    /// journal (revenu enseignant à la même commission que le tutorat, §6.6).
+    /// Idempotent ; rattrapé par la réconciliation en cas d'échec.
+    /// </summary>
+    private async Task SyncWalletAsync(int sessionEnrollmentId)
+    {
+        try { await _wallet.SyncSessionEnrollmentAsync(sessionEnrollmentId); }
+        catch (Exception ex) { _logger.LogError(ex, "Écritures de l'inscription {EnrollmentId} non posées (réconciliation à venir)", sessionEnrollmentId); }
     }
 
     private static string NormalizePhoneToE164(string phone)

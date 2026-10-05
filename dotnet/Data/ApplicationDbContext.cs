@@ -531,7 +531,15 @@ public partial class ApplicationDbContext : DbContext
                 .WithMany(s => s.Enrollments)
                 .HasForeignKey(e => e.SubjectId)
                 .OnDelete(DeleteBehavior.Cascade);
-            entity.HasIndex(e => new { e.UserId, e.SubjectId }).IsUnique();
+            // Module 21 : filtré aux lignes actives, pour qu'une réinscription
+            // après désinscription logique (IsDeleted = true sur l'ancienne
+            // ligne) ne se heurte plus à l'unicité — la réactivation de la
+            // ligne existante (EnrollmentService.EnrollUserAsync) reste le
+            // chemin normal, ce filtre est un filet de sécurité pour toute
+            // écriture qui ne passerait pas par ce chemin.
+            entity.HasIndex(e => new { e.UserId, e.SubjectId })
+                .IsUnique()
+                .HasFilter("\"IsDeleted\" = false");
         });
 
         // Configure CartItem entity
@@ -755,10 +763,17 @@ public partial class ApplicationDbContext : DbContext
                 .WithMany(s => s.Certificates)
                 .HasForeignKey(e => e.SubjectId)
                 .OnDelete(DeleteBehavior.Cascade);
+            // Module 21 (décision §4.G) : un certificat déjà obtenu reste
+            // acquis après désinscription — un accomplissement passé est
+            // indépendant de l'inscription active. SetNull (plutôt que
+            // Cascade) exige EnrollmentId nullable sur Certificate ; la
+            // désinscription passe désormais par une suppression logique
+            // (EnrollmentService.UnenrollAsync), donc cette relation n'est de
+            // toute façon jamais effacée par une suppression physique.
             entity.HasOne(e => e.Enrollment)
                 .WithOne(en => en.Certificate)
                 .HasForeignKey<Certificate>(e => e.EnrollmentId)
-                .OnDelete(DeleteBehavior.Cascade);
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // Configure Conversation entity (Chatbot)
@@ -1568,6 +1583,9 @@ modelBuilder.Entity<Exam>(entity =>
         modelBuilder.Entity<Event>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Session>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Subscription>().HasQueryFilter(e => !e.IsDeleted);
+        // Module 21 (décision §4.G) : désinscription devenue une suppression
+        // logique, pour que le certificat associé survive à la désinscription.
+        modelBuilder.Entity<Enrollment>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Exam>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Quiz>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Revision>().HasQueryFilter(e => !e.IsDeleted);

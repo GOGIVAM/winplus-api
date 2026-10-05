@@ -1,3 +1,4 @@
+using Backend.Models.DTOs;
 using Backend.Models.Entities;
 using Backend.Repositories;
 
@@ -51,7 +52,7 @@ public interface IOrderService
     /// ne peut pas être commandé.
     /// </summary>
     Task<CartPricing> PriceUserCartAsync(int userId);
-    Task<Order> CreateOrderAsync(int userId, string paymentMethod, string? referralCode = null);
+    Task<Order> CreateOrderAsync(int userId, string paymentMethod, string? referralCode = null, string? promoCode = null);
     Task<IEnumerable<Order>> GetUserOrdersAsync(int userId);
     Task<IEnumerable<Order>> GetUserOrdersAsync(int userId, int page, int limit);
     Task<Order?> GetOrderByIdAsync(int orderId);
@@ -68,17 +69,20 @@ public class OrderService : IOrderService
     private readonly IOrderRepository _orderRepository;
     private readonly ICartRepository _cartRepository;
     private readonly ISubjectRepository _subjectRepository;
+    private readonly IPromoCodeService _promoCodeService;
     private readonly ILogger<OrderService> _logger;
 
     public OrderService(
         IOrderRepository orderRepository,
         ICartRepository cartRepository,
         ISubjectRepository subjectRepository,
+        IPromoCodeService promoCodeService,
         ILogger<OrderService> logger)
     {
         _orderRepository = orderRepository;
         _cartRepository = cartRepository;
         _subjectRepository = subjectRepository;
+        _promoCodeService = promoCodeService;
         _logger = logger;
     }
 
@@ -137,7 +141,7 @@ public class OrderService : IOrderService
         return new CartPricing(items, items.Sum(i => i.ServerPrice), adjustments);
     }
 
-    public async Task<Order> CreateOrderAsync(int userId, string paymentMethod, string? referralCode = null)
+    public async Task<Order> CreateOrderAsync(int userId, string paymentMethod, string? referralCode = null, string? promoCode = null)
     {
         try
         {
@@ -157,12 +161,48 @@ public class OrderService : IOrderService
             // rejetait tout paiement du catalogue.
             var totalAmount = pricing.Total;
 
+            // Module 34 : la remise est recalculée ici, côté serveur, à partir
+            // du code et du prix en base — jamais reprise d'un montant transmis
+            // par le client (même cause racine que le Module 17). Le code n'est
+            // rattaché à la commande (usage décompté, quota consommé) qu'à la
+            // confirmation du paiement (PaymentService), pas ici : une commande
+            // jamais payée ne doit pas consommer un quota limité (décision §5.5.O).
+            var normalizedPromoCode = string.IsNullOrWhiteSpace(promoCode) ? null : promoCode.Trim().ToUpperInvariant();
+            decimal discount = 0;
+            if (normalizedPromoCode != null)
+            {
+                var validation = await _promoCodeService.ValidatePromoCodeAsync(userId, new ValidatePromoCodeRequest
+                {
+                    Code = normalizedPromoCode,
+                    CartTotal = totalAmount,
+                    SubjectIds = pricing.Items.Select(i => i.SubjectId).ToList(),
+                });
+                if (validation.IsValid)
+                {
+                    discount = decimal.Round(validation.DiscountAmount, 0, MidpointRounding.AwayFromZero);
+                    totalAmount = Math.Max(0, totalAmount - discount);
+                }
+                else
+                {
+                    // Code devenu invalide entre la validation au panier et la
+                    // commande (expiré, quota épuisé...) : la commande se crée
+                    // quand même, mais au prix plein et sans code rattaché —
+                    // jamais d'erreur bloquante pour un simple code caduc.
+                    _logger.LogInformation(
+                        "Code promo {Code} invalide à la création de la commande pour l'utilisateur {UserId} : {Reason}",
+                        normalizedPromoCode, userId, validation.ErrorMessage);
+                    normalizedPromoCode = null;
+                }
+            }
+
             // Create order
             var order = new Order
             {
                 UserId = userId,
                 OrderNumber = $"ORD-{DateTime.UtcNow:yyyyMMddHHmmss}-{Random.Shared.Next(1000, 9999)}",
                 TotalAmount = totalAmount,
+                DiscountAmount = discount,
+                PromoCode = normalizedPromoCode,
                 Status = "pending",
                 PaymentMethod = paymentMethod,
                 OrderDate = DateTime.UtcNow,

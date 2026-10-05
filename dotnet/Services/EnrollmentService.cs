@@ -73,6 +73,27 @@ public class EnrollmentService : IEnrollmentService
                 return existing;
             }
 
+            // Module 21 : une inscription désinscrite (suppression logique)
+            // existe peut-être déjà pour cette paire — l'index unique actif
+            // interdit d'en créer une seconde, et ça n'aurait de toute façon
+            // aucun sens (le certificat déjà obtenu reste attaché à la ligne
+            // existante). Réactivation plutôt que doublon.
+            var deletedExisting = await _enrollmentRepository.GetAnyByUserAndSubjectAsync(userId, subjectId);
+            if (deletedExisting is { IsDeleted: true })
+            {
+                deletedExisting.IsDeleted = false;
+                deletedExisting.UnenrolledAt = null;
+                deletedExisting.UnenrollReason = null;
+                deletedExisting.EnrolledAt = DateTime.UtcNow;
+                await _enrollmentRepository.UpdateAsync(deletedExisting);
+
+                subject.EnrollmentCount++;
+                await _subjectRepository.UpdateAsync(subject);
+
+                _logger.LogInformation("User {UserId} re-enrolled in subject {SubjectId} (reactivated)", userId, subjectId);
+                return deletedExisting;
+            }
+
             // Create enrollment
             var enrollment = new Enrollment
             {
@@ -292,7 +313,16 @@ public class EnrollmentService : IEnrollmentService
                 return false;
             }
 
-            var deleted = await _enrollmentRepository.DeleteAsync(enrollmentId);
+            // Module 21 (décision §4.G) : suppression logique, plus physique.
+            // Un Remove() physique entraînait, via la relation en cascade
+            // alors déclarée sur Certificate, la perte d'un certificat déjà
+            // obtenu. La relation est désormais SetNull et la suppression
+            // elle-même n'est plus physique : les deux protections se
+            // recoupent, aucune ne dépend plus de l'autre pour être sûre.
+            enrollment.IsDeleted = true;
+            enrollment.UnenrolledAt = DateTime.UtcNow;
+            await _enrollmentRepository.UpdateAsync(enrollment);
+            var deleted = true;
 
             if (deleted)
             {

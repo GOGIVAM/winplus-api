@@ -545,6 +545,10 @@ builder.Services.AddHostedService<AffiliateCommissionMaturityService>();
 // Lot 2, Module 1 : filet de sécurité du journal (rejoue, sans doublon, les
 // événements récents dont l'écriture aurait été perdue).
 builder.Services.AddHostedService<WalletReconciliationService>();
+// Module 14 : contre-passe le reliquat non consommé d'une dotation mensuelle
+// de portefeuille parent exactement à son expiration (voir le commentaire du
+// service pour le choix de conception).
+builder.Services.AddHostedService<ParentWalletAllocationExpiryService>();
 // Lot 2, Module 2 : suivi périodique des transferts de retrait en cours.
 builder.Services.AddHostedService<WithdrawalTransferSyncService>();
 builder.Services.AddHostedService<AffiliateRateRecalculationService>();

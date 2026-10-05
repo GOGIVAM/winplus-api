@@ -24,7 +24,7 @@ public interface ITutorBookingService
     Task<TutorBookingDto> SetSummaryAsync(int tutorUserId, int bookingId, string summaryText);
 
     /// <summary>Décision support sur un litige (US-REP-09) : rembourse tout/partie ou libère les fonds au répétiteur.</summary>
-    Task<TutorBookingDto> ResolveDisputeAsync(int adminUserId, int bookingId, string resolution, string? note);
+    Task<TutorBookingDto> ResolveDisputeAsync(int adminUserId, int bookingId, string resolution, string? note, decimal? amountXaf = null);
 
     /// <summary>Liste des réservations actuellement contestées, pour le panneau admin.</summary>
     Task<List<TutorBookingDto>> GetDisputedBookingsAsync();

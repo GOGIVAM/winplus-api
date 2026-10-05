@@ -12,32 +12,39 @@ public class PurchaseForChildRequest
 {
     public int ChildId { get; set; }
     public int SubjectId { get; set; }
+
+    /// <summary>
+    /// Conservé pour compatibilité avec le client existant : le portefeuille
+    /// (Module 14) est toujours utilisé en priorité, ce paramètre ne fait plus
+    /// basculer vers un registre différent. <c>false</c> n'a plus d'effet
+    /// utile depuis le remplacement du registre de crédits par le portefeuille :
+    /// il n'existe plus de second moyen de paiement "sans crédits" dédié à ce
+    /// parcours, le web doit lancer un paiement Mobile Money classique
+    /// (POST /api/orders) s'il veut explicitement éviter le portefeuille.
+    /// </summary>
     public bool UseCredits { get; set; } = true;
 }
 
 /// <summary>
-/// Crédits mensuels du parent et achat de contenu pour un enfant (S3-1 / S3-5).
-/// Le solde est la dotation du plan moins les consommations du mois : aucune
-/// valeur en dur, tout est en base.
+/// Portefeuille parent (Module 14) et achat de contenu pour un enfant.
 ///
-/// Règles figées (voir parent_decisions_session.md, correction 1) :
-/// 1 crédit = 1 FCFA, aucun taux de conversion  le montant en base EST le
-/// montant en FCFA, ne jamais introduire d'unité "crédit" distincte de la
-/// devise. Non reportables et non remboursables en fin de mois. Changement de
-/// plan en cours de mois : le cycle en cours garde son montant déjà alloué,
-/// le nouveau montant s'applique au cycle suivant, jamais de prorata.
-/// Déliaison d'un enfant après dépense : jamais de remboursement.
+/// Remplace le registre de crédits mensuels dédié (<see cref="ParentCreditLedger"/>,
+/// conservé uniquement pour l'historique déjà écrit avant ce module) par le
+/// journal de portefeuille commun (<see cref="IWalletService"/>,
+/// <c>WalletOwnerTypes.Parent</c>), avec une dotation mensuelle expirable en
+/// plus de la recharge libre permanente (décision §2.6 du suivi).
 ///
-/// GET  /api/parent/credits
-/// GET  /api/parent/credits/history
+/// Règles conservées de l'ancien système (toujours valables) : pas de report
+/// de la dotation au-delà de son expiration, pas de remboursement en fin de
+/// mois, pas de recalcul au prorata en cas de changement de plan en cours de
+/// mois.
+///
+/// GET  /api/parent/credits          (compatibilité) résumé simplifié
+/// GET  /api/parent/credits/history  (compatibilité) historique simplifié
 /// POST /api/parent/purchase-for-child
 /// </summary>
 [ApiController]
 [Route("api/parent")]
-// Module 20 : la politique "ParentOnly" était déclarée sans jamais être
-// utilisée. Ce contrôleur gère les crédits d'un parent et l'achat pour son
-// enfant : un simple [Authorize] laissait un compte élève appeler ces routes
-// (la propriété métier est vérifiée ensuite, mais le rôle ne l'était pas).
 [Authorize(Policy = "ParentOnly")]
 public class ParentCreditsController : ControllerBase
 {
@@ -60,102 +67,94 @@ public class ParentCreditsController : ControllerBase
         return new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
     }
 
+    private static DateTime CurrentPeriodEnd(DateTime periodStart) => periodStart.AddMonths(1);
+
     /// <summary>
-    /// Solde du mois. Crée la dotation du mois si le plan en prévoit une et
-    /// qu'elle n'a pas encore été écrite.
+    /// Crée la dotation du mois en cours si le parent a un abonnement payant
+    /// actif dont le plan en prévoit une, et qu'elle n'a pas déjà été écrite.
+    /// Appelé par chaque endpoint qui a besoin d'un solde à jour (lecture
+    /// paresseuse, comme l'ancien registre de crédits).
     /// </summary>
+    private async Task<(string? PlanName, int? MaxChildren, DateTime? SubscriptionEndDate)> EnsureMonthlyAllocationAsync(int parentId)
+    {
+        var periodStart = CurrentPeriodStart();
+
+        var subscription = await _db.Subscriptions.AsNoTracking()
+            .Where(s => s.UserId == parentId && s.Status == "active" && !s.IsDeleted)
+            .OrderByDescending(s => s.StartDate)
+            .Select(s => new
+            {
+                s.EndDate,
+                planName = s.PricingPlan != null ? s.PricingPlan.Name : null,
+                monthly = s.PricingPlan != null ? s.PricingPlan.MonthlyCredits : null,
+                maxChildren = s.PricingPlan != null ? s.PricingPlan.MaxChildren : null,
+            })
+            .FirstOrDefaultAsync();
+
+        if (subscription == null) return (null, null, null);
+
+        if (subscription.monthly is > 0)
+        {
+            await _wallet.PostParentMonthlyAllocationAsync(
+                parentId, subscription.monthly.Value, periodStart, CurrentPeriodEnd(periodStart),
+                subscription.planName ?? "Standard");
+        }
+
+        return (subscription.planName, subscription.maxChildren, subscription.EndDate);
+    }
+
+    /// <summary>GET /api/parent/credits — résumé compatible avec l'ancien registre, désormais porté par le portefeuille.</summary>
     [HttpGet("credits")]
     public async Task<IActionResult> GetCredits()
     {
         try
         {
             var parentId = User.GetUserId();
-            var periodStart = CurrentPeriodStart();
+            var (planName, maxChildren, endDate) = await EnsureMonthlyAllocationAsync(parentId);
 
-            var subscription = await _db.Subscriptions.AsNoTracking()
-                .Where(s => s.UserId == parentId && s.Status == "active" && !s.IsDeleted)
-                .OrderByDescending(s => s.StartDate)
-                .Select(s => new
-                {
-                    s.Id,
-                    s.EndDate,
-                    planName    = s.PricingPlan != null ? s.PricingPlan.Name : null,
-                    monthly     = s.PricingPlan != null ? s.PricingPlan.MonthlyCredits : null,
-                    maxChildren = s.PricingPlan != null ? s.PricingPlan.MaxChildren : null
-                })
-                .FirstOrDefaultAsync();
-
-            // Aucun abonnement actif : pas de crédits, et on le dit clairement.
-            if (subscription == null)
+            if (planName == null)
                 return Ok(new { data = (object?)null, success = true });
 
-            if (subscription.monthly is > 0)
-            {
-                // Une seule allocation par (parent, mois civil) : les crédits sont
-                // strictement scopés au mois en cours, jamais reportés d'un mois sur
-                // l'autre (pas de rollover) et jamais remboursés à la fin du mois (le
-                // solde du mois précédent est simplement hors du filtre PeriodStart
-                // ci-dessous, il n'existe nulle part une opération qui l'annule ou le
-                // transfère). Si le parent change de plan en cours de mois, le montant
-                // déjà alloué ce mois-ci n'est pas recalculé : le nouveau montant du
-                // plan ne s'appliquera qu'à la prochaine allocation, au mois suivant.
-                // Ne pas ajouter de logique de prorata ni de report ici.
-                var hasAllocation = await _db.ParentCreditLedgers.AnyAsync(
-                    l => l.ParentId == parentId && l.PeriodStart == periodStart && l.EntryType == "allocation");
-
-                if (!hasAllocation)
-                {
-                    _db.ParentCreditLedgers.Add(new ParentCreditLedger
-                    {
-                        ParentId    = parentId,
-                        EntryType   = "allocation",
-                        Amount      = subscription.monthly.Value,
-                        PeriodStart = periodStart,
-                        Label       = $"Dotation mensuelle  plan {subscription.planName}"
-                    });
-                    await _db.SaveChangesAsync();
-                }
-            }
-
-            var entries = await _db.ParentCreditLedgers.AsNoTracking()
-                .Where(l => l.ParentId == parentId && l.PeriodStart == periodStart)
-                .Select(l => new { l.EntryType, l.Amount })
-                .ToListAsync();
-
-            var allocated = entries.Where(e => e.EntryType == "allocation").Sum(e => e.Amount);
-            var consumed  = entries.Where(e => e.EntryType == "consumption").Sum(e => e.Amount);
-            var refunded  = entries.Where(e => e.EntryType == "refund").Sum(e => e.Amount);
-
+            var breakdown = await _wallet.GetParentBreakdownAsync(parentId);
             var childrenCount = await _db.ParentStudentLinks.CountAsync(l => l.ParentId == parentId && l.Status == "accepted");
-
-            var daysToRenewal = subscription.EndDate.HasValue
-                ? (int?)Math.Max(0, (subscription.EndDate.Value.Date - DateTime.UtcNow.Date).Days)
+            var daysToRenewal = endDate.HasValue
+                ? (int?)Math.Max(0, (endDate.Value.Date - DateTime.UtcNow.Date).Days)
                 : null;
 
             return Ok(new
             {
                 data = new
                 {
-                    planName       = subscription.planName,
-                    periodStart,
-                    creditsTotal   = allocated,
-                    creditsUsed    = consumed - refunded,
-                    creditsLeft    = allocated - consumed + refunded,
-                    currency       = "XAF",
+                    planName,
+                    periodStart = CurrentPeriodStart(),
+                    // Champs historiques conservés pour compatibilité d'affichage :
+                    // "creditsLeft" est désormais le disponible total du portefeuille
+                    // (dotation restante + recharges), pas seulement la dotation.
+                    creditsLeft = breakdown.AvailableXaf,
+                    allocationRemaining = breakdown.AllocationRemainingXaf,
+                    allocationExpiresAt = breakdown.AllocationExpiresAt,
+                    permanent = breakdown.PermanentXaf,
+                    currency = "XAF",
                     childrenCount,
-                    childrenLimit  = subscription.maxChildren,
-                    daysToRenewal
+                    childrenLimit = maxChildren,
+                    daysToRenewal,
                 },
-                success = true
+                success = true,
             });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting parent credits");
+            _logger.LogError(ex, "Error getting parent wallet summary");
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }
 
+    /// <summary>
+    /// GET /api/parent/credits/history — historique combiné : écritures du
+    /// portefeuille (dotation, recharge, achats) depuis ce module, et lignes
+    /// de l'ancien registre de crédits conservées pour la période antérieure à
+    /// la bascule (décision explicite : ne pas perdre l'historique déjà écrit).
+    /// </summary>
     [HttpGet("credits/history")]
     public async Task<IActionResult> GetHistory([FromQuery] int limit = 50)
     {
@@ -164,40 +163,51 @@ public class ParentCreditsController : ControllerBase
             if (limit is < 1 or > 200) limit = 50;
             var parentId = User.GetUserId();
 
-            var items = await _db.ParentCreditLedgers.AsNoTracking()
+            var (items, _) = await _wallet.GetHistoryAsync(parentId, WalletSources.MonthlyAllocation, 1, limit);
+            var purchases = await _wallet.GetHistoryAsync(parentId, WalletSources.Purchase, 1, limit);
+            var recharges = await _wallet.GetHistoryAsync(parentId, WalletSources.Recharge, 1, limit);
+
+            var walletItems = items.Concat(purchases.Items).Concat(recharges.Items)
+                .OrderByDescending(i => i.Date)
+                .Take(limit)
+                .Select(i => new
+                {
+                    i.Id,
+                    entryType = i.EntryType,
+                    amount = Math.Abs(i.AmountXaf),
+                    label = i.Label,
+                    createdAt = i.Date,
+                    direction = i.Type, // "credit" | "debit"
+                });
+
+            // Lignes historiques de l'ancien registre, écrites avant ce module :
+            // conservées telles quelles, jamais recalculées.
+            var legacy = await _db.ParentCreditLedgers.AsNoTracking()
                 .Where(l => l.ParentId == parentId)
                 .OrderByDescending(l => l.CreatedAt)
                 .Take(limit)
                 .Select(l => new
                 {
                     l.Id, l.EntryType, l.Amount, l.Label, l.CreatedAt, l.PeriodStart,
-                    childId   = l.ChildId,
+                    childId = l.ChildId,
                     childName = l.Child != null ? (l.Child.FirstName + " " + l.Child.LastName).Trim() : null
                 })
                 .ToListAsync();
 
-            return Ok(new { data = items, success = true });
+            return Ok(new { data = new { wallet = walletItems, legacy }, success = true });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting parent credit history");
+            _logger.LogError(ex, "Error getting parent wallet history");
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }
 
     /// <summary>
-    /// Retour d'usage sur les achats faits pour un enfant, 1 à 30 jours après
-    /// l'achat : signal binaire "consulté / pas encore consulté", jamais un
-    /// compteur (DownloadHistories n'est pas fiable pour compter les
-    /// consultations réelles  déduplication incohérente selon le canal
-    /// d'accès, voir parent_decisions_session.md, fonctionnalité E).
-    ///
-    /// OrderItem n'a pas de colonne "pour quel enfant" : le seul lien fiable
-    /// entre une commande et l'enfant destinataire est ParentCreditLedger
-    /// (EntryType="consumption", ChildId + OrderId), écrit par
-    /// PurchaseForChild au moment de l'achat. Un achat payé autrement qu'avec
-    /// les crédits mensuels n'a donc pas de suivi ici  c'est le seul système
-    /// d'achat-pour-enfant réellement implémenté aujourd'hui.
+    /// Retour d'usage sur les achats faits pour un enfant (inchangé par ce
+    /// module, conservé sur le registre historique : l'achat pour enfant par
+    /// portefeuille écrit désormais aussi une ligne de registre à titre
+    /// d'historique de bénéficiaire, voir <see cref="PurchaseForChild"/>).
     /// </summary>
     [HttpGet("purchases/{childId:int}/impact")]
     public async Task<IActionResult> GetPurchaseImpact(int childId)
@@ -255,22 +265,27 @@ public class ParentCreditsController : ControllerBase
     }
 
     /// <summary>
-    /// Achète une épreuve pour un enfant. Débite les crédits du mois si demandé
-    /// et suffisants, crée la commande et inscrit l'enfant au contenu.
+    /// Achète une épreuve pour un enfant. Débite le portefeuille (dotation
+    /// mensuelle en priorité, puis recharge — Module 14) si suffisant ; sinon,
+    /// propose explicitement le complément Mobile Money au lieu de rejeter
+    /// l'achat (décision §2.6 point 2 et prompt Module 14, critère
+    /// d'acceptation « n'est plus rejeté »).
     /// </summary>
     [HttpPost("purchase-for-child")]
     public async Task<IActionResult> PurchaseForChild([FromBody] PurchaseForChildRequest request)
     {
-        // Module 19 : la transaction existait mais sans isolation suffisante,
-        // et le solde de crédits est lui aussi recalculé par sommation du
-        // journal. Deux achats concurrents pouvaient donc consommer deux fois
-        // les mêmes crédits. Même traitement que le paiement par solde
-        // professeur et que la réservation de tutorat : Serializable, limité
-        // à ce chemin.
+        // Module 19 : Serializable, limité à ce chemin, comme le paiement par
+        // solde professeur et la réservation de tutorat.
         await using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
         try
         {
             var parentId = User.GetUserId();
+            // Verrou du portefeuille acquis dès l'ouverture de la transaction
+            // (même patron que OrdersController.PayWithBalance) : la lecture du
+            // disponible ci-dessous et le débit qui suit doivent voir le même
+            // état, sans course possible avec un autre achat concurrent.
+            await _wallet.RunLockedAsync(parentId, () => Task.FromResult(true));
+            await EnsureMonthlyAllocationAsync(parentId);
 
             var linked = await _db.ParentStudentLinks
                 .AnyAsync(l => l.ParentId == parentId && l.StudentId == request.ChildId && l.Status == "accepted");
@@ -284,25 +299,17 @@ public class ParentCreditsController : ControllerBase
             if (subject == null)
                 return NotFound(new { success = false, error = "Épreuve introuvable." });
 
-            // Idempotence dérivée côté serveur (passe de clôture du lot 0), sur
-            // le modèle du paiement par solde professeur : même parent, même
-            // enfant, même ensemble de contenus, fenêtre courte. Aucun client
-            // n'envoie de jeton d'idempotence, l'exiger casserait le web. Un
-            // rejeu renvoie la commande d'origine au lieu d'échouer sur
-            // « déjà accès » (voie crédits) ou de créer une seconde commande en
-            // attente (voie Mobile Money). L'enfant est reconnu par le marqueur
-            // posé dans Notes, ou par l'écriture de consommation de crédits
-            // pour les commandes antérieures à ce marqueur.
+            // Idempotence dérivée côté serveur (passe de clôture du lot 0) :
+            // même parent, même enfant, même contenu, fenêtre courte.
             var since = DateTime.UtcNow.Subtract(PurchaseForChildIdempotencyWindow);
             var childMarker = ChildPurchaseMarker(request.ChildId);
             var duplicate = await _db.Orders.AsNoTracking()
                 .Where(o => o.UserId == parentId
                          && o.CreatedAt >= since
-                         && (o.PaymentMethod == "parent_credits" || o.PaymentMethod == "mobile_money")
+                         && (o.PaymentMethod == "parent_wallet" || o.PaymentMethod == "mobile_money")
                          && o.Items.Count == 1
                          && o.Items.Any(i => i.SubjectId == request.SubjectId)
-                         && (o.Notes == childMarker
-                             || _db.ParentCreditLedgers.Any(l => l.OrderId == o.Id && l.ChildId == request.ChildId)))
+                         && o.Notes == childMarker)
                 .OrderByDescending(o => o.CreatedAt)
                 .FirstOrDefaultAsync();
 
@@ -320,7 +327,7 @@ public class ParentCreditsController : ControllerBase
                         orderId         = duplicate.Id,
                         orderNumber     = duplicate.OrderNumber,
                         status          = duplicate.Status,
-                        paidWithCredits = duplicate.PaymentMethod == "parent_credits",
+                        paidWithWallet  = duplicate.PaymentMethod == "parent_wallet",
                         amount          = duplicate.TotalAmount,
                     },
                     success   = true,
@@ -334,35 +341,18 @@ public class ParentCreditsController : ControllerBase
             if (alreadyEnrolled)
                 return BadRequest(new { success = false, error = "Votre enfant a déjà accès à cette épreuve." });
 
-            var periodStart = CurrentPeriodStart();
-            var entries = await _db.ParentCreditLedgers.AsNoTracking()
-                .Where(l => l.ParentId == parentId && l.PeriodStart == periodStart)
-                .Select(l => new { l.EntryType, l.Amount })
-                .ToListAsync();
-
-            var creditsLeft = entries.Where(e => e.EntryType == "allocation").Sum(e => e.Amount)
-                            - entries.Where(e => e.EntryType == "consumption").Sum(e => e.Amount)
-                            + entries.Where(e => e.EntryType == "refund").Sum(e => e.Amount);
-
-            var payWithCredits = request.UseCredits && creditsLeft >= subject.Price;
-
-            if (request.UseCredits && !payWithCredits)
-                return BadRequest(new
-                {
-                    success = false,
-                    error   = "Crédits insuffisants pour cet achat.",
-                    creditsLeft,
-                    price   = subject.Price
-                });
+            var available = await _wallet.GetAvailableAsync(parentId);
+            var payFromWallet = available >= subject.Price;
 
             var order = new Order
             {
                 UserId        = parentId,
                 OrderNumber   = $"WP-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString("N")[..6].ToUpperInvariant()}",
                 TotalAmount   = subject.Price,
-                Status        = payWithCredits ? "paid" : "pending",
-                PaymentMethod = payWithCredits ? "parent_credits" : "mobile_money",
-                // Bénéficiaire de l'achat, relu par la détection de doublon.
+                Status        = payFromWallet ? "paid" : "pending",
+                PaymentMethod = payFromWallet ? "parent_wallet" : "mobile_money",
+                // Bénéficiaire de l'achat, relu par la détection de doublon et
+                // par le webhook de paiement (module 18) pour l'inscription.
                 Notes         = childMarker,
             };
             _db.Orders.Add(order);
@@ -375,18 +365,11 @@ public class ParentCreditsController : ControllerBase
                 PriceAtPurchase = subject.Price
             });
 
-            if (payWithCredits)
+            if (payFromWallet)
             {
-                _db.ParentCreditLedgers.Add(new ParentCreditLedger
-                {
-                    ParentId    = parentId,
-                    EntryType   = "consumption",
-                    Amount      = subject.Price,
-                    ChildId     = request.ChildId,
-                    OrderId     = order.Id,
-                    PeriodStart = periodStart,
-                    Label       = subject.Title
-                });
+                await _wallet.DebitParentWalletAsync(
+                    parentId, subject.Price, $"purchase_for_child:order:{order.Id}", subject.Title,
+                    "Order", order.Id);
 
                 _db.Enrollments.Add(new Enrollment
                 {
@@ -394,23 +377,30 @@ public class ParentCreditsController : ControllerBase
                     SubjectId = subject.Id
                 });
 
+                // Historique legacy conservé pour l'écran "impact d'achat"
+                // (GetPurchaseImpact), qui lit encore ParentCreditLedger : une
+                // ligne y est toujours écrite à titre de trace bénéficiaire,
+                // son montant n'est plus la source du solde.
+                _db.ParentCreditLedgers.Add(new ParentCreditLedger
+                {
+                    ParentId    = parentId,
+                    EntryType   = "consumption",
+                    Amount      = subject.Price,
+                    ChildId     = request.ChildId,
+                    OrderId     = order.Id,
+                    PeriodStart = CurrentPeriodStart(),
+                    Label       = subject.Title,
+                });
             }
 
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
 
-            if (payWithCredits)
+            if (payFromWallet)
             {
-                // Lot 2, Module 1 : vente créditée à l'auteur dans le journal
-                // (idempotent, rattrapé par la réconciliation en cas d'échec).
                 try { await _wallet.SyncOrderAsync(order.Id); }
                 catch (Exception ex) { _logger.LogError(ex, "Écritures de vente de la commande {OrderId} non posées (réconciliation à venir)", order.Id); }
 
-                // Passe par PublishAsync (ntfy + DB) plutôt qu'un Notifications.Add direct :
-                // sans ça, aucun événement SSE n'était jamais émis, donc l'enfant ne
-                // voyait jamais ce contenu offert avant de recharger la page manuellement.
-                // Module 22 : envoyée APRÈS la validation de la transaction, pour que
-                // l'enfant ne soit jamais prévenu d'un achat finalement annulé.
                 await _ntfy.PublishAsync(
                     topic: $"winplus-user-{request.ChildId}",
                     title: "Nouveau contenu disponible",
@@ -420,35 +410,50 @@ public class ParentCreditsController : ControllerBase
                     type: "content",
                     relatedEntityType: "subject",
                     relatedEntityId: subject.Id);
+
+                return Ok(new
+                {
+                    data = new
+                    {
+                        orderId        = order.Id,
+                        orderNumber    = order.OrderNumber,
+                        status         = order.Status,
+                        paidWithWallet = true,
+                        amount         = subject.Price,
+                        walletLeft     = available - subject.Price,
+                    },
+                    success = true,
+                });
             }
 
-            return Ok(new
+            // Solde insuffisant : la commande reste en attente, prête pour un
+            // complément Mobile Money explicite — plus de rejet sec (Module 14).
+            return StatusCode(402, new
             {
-                data = new
-                {
-                    orderId      = order.Id,
-                    orderNumber  = order.OrderNumber,
-                    status       = order.Status,
-                    paidWithCredits = payWithCredits,
-                    amount       = subject.Price,
-                    creditsLeft  = payWithCredits ? creditsLeft - subject.Price : creditsLeft
-                },
-                success = true
+                success = false,
+                requiresTopUp = true,
+                error = "Solde du portefeuille insuffisant pour cet achat. Rechargez via Mobile Money pour continuer.",
+                orderId = order.Id,
+                walletAvailable = available,
+                price = subject.Price,
+                missingXaf = subject.Price - available,
             });
         }
         catch (Exception ex) when (DbConcurrency.IsSerializationFailure(ex))
         {
-            // Collision de sérialisation (40001) ou interblocage (40P01) :
-            // un autre achat du même parent consommait les mêmes crédits en
-            // parallèle. Même traitement que le paiement par solde
-            // (OrdersController) : 409 actionnable au lieu d'un 500. La
-            // transaction est annulée par `await using` à la sortie.
             _logger.LogWarning(ex, "Collision de sérialisation sur l'achat pour enfant");
             return StatusCode(409, new
             {
                 success = false,
-                error = "Un autre achat sur vos crédits est en cours de traitement. Réessayez dans un instant."
+                error = "Un autre achat sur votre portefeuille est en cours de traitement. Réessayez dans un instant."
             });
+        }
+        catch (InsufficientWalletBalanceException)
+        {
+            // Lu de nouveau entre la vérification et le débit (concurrence) :
+            // message actionnable plutôt qu'une erreur générique.
+            await tx.RollbackAsync();
+            return StatusCode(402, new { success = false, error = "Solde du portefeuille insuffisant pour cet achat." });
         }
         catch (Exception ex)
         {
@@ -462,5 +467,5 @@ public class ParentCreditsController : ControllerBase
     private static readonly TimeSpan PurchaseForChildIdempotencyWindow = TimeSpan.FromSeconds(60);
 
     /// <summary>Marqueur du bénéficiaire, écrit dans Order.Notes.</summary>
-    private static string ChildPurchaseMarker(int childId) => $"purchase-for-child:{childId}";
+    internal static string ChildPurchaseMarker(int childId) => $"purchase-for-child:{childId}";
 }

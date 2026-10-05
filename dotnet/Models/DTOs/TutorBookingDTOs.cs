@@ -66,6 +66,13 @@ public class ResolveTutorBookingDisputeRequestDto
     /// <summary>refunded_full | refunded_partial | released_to_tutor.</summary>
     public string Resolution { get; set; } = null!;
     public string? Note { get; set; }
+
+    /// <summary>
+    /// Montant remboursé à l'élève, en XAF (Module 29). Obligatoire et borné
+    /// par le montant bloqué en escrow pour <c>refunded_partial</c> ; ignoré
+    /// pour les deux autres issues (déduit intégralement du montant bloqué).
+    /// </summary>
+    public decimal? AmountXaf { get; set; }
 }
 
 /// <summary>Réservation en attente de décision du répétiteur, avec délai restant (US-REP-05).</summary>

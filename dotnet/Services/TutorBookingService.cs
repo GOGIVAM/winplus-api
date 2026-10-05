@@ -213,8 +213,14 @@ public class TutorBookingService : ITutorBookingService
         var isTutor = booking.TutorProfile?.UserId == userId;
         if (!isStudent && !isTutor)
             throw new InvalidOperationException("Tu ne peux pas annuler cette réservation.");
-        if (booking.Status is "cancelled" or "completed")
-            throw new InvalidOperationException("Cette réservation ne peut plus être annulée.");
+        // Module 21 (décision §4.H) : un litige ouvert doit être tranché par
+        // l'administrateur (Module 29) avant tout nouveau changement de
+        // statut — sans cette garde, l'élève pouvait annuler une réservation
+        // en litige, la rendant irrésolvable et invisible pour l'administrateur.
+        if (booking.Status is "cancelled" or "completed" or "disputed")
+            throw new InvalidOperationException(booking.Status == "disputed"
+                ? "Cette réservation est en litige : elle doit être tranchée par le support avant toute annulation."
+                : "Cette réservation ne peut plus être annulée.");
 
         var hadCompletedPayment = booking.PaymentStatus == "completed";
 
@@ -643,7 +649,7 @@ public class TutorBookingService : ITutorBookingService
 
     private static readonly string[] ValidDisputeResolutions = { "refunded_full", "refunded_partial", "released_to_tutor" };
 
-    public async Task<TutorBookingDto> ResolveDisputeAsync(int adminUserId, int bookingId, string resolution, string? note)
+    public async Task<TutorBookingDto> ResolveDisputeAsync(int adminUserId, int bookingId, string resolution, string? note, decimal? amountXaf = null)
     {
         if (!ValidDisputeResolutions.Contains(resolution))
             throw new InvalidOperationException("Décision invalide.");
@@ -654,6 +660,19 @@ public class TutorBookingService : ITutorBookingService
             ?? throw new InvalidOperationException("Réservation introuvable.");
         if (booking.Status != "disputed")
             throw new InvalidOperationException("Cette réservation n'est pas en litige.");
+
+        // Module 29 : le remboursement partiel exige un montant explicite,
+        // borné par le montant réellement bloqué en escrow — jamais davantage.
+        decimal? refundAmount = null;
+        if (resolution == "refunded_partial")
+        {
+            if (amountXaf is not > 0)
+                throw new InvalidOperationException("Indique le montant remboursé pour un remboursement partiel.");
+            refundAmount = RevenueSplit.Xaf(amountXaf.Value);
+            if (refundAmount > booking.PriceXaf)
+                throw new InvalidOperationException(
+                    $"Le montant remboursé ({refundAmount:0} XAF) dépasse le montant bloqué ({booking.PriceXaf:0} XAF).");
+        }
 
         booking.DisputeResolution = resolution;
         booking.DisputeResolutionNote = note;
@@ -669,13 +688,45 @@ public class TutorBookingService : ITutorBookingService
         else
         {
             booking.PaymentStatus = "refunded";
+            var retainedByTeacher = resolution == "refunded_partial" ? booking.PriceXaf - refundAmount!.Value : 0m;
             await _ntfy.PublishAdminAsync("Remboursement manuel requis  litige cours particulier",
                 $"Réservation #{booking.Id} ({booking.PriceXaf} XAF, réf. {booking.NotchpayReference}) : " +
-                $"{(resolution == "refunded_full" ? "remboursement total" : "remboursement partiel")} décidé par le support  effectuer le virement NotchPay/MoMo.",
+                (resolution == "refunded_full"
+                    ? "remboursement total"
+                    : $"remboursement partiel de {refundAmount:0} XAF (le répétiteur garde {retainedByTeacher:0} XAF)") +
+                $" décidé par le support  effectuer le virement NotchPay/MoMo de {(resolution == "refunded_full" ? booking.PriceXaf : refundAmount):0} XAF à l'élève.",
                 tags: new[] { "moneybag" });
         }
         await _context.SaveChangesAsync();
+        // Contre-passe l'écriture d'origine (en attente ou confirmée) dans
+        // tous les cas : le statut "cancelled"/"refunded" la fait sortir de la
+        // branche "payé et actif" du patron générique.
         await SyncWalletAsync(booking.Id);
+
+        if (resolution == "refunded_partial")
+        {
+            // Part conservée par le répétiteur sur le reliquat (prix moins le
+            // remboursement), à la même commission que d'habitude — écriture
+            // dédiée, distincte de celle (contre-passée ci-dessus) que le
+            // patron générique aurait posée pour le prix plein.
+            var teacherId = booking.TutorProfile?.UserId;
+            var retained = booking.PriceXaf - refundAmount!.Value;
+            if (teacherId.HasValue && retained > 0)
+            {
+                var share = await RevenueSplit.GetTeacherShareAsync(_context, teacherId.Value);
+                var net = RevenueSplit.NetXaf(retained, share);
+                var commission = retained - net;
+                var key = $"tutoring_dispute_partial:{booking.Id}";
+                var commissionKey = $"tutoring_dispute_partial_commission:{booking.Id}";
+                if (net > 0)
+                    await _wallet.PostAsync(new WalletEntry(teacherId.Value, WalletEntryTypes.TutoringRevenue, net, key,
+                        $"Litige résolu  séance du {booking.SessionDate:dd/MM/yyyy} (remboursement partiel)",
+                        "TutorBooking", booking.Id));
+                if (commission > 0)
+                    await _wallet.PostAsync(new WalletEntry(null, WalletEntryTypes.PlatformCommission, commission, commissionKey,
+                        $"Commission tutorat, litige réservation #{booking.Id}", "TutorBooking", booking.Id));
+            }
+        }
 
         var decisionLabel = resolution switch
         {

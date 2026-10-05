@@ -165,7 +165,7 @@ public class TutorBookingController : ControllerBase
     [Authorize(Roles = "admin")]
     public async Task<ActionResult<TutorBookingDto>> ResolveDispute(int id, [FromBody] ResolveTutorBookingDisputeRequestDto request)
     {
-        try { return Ok(await _service.ResolveDisputeAsync(User.GetUserId(), id, request.Resolution, request.Note)); }
+        try { return Ok(await _service.ResolveDisputeAsync(User.GetUserId(), id, request.Resolution, request.Note, request.AmountXaf)); }
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
     }
 }

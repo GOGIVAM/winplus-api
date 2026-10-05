@@ -328,7 +328,11 @@ public class CertificateService : ICertificateService
             Id = certificate.Id,
             UserId = certificate.UserId,
             SubjectId = certificate.SubjectId,
-            EnrollmentId = certificate.EnrollmentId,
+            // Module 21 : nul si l'inscription d'origine a depuis disparu
+            // (SetNull) — le certificat reste acquis, seule la référence
+            // s'efface. 0 n'a pas de sens métier ici, mais préserve la forme du
+            // DTO existant plutôt que d'élargir son contrat dans ce module.
+            EnrollmentId = certificate.EnrollmentId ?? 0,
             CertificateNumber = certificate.CertificateNumber,
             SubjectTitle = subject.Title,
             UserName = $"{user.FirstName} {user.LastName}",

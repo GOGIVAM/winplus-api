@@ -43,6 +43,7 @@ public class PaymentService : IPaymentService
     private readonly ApplicationDbContext _db;
     private readonly ILogger<PaymentService> _logger;
     private readonly IWalletService _wallet;
+    private readonly IPromoCodeService _promoCodes;
 
     public PaymentService(
         IPaymentRepository repository,
@@ -55,7 +56,8 @@ public class PaymentService : IPaymentService
         ISubscriptionActivationService subscriptionActivation,
         ApplicationDbContext db,
         ILogger<PaymentService> logger,
-        IWalletService wallet)
+        IWalletService wallet,
+        IPromoCodeService promoCodes)
     {
         _wallet = wallet;
         _subscriptionActivation = subscriptionActivation;
@@ -68,6 +70,7 @@ public class PaymentService : IPaymentService
         _affiliate = affiliate;
         _db = db;
         _logger = logger;
+        _promoCodes = promoCodes;
     }
 
     // ─── NotchPay operations ──────────────────────────────────────────────────
@@ -383,6 +386,26 @@ public class PaymentService : IPaymentService
             // rejeter la notification ferait reperdre la confirmation.
             _logger.LogError(ex,
                 "Paiement {PaymentId} confirmé mais activation de l'abonnement de la commande {OrderId} en échec",
+                payment.Id, payment.OrderId);
+        }
+
+        // Module 34 : le code promo n'est rattaché à la commande (usage
+        // décompté) qu'ici, à la confirmation du paiement — jamais à la
+        // création de la commande (décision §5.5.O). Même raison de ne jamais
+        // faire échouer la confirmation qu'au-dessus : l'argent est encaissé.
+        try
+        {
+            var order = await _db.Orders.AsNoTracking()
+                .Where(o => o.Id == payment.OrderId)
+                .Select(o => new { o.PromoCode, o.UserId })
+                .FirstOrDefaultAsync();
+            if (order is { PromoCode: { Length: > 0 }, UserId: not null })
+                await _promoCodes.ApplyPromoCodeAsync(order.UserId.Value, payment.OrderId, order.PromoCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Paiement {PaymentId} confirmé mais application du code promo de la commande {OrderId} en échec",
                 payment.Id, payment.OrderId);
         }
     }

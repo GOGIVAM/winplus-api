@@ -56,6 +56,15 @@ public class Order
     /// </summary>
     public string? ReferralCode { get; set; }
 
+    /// <summary>
+    /// Code promo validé au panier et porté jusqu'à la commande (Module 34).
+    /// <see cref="TotalAmount"/> est déjà net de la remise dès la création
+    /// (revalidée côté serveur, jamais reprise d'un montant client) ; ce champ
+    /// ne sert qu'à rattacher l'usage du code à la commande et décompter son
+    /// quota à la confirmation du paiement, jamais avant (décision §5.5.O).
+    /// </summary>
+    public string? PromoCode { get; set; }
+
     // Navigation properties
     public User? User { get; set; }
 

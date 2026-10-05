@@ -71,10 +71,22 @@ public class LibraryController : ControllerBase
 
         var organizedSubjectIds = items.Select(i => i.SubjectId).ToHashSet();
 
+        // Module 18 : un contenu acheté par un parent lié pour cet utilisateur
+        // (achat pour enfant, Module 14) doit apparaître dans SA bibliothèque,
+        // pas seulement dans celle du parent qui a payé — la commande
+        // appartient au parent (Order.UserId), seule l'inscription (Enrollment)
+        // rattache le contenu au bénéficiaire réel. Sans ce second critère,
+        // l'enfant voyait le contenu nulle part alors qu'il peut déjà l'ouvrir
+        // (ContentAccessService.HasPaidContentAccessAsync le lui accorde).
         var purchases = await _db.OrderItems.AsNoTracking()
-            .Where(oi => oi.Order.UserId == userId
+            .Where(oi => !organizedSubjectIds.Contains(oi.SubjectId)
                 && PaidOrderStatus.All.Contains(oi.Order.Status.ToLower())
-                && !organizedSubjectIds.Contains(oi.SubjectId))
+                && (oi.Order.UserId == userId
+                    || (_db.Enrollments.Any(e => e.UserId == userId && e.SubjectId == oi.SubjectId)
+                        && oi.Order.UserId != null
+                        && _db.ParentStudentLinks.Any(l => l.ParentId == oi.Order.UserId
+                                                         && l.StudentId == userId
+                                                         && l.Status == "accepted"))))
             .Select(oi => new { oi.SubjectId, oi.Order.CreatedAt })
             .ToListAsync();
 

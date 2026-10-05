@@ -57,10 +57,11 @@ public class WalletTopUpService : IWalletTopUpService
             .Select(u => new { u.Role, u.IsActive, u.IsDeleted }).FirstOrDefaultAsync();
         if (user == null || !user.IsActive || user.IsDeleted)
             throw new WithdrawalRejectedException(403, "account_inactive", "Ce compte ne peut pas être rechargé (compte suspendu ou supprimé).");
-        // Portefeuille professeur (lot 2). Le portefeuille parent rechargeable
-        // relève du Module 14 (lot 3).
-        if (!string.Equals(user.Role, "teacher", StringComparison.OrdinalIgnoreCase))
-            throw new WithdrawalRejectedException(403, "not_eligible", "La recharge du portefeuille est réservée aux comptes professeur pour l'instant.");
+        // Portefeuille professeur (lot 2) et portefeuille parent (Module 14,
+        // lot 3) : les deux seuls portefeuilles individuels rechargeables.
+        var role = (user.Role ?? string.Empty).Trim().ToLowerInvariant();
+        if (role is not ("teacher" or "parent"))
+            throw new WithdrawalRejectedException(403, "not_eligible", "La recharge du portefeuille est réservée aux comptes professeur et parent.");
 
         var requestId = string.IsNullOrWhiteSpace(clientRequestId) ? null : clientRequestId.Trim();
         if (requestId is { Length: > 64 }) requestId = requestId[..64];

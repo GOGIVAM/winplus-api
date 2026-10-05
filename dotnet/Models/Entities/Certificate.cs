@@ -16,8 +16,15 @@ public class Certificate
     [Required]
     public int SubjectId { get; set; }
     
-    [Required]
-    public int EnrollmentId { get; set; }
+    /// <summary>
+    /// Module 21 (décision §4.G) : nullable depuis que la relation est en
+    /// SetNull plutôt qu'en Cascade — un certificat déjà émis survit à la
+    /// désinscription (et même, en toute rigueur, à une suppression physique
+    /// de l'inscription si elle survenait, bien que la désinscription soit
+    /// désormais logique). <see cref="EnrollmentId"/> nul signifie « émis par
+    /// une inscription depuis disparue », jamais « jamais émis ».
+    /// </summary>
+    public int? EnrollmentId { get; set; }
     
     [Required]
     [MaxLength(100)]

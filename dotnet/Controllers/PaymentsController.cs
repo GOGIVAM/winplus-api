@@ -16,6 +16,7 @@ public class PaymentsController : ControllerBase
 {
     private readonly IPaymentService _paymentService;
     private readonly ITutorBookingService _tutorBookingService;
+    private readonly ITeachingSessionService _teachingSessionService;
     private readonly INotchPayService _notchPay;
     private readonly ILogger<PaymentsController> _logger;
     private readonly IMemoryCache _cache;
@@ -24,6 +25,7 @@ public class PaymentsController : ControllerBase
     public PaymentsController(
         IPaymentService paymentService,
         ITutorBookingService tutorBookingService,
+        ITeachingSessionService teachingSessionService,
         INotchPayService notchPay,
         ILogger<PaymentsController> logger,
         IMemoryCache cache,
@@ -32,6 +34,7 @@ public class PaymentsController : ControllerBase
         _withdrawals = withdrawals;
         _paymentService = paymentService;
         _tutorBookingService = tutorBookingService;
+        _teachingSessionService = teachingSessionService;
         _notchPay = notchPay;
         _logger = logger;
         _cache = cache;
@@ -213,7 +216,12 @@ public class PaymentsController : ControllerBase
             // du "WP-" utilisé par le checkout catalogue.
             var handledAsBooking = await _tutorBookingService.TryHandleNotchPayWebhookAsync(
                 eventId, webhookData.Event ?? "unknown", webhookData.Transaction);
-            if (!handledAsBooking)
+            // Module 18 : les inscriptions à une session payante portent leur
+            // propre paiement (référence "SESS-"), hors du module Order/Payment,
+            // exactement comme les réservations Répétiteur ci-dessus.
+            var handledAsSession = !handledAsBooking && await _teachingSessionService.TryHandleNotchPayWebhookAsync(
+                eventId, webhookData.Event ?? "unknown", webhookData.Transaction);
+            if (!handledAsBooking && !handledAsSession)
             {
                 await _paymentService.HandleNotchPayWebhookAsync(
                     eventId, webhookData.Event ?? "unknown", webhookData.Transaction);
