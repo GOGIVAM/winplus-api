@@ -45,9 +45,11 @@ public class TeacherClassesController : ControllerBase
     private readonly ILogger<TeacherClassesController> _logger;
     private readonly ITeacherService _teacherService;
     private readonly INtfyService _ntfy;
+    private readonly IWalletService _wallet;
 
-    public TeacherClassesController(ApplicationDbContext db, ILogger<TeacherClassesController> logger, ITeacherService teacherService, INtfyService ntfy)
+    public TeacherClassesController(ApplicationDbContext db, ILogger<TeacherClassesController> logger, ITeacherService teacherService, INtfyService ntfy, IWalletService wallet)
     {
+        _wallet = wallet;
         _db = db;
         _logger = logger;
         _teacherService = teacherService;
@@ -433,9 +435,8 @@ public class TeacherClassesController : ControllerBase
     /// seule fois au professeur si le contenu n'est pas déjà gratuit,
     /// déjà acheté, ou déjà publié par lui-même.
     ///
-    /// ⚠ Pas encore de solde WinPlus dépensable (Module 6) : le montant est
-    /// enregistré pour la comptabilité (Revenus &gt; Achats) mais rien ne
-    /// bloque encore une assignation faute de solde suffisant.
+    /// Lot 2 : le montant est débité dans le journal de portefeuille, sous
+    /// verrou ; une assignation est refusée (402) si le solde ne la couvre pas.
     /// </summary>
     [HttpPost("{id:int}/content")]
     public async Task<IActionResult> AssignContent([FromRoute] int id, [FromBody] AssignClassContentRequest request)
@@ -460,30 +461,52 @@ public class TeacherClassesController : ControllerBase
                     && oi.Order.UserId == teacherId
                     && PaidOrderStatus.All.Contains(oi.Order.Status.ToLower()));
 
-            var priceCharged = alreadyOwnedByTeacher ? 0m : subject.Price;
+            var priceCharged = alreadyOwnedByTeacher ? 0m : RevenueSplit.Xaf(subject.Price);
 
-            if (priceCharged > 0)
+            // Lot 2, Module 1 : l'assignation facturée passe par le journal,
+            // sous le verrou du portefeuille et dans une transaction. Le solde
+            // était auparavant lu puis l'assignation enregistrée sans aucune
+            // protection : deux assignations simultanées pouvaient engager
+            // deux fois le même solde.
+            TeacherClassContent assignment;
+            try
             {
-                var balance = await _teacherService.GetSpendableBalanceAsync(teacherId);
-                if (balance < priceCharged)
-                    return StatusCode(402, new
+                assignment = await _wallet.RunLockedAsync(teacherId, async () =>
+                {
+                    if (priceCharged > 0)
                     {
-                        success = false,
-                        error = $"Solde insuffisant : {balance:0} XAF disponibles, {priceCharged:0} XAF requis.",
-                        balanceXaf = balance,
-                        requiredXaf = priceCharged,
-                    });
-            }
+                        var available = await _wallet.GetAvailableAsync(teacherId);
+                        if (available < priceCharged)
+                            throw new InsufficientWalletBalanceException(Math.Max(0, available), priceCharged);
+                    }
 
-            var assignment = new TeacherClassContent
+                    var created = new TeacherClassContent
+                    {
+                        TeacherClassId = id,
+                        SubjectId = subject.Id,
+                        AssignedByUserId = teacherId,
+                        PriceChargedXaf = priceCharged,
+                    };
+                    _db.TeacherClassContents.Add(created);
+                    await _db.SaveChangesAsync();
+
+                    if (priceCharged > 0)
+                        await _wallet.DebitAsync(new WalletEntry(teacherId, WalletEntryTypes.ClassAssignment, priceCharged,
+                            WalletService.ClassAssignmentKey(created.Id), $"Assignation classe : {subject.Title}",
+                            "TeacherClassContent", created.Id));
+                    return created;
+                });
+            }
+            catch (InsufficientWalletBalanceException ex)
             {
-                TeacherClassId = id,
-                SubjectId = subject.Id,
-                AssignedByUserId = teacherId,
-                PriceChargedXaf = priceCharged,
-            };
-            _db.TeacherClassContents.Add(assignment);
-            await _db.SaveChangesAsync();
+                return StatusCode(402, new
+                {
+                    success = false,
+                    error = ex.Message,
+                    balanceXaf = ex.AvailableXaf,
+                    requiredXaf = ex.RequiredXaf,
+                });
+            }
 
             _logger.LogInformation("Professeur {TeacherId} a assigné le contenu {SubjectId} à la classe {ClassId} ({Price} XAF)",
                 teacherId, subject.Id, id, priceCharged);
@@ -509,6 +532,18 @@ public class TeacherClassesController : ControllerBase
         {
             _db.TeacherClassContents.Remove(link);
             await _db.SaveChangesAsync();
+
+            // Lot 2 : l'ancien solde, recalculé depuis les assignations encore
+            // présentes, recréditait implicitement le prix d'une assignation
+            // retirée. Ce comportement est conservé tel quel (point non tranché
+            // par le suivi, signalé), mais par une contre-passation explicite
+            // dans le journal au lieu d'une disparition silencieuse.
+            if (link.PriceChargedXaf > 0)
+            {
+                var debit = await _wallet.FindByKeyAsync(WalletService.ClassAssignmentKey(link.Id));
+                if (debit != null)
+                    await _wallet.ReverseAsync(debit.Id, "Assignation de classe retirée : montant recrédité", teacherId);
+            }
         }
         return NoContent();
     }

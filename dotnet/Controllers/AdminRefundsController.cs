@@ -56,13 +56,16 @@ public class AdminRefundsController : ControllerBase
     private readonly INtfyService _ntfy;
     private readonly IContentAccessService _contentAccess;
     private readonly ILogger<AdminRefundsController> _logger;
+    private readonly IWalletService _wallet;
 
     public AdminRefundsController(
         ApplicationDbContext db,
         INtfyService ntfy,
         IContentAccessService contentAccess,
-        ILogger<AdminRefundsController> logger)
+        ILogger<AdminRefundsController> logger,
+        IWalletService wallet)
     {
+        _wallet = wallet;
         _db = db;
         _ntfy = ntfy;
         _contentAccess = contentAccess;
@@ -208,6 +211,27 @@ public class AdminRefundsController : ControllerBase
                 }
 
                 await tx.CommitAsync();
+            }
+
+            // Lot 2, Module 1 : l'approbation se traduit dans le journal par
+            // des contre-passations (vente de l'auteur retirée, débit du
+            // paiement par solde restitué, commission d'affiliation annulée),
+            // jamais par une suppression d'écriture. Idempotent ; rattrapé par
+            // la réconciliation en cas d'échec.
+            if (approve)
+            {
+                try
+                {
+                    await _wallet.SyncOrderAsync(orderId);
+                    var commissionIds = await _db.AffiliateCommissions.AsNoTracking()
+                        .Where(c => c.OrderId == orderId).Select(c => c.Id).ToListAsync();
+                    foreach (var commissionId in commissionIds)
+                        await _wallet.SyncAffiliateCommissionAsync(commissionId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Contre-passations du remboursement de la commande {OrderId} non posées (réconciliation à venir)", orderId);
+                }
             }
 
             var order = await _db.Orders.AsNoTracking()
@@ -444,9 +468,8 @@ public class AdminRefundsController : ControllerBase
             {
                 title = "Remboursement accepté";
                 // Commande payée sur le solde WinPlus (professeur) : le débit
-                // disparaît du calcul du solde dès que la commande n'est plus
-                // payée (TeacherService.GetSpendableBalanceAsync), le montant
-                // est donc effectivement recrédité.
+                // est contre-passé dans le journal (lot 2), le montant est donc
+                // effectivement recrédité.
                 message = string.Equals(paymentMethod, "balance", StringComparison.OrdinalIgnoreCase)
                     ? $"Ta demande de remboursement pour la commande {orderNumber} a été acceptée. {amount:0} XAF ont été recrédités sur ton solde WinPlus. L'accès au contenu de cette commande est retiré."
                     : $"Ta demande de remboursement pour la commande {orderNumber} a été acceptée. L'accès au contenu de cette commande est retiré. Le reversement de {amount:0} XAF est traité séparément par le support WinPlus.";

@@ -44,9 +44,11 @@ public class ParentCreditsController : ControllerBase
     private readonly ApplicationDbContext _db;
     private readonly ILogger<ParentCreditsController> _logger;
     private readonly INtfyService _ntfy;
+    private readonly IWalletService _wallet;
 
-    public ParentCreditsController(ApplicationDbContext db, ILogger<ParentCreditsController> logger, INtfyService ntfy)
+    public ParentCreditsController(ApplicationDbContext db, ILogger<ParentCreditsController> logger, INtfyService ntfy, IWalletService wallet)
     {
+        _wallet = wallet;
         _db = db;
         _logger = logger;
         _ntfy = ntfy;
@@ -399,6 +401,11 @@ public class ParentCreditsController : ControllerBase
 
             if (payWithCredits)
             {
+                // Lot 2, Module 1 : vente créditée à l'auteur dans le journal
+                // (idempotent, rattrapé par la réconciliation en cas d'échec).
+                try { await _wallet.SyncOrderAsync(order.Id); }
+                catch (Exception ex) { _logger.LogError(ex, "Écritures de vente de la commande {OrderId} non posées (réconciliation à venir)", order.Id); }
+
                 // Passe par PublishAsync (ntfy + DB) plutôt qu'un Notifications.Add direct :
                 // sans ça, aucun événement SSE n'était jamais émis, donc l'enfant ne
                 // voyait jamais ce contenu offert avant de recharger la page manuellement.

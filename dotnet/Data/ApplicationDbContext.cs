@@ -91,6 +91,10 @@ public partial class ApplicationDbContext : DbContext
     // Journal de consommation WinAI en tokens LLM réels (Partie 8 du suivi).
     public DbSet<AiTokenUsage> AiTokenUsages => Set<AiTokenUsage>();
 
+    // Journal de portefeuille unique (Module 1, §14 du suivi).
+    public DbSet<WalletTransaction> WalletTransactions => Set<WalletTransaction>();
+    public DbSet<WalletTopUp> WalletTopUps => Set<WalletTopUp>();
+
     // Liaison parent-enfant, classes enseignant, messagerie directe
     public DbSet<ParentStudentLink> ParentStudentLinks => Set<ParentStudentLink>();
     public DbSet<TeacherStudentLink> TeacherStudentLinks => Set<TeacherStudentLink>();
@@ -1248,6 +1252,33 @@ modelBuilder.Entity<Exam>(entity =>
                 .WithMany()
                 .HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Journal de portefeuille (Module 1, §14 du suivi). L'index unique sur
+        // IdempotencyKey EST la garde contre le rejeu d'un événement. Aucune
+        // clé étrangère vers Users : le journal est un registre, il ne suit pas
+        // le cycle de vie du compte (une suppression ne doit rien effacer).
+        modelBuilder.Entity<WalletTransaction>(entity =>
+        {
+            entity.ToTable("WalletTransactions");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Amount).HasColumnType("numeric(14,0)");
+            entity.HasIndex(e => e.IdempotencyKey).IsUnique();
+            entity.HasIndex(e => new { e.OwnerType, e.OwnerId, e.Status });
+            entity.HasIndex(e => new { e.OwnerId, e.OccurredAt });
+            entity.HasIndex(e => new { e.SourceType, e.SourceId });
+            entity.HasIndex(e => e.ReversesEntryId).IsUnique();
+        });
+
+        // Recharge de portefeuille (Module 3) : intention structurée liée à la
+        // commande porteuse du paiement NotchPay.
+        modelBuilder.Entity<WalletTopUp>(entity =>
+        {
+            entity.ToTable("WalletTopUps");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.AmountXaf).HasColumnType("numeric(14,0)");
+            entity.HasIndex(e => e.OrderId).IsUnique();
+            entity.HasIndex(e => new { e.UserId, e.ClientRequestId }).IsUnique();
         });
 
         modelBuilder.Entity<ParentStudentLink>(entity =>

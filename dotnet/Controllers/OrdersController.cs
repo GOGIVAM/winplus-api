@@ -15,6 +15,9 @@ namespace Backend.Controllers;
 /// un compte est obligatoire pour commander. Un client qui les envoie encore
 /// n'est pas rejeté, ils sont simplement ignorés à la désérialisation.
 /// </summary>
+/// <summary>Paiement combiné solde + Mobile Money (TC-CAT-11, lot 2 Module 3).</summary>
+public record PayWithBalanceComplementRequest(string Operator, string Phone);
+
 public record CreateOrderRequest(
     string PaymentMethod,
     string? ReferralCode = null
@@ -30,6 +33,8 @@ public class OrdersController : ControllerBase
     private readonly IPdfService _pdfService;
     private readonly ITeacherService _teacherService;
     private readonly IAffiliateService _affiliate;
+    private readonly IWalletService _wallet;
+    private readonly IPaymentService _payments;
 
     public OrdersController(
         IOrderService orderService,
@@ -37,8 +42,12 @@ public class OrdersController : ControllerBase
         ApplicationDbContext db,
         IPdfService pdfService,
         ITeacherService teacherService,
-        IAffiliateService affiliate)
+        IAffiliateService affiliate,
+        IWalletService wallet,
+        IPaymentService payments)
     {
+        _wallet = wallet;
+        _payments = payments;
         _orderService = orderService;
         _logger = logger;
         _db = db;
@@ -113,6 +122,12 @@ public class OrdersController : ControllerBase
             // retour anticipé ne peut laisser un débit à moitié appliqué.
             await using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
 
+            // Lot 2 : verrou du portefeuille pris dès l'ouverture de la
+            // transaction (verrou consultatif PostgreSQL, gardé jusqu'au COMMIT),
+            // pour que la détection de doublon ci-dessous et le débit voient
+            // tous deux l'état laissé par une requête concurrente déjà validée.
+            await _wallet.RunLockedAsync(userId, () => Task.FromResult(true));
+
             {
                 // Passe de clôture du lot 0 : le contrôle de solde et la clé de
                 // doublon portaient sur le prix stocké au panier, alors que la
@@ -180,8 +195,30 @@ public class OrdersController : ControllerBase
                     });
                 }
 
-                var balance = await _teacherService.GetSpendableBalanceAsync(userId);
-                if (balance < serverTotal)
+                // Lot 2, Module 1 : le solde est lu dans le journal, sous le
+                // verrou du portefeuille (pris dans la transaction ouverte
+                // ci-dessus), et le débit y est écrit dans la même transaction.
+                // Deux paiements concurrents du même professeur sont donc
+                // sérialisés : le second voit le solde déjà débité.
+                var paid = await _wallet.RunLockedAsync(userId, async () =>
+                {
+                    var available = await _wallet.GetAvailableAsync(userId);
+                    if (available < serverTotal) return (Order?)null;
+
+                    var created = await _orderService.CreateOrderAsync(userId, "balance");
+
+                    // Le statut passe par la voie contrôlée à liste blanche plutôt
+                    // que par une écriture directe sur l'entité (Module 19).
+                    await _orderService.UpdateOrderStatusAsync(created.Id, "completed");
+
+                    await _wallet.DebitAsync(new WalletEntry(userId, WalletEntryTypes.BalancePurchase, created.TotalAmount,
+                        WalletService.BalancePurchaseKey(created.Id), $"Achat panier {created.OrderNumber}", "Order", created.Id));
+                    return created;
+                });
+
+                if (paid == null)
+                {
+                    var balance = Math.Max(0, await _wallet.GetAvailableAsync(userId));
                     return StatusCode(402, new
                     {
                         success = false,
@@ -190,16 +227,14 @@ public class OrdersController : ControllerBase
                         requiredXaf = serverTotal,
                         priceAdjustments = pricing.Adjustments,
                     });
+                }
 
-                var order = await _orderService.CreateOrderAsync(userId, "balance");
-
-                // Le statut passe par la voie contrôlée à liste blanche plutôt
-                // que par une écriture directe sur l'entité (Module 19) : elle
-                // valide la valeur, la normalise en minuscules et pose la date
-                // de complétion.
-                await _orderService.UpdateOrderStatusAsync(order.Id, "completed");
-
+                var order = paid;
                 await tx.CommitAsync();
+
+                // Hors transaction et idempotent : crédit des auteurs des contenus.
+                try { await _wallet.SyncOrderAsync(order.Id); }
+                catch (Exception ex) { _logger.LogError(ex, "Écritures de vente de la commande {OrderId} non posées (réconciliation à venir)", order.Id); }
 
                 // Hors transaction : la commission d'affiliation ne doit pas
                 // pouvoir faire échouer ni rejouer le débit déjà validé.
@@ -214,6 +249,10 @@ public class OrdersController : ControllerBase
         catch (ContentNotPurchasableException ex)
         {
             return BadRequest(new { success = false, error = ex.Message, subjectId = ex.SubjectId });
+        }
+        catch (InsufficientWalletBalanceException ex)
+        {
+            return StatusCode(402, new { success = false, error = ex.Message, balanceXaf = ex.AvailableXaf, requiredXaf = ex.RequiredXaf });
         }
         catch (Exception ex) when (IsSerializationFailure(ex))
         {
@@ -239,6 +278,131 @@ public class OrdersController : ControllerBase
         {
             _logger.LogError(ex, "Erreur lors du paiement par solde");
             return StatusCode(500, new { success = false, error = "Erreur serveur" });
+        }
+    }
+
+    /// <summary>
+    /// Montant minimal d'un paiement Mobile Money accepté par NotchPay en XAF
+    /// (documentation NotchPay, « minimum_amount » de la devise XAF).
+    /// </summary>
+    public const decimal MinimumMobileMoneyXaf = 100m;
+
+    /// <summary>
+    /// Paiement combiné : solde WinPlus + complément Mobile Money (cas de test
+    /// TC-CAT-11, lot 2 Module 3), quand le solde ne couvre pas tout le panier.
+    ///
+    /// Sous le verrou du portefeuille, la commande est créée en attente et la
+    /// part solde est débitée dans le journal (réservation), puis le complément
+    /// est demandé par le parcours d'encaissement existant. À la confirmation du
+    /// paiement, la commande passe en <c>completed</c> (ventes créditées aux
+    /// auteurs). Si le complément échoue, expire ou est annulé, la commande
+    /// passe en échec et la part solde est restituée par contre-passation : la
+    /// commande ne reste jamais dans un état intermédiaire.
+    ///
+    /// La part Mobile Money ne descend jamais sous le minimum NotchPay (100
+    /// XAF) : la part solde est réduite d'autant si nécessaire.
+    /// </summary>
+    [HttpPost("pay-with-balance-complement")]
+    [Authorize]
+    public async Task<IActionResult> PayWithBalanceComplement([FromBody] PayWithBalanceComplementRequest request)
+    {
+        var userId = User.GetUserId();
+        var role = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
+        if (!string.Equals(role, "teacher", StringComparison.OrdinalIgnoreCase))
+            return StatusCode(403, new { success = false, error = "Seul un compte professeur dispose d'un solde WinPlus." });
+
+        var op = (request.Operator ?? string.Empty).Trim().ToLowerInvariant();
+        if (op is not ("mtn" or "orange"))
+            return BadRequest(new { success = false, error = "Opérateur invalide : MTN MoMo ou Orange Money." });
+        var phone = WithdrawalService.NormalizePhone(request.Phone);
+        if (phone == null)
+            return BadRequest(new { success = false, error = "Numéro Mobile Money invalide : 9 chiffres commençant par 6." });
+
+        Order order;
+        decimal balancePart, momoPart;
+        try
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+            await _wallet.RunLockedAsync(userId, () => Task.FromResult(true));
+
+            var pricing = await _orderService.PriceUserCartAsync(userId);
+            var total = pricing.Total;
+            if (pricing.IsEmpty || total <= 0)
+                return BadRequest(new { success = false, error = "Panier vide." });
+
+            var available = Math.Max(0, await _wallet.GetAvailableAsync(userId));
+            if (available >= total)
+                return Conflict(new { success = false, code = "balance_sufficient", error = "Ton solde couvre tout le panier : utilise le paiement par solde.", balanceXaf = available });
+            if (available <= 0)
+                return StatusCode(402, new { success = false, code = "no_balance", error = "Aucun solde disponible à combiner : paie en Mobile Money.", balanceXaf = 0 });
+
+            balancePart = Math.Min(available, total - MinimumMobileMoneyXaf);
+            if (balancePart <= 0)
+                return BadRequest(new { success = false, code = "complement_too_small", error = $"Le complément Mobile Money doit être d'au moins {MinimumMobileMoneyXaf:0} FCFA : paie ce panier entièrement en Mobile Money." });
+            balancePart = RevenueSplit.Xaf(Math.Floor(balancePart));
+            momoPart = total - balancePart;
+
+            order = await _orderService.CreateOrderAsync(userId, op);
+            await _wallet.DebitAsync(new WalletEntry(userId, WalletEntryTypes.BalancePurchase, balancePart,
+                WalletService.BalancePurchaseKey(order.Id), $"Achat panier {order.OrderNumber} (part solde)", "Order", order.Id));
+            await tx.CommitAsync();
+        }
+        catch (ContentNotPurchasableException ex)
+        {
+            return BadRequest(new { success = false, error = ex.Message, subjectId = ex.SubjectId });
+        }
+        catch (InsufficientWalletBalanceException ex)
+        {
+            return StatusCode(402, new { success = false, error = ex.Message, balanceXaf = ex.AvailableXaf });
+        }
+        catch (Exception ex) when (IsSerializationFailure(ex))
+        {
+            return StatusCode(409, new { success = false, error = "Un autre paiement sur ton solde est en cours. Réessaie dans un instant." });
+        }
+
+        try
+        {
+            var payment = await _payments.InitiateNotchPayAsync(userId, new InitiatePaymentRequest
+            {
+                OrderId = order.Id,
+                Phone = phone,
+                Amount = momoPart,
+                Description = $"WinPlus : complément de la commande {order.OrderNumber}",
+            });
+
+            return Ok(new
+            {
+                success = true,
+                data = new
+                {
+                    orderId = order.Id,
+                    orderNumber = order.OrderNumber,
+                    paymentId = payment.PaymentId,
+                    status = payment.Status,
+                    totalXaf = order.TotalAmount,
+                    balancePartXaf = balancePart,
+                    momoPartXaf = momoPart,
+                },
+            });
+        }
+        catch (Exception ex)
+        {
+            // Complément impossible à lancer : la commande passe en échec et la
+            // part solde est restituée immédiatement.
+            _logger.LogWarning(ex, "Complément Mobile Money de la commande {OrderId} non lancé : part solde restituée", order.Id);
+            try
+            {
+                await _orderService.UpdateOrderStatusAsync(order.Id, "failed");
+                await _wallet.SyncOrderAsync(order.Id);
+            }
+            catch (Exception inner)
+            {
+                _logger.LogError(inner, "Restitution de la part solde de la commande {OrderId} à reprendre (réconciliation)", order.Id);
+            }
+            var message = ex is HttpRequestException
+                ? "Service de paiement temporairement indisponible. Ton solde n'a pas été débité."
+                : "Le paiement Mobile Money n'a pas pu être lancé. Ton solde n'a pas été débité.";
+            return StatusCode(ex is HttpRequestException ? 503 : 400, new { success = false, error = message });
         }
     }
 
@@ -372,6 +536,12 @@ public class OrdersController : ControllerBase
                 return BadRequest(new { success = false, error = blockReason });
 
             await _orderService.CancelOrderAsync(id);
+
+            // Lot 2 : annulation d'un paiement combiné en attente (part solde
+            // restituée) ou d'une recharge en attente (close). Idempotent.
+            try { await _wallet.SyncOrderAsync(id); }
+            catch (Exception ex) { _logger.LogError(ex, "Écritures de l'annulation de la commande {OrderId} non posées (réconciliation à venir)", id); }
+
             return Ok(new { data = new { id, status = "cancelled" }, success = true });
         }
         catch (InvalidOperationException ex)
@@ -522,6 +692,11 @@ public class OrdersController : ControllerBase
 
             if (!order.Status.Equals("completed", StringComparison.OrdinalIgnoreCase))
                 return BadRequest(new { success = false, error = "Seules les commandes complétées peuvent faire l'objet d'un remboursement" });
+
+            // Lot 2 : une recharge de portefeuille n'est pas un achat de
+            // contenu ; son montant est déjà sur le solde, retirable.
+            if (await _db.WalletTopUps.AnyAsync(t => t.OrderId == id))
+                return BadRequest(new { success = false, error = "Une recharge de portefeuille ne fait pas l'objet d'un remboursement : le montant est disponible sur ton solde et peut être retiré." });
 
             order.Status = "refund_requested";
             order.UpdatedAt = DateTime.UtcNow;

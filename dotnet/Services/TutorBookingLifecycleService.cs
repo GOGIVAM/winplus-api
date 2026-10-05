@@ -84,6 +84,7 @@ public class TutorBookingLifecycleService : BackgroundService
         }
 
         await db.SaveChangesAsync(ct);
+        await SyncWalletAsync(scope, expired.Select(b => b.Id));
         _logger.LogInformation("{Count} demande(s) de réservation expirée(s)", expired.Count);
     }
 
@@ -110,14 +111,31 @@ public class TutorBookingLifecycleService : BackgroundService
             var tutorUserId = booking.TutorProfile?.UserId;
             if (tutorUserId.HasValue)
                 await ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Fonds libérés",
-                    $"{booking.PriceXaf} XAF pour la séance du {booking.SessionDate:dd/MM/yyyy} sont maintenant disponibles dans ton solde WinPlus.",
+                    $"Ta part de la séance du {booking.SessionDate:dd/MM/yyyy} ({booking.PriceXaf} XAF payés par l'élève, commission déduite) est maintenant disponible dans ton solde WinPlus.",
                     userId: tutorUserId.Value, type: "TutorBooking");
             await ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Comment s'est passée ta séance ?",
                 "Laisse un avis pour aider les autres élèves.", userId: booking.StudentUserId, type: "TutorBooking");
         }
 
         await db.SaveChangesAsync(ct);
+        await SyncWalletAsync(scope, toRelease.Select(b => b.Id));
         _logger.LogInformation("{Count} réservation(s) libérée(s) de l'escrow", toRelease.Count);
+    }
+
+    /// <summary>
+    /// Lot 2, Module 1 : la libération de l'escrow confirme l'écriture en
+    /// attente du journal (seul moment où le revenu entre dans le solde
+    /// disponible) ; l'expiration l'annule. Idempotent : une libération rejouée
+    /// ne confirme pas deux fois le même revenu.
+    /// </summary>
+    private async Task SyncWalletAsync(IServiceScope scope, IEnumerable<int> bookingIds)
+    {
+        var wallet = scope.ServiceProvider.GetRequiredService<IWalletService>();
+        foreach (var id in bookingIds)
+        {
+            try { await wallet.SyncTutorBookingAsync(id); }
+            catch (Exception ex) { _logger.LogError(ex, "Écritures de la réservation {BookingId} non mises à jour (réconciliation à venir)", id); }
+        }
     }
 
     /// <summary>Dupliqué depuis TutorBookingService (petit calcul autonome, pas de dépendance circulaire).</summary>

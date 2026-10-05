@@ -407,6 +407,13 @@ builder.Services.AddScoped<IPricingService, PricingService>();
 builder.Services.AddScoped<IInstitutionService, InstitutionService>();
 builder.Services.AddScoped<IAnnouncementService, AnnouncementService>();
 builder.Services.AddScoped<ITeacherService, TeacherService>();
+// Lot 2, Module 1 : journal de portefeuille unique (source de vérité des soldes).
+builder.Services.AddScoped<IWalletService, WalletService>();
+builder.Services.AddScoped<IWalletBackfillService, WalletBackfillService>();
+// Lot 2, Module 2 : retrait Mobile Money automatisé par l'API de transfert NotchPay.
+builder.Services.AddScoped<IWithdrawalService, WithdrawalService>();
+// Lot 2, Module 3 : recharge du portefeuille par le parcours d'encaissement existant.
+builder.Services.AddScoped<IWalletTopUpService, WalletTopUpService>();
 builder.Services.AddScoped<IAffiliateService, AffiliateService>();
 builder.Services.AddScoped<IParentService, ParentService>();
 builder.Services.AddScoped<IStudentService, StudentService>();
@@ -535,6 +542,11 @@ builder.Services.AddHostedService<TutorCoachingReportService>();
 
 // Background services for the affiliate program
 builder.Services.AddHostedService<AffiliateCommissionMaturityService>();
+// Lot 2, Module 1 : filet de sécurité du journal (rejoue, sans doublon, les
+// événements récents dont l'écriture aurait été perdue).
+builder.Services.AddHostedService<WalletReconciliationService>();
+// Lot 2, Module 2 : suivi périodique des transferts de retrait en cours.
+builder.Services.AddHostedService<WithdrawalTransferSyncService>();
 builder.Services.AddHostedService<AffiliateRateRecalculationService>();
 
 // Background services for Formations (drip content)

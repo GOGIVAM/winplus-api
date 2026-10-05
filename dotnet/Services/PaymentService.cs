@@ -42,6 +42,7 @@ public class PaymentService : IPaymentService
     private readonly ISubscriptionActivationService _subscriptionActivation;
     private readonly ApplicationDbContext _db;
     private readonly ILogger<PaymentService> _logger;
+    private readonly IWalletService _wallet;
 
     public PaymentService(
         IPaymentRepository repository,
@@ -53,8 +54,10 @@ public class PaymentService : IPaymentService
         IAffiliateService affiliate,
         ISubscriptionActivationService subscriptionActivation,
         ApplicationDbContext db,
-        ILogger<PaymentService> logger)
+        ILogger<PaymentService> logger,
+        IWalletService wallet)
     {
+        _wallet = wallet;
         _subscriptionActivation = subscriptionActivation;
         _repository = repository;
         _orderService = orderService;
@@ -91,6 +94,7 @@ public class PaymentService : IPaymentService
         var blockReason = OrderStatusRules.PaymentBlockReason(order.Status);
         if (blockReason != null)
             throw new OrderNotPayableException(blockReason);
+        await EnsureBalancePartStillReservedAsync(orderId);
 
         // Résoudre l'email et le nom : depuis le compte si connecté, depuis la requête sinon
         string email;
@@ -342,6 +346,19 @@ public class PaymentService : IPaymentService
             return;
         }
 
+        // Lot 2, Module 1 : traduction de la commande en écritures du journal
+        // (vente catalogue créditée à l'auteur, recharge de portefeuille).
+        // Idempotente ; un échec est rattrapé par WalletReconciliationService
+        // et ne doit jamais faire perdre la confirmation du paiement.
+        try
+        {
+            await _wallet.SyncOrderAsync(payment.OrderId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Écritures de portefeuille de la commande {OrderId} non posées (réconciliation à venir)", payment.OrderId);
+        }
+
         if (orderStatus != "completed") return;
 
         // Module 18 (correction §7.3 du suivi) : une commande d'abonnement
@@ -415,12 +432,40 @@ public class PaymentService : IPaymentService
         // déjà déduite de TotalAmount au moment de la création (voir
         // OrderService). Aucune tolérance n'est acceptée, le XAF n'ayant pas
         // de sous-unité.
-        if (Xaf(payment.Amount) != Xaf(order.TotalAmount))
+        // Lot 2 (paiement combiné solde + Mobile Money, TC-CAT-11) : la part
+        // déjà débitée du solde dans le journal est déduite du montant attendu.
+        var balancePart = await BalancePartAsync(order.Id);
+        var expected = Xaf(order.TotalAmount) - balancePart;
+        if (Xaf(payment.Amount) != expected)
         {
-            return $"montant du paiement {Xaf(payment.Amount)} XAF ≠ total de la commande {Xaf(order.TotalAmount)} XAF";
+            return balancePart > 0
+                ? $"montant du paiement {Xaf(payment.Amount)} XAF ≠ complément attendu {expected} XAF (total {Xaf(order.TotalAmount)} XAF, part solde {balancePart} XAF)"
+                : $"montant du paiement {Xaf(payment.Amount)} XAF ≠ total de la commande {Xaf(order.TotalAmount)} XAF";
         }
 
         return null;
+    }
+
+    /// <summary>Part d'une commande réglée par le solde (paiement combiné), lue dans le journal ; 0 sinon.</summary>
+    private async Task<decimal> BalancePartAsync(int orderId)
+    {
+        var debit = await _wallet.FindByKeyAsync(WalletService.BalancePurchaseKey(orderId));
+        return debit == null ? 0m : -debit.Amount;
+    }
+
+    /// <summary>
+    /// Paiement combiné dont la part solde a déjà été restituée (complément en
+    /// échec) : un nouveau paiement Mobile Money ne couvrirait plus le total.
+    /// La commande doit être repassée.
+    /// </summary>
+    private async Task EnsureBalancePartStillReservedAsync(int orderId)
+    {
+        var debit = await _wallet.FindByKeyAsync(WalletService.BalancePurchaseKey(orderId));
+        if (debit == null) return;
+        var reversed = await _db.WalletTransactions.AsNoTracking().AnyAsync(t => t.ReversesEntryId == debit.Id);
+        if (reversed)
+            throw new OrderNotPayableException(
+                "Cette commande combinait ton solde et Mobile Money ; le complément n'a pas abouti et ton solde a été restitué. Repasse la commande depuis ton panier.");
     }
 
     private async Task SendConfirmationEmailAsync(Payment payment)
@@ -593,6 +638,7 @@ public class PaymentService : IPaymentService
         var blockReason = OrderStatusRules.PaymentBlockReason(order.Status);
         if (blockReason != null)
             throw new OrderNotPayableException(blockReason);
+        await EnsureBalancePartStillReservedAsync(order.Id);
 
         var user = await _userService.GetUserByIdAsync(requestingUserId)
             ?? throw new ArgumentException("Utilisateur introuvable");

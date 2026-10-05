@@ -25,9 +25,11 @@ public class TutorBookingService : ITutorBookingService
     private readonly INotchPayService _notchPay;
     private readonly INtfyService _ntfy;
     private readonly ILogger<TutorBookingService> _logger;
+    private readonly IWalletService _wallet;
 
-    public TutorBookingService(ApplicationDbContext context, INotchPayService notchPay, INtfyService ntfy, ILogger<TutorBookingService> logger)
+    public TutorBookingService(ApplicationDbContext context, INotchPayService notchPay, INtfyService ntfy, ILogger<TutorBookingService> logger, IWalletService wallet)
     {
+        _wallet = wallet;
         _context = context;
         _notchPay = notchPay;
         _ntfy = ntfy;
@@ -236,6 +238,7 @@ public class TutorBookingService : ITutorBookingService
         {
             await _context.SaveChangesAsync();
         }
+        await SyncWalletAsync(booking.Id);
 
         var notifiedUserId = isStudent ? booking.TutorProfile?.UserId : booking.StudentUserId;
         if (notifiedUserId.HasValue)
@@ -380,6 +383,7 @@ public class TutorBookingService : ITutorBookingService
         booking.PaymentStatus = refundPercent > 0 ? "refunded" : "forfeited";
         booking.RefundPercent = refundPercent;
         await _context.SaveChangesAsync();
+        await SyncWalletAsync(booking.Id);
 
         var refundAmount = Math.Round(booking.PriceXaf * refundPercent / 100m, 0);
         var studentMessage = refundPercent switch
@@ -509,7 +513,20 @@ public class TutorBookingService : ITutorBookingService
             await _context.SaveChangesAsync();
         }
 
+        await SyncWalletAsync(booking.Id);
         return true;
+    }
+
+    /// <summary>
+    /// Lot 2, Module 1 : traduit l'état de la réservation en écritures du
+    /// journal (revenu en attente au paiement, confirmé à la libération de
+    /// l'escrow, annulé au remboursement). Idempotent ; un échec est rattrapé
+    /// par WalletReconciliationService et n'interrompt jamais le flux.
+    /// </summary>
+    private async Task SyncWalletAsync(int bookingId)
+    {
+        try { await _wallet.SyncTutorBookingAsync(bookingId); }
+        catch (Exception ex) { _logger.LogError(ex, "Écritures de la réservation {BookingId} non posées (réconciliation à venir)", bookingId); }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -658,6 +675,7 @@ public class TutorBookingService : ITutorBookingService
                 tags: new[] { "moneybag" });
         }
         await _context.SaveChangesAsync();
+        await SyncWalletAsync(booking.Id);
 
         var decisionLabel = resolution switch
         {

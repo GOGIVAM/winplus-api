@@ -17,9 +17,10 @@ public interface ITeacherService
     Task<dynamic> GetTeacherRevenuesAsync(int teacherId);
 
     /// <summary>
-    /// Solde WinPlus dépensable (Module 2, US-CAT-06) : revenus de vente
-    /// catalogue moins tout ce qui a déjà été dépensé via ce solde
-    /// (assignations de contenu à une classe, achats catalogue payés par solde).
+    /// Solde WinPlus dépensable (Module 2, US-CAT-06), lu dans le journal de
+    /// portefeuille (lot 2, Module 1) : somme des écritures confirmées.
+    /// Pour un débit, utiliser <see cref="IWalletService.DebitAsync"/> sous
+    /// verrou plutôt que de lire ce solde puis d'écrire.
     /// </summary>
     Task<decimal> GetSpendableBalanceAsync(int teacherId);
 
@@ -36,9 +37,8 @@ public interface ITeacherService
     Task<IEnumerable<dynamic>> GetTutoringTransactionsAsync(int teacherId);
 
     /// <summary>
-    /// Historique unifié filtrable par source (Module 7, 7B) : ventes
-    /// catalogue et cours particuliers (crédits) + assignations classe et
-    /// achats sur solde (débits), dans un seul flux trié par date.
+    /// Historique unifié filtrable par source (Module 7, 7B), lu dans le
+    /// journal de portefeuille (lot 2, Module 1), trié par date.
     /// </summary>
     Task<IEnumerable<dynamic>> GetTransactionsAsync(int teacherId, string? source);
 }
@@ -49,14 +49,17 @@ public class TeacherService : ITeacherService
     private readonly ISessionRepository _sessionRepository;
     private readonly IUserRepository _userRepository;
     private readonly ILogger<TeacherService> _logger;
+    private readonly IWalletService _wallet;
 
     public TeacherService(
         ApplicationDbContext context,
         ISessionRepository sessionRepository,
         IUserRepository userRepository,
-        ILogger<TeacherService> logger)
+        ILogger<TeacherService> logger,
+        IWalletService wallet)
     {
         _context = context;
+        _wallet = wallet;
         _sessionRepository = sessionRepository;
         _userRepository = userRepository;
         _logger = logger;
@@ -270,90 +273,24 @@ public class TeacherService : ITeacherService
         }
     }
 
+    /// <summary>
+    /// Module 1 (lot 2) : le solde est la somme des écritures confirmées du
+    /// journal de portefeuille (<see cref="IWalletService"/>), et non plus une
+    /// sommation des tables métier (commandes, assignations, réservations,
+    /// commissions, retraits) recalculée à chaque appel. La forme de retour est
+    /// inchangée pour les appelants existants : un solde négatif (anomalie,
+    /// signalée par le journal) est ramené à zéro comme auparavant.
+    /// </summary>
     public async Task<decimal> GetSpendableBalanceAsync(int teacherId)
     {
-        var totalRevenue = await _context.OrderItems
-            .AsNoTracking()
-            .Where(oi => PaidOrderStatus.All.Contains(oi.Order.Status.ToLower()) && oi.Subject != null && oi.Subject.AuthorUserId == teacherId)
-            .SumAsync(oi => (decimal?)oi.PriceAtPurchase) ?? 0m;
-
-        var spentOnClassAssignments = await _context.TeacherClassContents
-            .AsNoTracking()
-            .Where(tcc => tcc.AssignedByUserId == teacherId)
-            .SumAsync(tcc => (decimal?)tcc.PriceChargedXaf) ?? 0m;
-
-        var spentOnBalancePurchases = await _context.Orders
-            .AsNoTracking()
-            .Where(o => o.UserId == teacherId && PaidOrderStatus.All.Contains(o.Status.ToLower()) && o.PaymentMethod == "balance")
-            .SumAsync(o => (decimal?)o.TotalAmount) ?? 0m;
-
-        // Cours particuliers (Module 6) : fonds crédités dès la libération de
-        // l'escrow simulé (TutorBookingLifecycleService), à la même part
-        // enseignant que le catalogue  voir TeacherContentController.GetRevenueShareAsync.
-        var revenueShare = await GetRevenueShareAsync(teacherId) ?? 0.80m;
-        // Module 19 : la part enseignant était appliquée à la SOMME brute des
-        // séances, sans arrondi, ce qui produisait un solde fractionnaire
-        // qu'un virement Mobile Money ne sait pas honorer, et un solde
-        // différent de la somme des lignes affichées dans l'historique. Le net
-        // est désormais calculé séance par séance, avec exactement la même
-        // décomposition que l'historique.
-        var tutoringGross = await _context.TutorBookings
-            .AsNoTracking()
-            .Where(b => b.EscrowReleasedAt != null && b.TutorProfile!.UserId == teacherId)
-            .Select(b => b.PriceXaf)
-            .ToListAsync();
-        var tutoringNet = tutoringGross.Sum(p => NetXaf(p, revenueShare));
-
-        // Programme d'affiliation (2026-09-11) : seules les commissions déjà
-        // "confirmed" (délai de rétractation commande écoulé, voir
-        // AffiliateCommissionMaturityService) alimentent le solde retirable 
-        // les "pending" ne sont pas encore acquises.
-        var affiliateEarnings = await _context.AffiliateCommissions
-            .AsNoTracking()
-            .Where(c => c.AffiliateAccount!.UserId == teacherId && c.Status == "confirmed")
-            .SumAsync(c => (decimal?)c.CommissionAmount) ?? 0m;
-
-        // Retraits déjà effectués ou en cours (Module 7) : réservés dès la
-        // demande pour empêcher un double retrait pendant le traitement
-        // manuel Mobile Money  voir Withdrawal.cs.
-        var withdrawn = await _context.Withdrawals
-            .AsNoTracking()
-            .Where(w => w.UserId == teacherId && (w.Status == "pending" || w.Status == "completed"))
-            .SumAsync(w => (decimal?)w.AmountXaf) ?? 0m;
-
-        // Arrondi final de sécurité : aucune fraction ne doit sortir d'ici,
-        // même si une ligne historique en porte encore une (dette de données
-        // connue, voir le compte rendu du Module 19).
-        return Math.Max(0, Math.Round(
-            totalRevenue - spentOnClassAssignments - spentOnBalancePurchases
-            + tutoringNet + affiliateEarnings - withdrawn,
-            0, MidpointRounding.AwayFromZero));
+        var available = await _wallet.GetAvailableAsync(teacherId);
+        if (available < 0)
+            _logger.LogError("Anomalie de portefeuille : solde négatif ({Available} XAF) pour l'utilisateur {UserId}", available, teacherId);
+        return Math.Max(0, available);
     }
 
-    /// <summary>
-    /// Décomposition d'un montant en part plateforme et part enseignant
-    /// (Module 19, décision §4.E).
-    ///
-    /// Le XAF n'a pas de sous-unité : un seul des deux montants est arrondi,
-    /// l'autre s'obtient par soustraction, de sorte que leur somme retombe
-    /// exactement sur le prix payé. Arrondir les deux indépendamment, comme
-    /// c'était le cas, laisse un écart d'une unité qui se retrouve dans le
-    /// solde retirable puis dans un virement Mobile Money.
-    /// </summary>
-    private static decimal CommissionXaf(decimal grossXaf, decimal revenueShare) =>
-        Math.Round(grossXaf * (1 - revenueShare), 0, MidpointRounding.AwayFromZero);
-
-    /// <summary>Part enseignant, déduite par soustraction de la commission arrondie.</summary>
-    private static decimal NetXaf(decimal grossXaf, decimal revenueShare) =>
-        grossXaf - CommissionXaf(grossXaf, revenueShare);
-
-    /// <summary>Part enseignant lue sur le plan actif (dupliqué de TeacherContentController  même formule, contexte différent).</summary>
-    private async Task<decimal?> GetRevenueShareAsync(int teacherId) =>
-        await _context.Subscriptions.AsNoTracking()
-            .Where(s => s.UserId == teacherId && s.Status == "active" && !s.IsDeleted)
-            .OrderByDescending(s => s.StartDate)
-            .Select(s => s.PricingPlan != null ? s.PricingPlan.TeacherRevenueShare : null)
-            .FirstOrDefaultAsync();
+    /// <summary>Part enseignant lue sur le plan actif (règle partagée avec le journal, voir <see cref="RevenueSplit"/>).</summary>
+    private Task<decimal> GetRevenueShareAsync(int teacherId) => RevenueSplit.GetTeacherShareAsync(_context, teacherId);
 
     public async Task<IEnumerable<dynamic>> GetRevenueHistoryAsync(int teacherId, int days)
     {
@@ -434,7 +371,7 @@ public class TeacherService : ITeacherService
 
     public async Task<IEnumerable<dynamic>> GetTutoringTransactionsAsync(int teacherId)
     {
-        var revenueShare = await GetRevenueShareAsync(teacherId) ?? 0.80m;
+        var revenueShare = await GetRevenueShareAsync(teacherId);
         var bookings = await _context.TutorBookings
             .AsNoTracking()
             .Include(b => b.Student)
@@ -456,73 +393,34 @@ public class TeacherService : ITeacherService
             // Les deux endroits arrondissaient auparavant chacun leur part,
             // et pouvaient annoncer un net différent de 1 XAF pour la même
             // séance.
-            netAmountXaf = NetXaf(b.PriceXaf, revenueShare),
+            netAmountXaf = RevenueSplit.NetXaf(b.PriceXaf, revenueShare),
             date = b.EscrowReleasedAt,
         }).ToList();
     }
 
+    /// <summary>
+    /// Module 1 (lot 2) : historique lu dans le journal de portefeuille, avec
+    /// la même forme de réponse qu'avant (date, type, source, label, brut,
+    /// commission, net, statut). Les sources historiques (catalogue,
+    /// cours_particulier, achat) gardent leur nom ; s'y ajoutent affiliation,
+    /// recharge, credit_admin et retrait. Les écritures de montant nul
+    /// (traitement d'un retrait) sont omises de cette vue historique.
+    /// </summary>
     public async Task<IEnumerable<dynamic>> GetTransactionsAsync(int teacherId, string? source)
     {
-        var revenueShare = await GetRevenueShareAsync(teacherId) ?? 0.80m;
-        var rows = new List<(DateTime Date, string Type, string Source, string Label, decimal Gross, decimal Commission, decimal Net, string Status)>();
-
-        // Vente catalogue (crédit)  pas de commission déduite dans ce modèle
-        // (voir GetSpendableBalanceAsync : totalRevenue n'applique aucune part
-        // enseignant sur les ventes catalogue, contrairement aux cours
-        // particuliers). Affiché tel quel plutôt que d'inventer une commission.
-        var catalogSales = await _context.OrderItems
-            .AsNoTracking()
-            .Where(oi => PaidOrderStatus.All.Contains(oi.Order.Status.ToLower()) && oi.Subject != null && oi.Subject.AuthorUserId == teacherId)
-            .Select(oi => new { oi.Order.CreatedAt, Title = oi.Subject!.Title, oi.PriceAtPurchase })
-            .ToListAsync();
-        rows.AddRange(catalogSales.Select(s => (s.CreatedAt, "credit", "catalogue", s.Title, s.PriceAtPurchase, 0m, s.PriceAtPurchase, "completed")));
-
-        // Cours particulier (crédit)
-        var tutoring = await _context.TutorBookings
-            .AsNoTracking()
-            .Include(b => b.Student)
-            .Where(b => b.TutorProfile!.UserId == teacherId && b.EscrowReleasedAt != null)
-            .ToListAsync();
-        rows.AddRange(tutoring.Select(b =>
-        {
-            var studentName = b.Student != null ? $"{b.Student.FirstName} {b.Student.LastName}".Trim() : "Élève";
-            var label = string.IsNullOrWhiteSpace(b.Subject) ? $"Séance avec {studentName}" : $"{b.Subject}  {studentName}";
-            var commission = CommissionXaf(b.PriceXaf, revenueShare);
-            return (b.EscrowReleasedAt!.Value, "credit", "cours_particulier", label, b.PriceXaf, commission, b.PriceXaf - commission, "completed");
-        }));
-
-        // Achat catalogue  assignation à une classe (débit)
-        var assignments = await _context.TeacherClassContents
-            .AsNoTracking()
-            .Where(tcc => tcc.AssignedByUserId == teacherId && tcc.PriceChargedXaf > 0)
-            .Select(tcc => new { tcc.AssignedAt, Title = tcc.Subject != null ? tcc.Subject.Title : "Contenu", tcc.PriceChargedXaf })
-            .ToListAsync();
-        rows.AddRange(assignments.Select(a => (a.AssignedAt, "debit", "achat", $"Assignation classe  {a.Title}", a.PriceChargedXaf, 0m, a.PriceChargedXaf, "completed")));
-
-        // Achat catalogue  payé sur le solde WinPlus (débit)
-        var balancePurchases = await _context.Orders
-            .AsNoTracking()
-            .Where(o => o.UserId == teacherId && PaidOrderStatus.All.Contains(o.Status.ToLower()) && o.PaymentMethod == "balance")
-            .Select(o => new { o.CreatedAt, o.OrderNumber, o.TotalAmount })
-            .ToListAsync();
-        rows.AddRange(balancePurchases.Select(o => (o.CreatedAt, "debit", "achat", $"Achat panier {o.OrderNumber}", o.TotalAmount, 0m, o.TotalAmount, "completed")));
-
-        IEnumerable<(DateTime Date, string Type, string Source, string Label, decimal Gross, decimal Commission, decimal Net, string Status)> filtered = rows;
-        if (!string.IsNullOrWhiteSpace(source) && source != "all")
-            filtered = filtered.Where(r => r.Source == source);
-
-        return filtered
-            .OrderByDescending(r => r.Date)
-            .Select(r => new
+        var (items, _) = await _wallet.GetHistoryAsync(teacherId, source, 1, 200);
+        return items
+            .Where(i => i.AmountXaf != 0)
+            .Select(i => (dynamic)new
             {
-                date = r.Date,
-                type = r.Type,
-                source = r.Source,
-                label = r.Label,
-                grossAmountXaf = r.Gross,
-                commissionXaf = r.Commission,
-                netAmountXaf = r.Net,
-                status = r.Status,
+                date = i.Date,
+                type = i.Type,
+                source = i.Source,
+                label = i.Label,
+                grossAmountXaf = i.GrossAmountXaf,
+                commissionXaf = i.CommissionXaf,
+                netAmountXaf = Math.Abs(i.AmountXaf),
+                status = i.Status,
             })
             .ToList();
     }

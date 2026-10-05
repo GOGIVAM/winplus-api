@@ -52,11 +52,61 @@ public class NotchPayTransaction
     public string? FailureMessage { get; set; }
 }
 
+/// <summary>Transfert sortant NotchPay (API /transfers, Module 2 du lot 2).</summary>
+public class NotchPayTransfer
+{
+    public string? Id { get; set; }
+    public string? Reference { get; set; }
+    public decimal? Amount { get; set; }
+    public string? Currency { get; set; }
+    /// <summary>pending | processing | complete | failed | canceled (documentation NotchPay).</summary>
+    public string? Status { get; set; }
+    public string? Channel { get; set; }
+    public string? FailureReason { get; set; }
+    public string? FailureMessage { get; set; }
+    public DateTime? CompletedAt { get; set; }
+}
+
+public class NotchPayTransferRequest
+{
+    public decimal AmountXaf { get; set; }
+    /// <summary>cm.mtn | cm.orange.</summary>
+    public string Channel { get; set; } = "cm.mtn";
+    public string BeneficiaryName { get; set; } = string.Empty;
+    public string? BeneficiaryEmail { get; set; }
+    /// <summary>Numéro au format 237XXXXXXXXX ; le « + » est ajouté à l'envoi.</summary>
+    public string BeneficiaryPhone { get; set; } = string.Empty;
+    public string Reference { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Refus explicite de NotchPay (réponse 4xx) : le transfert n'a pas été créé.
+/// À distinguer d'une panne ou d'un délai dépassé (HttpRequestException,
+/// TaskCanceledException), après lesquels le transfert a pu être créé.
+/// </summary>
+public class NotchPayTransferRejectedException : Exception
+{
+    public int StatusCode { get; }
+    public NotchPayTransferRejectedException(int statusCode, string message) : base(message) => StatusCode = statusCode;
+}
+
 public interface INotchPayService
 {
     Task<NotchPayInitiateResponse> InitiatePaymentAsync(string phone, decimal amount, int orderId, string description, string customerEmail, string customerName, string channel, string referencePrefix = "WP");
     Task<NotchPayTransaction> GetTransactionStatusAsync(string reference);
     bool VerifyWebhookSignature(string payload, string signature);
+
+    /// <summary>
+    /// Crée un transfert Mobile Money (POST /transfers). Un seul envoi, sans
+    /// nouvelle tentative automatique : rejouer un POST de transfert après une
+    /// réponse perdue risquerait un second virement. La réconciliation passe
+    /// par <see cref="GetTransferAsync"/> avec la référence de l'application.
+    /// </summary>
+    Task<NotchPayTransfer> CreateTransferAsync(NotchPayTransferRequest request);
+
+    /// <summary>Statut d'un transfert par identifiant ou référence (GET /transfers/{id}) ; null si inconnu de NotchPay (404).</summary>
+    Task<NotchPayTransfer?> GetTransferAsync(string idOrReference);
 }
 
 public class NotchPayService : INotchPayService
@@ -199,6 +249,92 @@ public class NotchPayService : INotchPayService
         var b64 = Convert.ToBase64String(hash);
         return string.Equals(hex, signature?.ToLowerInvariant(), StringComparison.Ordinal)
             || string.Equals(b64, signature, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ── Transferts sortants (Module 2) ───────────────────────────────────
+
+    private sealed class TransferEnvelope
+    {
+        public string? Status { get; set; }
+        public string? Message { get; set; }
+        public NotchPayTransfer? Transfer { get; set; }
+    }
+
+    /// <summary>
+    /// Les routes de transfert exigent, en plus de la clé publique déjà posée
+    /// sur le client HTTP, la clé privée dans l'en-tête X-Grant (documentation
+    /// NotchPay, « Transfers API »), et l'IP du serveur doit être autorisée
+    /// dans le tableau de bord NotchPay.
+    /// </summary>
+    private HttpRequestMessage TransferRequest(HttpMethod method, string path, HttpContent? content = null)
+    {
+        var message = new HttpRequestMessage(method, path) { Content = content };
+        if (!string.IsNullOrEmpty(_config.SecretKey))
+            message.Headers.TryAddWithoutValidation("X-Grant", _config.SecretKey);
+        return message;
+    }
+
+    public async Task<NotchPayTransfer> CreateTransferAsync(NotchPayTransferRequest request)
+    {
+        var phone = request.BeneficiaryPhone.StartsWith('+') ? request.BeneficiaryPhone : $"+{request.BeneficiaryPhone}";
+        var payload = new
+        {
+            // XAF sans sous-unité : entier, jamais de décimale (décision §4.E).
+            amount = (int)Math.Round(request.AmountXaf, 0, MidpointRounding.AwayFromZero),
+            currency = _config.Currency,
+            beneficiary_data = new
+            {
+                name = request.BeneficiaryName,
+                phone,
+                email = request.BeneficiaryEmail,
+                country = "CM",
+            },
+            channel = request.Channel,
+            description = request.Description,
+            reference = request.Reference,
+        };
+
+        var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        using var message = TransferRequest(HttpMethod.Post, "/transfers", new StringContent(json, Encoding.UTF8, "application/json"));
+        using var response = await _httpClient.SendAsync(message);
+        var body = await response.Content.ReadAsStringAsync();
+        _logger.LogInformation("NotchPay transfert ← ref={Ref} status={Status}", request.Reference, response.StatusCode);
+
+        if ((int)response.StatusCode >= 500)
+            throw new HttpRequestException($"NotchPay transfer error: {response.StatusCode}");
+        if (!response.IsSuccessStatusCode)
+            throw new NotchPayTransferRejectedException((int)response.StatusCode, ExtractMessage(body) ?? $"Transfert refusé ({(int)response.StatusCode})");
+
+        var envelope = JsonSerializer.Deserialize<TransferEnvelope>(body, _jsonOptions);
+        return envelope?.Transfer ?? new NotchPayTransfer { Reference = request.Reference, Status = "pending" };
+    }
+
+    public async Task<NotchPayTransfer?> GetTransferAsync(string idOrReference)
+    {
+        using var message = TransferRequest(HttpMethod.Get, $"/transfers/{Uri.EscapeDataString(idOrReference)}");
+        using var response = await _httpClient.SendAsync(message);
+        var body = await response.Content.ReadAsStringAsync();
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        if ((int)response.StatusCode >= 500)
+            throw new HttpRequestException($"NotchPay transfer status error: {response.StatusCode}");
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"NotchPay rejected transfer status request: {response.StatusCode}");
+
+        return JsonSerializer.Deserialize<TransferEnvelope>(body, _jsonOptions)?.Transfer;
+    }
+
+    private string? ExtractMessage(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private async Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> action)

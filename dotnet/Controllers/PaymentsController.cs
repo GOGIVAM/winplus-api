@@ -19,14 +19,17 @@ public class PaymentsController : ControllerBase
     private readonly INotchPayService _notchPay;
     private readonly ILogger<PaymentsController> _logger;
     private readonly IMemoryCache _cache;
+    private readonly IWithdrawalService _withdrawals;
 
     public PaymentsController(
         IPaymentService paymentService,
         ITutorBookingService tutorBookingService,
         INotchPayService notchPay,
         ILogger<PaymentsController> logger,
-        IMemoryCache cache)
+        IMemoryCache cache,
+        IWithdrawalService withdrawals)
     {
+        _withdrawals = withdrawals;
         _paymentService = paymentService;
         _tutorBookingService = tutorBookingService;
         _notchPay = notchPay;
@@ -154,6 +157,27 @@ public class PaymentsController : ControllerBase
             return Unauthorized(new { error = "Signature invalide" });
         }
 
+        // Lot 2, Module 2 : notifications de transfert sortant (retraits).
+        // Même vérification de signature que l'encaissement (ci-dessus). Le
+        // contenu de la notification sert seulement à retrouver le retrait :
+        // l'issue appliquée est toujours le statut relu chez NotchPay, ce qui
+        // rend le traitement indépendant du format exact de la notification
+        // et idempotent (une notification reçue deux fois ne change rien).
+        var transferReference = TryReadTransferReference(payload);
+        if (transferReference != null)
+        {
+            try
+            {
+                await _withdrawals.SyncByReferenceAsync(transferReference);
+                return Ok(new { received = true });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erreur traitement notification de transfert {Ref}", transferReference);
+                return StatusCode(500, new { error = "Erreur traitement webhook" });
+            }
+        }
+
         NotchPayWebhookPayload? webhookData;
         try
         {
@@ -200,6 +224,39 @@ public class PaymentsController : ControllerBase
         {
             _logger.LogError(ex, "Erreur traitement webhook NotchPay {EventId}", eventId);
             return StatusCode(500, new { error = "Erreur traitement webhook" });
+        }
+    }
+
+    /// <summary>
+    /// Référence d'une notification de transfert (<c>transfer.*</c>), ou null
+    /// pour toute autre notification. Tolère les deux formes observées
+    /// (<c>event</c>/<c>type</c>, objet sous <c>data</c>/<c>transfer</c>/<c>transaction</c>).
+    /// </summary>
+    private static string? TryReadTransferReference(string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+
+            string? eventName = null;
+            foreach (var name in new[] { "event", "type" })
+                if (root.TryGetProperty(name, out var e) && e.ValueKind == JsonValueKind.String) { eventName = e.GetString(); break; }
+            if (eventName == null || !eventName.StartsWith("transfer.", StringComparison.OrdinalIgnoreCase)) return null;
+
+            foreach (var container in new[] { "data", "transfer", "transaction" })
+            {
+                if (!root.TryGetProperty(container, out var obj) || obj.ValueKind != JsonValueKind.Object) continue;
+                foreach (var key in new[] { "reference", "id" })
+                    if (obj.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(v.GetString()))
+                        return v.GetString();
+            }
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 

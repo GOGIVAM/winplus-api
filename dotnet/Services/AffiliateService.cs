@@ -26,9 +26,11 @@ public class AffiliateService : IAffiliateService
     private readonly ApplicationDbContext _db;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AffiliateService> _logger;
+    private readonly IWalletService _wallet;
 
-    public AffiliateService(ApplicationDbContext db, IConfiguration configuration, ILogger<AffiliateService> logger)
+    public AffiliateService(ApplicationDbContext db, IConfiguration configuration, ILogger<AffiliateService> logger, IWalletService wallet)
     {
+        _wallet = wallet;
         _db = db;
         _configuration = configuration;
         _logger = logger;
@@ -197,7 +199,7 @@ public class AffiliateService : IAffiliateService
             var commissionAmount = Math.Round(commissionBase * account.CommissionRate / 100m, 0, MidpointRounding.AwayFromZero);
             if (commissionAmount <= 0) return;
 
-            _db.AffiliateCommissions.Add(new AffiliateCommission
+            var commission = new AffiliateCommission
             {
                 AffiliateAccountId = account.Id,
                 OrderId = order.Id,
@@ -208,8 +210,13 @@ public class AffiliateService : IAffiliateService
                 CommissionRateApplied = account.CommissionRate,
                 CommissionAmount = commissionAmount,
                 Status = "pending",
-            });
+            };
+            _db.AffiliateCommissions.Add(commission);
             await _db.SaveChangesAsync();
+
+            // Lot 2, Module 1 : écriture en attente dans le journal, confirmée
+            // à la maturation (AffiliateCommissionMaturityService).
+            await _wallet.SyncAffiliateCommissionAsync(commission.Id);
 
             _logger.LogInformation("Commission d'affiliation créée : {Amount} XAF pour l'affilié {UserId} sur la commande {OrderId}",
                 commissionAmount, account.UserId, orderId);

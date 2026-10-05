@@ -74,6 +74,17 @@ public sealed class AffiliateCommissionMaturityService : BackgroundService
         }
 
         await db.SaveChangesAsync(ct);
+
+        // Lot 2, Module 1 : la maturation confirme (ou annule) l'écriture en
+        // attente du journal ; c'est elle qui fait entrer la commission dans le
+        // solde disponible. Idempotent.
+        var wallet = scope.ServiceProvider.GetRequiredService<IWalletService>();
+        foreach (var commission in pending)
+        {
+            try { await wallet.SyncAffiliateCommissionAsync(commission.Id); }
+            catch (Exception ex) { _logger.LogError(ex, "Écriture de la commission {CommissionId} non mise à jour (réconciliation à venir)", commission.Id); }
+        }
+
         _logger.LogInformation("Maturation des commissions d'affiliation : {Confirmed} confirmée(s), {Reversed} annulée(s)", confirmed, reversed);
     }
 }

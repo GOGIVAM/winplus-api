@@ -77,6 +77,10 @@ public class PaymentExpirationService : BackgroundService
                 }
 
                 await orderService.UpdateOrderStatusAsync(payment.OrderId, "failed");
+
+                // Lot 2 : complément Mobile Money expiré d'un paiement combiné,
+                // ou recharge expirée : part solde restituée, recharge close.
+                await scope.ServiceProvider.GetRequiredService<IWalletService>().SyncOrderAsync(payment.OrderId);
             }
             catch (Exception ex)
             {
