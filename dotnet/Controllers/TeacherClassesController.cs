@@ -73,7 +73,39 @@ public class TeacherClassesController : ControllerBase
                 .OrderByDescending(c => c.IsActive).ThenByDescending(c => c.CreatedAt)
                 .Select(c => new { c.Id, c.Name, c.Level, c.AcademicYear, c.Description, c.StudentCount, c.CreatedAt, c.IsActive })
                 .ToListAsync();
-            return Ok(classes);
+
+            // Indicateurs affichés sur la carte : moyenne de classe (même règle que
+            // GetStudents : moyenne des moyennes individuelles) et copies à corriger.
+            var classIds = classes.Select(c => c.Id).ToList();
+            var roster = await _db.TeacherClassStudents.AsNoTracking()
+                .Where(cs => classIds.Contains(cs.TeacherClassId))
+                .Select(cs => new { cs.TeacherClassId, cs.StudentId })
+                .ToListAsync();
+            var rosterStudentIds = roster.Select(r => r.StudentId).Distinct().ToList();
+            var studentAvg = (await _db.QuizAttempts.AsNoTracking()
+                    .Where(a => rosterStudentIds.Contains(a.UserId) && a.IsCompleted)
+                    .GroupBy(a => a.UserId)
+                    .Select(g => new { UserId = g.Key, Avg = g.Average(a => (double)a.Score) })
+                    .ToListAsync())
+                .ToDictionary(x => x.UserId, x => x.Avg);
+            var pendingByClass = await _db.Submissions.AsNoTracking()
+                .Where(s => classIds.Contains(s.Assignment!.TeacherClassId) && (s.Status == "pending" || s.Status == "draft"))
+                .GroupBy(s => s.Assignment!.TeacherClassId)
+                .Select(g => new { ClassId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.ClassId, x => x.Count);
+
+            var result = classes.Select(c =>
+            {
+                var avgs = roster.Where(r => r.TeacherClassId == c.Id && studentAvg.ContainsKey(r.StudentId))
+                    .Select(r => studentAvg[r.StudentId]).ToList();
+                return new
+                {
+                    c.Id, c.Name, c.Level, c.AcademicYear, c.Description, c.StudentCount, c.CreatedAt, c.IsActive,
+                    classAverage = avgs.Count == 0 ? (int?)null : (int)Math.Round(avgs.Average()),
+                    pendingCount = pendingByClass.TryGetValue(c.Id, out var n) ? n : 0,
+                };
+            }).ToList();
+            return Ok(result);
         }
         catch (Exception ex)
         {

@@ -48,24 +48,82 @@ public class NotificationsController : ControllerBase
         Response.Headers["Cache-Control"] = "no-cache";
         Response.Headers["X-Accel-Buffering"] = "no";
 
-        using var req = new HttpRequestMessage(HttpMethod.Get, sseUrl);
-        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
-        if (!string.IsNullOrEmpty(ntfyToken))
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ntfyToken);
+        // En-têtes et premier octet partent tout de suite : sans cela, si ntfy
+        // tarde à répondre, le reverse proxy ne reçoit rien avant son délai et
+        // renvoie 504 au lieu d'un flux ouvert.
+        var writeLock = new SemaphoreSlim(1, 1);
+        async Task WriteAsync(string text)
+        {
+            await writeLock.WaitAsync(ct);
+            try
+            {
+                await Response.WriteAsync(text, ct);
+                await Response.Body.FlushAsync(ct);
+            }
+            finally { writeLock.Release(); }
+        }
 
         try
         {
+            await WriteAsync(": connected\n\n");
+
+            using var req = new HttpRequestMessage(HttpMethod.Get, sseUrl);
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+            if (!string.IsNullOrEmpty(ntfyToken))
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ntfyToken);
+
+            // Flux long : pas de délai global, mais 10 s max pour joindre ntfy.
             using var client = _http.CreateClient();
-            using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            client.Timeout = Timeout.InfiniteTimeSpan;
+            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connectCts.CancelAfter(TimeSpan.FromSeconds(10));
+            using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, connectCts.Token);
             if (!resp.IsSuccessStatusCode)
             {
-                Response.StatusCode = (int)resp.StatusCode;
+                _logger.LogWarning("ntfy SSE returned {Status} for user {UserId}", (int)resp.StatusCode, userId);
+                await WriteAsync($"event: error\ndata: ntfy {(int)resp.StatusCode}\n\n");
                 return;
             }
-            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-            await stream.CopyToAsync(Response.Body, ct);
+
+            // Battement toutes les 20 s : garde la connexion ouverte à travers
+            // nginx/ALB même quand aucune notification n'arrive.
+            using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var heartbeat = Task.Run(async () =>
+            {
+                try
+                {
+                    while (!heartbeatCts.IsCancellationRequested)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(20), heartbeatCts.Token);
+                        await WriteAsync(": ping\n\n");
+                    }
+                }
+                catch (OperationCanceledException) { }
+            }, CancellationToken.None);
+
+            try
+            {
+                await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+                var buffer = new byte[4096];
+                int read;
+                while ((read = await stream.ReadAsync(buffer, ct)) > 0)
+                {
+                    await writeLock.WaitAsync(ct);
+                    try
+                    {
+                        await Response.Body.WriteAsync(buffer.AsMemory(0, read), ct);
+                        await Response.Body.FlushAsync(ct);
+                    }
+                    finally { writeLock.Release(); }
+                }
+            }
+            finally
+            {
+                heartbeatCts.Cancel();
+                await heartbeat;
+            }
         }
-        catch (OperationCanceledException) { /* déconnexion normale du client */ }
+        catch (OperationCanceledException) { /* déconnexion du client ou ntfy injoignable (10 s) */ }
         catch (Exception ex)
         {
             _logger.LogError(ex, "SSE proxy error for user {UserId}", userId);
