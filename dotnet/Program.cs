@@ -355,6 +355,8 @@ builder.Services.AddScoped<IAnalyticsRepository, AnalyticsRepository>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<ISubjectService, SubjectService>();
 builder.Services.AddScoped<ICartService, CartService>();
+// Pochette de document générée par WinAI à la demande (CoverController).
+builder.Services.AddScoped<ICoverGenerationService, CoverGenerationService>();
 builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<IEnrollmentService, EnrollmentService>();
 // Règle d'accès unique aux contenus payants (Module 17) : partagée par la

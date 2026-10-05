@@ -36,6 +36,7 @@ from routes.exam_quiz_routes import exam_quiz_router
 from routes.canal_qa_routes import canal_qa_router
 from routes.winai_memory_routes import winai_memory_router
 from routes.goal_suggestions import router as goal_suggestions_router
+from routes.cover_routes import router as cover_router
 from RAG.router import rag_router
 import json
 from schemas import (
@@ -137,6 +138,10 @@ app.include_router(rag_router, prefix="/api", tags=["rag"])
 # n'était jamais monté : WeeklyGoalSuggestionsController (.NET) recevait 404
 # et affichait toujours le calcul local. Préfixe /api/ai porté par le routeur.
 app.include_router(goal_suggestions_router)
+
+# Pochette de document générée par WinAI (image), sur action explicite du
+# backend .NET (CoverController). Préfixe /api/ai/cover porté par le routeur.
+app.include_router(cover_router)
 
 
 # ==================== HEALTH CHECK (Public) ====================
