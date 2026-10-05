@@ -449,39 +449,8 @@ public class TeacherController : ControllerBase
         return Ok(new { sent = true, message = messageText });
     }
 
-    /// <summary>
-    /// Récupère les classes du professeur
-    /// </summary>
-    [HttpGet("classes")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetClasses()
-    {
-        try
-        {
-            var teacherId = User.GetUserId();
-            var classes = await _db.TeacherClasses
-                .Where(c => c.TeacherId == teacherId && c.IsActive)
-                .OrderByDescending(c => c.CreatedAt)
-                .Select(c => new
-                {
-                    c.Id,
-                    c.Name,
-                    c.Level,
-                    c.AcademicYear,
-                    c.Description,
-                    c.StudentCount,
-                    c.CreatedAt
-                })
-                .ToListAsync();
-            return Ok(new { data = classes, success = true });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting teacher classes");
-            return StatusCode(500, new { success = false, error = "Internal server error" });
-        }
-    }
+    // GET api/teacher/classes est servi par TeacherClassesController.List : une
+    // seconde action sur la même route faisait lever AmbiguousMatchException (500).
 
     /// <summary>
     /// Récupère les publications du professeur

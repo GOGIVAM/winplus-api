@@ -42,6 +42,13 @@ public class CustomAuthService : ICustomAuthService
     private readonly ISessionService _sessionService;
     private readonly int _emailVerificationExpirationHours;
     private readonly int _passwordResetExpirationHours;
+    private readonly TimeSpan _refreshTokenLifetime;
+
+    // Après une rotation, l'ancien refresh token reste accepté ce court laps de
+    // temps : plusieurs requêtes (ou onglets) qui expirent ensemble envoient le
+    // même token, et seule la première gagnait la course - les autres étaient
+    // déconnectées alors que la session était bien valide.
+    private static readonly TimeSpan RefreshRotationGrace = TimeSpan.FromSeconds(30);
 
     public CustomAuthService(
         ApplicationDbContext dbContext,
@@ -58,6 +65,8 @@ public class CustomAuthService : ICustomAuthService
         _deviceTrackingService = deviceTrackingService;
         _sessionService = sessionService;
         _logger = logger;
+        _refreshTokenLifetime = TimeSpan.FromDays(
+            int.TryParse(configuration["JWT:RefreshTokenExpirationDays"], out var days) && days > 0 ? days : 30);
         _emailVerificationExpirationHours = int.TryParse(
             configuration["Auth:EmailVerificationExpirationHours"], out var hours) ? hours : 24;
         _passwordResetExpirationHours = int.TryParse(
@@ -345,7 +354,7 @@ public class CustomAuthService : ICustomAuthService
             {
                 UserId = user.Id,
                 Token = refreshToken,
-                ExpiresAt = DateTime.UtcNow.AddDays(7),
+                ExpiresAt = DateTime.UtcNow.Add(_refreshTokenLifetime),
                 CreatedAt = DateTime.UtcNow
             };
 
@@ -479,7 +488,7 @@ public class CustomAuthService : ICustomAuthService
             {
                 UserId = user.Id,
                 Token = refreshToken,
-                ExpiresAt = DateTime.UtcNow.AddDays(7),
+                ExpiresAt = DateTime.UtcNow.Add(_refreshTokenLifetime),
                 CreatedAt = DateTime.UtcNow
             });
 
@@ -799,7 +808,10 @@ public class CustomAuthService : ICustomAuthService
                 };
             }
 
-            if (!refreshTokenEntity.IsValid)
+            var recentlyRotated = refreshTokenEntity.IsRevoked && !refreshTokenEntity.IsExpired
+                && DateTime.UtcNow - refreshTokenEntity.RevokedAt!.Value <= RefreshRotationGrace;
+
+            if (!refreshTokenEntity.IsValid && !recentlyRotated)
             {
                 return new AuthResult
                 {
@@ -830,12 +842,12 @@ public class CustomAuthService : ICustomAuthService
             {
                 UserId = user.Id,
                 Token = newRefreshToken,
-                ExpiresAt = DateTime.UtcNow.AddDays(7),
+                ExpiresAt = DateTime.UtcNow.Add(_refreshTokenLifetime),
                 CreatedAt = DateTime.UtcNow
             };
 
             // Revoke old refresh token
-            refreshTokenEntity.RevokedAt = DateTime.UtcNow;
+            refreshTokenEntity.RevokedAt ??= DateTime.UtcNow;
 
             _dbContext.Update(refreshTokenEntity);
             _dbContext.Add(newRefreshTokenEntity);
@@ -1053,7 +1065,7 @@ public class CustomAuthService : ICustomAuthService
             {
                 UserId = user.Id,
                 Token = refreshToken,
-                ExpiresAt = DateTime.UtcNow.AddDays(30),
+                ExpiresAt = DateTime.UtcNow.Add(_refreshTokenLifetime),
                 CreatedAt = DateTime.UtcNow
             });
 

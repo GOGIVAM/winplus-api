@@ -580,6 +580,36 @@ public class ParentController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// GET /api/parent/children/pending  demandes de liaison envoyées par ce parent et
+    /// encore en attente de réponse de l'élève (annulables via DELETE children/{id}).
+    /// </summary>
+    [HttpGet("children/pending")]
+    public async Task<IActionResult> GetPendingChildRequests()
+    {
+        try
+        {
+            var parentId = User.GetUserId();
+            var pending = await _db.ParentStudentLinks
+                .AsNoTracking()
+                .Where(l => l.ParentId == parentId && l.Status == "pending")
+                .OrderByDescending(l => l.CreatedAt)
+                .Select(l => new
+                {
+                    l.Id,
+                    l.CreatedAt,
+                    Student = new { l.Student!.Id, l.Student.FirstName, l.Student.LastName, l.Student.AvatarUrl, l.Student.Email },
+                })
+                .ToListAsync();
+            return Ok(pending);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error listing pending child requests");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
     /// <summary>DELETE /api/parent/children/{childId}  délier un enfant.</summary>
     [HttpDelete("children/{childId:int}")]
     public async Task<IActionResult> RemoveChild([FromRoute] int childId)
