@@ -13,6 +13,7 @@ WinAI  Endpoints IA pour le compte Professeur.
 
 import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional
 
@@ -1636,6 +1637,13 @@ _ANALYSIS_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 _ANALYSIS_AUDIO_EXTENSIONS = {".mp3", ".m4a", ".wav"}
 _ANALYSIS_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 _ANALYSIS_MAX_CHARS = 12000
+# PDF au-delà de ce nombre de pages : seules la 1re et la dernière page servent
+# aux métadonnées (titre, matière, niveau, année sont en général sur ces pages).
+# 30 pages : la lecture complète dépasserait l'enveloppe de l'appel synchrone
+# (OCR de tout le document) alors que le prompt est plafonné à 12 000 caractères.
+_ANALYSIS_LARGE_PDF_PAGES = 30
+# En-deçà de ce nombre de caractères, la couche texte native est jugée insuffisante -> OCR.
+_ANALYSIS_MIN_NATIVE_CHARS = 200
 
 
 class AnalyzeContentUploadRequest(BaseModel):
@@ -1691,14 +1699,135 @@ def _download_for_analysis(file_url: str) -> tuple[bytes, Optional[str]]:
     return b"".join(chunks), resp.headers.get("content-type")
 
 
+def _ocr_pdf_chain(pdf_path: str) -> tuple[str, str]:
+    """OCR d'un PDF : Mistral OCR (API) d'abord, puis OCR local self-hosted
+    (RAG/self_hosted, GLM-OCR) page par page en secours si Mistral échoue.
+    Renvoie (texte, moteur_utilisé). Lève si aucun moteur ne répond."""
+    from RAG.api.ingestion.ocr_client import ocr_pdf
+
+    try:
+        return ocr_pdf(pdf_path), "mistral"
+    except Exception as primary_err:
+        logger.error(f"[Module8] OCR Mistral indisponible, secours OCR local : {primary_err}", exc_info=True)
+
+    from RAG.self_hosted.ingestion.ocr_engine import ocr_transcribe
+    from RAG.shared.pdf_utils import page_count, render_page_image
+
+    parts = []
+    for page_no in range(1, page_count(pdf_path) + 1):
+        page_text = (ocr_transcribe(render_page_image(pdf_path, page_no, dpi=150)) or "").strip()
+        if page_text:
+            parts.append(f"--- page {page_no} ---\n{page_text}")
+    return "\n\n".join(parts), "local"
+
+
+def _write_first_last_pdf(pdf_path: str, total_pages: int) -> str:
+    """Écrit dans un PDF temporaire la 1re et la dernière page seulement.
+    Le chemin renvoyé est ensuite passé tel quel au natif et à l'OCR."""
+    import fitz
+
+    src = fitz.open(pdf_path)
+    out = fitz.open()
+    try:
+        out.insert_pdf(src, from_page=0, to_page=0)
+        out.insert_pdf(src, from_page=total_pages - 1, to_page=total_pages - 1)
+        with _tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            out_path = tmp.name
+        try:
+            out.save(out_path)
+        except Exception:
+            os.remove(out_path)
+            raise
+        return out_path
+    finally:
+        out.close()
+        src.close()
+
+
+def _extract_pdf_for_analysis(pdf_path: str) -> tuple[Optional[str], Optional[int], Optional[str]]:
+    """PDF : texte natif d'abord, OCR en secours si la couche texte est vide
+    ou insuffisante. Au-delà de _ANALYSIS_LARGE_PDF_PAGES pages, seules la
+    1re et la dernière page sont lues (natif comme OCR), texte brut sans
+    re-découpage. Une erreur d'OCR est remontée en avertissement explicite."""
+    from RAG.shared.pdf_utils import extract_native_text, page_count
+
+    try:
+        total = page_count(pdf_path)
+    except Exception as e:
+        logger.warning(f"[Module8] PDF non ouvrable : {e}")
+        return None, None, "Document illisible ou protégé : impossible à analyser automatiquement."
+
+    large = total > _ANALYSIS_LARGE_PDF_PAGES
+    page_cap = _ANALYSIS_MAX_CHARS // 2 if large else _ANALYSIS_MAX_CHARS
+    sample_path = None
+    if large:
+        try:
+            sample_path = _write_first_last_pdf(pdf_path, total)
+        except Exception as e:
+            logger.warning(f"[Module8] Extraction 1re/dernière page échouée : {e}")
+            return None, None, "Document illisible ou protégé : impossible à analyser automatiquement."
+    work_path = sample_path or pdf_path
+    scope = "première et dernière page seulement" if large else None
+
+    try:
+        # 1) Texte natif (couche texte du PDF).
+        native_text = ""
+        try:
+            extraction = extract_native_text(work_path)
+            pages = [p.text for p in extraction.pages if p.text and p.text.strip()]
+            if large:
+                pages = [t[:page_cap] for t in pages]
+            native_text = "\n".join(pages).strip()
+        except Exception as e:
+            logger.warning(f"[Module8] Extraction native échouée : {e}")
+
+        if len(native_text) >= _ANALYSIS_MIN_NATIVE_CHARS:
+            warning = (
+                f"Document volumineux ({total} pages) : métadonnées déduites de la {scope}."
+                if large else None
+            )
+            return native_text[:_ANALYSIS_MAX_CHARS], None, warning
+
+        # 2) Secours OCR : texte natif vide ou insuffisant (PDF scanné).
+        try:
+            ocr_raw, engine = _ocr_pdf_chain(work_path)
+            ocr_text = (ocr_raw or "").strip()
+        except Exception as e:
+            logger.error(f"[Module8] OCR du PDF échoué : {e}", exc_info=True)
+            if native_text:
+                return (
+                    native_text[:_ANALYSIS_MAX_CHARS],
+                    None,
+                    "Reconnaissance de caractères (OCR) indisponible : seul un peu de texte a pu être lu, relis les suggestions.",
+                )
+            return (
+                None,
+                None,
+                "La reconnaissance de caractères (OCR) a échoué pour l'instant : remplis le formulaire manuellement.",
+            )
+
+        if ocr_text:
+            warning = "Document scanné : lecture par reconnaissance de caractères (OCR)"
+            if engine == "local":
+                warning += " locale de secours (Mistral indisponible)"
+            if large:
+                warning += f", {scope}"
+            return ocr_text[:_ANALYSIS_MAX_CHARS], None, warning + ", relis les suggestions."
+
+        if native_text:
+            return native_text[:_ANALYSIS_MAX_CHARS], None, None
+        return None, None, "Document illisible (vide après extraction native et OCR)."
+    finally:
+        if sample_path:
+            try:
+                os.remove(sample_path)
+            except OSError:
+                pass
+
+
 def _extract_text_for_analysis(raw_bytes: bytes, filename: Optional[str]) -> tuple[Optional[str], Optional[int], Optional[str]]:
     """Lecture réelle du fichier  réutilise les briques RAG/api/ingestion,
     jamais recréées. Renvoie (texte_extrait, duree_secondes, avertissement)."""
-    from RAG.api.ingestion.ocr_client import ocr_pdf, ocr_image
-    from RAG.api.ingestion.transcription_client import transcribe_video
-    from RAG.api.ingestion.vision_client import caption_image
-    from RAG.shared.pdf_utils import extract_native_text
-
     ext = os.path.splitext(filename or "")[1].lower() or ".pdf"
     warning = None
 
@@ -1708,23 +1837,11 @@ def _extract_text_for_analysis(raw_bytes: bytes, filename: Optional[str]) -> tup
 
     try:
         if ext == ".pdf":
-            try:
-                extraction = extract_native_text(tmp_path)
-                if extraction.is_native:
-                    text = "\n".join(p.text for p in extraction.pages if p.text and p.text.strip())
-                    if text.strip():
-                        return text[:_ANALYSIS_MAX_CHARS], None, None
-                # PDF scanné ou texte natif vide : secours OCR (patron attachment_processor.py).
-                text = ocr_pdf(tmp_path)
-                if text and text.strip():
-                    return text[:_ANALYSIS_MAX_CHARS], None, "Document scanné : lecture par reconnaissance de caractères (OCR), relis les suggestions."
-                return None, None, "Document illisible (vide après extraction native et OCR)."
-            except Exception as e:
-                logger.warning(f"[Module8] Extraction PDF échouée : {e}")
-                return None, None, "Document illisible ou protégé  impossible à analyser automatiquement."
+            return _extract_pdf_for_analysis(tmp_path)
 
         if ext in _ANALYSIS_IMAGE_EXTENSIONS:
             try:
+                from RAG.api.ingestion.vision_client import caption_image
                 caption = caption_image(raw_bytes)
                 ocr_text = ""
                 try:
@@ -1735,10 +1852,19 @@ def _extract_text_for_analysis(raw_bytes: bytes, filename: Optional[str]) -> tup
                 return (text or None), None, None
             except Exception as e:
                 logger.warning(f"[Module8] Description d'image échouée : {e}")
+                try:
+                    from RAG.api.ingestion.ocr_client import ocr_image
+                    ocr_only = (ocr_image(raw_bytes) or "").strip()
+                except Exception as e2:
+                    logger.error(f"[Module8] OCR image échoué : {e2}", exc_info=True)
+                    return None, None, "Image illisible par l'IA de vision."
+                if ocr_only:
+                    return ocr_only[:_ANALYSIS_MAX_CHARS], None, "Description visuelle indisponible : texte de l'image lu par OCR, relis les suggestions."
                 return None, None, "Image illisible par l'IA de vision."
 
         if ext in _ANALYSIS_VIDEO_EXTENSIONS or ext in _ANALYSIS_AUDIO_EXTENSIONS:
             try:
+                from RAG.api.ingestion.transcription_client import transcribe_video
                 segments = transcribe_video(tmp_path)
                 text = " ".join(s.text for s in segments).strip()
                 duration = int(segments[-1].end) if segments else None
