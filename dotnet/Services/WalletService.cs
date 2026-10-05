@@ -473,6 +473,7 @@ public class WalletService : IWalletService
     // ── Traduction des événements métier ────────────────────────────────
 
     public static string CatalogSaleKey(int orderItemId) => $"catalog_sale:orderitem:{orderItemId}";
+    public static string CatalogCommissionKey(int orderItemId) => $"catalog_commission:orderitem:{orderItemId}";
     public static string BalancePurchaseKey(int orderId) => $"balance_purchase:order:{orderId}";
     public static string TutoringKey(int bookingId) => $"tutoring:booking:{bookingId}";
     public static string TutoringCommissionKey(int bookingId) => $"tutoring_commission:booking:{bookingId}";
@@ -504,27 +505,56 @@ public class WalletService : IWalletService
 
         var items = await _db.OrderItems.AsNoTracking()
             .Where(oi => oi.OrderId == orderId && oi.Subject != null && oi.Subject.AuthorUserId != null)
-            .Select(oi => new { oi.Id, oi.PriceAtPurchase, AuthorId = oi.Subject!.AuthorUserId!.Value, Title = oi.Subject.Title })
+            .Select(oi => new
+            {
+                oi.Id,
+                oi.PriceAtPurchase,
+                AuthorId = oi.Subject!.AuthorUserId!.Value,
+                Title = oi.Subject.Title,
+                // Module 7 : part plateforme figée au contenu lors de son
+                // évaluation WinAI (SubjectsController.Create). Un contenu
+                // jamais évalué (créé avant le Module 7, ou sans fichier)
+                // retombe sur la commission plancher 10%, jamais sur 0% :
+                // l'absence d'évaluation ne doit jamais se traduire par une
+                // commission plus favorable qu'un contenu évalué au minimum.
+                CommissionRate = oi.Subject.PlatformCommissionRate,
+            })
             .ToListAsync();
 
         foreach (var item in items)
         {
             var key = CatalogSaleKey(item.Id);
-            var amount = RevenueSplit.Xaf(item.PriceAtPurchase);
+            var commissionKey = CatalogCommissionKey(item.Id);
+            var gross = RevenueSplit.Xaf(item.PriceAtPurchase);
             if (paid)
             {
-                if (amount <= 0) continue;
-                await PostAsync(new WalletEntry(item.AuthorId, WalletEntryTypes.CatalogSale, amount, key,
-                    $"Vente : {item.Title}", "OrderItem", item.Id, OccurredAt: occurredAt));
-                // Module 7 : insérer ici l'écriture PlatformCommission (part
-                // retenue selon le score WinAI) et réduire d'autant la part
-                // auteur. Aucune commission catalogue n'est appliquée avant.
+                if (gross <= 0) continue;
+                // Module 7 : une seule des deux parts est arrondie (la
+                // commission, via RevenueSplit.NetXaf/CommissionXaf  même
+                // convention que le tutorat), l'autre est déduite par
+                // soustraction  la somme des deux est donc TOUJOURS
+                // exactement égale au prix payé, sans écart d'arrondi possible.
+                var rate = item.CommissionRate ?? CatalogCommissionService.AbsoluteMinPercent / 100m;
+                var net = RevenueSplit.NetXaf(gross, 1m - rate);
+                var commission = gross - net;
+
+                if (net > 0)
+                    await PostAsync(new WalletEntry(item.AuthorId, WalletEntryTypes.CatalogSale, net, key,
+                        $"Vente : {item.Title}", "OrderItem", item.Id, OccurredAt: occurredAt));
+                if (commission > 0)
+                    await PostAsync(new WalletEntry(null, WalletEntryTypes.PlatformCommission, commission, commissionKey,
+                        $"Commission catalogue ({rate:P0}) : {item.Title}", "OrderItem", item.Id, OccurredAt: occurredAt));
             }
             else
             {
+                // Remboursement/annulation : contre-passe LES DEUX écritures,
+                // pas seulement la part auteur (cas explicite du Module 7).
                 var entry = await FindByKeyAsync(key);
                 if (entry != null)
                     await ReverseAsync(entry.Id, $"Annulation de la vente ({order.OrderNumber}, commande {order.Status}) : {item.Title}");
+                var commissionEntry = await FindByKeyAsync(commissionKey);
+                if (commissionEntry != null)
+                    await ReverseAsync(commissionEntry.Id, $"Annulation de la commission catalogue ({order.OrderNumber}, commande {order.Status}) : {item.Title}");
             }
         }
 

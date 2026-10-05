@@ -409,6 +409,7 @@ builder.Services.AddScoped<IAnnouncementService, AnnouncementService>();
 builder.Services.AddScoped<ITeacherService, TeacherService>();
 // Lot 2, Module 1 : journal de portefeuille unique (source de vérité des soldes).
 builder.Services.AddScoped<IWalletService, WalletService>();
+builder.Services.AddScoped<ICatalogCommissionService, CatalogCommissionService>();
 builder.Services.AddScoped<IWalletBackfillService, WalletBackfillService>();
 // Lot 2, Module 2 : retrait Mobile Money automatisé par l'API de transfert NotchPay.
 builder.Services.AddScoped<IWithdrawalService, WithdrawalService>();

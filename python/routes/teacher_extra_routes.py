@@ -1611,3 +1611,253 @@ async def generate_syllabus(
         if parsed_weeks:
             return GenerateSyllabusResponse(weeks=parsed_weeks)
     raise HTTPException(status_code=500, detail="Génération du syllabus impossible pour le moment.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Module 8  WinAI : suggestion de champs à l'upload (lecture réelle du fichier)
+# Module 7  même lecture réutilisée pour le score de commission catalogue
+#
+# Point d'entrée SYNCHRONE unique : lit le fichier réellement déposé (texte
+# natif, OCR de secours, description d'image, transcription vidéo  mêmes
+# briques que RAG/api/ingestion, jamais recréées ici) UNE SEULE FOIS, puis en
+# tire à la fois un préremplissage de formulaire (Module 8) et un score de
+# pertinence/valeur pédagogique avec sa justification (Module 7), pour ne pas
+# lire le fichier deux fois. Le fichier n'est jamais indexé dans le pipeline
+# RAG du chatbot ici : ce dernier reste la responsabilité exclusive de
+# RAG/router.py (voir attachment_processor.py).
+# ─────────────────────────────────────────────────────────────────────────────
+
+import requests as _requests
+import tempfile as _tempfile
+
+_ANALYSIS_MAX_BYTES = 30 * 1024 * 1024  # 30 Mo : au-delà, hors budget d'un appel synchrone
+_ANALYSIS_DOWNLOAD_TIMEOUT_S = 20
+_ANALYSIS_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+_ANALYSIS_AUDIO_EXTENSIONS = {".mp3", ".m4a", ".wav"}
+_ANALYSIS_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+_ANALYSIS_MAX_CHARS = 12000
+
+
+class AnalyzeContentUploadRequest(BaseModel):
+    file_url: str
+    filename: Optional[str] = None
+    # epreuve | correction | livre | quiz | pack | formation | video
+    content_kind: str = "epreuve"
+
+
+class SuggestedContentFields(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    description_courte: Optional[str] = None
+    category: Optional[str] = None
+    level: Optional[str] = None
+    difficulty: Optional[str] = None
+    year: Optional[str] = None
+    exam_type: Optional[str] = None
+    tags: List[str] = []
+    objectives: List[str] = []
+    prerequisites: List[str] = []
+    duration_seconds: Optional[int] = None
+    price_suggestion: Optional[float] = None
+
+
+class AnalyzeContentUploadResponse(BaseModel):
+    suggested: SuggestedContentFields
+    winai_score: Optional[float] = None
+    winai_justification: Optional[str] = None
+    extraction_warning: Optional[str] = None
+
+
+def _download_for_analysis(file_url: str) -> tuple[bytes, Optional[str]]:
+    """Télécharge le fichier déposé pour analyse. Lève HTTPException si trop
+    volumineux ou injoignable  jamais d'attente indéfinie (cas limite Module 8)."""
+    try:
+        resp = _requests.get(file_url, timeout=_ANALYSIS_DOWNLOAD_TIMEOUT_S, stream=True)
+        resp.raise_for_status()
+    except Exception as e:
+        logger.warning(f"[Module8] Téléchargement du fichier à analyser échoué : {e}")
+        raise HTTPException(status_code=502, detail="Fichier déposé injoignable pour l'analyse automatique.")
+
+    chunks = []
+    total = 0
+    for chunk in resp.iter_content(chunk_size=1024 * 256):
+        total += len(chunk)
+        if total > _ANALYSIS_MAX_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Fichier trop volumineux pour une analyse immédiate (30 Mo max)  remplis le formulaire manuellement.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks), resp.headers.get("content-type")
+
+
+def _extract_text_for_analysis(raw_bytes: bytes, filename: Optional[str]) -> tuple[Optional[str], Optional[int], Optional[str]]:
+    """Lecture réelle du fichier  réutilise les briques RAG/api/ingestion,
+    jamais recréées. Renvoie (texte_extrait, duree_secondes, avertissement)."""
+    from RAG.api.ingestion.ocr_client import ocr_pdf, ocr_image
+    from RAG.api.ingestion.transcription_client import transcribe_video
+    from RAG.api.ingestion.vision_client import caption_image
+    from RAG.shared.pdf_utils import extract_native_text
+
+    ext = os.path.splitext(filename or "")[1].lower() or ".pdf"
+    warning = None
+
+    with _tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        tmp.write(raw_bytes)
+        tmp_path = tmp.name
+
+    try:
+        if ext == ".pdf":
+            try:
+                extraction = extract_native_text(tmp_path)
+                if extraction.is_native:
+                    text = "\n".join(p.text for p in extraction.pages if p.text and p.text.strip())
+                    if text.strip():
+                        return text[:_ANALYSIS_MAX_CHARS], None, None
+                # PDF scanné ou texte natif vide : secours OCR (patron attachment_processor.py).
+                text = ocr_pdf(tmp_path)
+                if text and text.strip():
+                    return text[:_ANALYSIS_MAX_CHARS], None, "Document scanné : lecture par reconnaissance de caractères (OCR), relis les suggestions."
+                return None, None, "Document illisible (vide après extraction native et OCR)."
+            except Exception as e:
+                logger.warning(f"[Module8] Extraction PDF échouée : {e}")
+                return None, None, "Document illisible ou protégé  impossible à analyser automatiquement."
+
+        if ext in _ANALYSIS_IMAGE_EXTENSIONS:
+            try:
+                caption = caption_image(raw_bytes)
+                ocr_text = ""
+                try:
+                    ocr_text = ocr_image(raw_bytes)
+                except Exception:
+                    pass
+                text = f"{caption}\n{ocr_text}".strip()
+                return (text or None), None, None
+            except Exception as e:
+                logger.warning(f"[Module8] Description d'image échouée : {e}")
+                return None, None, "Image illisible par l'IA de vision."
+
+        if ext in _ANALYSIS_VIDEO_EXTENSIONS or ext in _ANALYSIS_AUDIO_EXTENSIONS:
+            try:
+                segments = transcribe_video(tmp_path)
+                text = " ".join(s.text for s in segments).strip()
+                duration = int(segments[-1].end) if segments else None
+                if not text:
+                    return None, duration, "Aucune piste audio exploitable : la transcription n'a rien donné (vidéo muette ou silencieuse)."
+                return text[:_ANALYSIS_MAX_CHARS], duration, None
+            except Exception as e:
+                logger.warning(f"[Module8] Transcription vidéo échouée : {e}")
+                return None, None, "Transcription de la vidéo impossible pour l'instant."
+
+        return None, None, f"Type de fichier non couvert par l'analyse automatique ({ext})."
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
+_CONTENT_KIND_FIELD_HINTS = {
+    "epreuve": "titre, description, matière, niveau, difficulté estimée, année/session si mentionnée, type d'épreuve si détectable",
+    "correction": "titre, description, matière, niveau",
+    "livre": "titre, description, matière, niveau, étiquettes",
+    "pack": "titre, description, matière, niveau, étiquettes",
+    "quiz": "titre, description, matière, niveau",
+    "formation": "titre, description longue, description courte, matière, niveau, étiquettes, objectifs, prérequis",
+    "video": "titre, description, matière, niveau, étiquettes",
+}
+
+
+@teacher_ai_router.post("/teacher/analyze-content-upload", response_model=AnalyzeContentUploadResponse)
+def analyze_content_upload(
+    body: AnalyzeContentUploadRequest,
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
+):
+    """
+    Synchrone (def, pas async def  FastAPI l'exécute dans un threadpool,
+    les appels bloquants qu'elle fait  requests, OCR, transcription  ne
+    gèlent donc pas la boucle d'événements). Ne publie jamais rien : ne
+    renvoie que des suggestions modifiables (Module 8) et une évaluation
+    consultative (Module 7)  jamais de décision de publication.
+    """
+    raw_bytes, content_type = _download_for_analysis(body.file_url)
+    text, duration_seconds, warning = _extract_text_for_analysis(raw_bytes, body.filename)
+
+    if not text:
+        # Fichier illisible : le formulaire doit rester utilisable en saisie
+        # manuelle (cas limite explicite du Module 8), on ne bloque jamais.
+        return AnalyzeContentUploadResponse(
+            suggested=SuggestedContentFields(duration_seconds=duration_seconds),
+            winai_score=None,
+            winai_justification=None,
+            extraction_warning=warning or "Contenu illisible  remplis le formulaire manuellement.",
+        )
+
+    hints = _CONTENT_KIND_FIELD_HINTS.get(body.content_kind, _CONTENT_KIND_FIELD_HINTS["epreuve"])
+    prompt = (
+        f"Voici le contenu réel d'un fichier déposé sur WinPlus (type déclaré : {body.content_kind}) :\n\n"
+        f"{text}\n\n"
+        f"À partir de CE contenu réel (pas du nom de fichier), propose des valeurs pour : {hints}. "
+        "Propose aussi un score de pertinence et de valeur pédagogique entre 0 et 100 (winai_score) avec une "
+        "justification courte et lisible (winai_justification), et une suggestion de prix de vente en FCFA "
+        "(price_suggestion) cohérente avec un contenu éducatif camerounais. "
+        "Réponds en JSON strict avec exactement les clés : title, description, description_courte, category, "
+        "level, difficulty (easy|medium|hard), year, exam_type, tags (liste), objectives (liste), "
+        "prerequisites (liste), price_suggestion (nombre), winai_score (nombre 0-100), winai_justification (texte). "
+        "Mets une chaîne vide ou une liste vide pour tout champ non pertinent ou non détectable  n'invente rien "
+        "qui ne soit pas appuyé par le texte fourni."
+    )
+    system = (
+        "Tu es WinAI, évaluateur pédagogique pour la plateforme WinPlus. Tu lis le contenu réel d'un document "
+        "ou d'une transcription et tu en tires des métadonnées fidèles, jamais inventées. Réponds uniquement "
+        "en JSON valide."
+    )
+    raw = _deepseek_json(prompt, system, max_tokens=1400)
+
+    if not isinstance(raw, dict):
+        return AnalyzeContentUploadResponse(
+            suggested=SuggestedContentFields(duration_seconds=duration_seconds),
+            winai_score=None,
+            winai_justification=None,
+            extraction_warning=warning or "WinAI n'a pas pu produire de suggestion pour l'instant  remplis le formulaire manuellement.",
+        )
+
+    def _str_list(v: Any) -> List[str]:
+        if isinstance(v, list):
+            return [str(x) for x in v if str(x).strip()]
+        return []
+
+    score = raw.get("winai_score")
+    try:
+        score = max(0.0, min(100.0, float(score))) if score is not None else None
+    except (TypeError, ValueError):
+        score = None
+
+    price = raw.get("price_suggestion")
+    try:
+        price = float(price) if price is not None else None
+    except (TypeError, ValueError):
+        price = None
+
+    suggested = SuggestedContentFields(
+        title=(str(raw.get("title") or "").strip() or None),
+        description=(str(raw.get("description") or "").strip() or None),
+        description_courte=(str(raw.get("description_courte") or "").strip() or None),
+        category=(str(raw.get("category") or "").strip() or None),
+        level=(str(raw.get("level") or "").strip() or None),
+        difficulty=(str(raw.get("difficulty") or "").strip() or None),
+        year=(str(raw.get("year") or "").strip() or None),
+        exam_type=(str(raw.get("exam_type") or "").strip() or None),
+        tags=_str_list(raw.get("tags")),
+        objectives=_str_list(raw.get("objectives")),
+        prerequisites=_str_list(raw.get("prerequisites")),
+        duration_seconds=duration_seconds,
+        price_suggestion=price,
+    )
+
+    return AnalyzeContentUploadResponse(
+        suggested=suggested,
+        winai_score=score,
+        winai_justification=(str(raw.get("winai_justification") or "").strip() or None),
+        extraction_warning=warning,
+    )

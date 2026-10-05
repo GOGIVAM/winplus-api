@@ -145,6 +145,25 @@ public class UsersController : ControllerBase
 
             if (request.FirstName != null) user.FirstName = request.FirstName;
             if (request.LastName != null) user.LastName = request.LastName;
+            if (request.Username != null)
+            {
+                var candidate = request.Username.Trim();
+                if (candidate.Length == 0)
+                {
+                    user.Username = null; // Vider le champ est permis explicitement.
+                }
+                else
+                {
+                    if (candidate.Length < 3 || candidate.Length > 32 || !System.Text.RegularExpressions.Regex.IsMatch(candidate, "^[a-zA-Z0-9_-]+$"))
+                        return BadRequest(new { error = "Le nom d'utilisateur doit faire 3 à 32 caractères (lettres, chiffres, - ou _)." });
+
+                    var taken = await _db.Users.AnyAsync(u => u.Id != userId && u.Username == candidate);
+                    if (taken)
+                        return BadRequest(new { error = "Ce nom d'utilisateur est déjà pris." });
+
+                    user.Username = candidate;
+                }
+            }
             if (request.Phone != null) user.Phone = request.Phone;
             if (request.Bio != null) user.Bio = request.Bio;
             if (request.Level != null) user.Level = request.Level;
@@ -179,6 +198,7 @@ public class UsersController : ControllerBase
                 Email = updated.Email,
                 FirstName = updated.FirstName,
                 LastName = updated.LastName,
+                Username = updated.Username,
                 Phone = updated.Phone,
                 Bio = updated.Bio,
                 Level = updated.Level,

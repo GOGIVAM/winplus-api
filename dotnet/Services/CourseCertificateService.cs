@@ -52,6 +52,20 @@ public class CourseCertificateService : ICourseCertificateService
         if (enrollment == null || enrollment.ProgressPercent < 100)
             throw new InvalidOperationException("La formation n'est pas terminée à 100%.");
 
+        // Module 6/31 : l'examen final, quand il est configuré, est une
+        // condition SUPPLÉMENTAIRE et obligatoire  réussir tous les examens
+        // de module (section) ne suffit pas à lui seul. Une formation sans
+        // examen final garde l'ancien comportement (100% des leçons suffit).
+        if (course.FinalExamQuizId != null)
+        {
+            var bestScore = await _db.QuizAttempts.AsNoTracking()
+                .Where(a => a.UserId == userId && a.QuizId == course.FinalExamQuizId.Value)
+                .MaxAsync(a => (decimal?)a.Score);
+            if (bestScore == null || bestScore < course.FinalExamPassScorePercent)
+                throw new InvalidOperationException(
+                    $"L'examen final doit être réussi (score minimum {course.FinalExamPassScorePercent}%) avant d'obtenir le certificat.");
+        }
+
         var grade = await _db.QuizAttempts.AsNoTracking()
             .Where(a => a.UserId == userId && _db.CourseLessons.Any(l => l.CourseId == courseId && l.QuizId == a.QuizId))
             .Select(a => (decimal?)a.Score)

@@ -58,6 +58,32 @@ public class Course
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// Module 7 : même mécanisme de commission WinAI que le catalogue
+    /// (Subject), posé ici en prévision du câblage réel de l'achat de
+    /// formation au panier (voir le rapport de lot : ce câblage reste un
+    /// chantier distinct, CartItem/OrderItem n'ayant aujourd'hui aucun
+    /// chemin réel pour CourseId).
+    /// </summary>
+    public decimal? WinAiScore { get; set; }
+    public string? WinAiJustification { get; set; }
+    public decimal? PlatformCommissionRate { get; set; }
+    public DateTime? WinAiScoreEvaluatedAt { get; set; }
+
+    /// <summary>
+    /// Module 6/31 : examen final, DISTINCT de tout examen de déblocage de
+    /// module (CourseSection.MinScore), condition supplémentaire et
+    /// OBLIGATOIRE pour le certificat quand il est configuré. Réutilise
+    /// l'entité Quiz existante (aucun second système d'examen créé).
+    /// Facultatif à la création d'une formation (§6B du prompt : "éventuellement
+    /// un examen final") : une formation sans examen final garde l'ancien
+    /// comportement (certificat dès 100% des leçons).
+    /// </summary>
+    public int? FinalExamQuizId { get; set; }
+
+    /// <summary>Score minimum (0-100) à l'examen final pour qu'il soit considéré réussi. 50 par défaut.</summary>
+    public int FinalExamPassScorePercent { get; set; } = 50;
+
     public ICollection<CourseSection> Sections { get; set; } = new List<CourseSection>();
     public ICollection<CourseEnrollment> CourseEnrollments { get; set; } = new List<CourseEnrollment>();
     public ICollection<CourseReview> CourseReviews { get; set; } = new List<CourseReview>();

@@ -15,6 +15,7 @@ public partial class ApplicationDbContext : DbContext
     // DbSets for all entities
     public DbSet<User> Users => Set<User>();
     public DbSet<Subject> Subjects => Set<Subject>();
+    public DbSet<CatalogCommissionSettings> CatalogCommissionSettings => Set<CatalogCommissionSettings>();
     public DbSet<CourseContent> CourseContents => Set<CourseContent>();
     public DbSet<Enrollment> Enrollments => Set<Enrollment>();
     public DbSet<CartItem> CartItems => Set<CartItem>();

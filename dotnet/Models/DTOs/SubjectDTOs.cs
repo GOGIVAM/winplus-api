@@ -34,6 +34,15 @@ public class SubjectCreateRequest
     public string? ThumbnailUrl { get; set; }
 
     /// <summary>
+    /// Module 8 : adresse du fichier principal, obtenue au préalable via un
+    /// endpoint d'upload dédié (AdminUploadsController ou son pendant
+    /// professeur)  jamais un fichier envoyé directement ici (ce contrôleur
+    /// attend du JSON, pas du multipart : voir ContentPublishFlow.tsx).
+    /// </summary>
+    [StringLength(1000)]
+    public string? DocumentUrl { get; set; }
+
+    /// <summary>
     /// Prix de vente en FCFA. Devise sans sous-unité : arrondi à zéro
     /// décimale côté serveur, jamais conservé fractionnaire.
     /// </summary>

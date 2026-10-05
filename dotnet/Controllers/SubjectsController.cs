@@ -26,6 +26,7 @@ public class SubjectsController : ControllerBase
     private readonly IDocumentWatermarkService _watermark;
     private readonly IWalletService _wallet;
     private readonly INtfyService _ntfy;
+    private readonly ICatalogCommissionService _commission;
 
     public SubjectsController(
         ISubjectService subjectService,
@@ -37,7 +38,8 @@ public class SubjectsController : ControllerBase
         IContentAccessService contentAccess,
         IDocumentWatermarkService watermark,
         IWalletService wallet,
-        INtfyService ntfy)
+        INtfyService ntfy,
+        ICatalogCommissionService commission)
     {
         _subjectService = subjectService;
         _context = context;
@@ -49,6 +51,7 @@ public class SubjectsController : ControllerBase
         _watermark = watermark;
         _wallet = wallet;
         _ntfy = ntfy;
+        _commission = commission;
     }
 
     private class PythonRecsResponse { public List<object>? Recommendations { get; set; } }
@@ -347,6 +350,11 @@ public class SubjectsController : ControllerBase
                 Category = request.Category,
                 Level = request.Level,
                 ThumbnailUrl = request.ThumbnailUrl,
+                // Module 8 : le fichier est déposé AVANT cet appel, via un
+                // endpoint d'upload dédié (voir AdminUploadsController /
+                // TeacherContentUploadsController)  ce contrôleur ne reçoit
+                // ici que son adresse, jamais le fichier lui-même.
+                DocumentUrl = request.DocumentUrl,
                 // FCFA : devise sans sous-unité, jamais de montant fractionnaire.
                 Price = decimal.Round(request.Price, 0, MidpointRounding.AwayFromZero),
                 // La publication reste une décision humaine passant par
@@ -360,6 +368,18 @@ public class SubjectsController : ControllerBase
                 AuthorUserId = isAdmin ? null : userId,
             };
 
+            // Module 7 : le score WinAI et la part plateforme ne sont JAMAIS
+            // acceptés depuis la requête (un professeur pourrait sinon
+            // déclarer un score artificiellement bas pour réduire sa
+            // commission)  ré-évalués ici, côté serveur, à partir du fichier
+            // réellement déposé. Best-effort : une évaluation indisponible ne
+            // bloque jamais la création, elle retombe sur la commission
+            // plancher (10%), explicite et traçable via WinAiJustification.
+            if (!string.IsNullOrWhiteSpace(subject.DocumentUrl))
+            {
+                await EvaluateAndStoreCommissionAsync(subject, request.Title);
+            }
+
             var created = await _subjectService.CreateSubjectAsync(subject);
             return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
         }
@@ -368,6 +388,80 @@ public class SubjectsController : ControllerBase
             _logger.LogError(ex, "Erreur lors de la création du cours");
             return StatusCode(500, "Erreur serveur");
         }
+    }
+
+    /// <summary>
+    /// Module 7 : appelle l'évaluation WinAI (Python, synchrone) et fige le
+    /// score, sa justification et la part plateforme qui en découle sur le
+    /// contenu. Échec/indisponibilité  valeur de repli explicite (commission
+    /// plancher), jamais de blocage de la création (cas limite du Module 7).
+    /// </summary>
+    private async Task EvaluateAndStoreCommissionAsync(Subject subject, string title)
+    {
+        try
+        {
+            var result = await _fastApiClient.PostAsync<AnalyzeContentUploadResponse>(
+                "/api/teacher/analyze-content-upload",
+                new AnalyzeContentUploadRequest { FileUrl = subject.DocumentUrl!, Filename = title, ContentKind = "epreuve" });
+
+            subject.WinAiScore = result?.WinAiScore;
+            subject.WinAiJustification = result?.WinAiJustification
+                ?? "Évaluation WinAI indisponible au moment de la publication : commission plancher appliquée par défaut.";
+            subject.PlatformCommissionRate = await _commission.RateForScoreAsync(result?.WinAiScore);
+            subject.WinAiScoreEvaluatedAt = DateTime.UtcNow;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Évaluation WinAI (Module 7) indisponible pour la création de contenu");
+            subject.WinAiJustification = "Évaluation WinAI indisponible au moment de la publication : commission plancher appliquée par défaut.";
+            subject.PlatformCommissionRate = await _commission.RateForScoreAsync(null);
+            subject.WinAiScoreEvaluatedAt = DateTime.UtcNow;
+        }
+    }
+
+    /// <summary>
+    /// Module 8 : analyse synchrone d'un fichier déjà déposé pour préremplir
+    /// le formulaire de publication (professeur comme administrateur, la
+    /// politique InstructorOnly couvrant les deux rôles). Consultatif
+    /// uniquement : aucune valeur renvoyée ici n'est jamais publiée ni
+    /// enregistrée telle quelle, l'utilisateur garde la main sur chaque champ.
+    /// </summary>
+    [HttpPost("analyze")]
+    [Authorize(Policy = "InstructorOnly")]
+    public async Task<IActionResult> AnalyzeUpload([FromBody] AnalyzeContentUploadRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.FileUrl))
+            return BadRequest(new { error = "file_url requis" });
+
+        var result = await _fastApiClient.PostAsync<AnalyzeContentUploadResponse>("/api/teacher/analyze-content-upload", request);
+        // Module 7, §7B : « le professeur doit pouvoir comprendre, avant
+        // publication, quelle part lui revient ». Le score vient de Python,
+        // mais la traduction en part plateforme reste une responsabilité du
+        // .NET (grille modifiable par un administrateur) : calculée ici pour
+        // être affichable côté prefill, à TITRE INDICATIF  elle sera
+        // recalculée et figée côté serveur à la création réelle du contenu
+        // (EvaluateAndStoreCommissionAsync), jamais acceptée depuis le client.
+        var previewRate = await _commission.RateForScoreAsync(result?.WinAiScore);
+
+        if (result == null)
+        {
+            return Ok(new
+            {
+                suggested = new SuggestedContentFieldsDto(),
+                winaiScore = (decimal?)null,
+                winaiJustification = (string?)null,
+                extractionWarning = "WinAI indisponible pour l'instant  remplis le formulaire manuellement.",
+                platformCommissionRatePreview = previewRate,
+            });
+        }
+        return Ok(new
+        {
+            result.Suggested,
+            result.WinAiScore,
+            result.WinAiJustification,
+            result.ExtractionWarning,
+            platformCommissionRatePreview = previewRate,
+        });
     }
 
     /// <summary>

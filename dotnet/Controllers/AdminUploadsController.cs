@@ -27,9 +27,18 @@ namespace Backend.Controllers;
 /// bucket est absent, on répond 503 avec un message exploitable au lieu de la
 /// 500 « Impossible d'ouvrir le téléversement ».
 /// </summary>
+/// <summary>
+/// Module 8 : policy élargie de AdminOnly à InstructorOnly (teacher+admin).
+/// Cette route servait jusqu'ici uniquement l'écran de dépôt administrateur,
+/// mais c'est le même mécanisme d'upload (découplé des métadonnées) qui sert
+/// de correction au flux de publication professeur (ContentPublishFlow.tsx),
+/// qui envoyait auparavant un multipart vers un contrôleur attendant du JSON.
+/// Aucune opération ici n'est spécifique à l'administration : upload de
+/// fichier brut vers S3, rien de plus.
+/// </summary>
 [ApiController]
 [Route("api/admin/uploads")]
-[Authorize(Policy = "AdminOnly")]
+[Authorize(Policy = "InstructorOnly")]
 public class AdminUploadsController : ControllerBase
 {
     private readonly IStorageService _storage;

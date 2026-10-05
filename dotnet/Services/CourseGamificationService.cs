@@ -18,7 +18,16 @@ public interface ICourseGamificationService
     Task<CourseGamificationSettings> UpdateSettingsAsync(int courseId, bool? enabled, int? pointsPerLesson, int? pointsPerQuiz, int? pointsBonusPerfectScore, bool? leaderboardVisible);
 
     Task<(int Points, List<(string BadgeType, DateTime EarnedAt)> Badges, int? Rank, int TotalStudents)> GetStudentProgressAsync(int courseId, int userId);
-    Task<List<(int UserId, string Name, string? AvatarUrl, int Points)>> GetLeaderboardAsync(int courseId, int limit);
+
+    /// <summary>
+    /// Module 35 : classement anonymisé PAR DÉFAUT (nom d'utilisateur choisi,
+    /// ou repli "Élève #ID" déterministe si l'élève n'en a pas défini)
+    /// <paramref name="revealRealNames"/> ne doit valoir vrai que pour le
+    /// professeur de la formation (ou un administrateur), jamais pour un élève,
+    /// y compris sur sa propre ligne (TeacherCourseController vs
+    /// CoursePlayerController portent cette distinction, pas ce service).
+    /// </summary>
+    Task<List<(int UserId, string Name, string? AvatarUrl, int Points)>> GetLeaderboardAsync(int courseId, int limit, bool revealRealNames = true);
 }
 
 public class CourseGamificationService : ICourseGamificationService
@@ -142,17 +151,25 @@ public class CourseGamificationService : ICourseGamificationService
         return (points, badges.Select(b => (b.BadgeType, b.EarnedAt)).ToList(), rank, allPoints.Count);
     }
 
-    public async Task<List<(int UserId, string Name, string? AvatarUrl, int Points)>> GetLeaderboardAsync(int courseId, int limit)
+    public async Task<List<(int UserId, string Name, string? AvatarUrl, int Points)>> GetLeaderboardAsync(int courseId, int limit, bool revealRealNames = true)
     {
         var rows = await (
             from p in _db.StudentCoursePoints.AsNoTracking()
             join u in _db.Users.AsNoTracking() on p.UserId equals u.Id
             where p.CourseId == courseId
             orderby p.Points descending
-            select new { u.Id, Name = u.FirstName + " " + u.LastName, u.AvatarUrl, p.Points }
+            select new { u.Id, u.FirstName, u.LastName, u.Username, u.AvatarUrl, p.Points }
         ).Take(limit).ToListAsync();
 
-        return rows.Select(r => (r.Id, r.Name.Trim(), r.AvatarUrl, r.Points)).ToList();
+        return rows.Select(r =>
+        {
+            var name = revealRealNames
+                ? $"{r.FirstName} {r.LastName}".Trim()
+                // Module 35 : anonymisé par défaut  nom d'utilisateur choisi,
+                // sinon repli déterministe sans exposer la vraie identité.
+                : (!string.IsNullOrWhiteSpace(r.Username) ? r.Username! : $"Élève #{r.Id}");
+            return (r.Id, name, revealRealNames ? r.AvatarUrl : null, r.Points);
+        }).ToList();
     }
 
     public static string BadgeLabel(string badgeType) => badgeType switch

@@ -294,8 +294,19 @@ public class CoursePlayerController : ControllerBase
         if (!settings.GamificationEnabled || !settings.LeaderboardVisible)
             return Ok(new List<object>());
 
-        var rows = await _gamification.GetLeaderboardAsync(courseId, 50);
-        return Ok(rows.Select((r, i) => new { rank = i + 1, userId = r.UserId, name = r.Name.Trim(), avatarUrl = r.AvatarUrl, points = r.Points, isMe = r.UserId == userId }));
+        // Module 35 : classement anonymisé par défaut pour un élève, même sur
+        // sa propre ligne ("Toi" plutôt que son vrai nom)  seul le professeur
+        // (TeacherCourseController.GetLeaderboard) voit les vraies identités.
+        var rows = await _gamification.GetLeaderboardAsync(courseId, 50, revealRealNames: false);
+        return Ok(rows.Select((r, i) => new
+        {
+            rank = i + 1,
+            userId = r.UserId,
+            name = r.UserId == userId ? "Toi" : r.Name.Trim(),
+            avatarUrl = r.UserId == userId ? r.AvatarUrl : null,
+            points = r.Points,
+            isMe = r.UserId == userId,
+        }));
     }
 }
 

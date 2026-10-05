@@ -6,6 +6,15 @@ public class UpdateProfileRequest
 {
     [MaxLength(100)] public string? FirstName { get; set; }
     [MaxLength(100)] public string? LastName { get; set; }
+
+    /// <summary>
+    /// Module 35 : identité anonymisée affichée dans le classement d'une
+    /// formation. 3-32 caractères alphanumériques/tiret/underscore, validé et
+    /// vérifié unique dans UsersController.UpdateProfile (pas ici, l'unicité
+    /// nécessite une requête en base).
+    /// </summary>
+    [MaxLength(32)] public string? Username { get; set; }
+
     [MaxLength(20)] public string? Phone { get; set; }
     [MaxLength(1000)] public string? Bio { get; set; }
     [MaxLength(100)] public string? Level { get; set; }
@@ -31,6 +40,7 @@ public class ProfileResponse
     public string? Email { get; set; }
     public string? FirstName { get; set; }
     public string? LastName { get; set; }
+    public string? Username { get; set; }
     public string? Phone { get; set; }
     public string? Bio { get; set; }
     public string? Level { get; set; }

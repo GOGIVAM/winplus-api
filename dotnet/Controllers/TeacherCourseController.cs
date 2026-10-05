@@ -212,6 +212,21 @@ public class TeacherCourseController : ControllerBase
             if (req.Requirements     != null) course.Requirements     = req.Requirements;
             if (req.Objectives       != null) course.Objectives       = req.Objectives;
             if (req.CertificateEnabled != null) course.CertificateEnabled = req.CertificateEnabled.Value;
+            if (req.FinalExamQuizId != null)
+            {
+                if (req.FinalExamQuizId <= 0)
+                {
+                    course.FinalExamQuizId = null;
+                }
+                else
+                {
+                    var quizExists = await _db.Quizzes.AnyAsync(q => q.Id == req.FinalExamQuizId.Value);
+                    if (!quizExists) return BadRequest(new { error = "Quiz introuvable pour l'examen final." });
+                    course.FinalExamQuizId = req.FinalExamQuizId.Value;
+                }
+            }
+            if (req.FinalExamPassScorePercent != null)
+                course.FinalExamPassScorePercent = Math.Clamp(req.FinalExamPassScorePercent.Value, 0, 100);
             course.UpdatedAt = DateTime.UtcNow;
 
             await _db.SaveChangesAsync();
@@ -622,6 +637,31 @@ public class TeacherCourseController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Module 35 : le professeur voit toujours les vrais noms sur SA
+    /// formation (contrairement à l'écran élève, CoursePlayerController,
+    /// anonymisé par défaut). Vérifie la propriété de la formation avant de
+    /// révéler quoi que ce soit.
+    /// </summary>
+    [HttpGet("{id}/leaderboard")]
+    public async Task<IActionResult> GetLeaderboard(int id)
+    {
+        try
+        {
+            var teacherId = User.GetUserId();
+            if (await OwnCourse(id, teacherId) == null && !User.IsAdmin())
+                return NotFound(new { error = "Formation introuvable" });
+
+            var rows = await _gamification.GetLeaderboardAsync(id, 100, revealRealNames: true);
+            return Ok(rows.Select((r, i) => new { rank = i + 1, userId = r.UserId, name = r.Name, avatarUrl = r.AvatarUrl, points = r.Points }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting teacher leaderboard for course {Id}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
     // ── Analytics par leçon (audit 5A, point 4) ─────────────────────────────
 
     [HttpGet("{id}/analytics/lessons")]
@@ -945,6 +985,10 @@ public class CourseUpsertRequest
     public List<string>? Requirements     { get; set; }
     public List<string>? Objectives       { get; set; }
     public bool?         CertificateEnabled { get; set; }
+
+    /// <summary>Module 6/31 : examen final distinct (référence à un Quiz existant), facultatif. 0 ou négatif = retire l'examen final.</summary>
+    public int?          FinalExamQuizId  { get; set; }
+    public int?          FinalExamPassScorePercent { get; set; }
 }
 
 public record SectionRequest(string Title, string? Description, string? UnlockRule = null, int? DelayDays = null, int? MinScore = null);

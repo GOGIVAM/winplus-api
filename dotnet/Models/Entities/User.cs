@@ -19,6 +19,21 @@ public class User
     
     public string? LastName { get; set; }
 
+    /// <summary>
+    /// Module 35 : identité anonymisée affichée dans le classement d'une
+    /// formation aux autres élèves (le professeur, lui, voit toujours
+    /// FirstName/LastName). Facultatif, choisi par l'utilisateur.
+    ///
+    /// Risque de collision documenté (lot 4) : le Module 15 (profils,
+    /// lot 6, pas encore livré) pourrait vouloir introduire son propre champ
+    /// d'identité à l'onboarding. Au moment de cette implémentation, aucun
+    /// champ "Username"/"DisplayName" n'existe ailleurs dans ce fichier : à
+    /// coordonner avec le Module 15 avant de livrer l'onboarding, pour ne
+    /// pas créer deux champs concurrents.
+    /// </summary>
+    [MaxLength(32)]
+    public string? Username { get; set; }
+
     public string? Phone { get; set; }
 
     [MaxLength(50)]
