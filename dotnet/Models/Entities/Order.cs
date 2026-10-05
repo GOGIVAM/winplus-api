@@ -84,7 +84,9 @@ public class Order
 /// <summary>Contenu dont le prix a changé entre le panier et la commande.</summary>
 public class OrderPriceAdjustment
 {
-    public int SubjectId { get; set; }
+    public int? SubjectId { get; set; }
+    /// <summary>B1 (achat de formation) : renseigné à la place de SubjectId pour une formation.</summary>
+    public int? CourseId { get; set; }
     public string? Title { get; set; }
     public decimal OldPrice { get; set; }
     public decimal NewPrice { get; set; }

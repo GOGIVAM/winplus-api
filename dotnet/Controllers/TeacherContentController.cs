@@ -276,9 +276,12 @@ public class TeacherContentController : ControllerBase
             var monthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
 
             // Meilleure vente du mois
+            // B1 (achat de formation) : OrderItem.SubjectId est désormais
+            // nullable  une ligne Course (SubjectId null) est hors périmètre
+            // de ces statistiques catalogue Subject.
             var best = await _db.OrderItems.AsNoTracking()
-                .Where(oi => subjectIds.Contains(oi.SubjectId) && oi.Order.CreatedAt >= monthStart)
-                .GroupBy(oi => oi.SubjectId)
+                .Where(oi => oi.SubjectId != null && subjectIds.Contains(oi.SubjectId.Value) && oi.Order.CreatedAt >= monthStart)
+                .GroupBy(oi => oi.SubjectId!.Value)
                 .Select(g => new { subjectId = g.Key, revenue = g.Sum(x => x.PriceAtPurchase), sales = g.Count() })
                 .OrderByDescending(x => x.revenue)
                 .FirstOrDefaultAsync();

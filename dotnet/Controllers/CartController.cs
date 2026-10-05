@@ -40,6 +40,27 @@ public class CartController : ControllerBase
         _promoCodeService = promoCodeService;
     }
 
+    /// <summary>
+    /// B1 (achat de formation) : un CartItem porte soit un Subject soit un
+    /// Course (xor, voir CartItem.cs). Un seul point de conversion vers le
+    /// DTO plutôt que de dupliquer le branchement Subject/Course dans
+    /// chacun des quatre endpoints qui le construisaient avant ce correctif.
+    /// </summary>
+    private static CartItemDto ToDto(CartItem item) => new CartItemDto
+    {
+        Id = item.Id,
+        SubjectId = item.SubjectId,
+        CourseId = item.CourseId,
+        Title = item.CourseId != null
+            ? (!string.IsNullOrWhiteSpace(item.Course?.Title) ? item.Course!.Title : $"Formation #{item.CourseId}")
+            : (!string.IsNullOrWhiteSpace(item.Subject?.Title) ? item.Subject!.Title : $"Article #{item.SubjectId}"),
+        Description = item.CourseId != null ? item.Course?.Description : item.Subject?.Description,
+        Price = item.Price,
+        Image = item.CourseId != null ? item.Course?.ThumbnailUrl : item.Subject?.ThumbnailUrl,
+        Quantity = 1,
+        AddedAt = item.AddedAt,
+    };
+
     [HttpGet]
     [ProducesResponseType(typeof(CartResponseDto), 200)]
     [ProducesResponseType(401)]
@@ -154,28 +175,19 @@ public class CartController : ControllerBase
             var validatedItems = items
                 .Where(item =>
                 {
-                    if (item.SubjectId <= 0)
+                    // B1 (achat de formation) : une ligne valide porte SOIT un
+                    // SubjectId SOIT un CourseId (jamais aucun des deux, la
+                    // contrainte xor est posée en base  voir SQL_AddCourseCheckout.sql).
+                    if ((item.SubjectId == null || item.SubjectId <= 0) && (item.CourseId == null || item.CourseId <= 0))
                     {
-                        _logger.LogWarning("[GetCart] ⚠️ CartItem {CartItemId} has invalid SubjectId: {SubjectId}", item.Id, item.SubjectId);
+                        _logger.LogWarning("[GetCart] ⚠️ CartItem {CartItemId} has neither a valid SubjectId nor CourseId", item.Id);
                         return false;
                     }
-                    if (item.Subject == null)
-                        _logger.LogWarning("[GetCart] ⚠️ CartItem {CartItemId} Subject still null after load  keeping with stored price", item.Id);
+                    if (item.Subject == null && item.Course == null)
+                        _logger.LogWarning("[GetCart] ⚠️ CartItem {CartItemId} content still null after load  keeping with stored price", item.Id);
                     return true;
                 })
-                .Select(item => new CartItemDto
-                {
-                    Id = item.Id > 0 ? item.Id : 0,
-                    SubjectId = item.SubjectId,
-                    Title = !string.IsNullOrWhiteSpace(item.Subject?.Title)
-                        ? item.Subject.Title
-                        : $"Article #{item.SubjectId}",
-                    Description = item.Subject?.Description,
-                    Price = item.Price, // prix stocké au panier, voir la note en tête de classe
-                    Image = item.Subject?.ThumbnailUrl,
-                    Quantity = 1,
-                    AddedAt = item.AddedAt
-                })
+                .Select(ToDto)
                 .ToList();
             
             // ✅ Log les items filtrés (invalides)
@@ -272,7 +284,11 @@ public class CartController : ControllerBase
                 return BadRequest(new { error = "Request body is required" });
             }
 
-            if (request.SubjectId <= 0)
+            // B1 (achat de formation) : exactement l'un des deux doit être
+            // fourni. CourseId prime si les deux le sont par erreur côté
+            // client  jamais les deux traités comme deux lignes.
+            bool isCoursePurchase = request.CourseId.HasValue && request.CourseId.Value > 0;
+            if (!isCoursePurchase && request.SubjectId <= 0)
             {
                 return BadRequest(new { error = "Invalid subject ID" });
             }
@@ -319,24 +335,16 @@ public class CartController : ControllerBase
             // Both paths return CartResponseDto (unified format  audit section 8.4 ✅)
             if (isAuthenticated && userId > 0)
             {
-                var added = await _cartService.AddToCartAsync(userId, request.SubjectId);
+                var added = isCoursePurchase
+                    ? await _cartService.AddCourseToCartAsync(userId, request.CourseId!.Value)
+                    : await _cartService.AddToCartAsync(userId, request.SubjectId);
                 if (added == null)
                 {
                     return BadRequest(new { error = "Failed to add item to cart" });
                 }
 
                 var updatedItems = (await _cartService.GetUserCartAsync(userId))
-                    .Select(item => new CartItemDto
-                    {
-                        Id = item.Id,
-                        SubjectId = item.SubjectId,
-                        Title = item.Subject?.Title ?? $"Subject #{item.SubjectId}",
-                        Description = item.Subject?.Description,
-                        Price = item.Price, // prix stocké au panier, voir la note en tête de classe
-                        Image = item.Subject?.ThumbnailUrl,
-                        Quantity = 1,
-                        AddedAt = item.AddedAt
-                    }).ToList();
+                    .Select(ToDto).ToList();
 
                 var cartResponse = new CartResponseDto
                 {
@@ -358,21 +366,13 @@ public class CartController : ControllerBase
             {
                 // ✅ Anonymous user: persisté en base par deviceId (survit à un
                 // redémarrage du service  voir CartItem.cs)
-                await _cartService.AddToAnonymousCartAsync(request.DeviceId, request.SubjectId);
+                if (isCoursePurchase)
+                    await _cartService.AddCourseToAnonymousCartAsync(request.DeviceId, request.CourseId!.Value);
+                else
+                    await _cartService.AddToAnonymousCartAsync(request.DeviceId, request.SubjectId);
 
                 var anonymousList = await _cartService.GetAnonymousCartAsync(request.DeviceId);
-                var anonymousItems = anonymousList
-                    .Select(item => new CartItemDto
-                    {
-                        Id = item.Id,
-                        SubjectId = item.SubjectId,
-                        Title = item.Subject?.Title ?? string.Empty,
-                        Description = item.Subject?.Description,
-                        Price = item.Price, // prix stocké au panier, voir la note en tête de classe
-                        Image = item.Subject?.ThumbnailUrl,
-                        Quantity = 1,
-                        AddedAt = item.AddedAt
-                    }).ToList();
+                var anonymousItems = anonymousList.Select(ToDto).ToList();
 
                 var cartResponse = new CartResponseDto
                 {
@@ -497,6 +497,59 @@ public class CartController : ControllerBase
         }
     }
     /// <summary>
+    /// B1 (achat de formation) : retrait d'une formation du panier. Endpoint
+    /// dédié plutôt qu'une branche supplémentaire dans RemoveFromCart
+    /// ci-dessus, dont le paramètre `id` jongle déjà entre CartItemId et
+    /// SubjectId selon son format  y ajouter une troisième signification
+    /// (CourseId) aurait rendu cette ambiguïté existante encore plus fragile.
+    /// </summary>
+    [HttpDelete("items/course/{courseId}")]
+    [ProducesResponseType(204)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    [ProducesResponseType(500)]
+    public async Task<IActionResult> RemoveCourseFromCart(int courseId, [FromQuery] string? deviceId = null)
+    {
+        try
+        {
+            if (User.Identity?.IsAuthenticated == true)
+            {
+                int userId;
+                try
+                {
+                    userId = User.GetUserId();
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    return Unauthorized(new { error = "Invalid token" });
+                }
+
+                var result = await _cartService.RemoveCourseFromCartAsync(userId, courseId);
+                if (!result)
+                    return NotFound(new { error = "Cart item not found" });
+
+                return NoContent();
+            }
+            else if (!string.IsNullOrEmpty(deviceId))
+            {
+                var result = await _cartService.RemoveCourseFromAnonymousCartAsync(deviceId, courseId);
+                if (!result)
+                    return NotFound(new { error = "Cart item not found" });
+
+                return NoContent();
+            }
+
+            return BadRequest(new { error = "Authentication required or DeviceId must be provided" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[RemoveCourseFromCart] Error removing course {CourseId} from cart", courseId);
+            return StatusCode(500, new { error = "Server error", details = ex.Message });
+        }
+    }
+
+    /// <summary>
     /// Clear all items from shopping cart
     /// Supports both authenticated users and anonymous users with deviceId
     /// </summary>
@@ -590,7 +643,12 @@ public class CartController : ControllerBase
 
             var cartItems = (await _cartService.GetUserCartAsync(userId)).ToList();
             var cartTotal = cartItems.Sum(i => i.Price);
-            var subjectIds = cartItems.Select(i => i.SubjectId).ToList();
+            // B1 (achat de formation) : SubjectId est désormais nullable (une
+            // ligne peut être une formation via CourseId). Les codes promo ne
+            // couvrent pour l'instant que le catalogue Subject  une formation
+            // au panier n'est simplement jamais éligible à la remise, point
+            // ouvert documenté dans le rapport de lot plutôt que tranché ici.
+            var subjectIds = cartItems.Where(i => i.SubjectId != null).Select(i => i.SubjectId!.Value).ToList();
 
             var result = await _promoCodeService.ValidatePromoCodeAsync(userId, new ValidatePromoCodeRequest
             {
@@ -680,13 +738,14 @@ public class CartController : ControllerBase
 
             // Fusion : on ajoute les items locaux absents du panier serveur
             var serverItems = (await _cartService.GetUserCartAsync(userId)).ToList();
-            var serverSubjectIds = serverItems.Select(i => i.SubjectId).ToHashSet();
+            var serverSubjectIds = serverItems.Where(i => i.SubjectId != null).Select(i => i.SubjectId!.Value).ToHashSet();
+            var serverCourseIds = serverItems.Where(i => i.CourseId != null).Select(i => i.CourseId!.Value).ToHashSet();
 
-            foreach (var localItem in localCart.Items.Where(i => !serverSubjectIds.Contains(i.SubjectId)))
+            foreach (var localItem in localCart.Items.Where(i => i.SubjectId != null && !serverSubjectIds.Contains(i.SubjectId.Value)))
             {
                 try
                 {
-                    await _cartService.AddToCartAsync(userId, localItem.SubjectId);
+                    await _cartService.AddToCartAsync(userId, localItem.SubjectId!.Value);
                 }
                 catch (Exception ex)
                 {
@@ -694,21 +753,24 @@ public class CartController : ControllerBase
                 }
             }
 
+            // B1 (achat de formation) : même fusion pour les formations.
+            foreach (var localItem in localCart.Items.Where(i => i.CourseId != null && !serverCourseIds.Contains(i.CourseId.Value)))
+            {
+                try
+                {
+                    await _cartService.AddCourseToCartAsync(userId, localItem.CourseId!.Value);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("Sync: impossible d'ajouter la formation {CourseId}: {Err}", localItem.CourseId, ex.Message);
+                }
+            }
+
             serverItems = (await _cartService.GetUserCartAsync(userId)).ToList();
 
             var cartDto = new CartResponseDto
             {
-                Items = serverItems.Select(item => new CartItemDto
-                {
-                    Id = item.Id,
-                    SubjectId = item.SubjectId,
-                    Title = item.Subject?.Title ?? "",
-                    Description = item.Subject?.Description,
-                    Price = item.Price, // prix stocké au panier, voir la note en tête de classe
-                    Image = item.Subject?.ThumbnailUrl,
-                    Quantity = 1,
-                    AddedAt = item.AddedAt
-                }).ToList(),
+                Items = serverItems.Select(ToDto).ToList(),
                 ItemsCount = serverItems.Count,
                 Subtotal = serverItems.Sum(i => i.Price),
                 Discount = 0,

@@ -6,6 +6,12 @@ namespace Backend.Models.DTOs;
 public class AddToCartRequestDto
 {
     public int SubjectId { get; set; }
+    /// <summary>
+    /// B1 (achat de formation) : exactement un des deux (SubjectId ou
+    /// CourseId) doit être &gt; 0. CourseId prime si les deux sont fournis
+    /// par erreur  revalidé côté contrôleur, jamais fait confiance côté client.
+    /// </summary>
+    public int? CourseId { get; set; }
     public decimal Price { get; set; }
     /// <summary>
     /// Device ID for anonymous users. If null, userId from token is used
@@ -27,7 +33,9 @@ public class ApplyPromoCodeDto
 public class CartItemDto
 {
     public int Id { get; set; }
-    public int SubjectId { get; set; }
+    public int? SubjectId { get; set; }
+    /// <summary>B1 (achat de formation) : renseigné à la place de SubjectId pour une formation.</summary>
+    public int? CourseId { get; set; }
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
     public decimal Price { get; set; }

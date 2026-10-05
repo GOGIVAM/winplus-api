@@ -522,41 +522,30 @@ public class WalletService : IWalletService
             .ToListAsync();
 
         foreach (var item in items)
-        {
-            var key = CatalogSaleKey(item.Id);
-            var commissionKey = CatalogCommissionKey(item.Id);
-            var gross = RevenueSplit.Xaf(item.PriceAtPurchase);
-            if (paid)
-            {
-                if (gross <= 0) continue;
-                // Module 7 : une seule des deux parts est arrondie (la
-                // commission, via RevenueSplit.NetXaf/CommissionXaf  même
-                // convention que le tutorat), l'autre est déduite par
-                // soustraction  la somme des deux est donc TOUJOURS
-                // exactement égale au prix payé, sans écart d'arrondi possible.
-                var rate = item.CommissionRate ?? CatalogCommissionService.AbsoluteMinPercent / 100m;
-                var net = RevenueSplit.NetXaf(gross, 1m - rate);
-                var commission = gross - net;
+            await SyncCatalogSaleEntryAsync(item.Id, item.AuthorId, item.Title, item.PriceAtPurchase, item.CommissionRate,
+                paid, occurredAt, order.OrderNumber, order.Status, "Vente", "Commission catalogue");
 
-                if (net > 0)
-                    await PostAsync(new WalletEntry(item.AuthorId, WalletEntryTypes.CatalogSale, net, key,
-                        $"Vente : {item.Title}", "OrderItem", item.Id, OccurredAt: occurredAt));
-                if (commission > 0)
-                    await PostAsync(new WalletEntry(null, WalletEntryTypes.PlatformCommission, commission, commissionKey,
-                        $"Commission catalogue ({rate:P0}) : {item.Title}", "OrderItem", item.Id, OccurredAt: occurredAt));
-            }
-            else
+        // B1 (achat de formation) : même mécanisme de commission que
+        // Subject ci-dessus, câblé sur Course.PlatformCommissionRate (posé
+        // au lot 4, jamais branché jusqu'ici  voir SQL_AddCourseWinAiCommissionAndUsername.sql).
+        // Avant ce correctif, un OrderItem.CourseId ne produisait JAMAIS
+        // d'écriture wallet : le professeur formateur n'était jamais payé
+        // même si un tel OrderItem avait pu être créé.
+        var courseItems = await _db.OrderItems.AsNoTracking()
+            .Where(oi => oi.OrderId == orderId && oi.Course != null)
+            .Select(oi => new
             {
-                // Remboursement/annulation : contre-passe LES DEUX écritures,
-                // pas seulement la part auteur (cas explicite du Module 7).
-                var entry = await FindByKeyAsync(key);
-                if (entry != null)
-                    await ReverseAsync(entry.Id, $"Annulation de la vente ({order.OrderNumber}, commande {order.Status}) : {item.Title}");
-                var commissionEntry = await FindByKeyAsync(commissionKey);
-                if (commissionEntry != null)
-                    await ReverseAsync(commissionEntry.Id, $"Annulation de la commission catalogue ({order.OrderNumber}, commande {order.Status}) : {item.Title}");
-            }
-        }
+                oi.Id,
+                oi.PriceAtPurchase,
+                AuthorId = oi.Course!.InstructorId,
+                Title = oi.Course.Title,
+                CommissionRate = oi.Course.PlatformCommissionRate,
+            })
+            .ToListAsync();
+
+        foreach (var item in courseItems)
+            await SyncCatalogSaleEntryAsync(item.Id, item.AuthorId, item.Title, item.PriceAtPurchase, item.CommissionRate,
+                paid, occurredAt, order.OrderNumber, order.Status, "Vente (formation)", "Commission catalogue (formation)");
 
         // Part réglée par le solde (paiement par solde, ou part solde d'un
         // paiement combiné solde + Mobile Money) : restituée dès que la
@@ -570,6 +559,45 @@ public class WalletService : IWalletService
         }
 
         await SyncWalletTopUpAsync(orderId);
+    }
+
+    /// <summary>
+    /// Factorisation des écritures "vente catalogue / commission plateforme"
+    /// pour un OrderItem, commune à Subject et Course (B1, achat de
+    /// formation) : même logique d'arrondi (une seule part arrondie, l'autre
+    /// déduite par soustraction  Module 7), même commission plancher de
+    /// repli, même contre-passe symétrique en cas de remboursement/annulation.
+    /// </summary>
+    private async Task SyncCatalogSaleEntryAsync(
+        int orderItemId, int authorId, string title, decimal priceAtPurchase, decimal? commissionRate,
+        bool paid, DateTime occurredAt, string orderNumber, string orderStatus, string saleLabel, string commissionLabel)
+    {
+        var key = CatalogSaleKey(orderItemId);
+        var commissionKey = CatalogCommissionKey(orderItemId);
+        var gross = RevenueSplit.Xaf(priceAtPurchase);
+        if (paid)
+        {
+            if (gross <= 0) return;
+            var rate = commissionRate ?? CatalogCommissionService.AbsoluteMinPercent / 100m;
+            var net = RevenueSplit.NetXaf(gross, 1m - rate);
+            var commission = gross - net;
+
+            if (net > 0)
+                await PostAsync(new WalletEntry(authorId, WalletEntryTypes.CatalogSale, net, key,
+                    $"{saleLabel} : {title}", "OrderItem", orderItemId, OccurredAt: occurredAt));
+            if (commission > 0)
+                await PostAsync(new WalletEntry(null, WalletEntryTypes.PlatformCommission, commission, commissionKey,
+                    $"{commissionLabel} ({rate:P0}) : {title}", "OrderItem", orderItemId, OccurredAt: occurredAt));
+        }
+        else
+        {
+            var entry = await FindByKeyAsync(key);
+            if (entry != null)
+                await ReverseAsync(entry.Id, $"Annulation de la vente ({orderNumber}, commande {orderStatus}) : {title}");
+            var commissionEntry = await FindByKeyAsync(commissionKey);
+            if (commissionEntry != null)
+                await ReverseAsync(commissionEntry.Id, $"Annulation de la commission catalogue ({orderNumber}, commande {orderStatus}) : {title}");
+        }
     }
 
     /// <summary>Commande encore en attente de son paiement (complément Mobile Money en cours) : rien à restituer.</summary>

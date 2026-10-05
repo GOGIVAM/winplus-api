@@ -37,6 +37,7 @@ public class CartRepository : ICartRepository
             return await _context.CartItems
                 .Where(c => c.UserId == userId)
                 .Include(c => c.Subject)
+                .Include(c => c.Course)
                 .ToListAsync();
         }
         catch (Exception ex)
@@ -124,19 +125,97 @@ public class CartRepository : ICartRepository
         {
             var item = await _context.CartItems
                 .FirstOrDefaultAsync(c => c.UserId == userId && c.SubjectId == subjectId);
-            
+
             if (item == null)
                 return false;
 
             _context.CartItems.Remove(item);
             await _context.SaveChangesAsync();
-            
+
             _logger.LogInformation("Cart item removed for user {UserId} and subject {SubjectId}", userId, subjectId);
             return true;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error removing cart item for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    // ── B1 (achat de formation) : équivalents Course des méthodes Subject ci-dessus ──
+
+    public async Task<CartItem?> GetByUserAndCourseAsync(int userId, int courseId)
+    {
+        try
+        {
+            return await _context.CartItems
+                .Include(c => c.Course)
+                .FirstOrDefaultAsync(c => c.UserId == userId && c.CourseId == courseId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting cart item for user {UserId} and course {CourseId}", userId, courseId);
+            return null;
+        }
+    }
+
+    public async Task<bool> RemoveByUserAndCourseAsync(int userId, int courseId)
+    {
+        try
+        {
+            var item = await _context.CartItems
+                .FirstOrDefaultAsync(c => c.UserId == userId && c.CourseId == courseId);
+
+            if (item == null)
+                return false;
+
+            _context.CartItems.Remove(item);
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Cart item removed for user {UserId} and course {CourseId}", userId, courseId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error removing cart item (course) for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<CartItem?> GetByDeviceAndCourseAsync(string deviceId, int courseId)
+    {
+        try
+        {
+            return await _context.CartItems
+                .Include(c => c.Course)
+                .FirstOrDefaultAsync(c => c.DeviceId == deviceId && c.CourseId == courseId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting cart item for device {DeviceId} and course {CourseId}", deviceId, courseId);
+            return null;
+        }
+    }
+
+    public async Task<bool> RemoveByDeviceAndCourseAsync(string deviceId, int courseId)
+    {
+        try
+        {
+            var item = await _context.CartItems
+                .FirstOrDefaultAsync(c => c.DeviceId == deviceId && c.CourseId == courseId);
+
+            if (item == null)
+                return false;
+
+            _context.CartItems.Remove(item);
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Cart item removed for device {DeviceId} and course {CourseId}", deviceId, courseId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error removing cart item (course) for device {DeviceId}", deviceId);
             throw;
         }
     }
@@ -204,6 +283,7 @@ public class CartRepository : ICartRepository
             return await _context.CartItems
                 .Where(c => c.DeviceId == deviceId)
                 .Include(c => c.Subject)
+                .Include(c => c.Course)
                 .ToListAsync();
         }
         catch (Exception ex)
@@ -286,15 +366,25 @@ public class CartRepository : ICartRepository
             if (deviceItems.Count == 0)
                 return 0;
 
-            var existingSubjectIds = await _context.CartItems
+            var existingItems = await _context.CartItems
                 .Where(c => c.UserId == userId)
-                .Select(c => c.SubjectId)
+                .Select(c => new { c.SubjectId, c.CourseId })
                 .ToListAsync();
+            // B1 (achat de formation) : SubjectId et CourseId sont désormais
+            // nullables (xor). Sans distinguer les deux, DEUX formations
+            // anonymes différentes (SubjectId=null pour les deux) auraient
+            // matché le même "existingSubjectIds.Contains(null)" dès que
+            // l'utilisateur avait UNE SEULE formation déjà au panier  l'une
+            // des deux aurait été supprimée au lieu d'être réassignée.
+            var existingSubjectIds = existingItems.Where(e => e.SubjectId != null).Select(e => e.SubjectId!.Value).ToHashSet();
+            var existingCourseIds = existingItems.Where(e => e.CourseId != null).Select(e => e.CourseId!.Value).ToHashSet();
 
             var reassigned = 0;
             foreach (var item in deviceItems)
             {
-                if (existingSubjectIds.Contains(item.SubjectId))
+                var alreadyPresent = (item.SubjectId != null && existingSubjectIds.Contains(item.SubjectId.Value))
+                    || (item.CourseId != null && existingCourseIds.Contains(item.CourseId.Value));
+                if (alreadyPresent)
                 {
                     // Déjà dans le panier réel de l'utilisateur : le doublon
                     // anonyme est superflu, pas une erreur à propager.

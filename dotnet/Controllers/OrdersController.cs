@@ -594,6 +594,7 @@ public class OrdersController : ControllerBase
         {
             var order = await _db.Orders
                 .Include(o => o.Items).ThenInclude(i => i.Subject)
+                .Include(o => o.Items).ThenInclude(i => i.Course)
                 .FirstOrDefaultAsync(o => o.Id == id);
 
             if (order == null)

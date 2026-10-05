@@ -21,7 +21,16 @@ public class CartItem
     /// <summary>Identifiant client anonyme (avant connexion)  null une fois l'item rattaché à un UserId.</summary>
     public string? DeviceId { get; set; }
 
-    public int SubjectId { get; set; }
+    /// <summary>
+    /// B1 (achat de formation) : nullable depuis que <see cref="CourseId"/>
+    /// existe. Exactement un des deux doit être renseigné  jamais les deux,
+    /// jamais aucun (contrainte CHECK en base, revalidée dans CartService
+    /// avant toute écriture).
+    /// </summary>
+    public int? SubjectId { get; set; }
+
+    /// <summary>Formation (Course, pas Subject) ajoutée au panier  voir SubjectId.</summary>
+    public int? CourseId { get; set; }
 
     public decimal Price { get; set; }
 
@@ -30,5 +39,7 @@ public class CartItem
     // Navigation properties
     public User? User { get; set; }
 
-    public required Subject Subject { get; set; }
+    public Subject? Subject { get; set; }
+
+    public Course? Course { get; set; }
 }

@@ -520,9 +520,16 @@ public class PaymentService : IPaymentService
             }
 
             // Charger les épreuves de la commande
+            // B1 (achat de formation) : OrderItem.SubjectId est désormais
+            // nullable  une ligne Course (SubjectId null) ne correspond à
+            // aucun Subject et sort donc naturellement de cette jointure.
+            // L'email de confirmation détaillé par épreuve reste scopé au
+            // catalogue Subject (point ouvert : une formation achetée n'est
+            // pas encore listée nommément dans cet email, seul le montant
+            // total payé l'est via SendPaymentConfirmationAsync côté commande).
             var purchasedItems = await _db.OrderItems
-                .Where(oi => oi.OrderId == payment.OrderId)
-                .Join(_db.Subjects, oi => oi.SubjectId, s => s.Id, (oi, s) => new { s.Title, SubjectId = oi.SubjectId })
+                .Where(oi => oi.OrderId == payment.OrderId && oi.SubjectId != null)
+                .Join(_db.Subjects, oi => oi.SubjectId!.Value, s => s.Id, (oi, s) => new { s.Title, SubjectId = oi.SubjectId!.Value })
                 .ToListAsync();
 
             var items = purchasedItems

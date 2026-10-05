@@ -105,7 +105,8 @@ public class PdfService : IPdfService
                             var item = itemList[i];
                             var bg = i % 2 == 0 ? Colors.White : Colors.Grey.Lighten5;
                             table.Cell().Background(bg).Padding(6)
-                                 .Text(item.Subject?.Title ?? $"Sujet #{item.SubjectId}").FontSize(10);
+                                 .Text(item.Subject?.Title ?? item.Course?.Title
+                                       ?? (item.CourseId != null ? $"Formation #{item.CourseId}" : $"Sujet #{item.SubjectId}")).FontSize(10);
                             table.Cell().Background(bg).Padding(6).AlignRight()
                                  .Text($"{item.PriceAtPurchase:N0}").FontSize(10);
                         }

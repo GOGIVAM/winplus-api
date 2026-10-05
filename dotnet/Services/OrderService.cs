@@ -1,6 +1,8 @@
+using Backend.Data;
 using Backend.Models.DTOs;
 using Backend.Models.Entities;
 using Backend.Repositories;
+using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Services;
 
@@ -11,16 +13,26 @@ namespace Backend.Services;
 /// </summary>
 public class ContentNotPurchasableException : InvalidOperationException
 {
-    public int SubjectId { get; }
+    public int? SubjectId { get; }
+    /// <summary>B1 (achat de formation) : renseigné à la place de SubjectId pour une formation.</summary>
+    public int? CourseId { get; }
 
     public ContentNotPurchasableException(int subjectId, string message) : base(message)
     {
         SubjectId = subjectId;
     }
+
+    public ContentNotPurchasableException(int courseId, string message, bool isCourse) : base(message)
+    {
+        if (isCourse) CourseId = courseId; else SubjectId = courseId;
+    }
 }
 
-/// <summary>Ligne de panier valorisée au prix serveur.</summary>
-public record PricedCartItem(int SubjectId, string Title, decimal CartPrice, decimal ServerPrice);
+/// <summary>
+/// Ligne de panier valorisée au prix serveur. Exactement un des deux
+/// identifiants (SubjectId xor CourseId) est renseigné (B1, achat de formation).
+/// </summary>
+public record PricedCartItem(int? SubjectId, int? CourseId, string Title, decimal CartPrice, decimal ServerPrice);
 
 /// <summary>
 /// Valorisation serveur d'un panier : lignes, sous-total hors taxe au prix
@@ -70,6 +82,9 @@ public class OrderService : IOrderService
     private readonly ICartRepository _cartRepository;
     private readonly ISubjectRepository _subjectRepository;
     private readonly IPromoCodeService _promoCodeService;
+    // B1 (achat de formation) : pas d'ICourseRepository dans ce projet (voir
+    // CartService, même choix pour la même raison).
+    private readonly ApplicationDbContext _db;
     private readonly ILogger<OrderService> _logger;
 
     public OrderService(
@@ -77,12 +92,14 @@ public class OrderService : IOrderService
         ICartRepository cartRepository,
         ISubjectRepository subjectRepository,
         IPromoCodeService promoCodeService,
+        ApplicationDbContext db,
         ILogger<OrderService> logger)
     {
         _orderRepository = orderRepository;
         _cartRepository = cartRepository;
         _subjectRepository = subjectRepository;
         _promoCodeService = promoCodeService;
+        _db = db;
         _logger = logger;
     }
 
@@ -111,6 +128,26 @@ public class OrderService : IOrderService
         return (subject, decimal.Round(subject.Price, 0, MidpointRounding.AwayFromZero));
     }
 
+    /// <summary>
+    /// B1 (achat de formation) : équivalent de <see cref="ResolveServerPriceAsync"/>
+    /// pour une formation (Course, pas Subject). Même règle de prix relu en
+    /// base (Module 17) et de contenu non commandable traduit en exception
+    /// typée plutôt qu'une 500 nue.
+    /// </summary>
+    private async Task<(Course Course, decimal Price)> ResolveCourseServerPriceAsync(int courseId)
+    {
+        var course = await _db.Courses.AsNoTracking().FirstOrDefaultAsync(c => c.Id == courseId);
+        if (course == null)
+            throw new ContentNotPurchasableException(courseId,
+                $"La formation {courseId} n'est plus disponible à la vente. Retirez-la de votre panier pour continuer.", isCourse: true);
+
+        if (course.Status != "published")
+            throw new ContentNotPurchasableException(courseId,
+                $"La formation « {course.Title} » n'est pas publiée et ne peut pas être commandée. Retirez-la de votre panier pour continuer.", isCourse: true);
+
+        return (course, decimal.Round(course.Price, 0, MidpointRounding.AwayFromZero));
+    }
+
     public async Task<CartPricing> PriceUserCartAsync(int userId)
     {
         var cartItems = await _cartRepository.GetByUserIdAsync(userId);
@@ -119,8 +156,31 @@ public class OrderService : IOrderService
         var adjustments = new List<OrderPriceAdjustment>();
         foreach (var cartItem in cartItems)
         {
-            var (subject, serverPrice) = await ResolveServerPriceAsync(cartItem.SubjectId);
-            items.Add(new PricedCartItem(cartItem.SubjectId, subject.Title, cartItem.Price, serverPrice));
+            // B1 (achat de formation) : une ligne de panier porte soit un
+            // SubjectId soit un CourseId (xor, voir CartItem.cs).
+            if (cartItem.CourseId != null)
+            {
+                var (course, coursePrice) = await ResolveCourseServerPriceAsync(cartItem.CourseId.Value);
+                items.Add(new PricedCartItem(null, cartItem.CourseId, course.Title, cartItem.Price, coursePrice));
+
+                if (coursePrice != cartItem.Price)
+                {
+                    _logger.LogWarning(
+                        "Prix de la formation {CourseId} différent du panier de l'utilisateur {UserId} : {CartPrice} -> {ServerPrice} XAF appliqué",
+                        cartItem.CourseId, userId, cartItem.Price, coursePrice);
+                    adjustments.Add(new OrderPriceAdjustment
+                    {
+                        CourseId = cartItem.CourseId,
+                        Title = course.Title,
+                        OldPrice = cartItem.Price,
+                        NewPrice = coursePrice,
+                    });
+                }
+                continue;
+            }
+
+            var (subject, serverPrice) = await ResolveServerPriceAsync(cartItem.SubjectId!.Value);
+            items.Add(new PricedCartItem(cartItem.SubjectId, null, subject.Title, cartItem.Price, serverPrice));
 
             if (serverPrice != cartItem.Price)
             {
@@ -171,11 +231,15 @@ public class OrderService : IOrderService
             decimal discount = 0;
             if (normalizedPromoCode != null)
             {
+                // B1 (achat de formation) : les codes promo ne couvrent pour
+                // l'instant que le catalogue Subject (point ouvert, voir
+                // CartController.ApplyPromoCode)  une ligne Course n'a pas
+                // de SubjectId à transmettre ici.
                 var validation = await _promoCodeService.ValidatePromoCodeAsync(userId, new ValidatePromoCodeRequest
                 {
                     Code = normalizedPromoCode,
                     CartTotal = totalAmount,
-                    SubjectIds = pricing.Items.Select(i => i.SubjectId).ToList(),
+                    SubjectIds = pricing.Items.Where(i => i.SubjectId != null).Select(i => i.SubjectId!.Value).ToList(),
                 });
                 if (validation.IsValid)
                 {
@@ -211,12 +275,15 @@ public class OrderService : IOrderService
             };
 
             // Add items to order
+            // B1 (achat de formation) : SubjectId xor CourseId, reporté tel
+            // quel depuis la ligne de panier valorisée (PriceUserCartAsync).
             foreach (var item in pricing.Items)
             {
                 order.Items.Add(new OrderItem
                 {
                     OrderId = order.Id,
                     SubjectId = item.SubjectId,
+                    CourseId = item.CourseId,
                     PriceAtPurchase = item.ServerPrice,
                     Order = order
                 });

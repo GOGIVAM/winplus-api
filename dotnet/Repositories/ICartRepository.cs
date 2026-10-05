@@ -15,6 +15,12 @@ public interface ICartRepository
     Task<decimal> GetTotalAsync(int userId);
     Task<int> GetCountAsync(int userId);
 
+    // ── B1 (achat de formation) : mêmes opérations que Subject ci-dessus, pour Course ──
+    Task<CartItem?> GetByUserAndCourseAsync(int userId, int courseId);
+    Task<bool> RemoveByUserAndCourseAsync(int userId, int courseId);
+    Task<CartItem?> GetByDeviceAndCourseAsync(string deviceId, int courseId);
+    Task<bool> RemoveByDeviceAndCourseAsync(string deviceId, int courseId);
+
     // ── Panier anonyme (avant connexion), persisté en base par DeviceId ──────
     Task<IEnumerable<CartItem>> GetByDeviceIdAsync(string deviceId);
     Task<CartItem?> GetByDeviceAndSubjectAsync(string deviceId, int subjectId);

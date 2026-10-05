@@ -1,5 +1,7 @@
+using Backend.Data;
 using Backend.Models.Entities;
 using Backend.Repositories;
+using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Services;
 
@@ -18,6 +20,13 @@ public interface ICartService
     Task<int> GetCartCountAsync(int userId);
     Task<bool> IsItemInCartAsync(int userId, int subjectId);
 
+    // ── B1 (achat de formation) : équivalents Course des méthodes Subject ci-dessus ──
+    Task<CartItem> AddCourseToCartAsync(int userId, int courseId);
+    Task<bool> RemoveCourseFromCartAsync(int userId, int courseId);
+    Task<bool> IsCourseInCartAsync(int userId, int courseId);
+    Task<CartItem> AddCourseToAnonymousCartAsync(string deviceId, int courseId);
+    Task<bool> RemoveCourseFromAnonymousCartAsync(string deviceId, int courseId);
+
     // ── Panier anonyme (avant connexion), persisté en base par DeviceId ──────
     Task<IEnumerable<CartItem>> GetAnonymousCartAsync(string deviceId);
     Task<CartItem> AddToAnonymousCartAsync(string deviceId, int subjectId);
@@ -34,17 +43,24 @@ public class CartService : ICartService
     private readonly ICartRepository _cartRepository;
     private readonly ISubjectRepository _subjectRepository;
     private readonly IUserRepository _userRepository;
+    // B1 (achat de formation) : pas d'ICourseRepository dans ce projet
+    // (Course est lu directement via le DbContext dans les contrôleurs
+    // existants, ex. CourseEnrollmentController)  même pattern ici plutôt
+    // que d'introduire une nouvelle abstraction pour une seule entité.
+    private readonly ApplicationDbContext _db;
     private readonly ILogger<CartService> _logger;
 
     public CartService(
         ICartRepository cartRepository,
         ISubjectRepository subjectRepository,
         IUserRepository userRepository,
+        ApplicationDbContext db,
         ILogger<CartService> logger)
     {
         _cartRepository = cartRepository;
         _subjectRepository = subjectRepository;
         _userRepository = userRepository;
+        _db = db;
         _logger = logger;
     }
 
@@ -67,7 +83,7 @@ public class CartService : ICartService
                     );
 
                     // Charger le Subject directement
-                    var subject = await _subjectRepository.GetByIdAsync(itemsList[i].SubjectId);
+                    var subject = await _subjectRepository.GetByIdAsync(itemsList[i].SubjectId!.Value);
                     if (subject != null)
                     {
                         itemsList[i].Subject = subject;
@@ -209,6 +225,121 @@ public class CartService : ICartService
         {
             _logger.LogError(ex, "Error checking if item in cart");
             return false;
+        }
+    }
+
+    // ── B1 (achat de formation) : équivalents Course des méthodes Subject ci-dessus ──
+
+    public async Task<CartItem> AddCourseToCartAsync(int userId, int courseId)
+    {
+        try
+        {
+            var course = await _db.Courses.AsNoTracking().FirstOrDefaultAsync(c => c.Id == courseId);
+            if (course == null)
+                throw new InvalidOperationException($"Course {courseId} not found");
+            if (course.Status != "published")
+                throw new InvalidOperationException($"La formation « {course.Title} » n'est pas publiée et ne peut pas être ajoutée au panier.");
+
+            var existing = await _cartRepository.GetByUserAndCourseAsync(userId, courseId);
+            if (existing != null)
+            {
+                _logger.LogInformation("Course already in cart for user {UserId}", userId);
+                return existing;
+            }
+
+            var user = await _userRepository.GetByIdAsync(userId);
+            if (user == null)
+                throw new InvalidOperationException($"User {userId} not found");
+
+            var cartItem = new CartItem
+            {
+                UserId = userId,
+                CourseId = courseId,
+                // Module 17 (même règle que pour Subject) : le prix vient
+                // exclusivement de la base, jamais du client.
+                Price = decimal.Round(course.Price, 0, MidpointRounding.AwayFromZero),
+                User = user,
+            };
+
+            return await _cartRepository.AddAsync(cartItem);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error adding course to cart");
+            throw;
+        }
+    }
+
+    public async Task<bool> RemoveCourseFromCartAsync(int userId, int courseId)
+    {
+        try
+        {
+            return await _cartRepository.RemoveByUserAndCourseAsync(userId, courseId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error removing course from cart");
+            throw;
+        }
+    }
+
+    public async Task<bool> IsCourseInCartAsync(int userId, int courseId)
+    {
+        try
+        {
+            var item = await _cartRepository.GetByUserAndCourseAsync(userId, courseId);
+            return item != null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking if course in cart");
+            return false;
+        }
+    }
+
+    public async Task<CartItem> AddCourseToAnonymousCartAsync(string deviceId, int courseId)
+    {
+        try
+        {
+            var course = await _db.Courses.AsNoTracking().FirstOrDefaultAsync(c => c.Id == courseId);
+            if (course == null)
+                throw new InvalidOperationException($"Course {courseId} not found");
+            if (course.Status != "published")
+                throw new InvalidOperationException($"La formation « {course.Title} » n'est pas publiée et ne peut pas être ajoutée au panier.");
+
+            var existing = await _cartRepository.GetByDeviceAndCourseAsync(deviceId, courseId);
+            if (existing != null)
+            {
+                _logger.LogInformation("Course already in anonymous cart for device {DeviceId}", deviceId);
+                return existing;
+            }
+
+            var cartItem = new CartItem
+            {
+                DeviceId = deviceId,
+                CourseId = courseId,
+                Price = decimal.Round(course.Price, 0, MidpointRounding.AwayFromZero),
+            };
+
+            return await _cartRepository.AddAsync(cartItem);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error adding course to anonymous cart");
+            throw;
+        }
+    }
+
+    public async Task<bool> RemoveCourseFromAnonymousCartAsync(string deviceId, int courseId)
+    {
+        try
+        {
+            return await _cartRepository.RemoveByDeviceAndCourseAsync(deviceId, courseId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error removing course from anonymous cart");
+            throw;
         }
     }
 

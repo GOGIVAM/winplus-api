@@ -557,13 +557,31 @@ public partial class ApplicationDbContext : DbContext
             entity.HasOne(e => e.Subject)
                 .WithMany(s => s.CartItems)
                 .HasForeignKey(e => e.SubjectId)
+                .IsRequired(false)
+                .OnDelete(DeleteBehavior.Cascade);
+            // B1 (achat de formation) : même principe que Subject ci-dessus
+            // panier vidé de la ligne si la formation est supprimée.
+            entity.HasOne(e => e.Course)
+                .WithMany()
+                .HasForeignKey(e => e.CourseId)
+                .IsRequired(false)
                 .OnDelete(DeleteBehavior.Cascade);
             // UserId et DeviceId sont mutuellement exclusifs (voir CartItem.cs) : deux
             // index uniques séparés plutôt qu'un seul, Postgres traitant NULL comme
             // distinct dans un index unique (plusieurs lignes UserId=null coexistent
             // sans le violer), donc le premier index ne protège pas le panier anonyme.
-            entity.HasIndex(e => new { e.UserId, e.SubjectId }).IsUnique().HasFilter("\"UserId\" IS NOT NULL");
-            entity.HasIndex(e => new { e.DeviceId, e.SubjectId }).IsUnique().HasFilter("\"DeviceId\" IS NOT NULL");
+            // Filtrées sur IS NOT NULL en plus de UserId/DeviceId : Subject.Id et
+            // Course.Id partagent le même espace de numérotation applicatif mais
+            // sont des entités distinctes, l'unicité doit donc porter séparément
+            // sur chaque paire (identifiant, UserId/DeviceId).
+            entity.HasIndex(e => new { e.UserId, e.SubjectId }).IsUnique()
+                .HasFilter("\"UserId\" IS NOT NULL AND \"SubjectId\" IS NOT NULL");
+            entity.HasIndex(e => new { e.DeviceId, e.SubjectId }).IsUnique()
+                .HasFilter("\"DeviceId\" IS NOT NULL AND \"SubjectId\" IS NOT NULL");
+            entity.HasIndex(e => new { e.UserId, e.CourseId }).IsUnique()
+                .HasFilter("\"UserId\" IS NOT NULL AND \"CourseId\" IS NOT NULL");
+            entity.HasIndex(e => new { e.DeviceId, e.CourseId }).IsUnique()
+                .HasFilter("\"DeviceId\" IS NOT NULL AND \"CourseId\" IS NOT NULL");
         });
 
         // Configure Order entity
@@ -593,7 +611,19 @@ public partial class ApplicationDbContext : DbContext
             entity.HasOne(e => e.Subject)
                 .WithMany()
                 .HasForeignKey(e => e.SubjectId)
+                .IsRequired(false)
                 .OnDelete(DeleteBehavior.Restrict);
+            // B1 (achat de formation) : la colonne et la FK existent déjà en
+            // base (SQL_FixOrderItemsMissingColumns.sql, ON DELETE SET NULL)
+            // mais n'étaient jamais déclarées ici  EF les découvrait par
+            // convention (propriété CourseId + navigation Course), déclarées
+            // explicitement pour que le comportement de suppression soit
+            // garanti identique à celui déjà posé en base.
+            entity.HasOne(e => e.Course)
+                .WithMany()
+                .HasForeignKey(e => e.CourseId)
+                .IsRequired(false)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // Configure Favorite entity

@@ -78,8 +78,14 @@ public class LibraryController : ControllerBase
         // rattache le contenu au bénéficiaire réel. Sans ce second critère,
         // l'enfant voyait le contenu nulle part alors qu'il peut déjà l'ouvrir
         // (ContentAccessService.HasPaidContentAccessAsync le lui accorde).
+        // B1 (achat de formation) : OrderItem.SubjectId est désormais nullable
+        // (une ligne de commande peut être une formation via CourseId à la
+        // place)  cette bibliothèque est spécifique au catalogue Subject,
+        // donc les lignes Course en sont exclues explicitement plutôt que de
+        // planter sur un SubjectId absent.
         var purchases = await _db.OrderItems.AsNoTracking()
-            .Where(oi => !organizedSubjectIds.Contains(oi.SubjectId)
+            .Where(oi => oi.SubjectId != null
+                && !organizedSubjectIds.Contains(oi.SubjectId.Value)
                 && PaidOrderStatus.All.Contains(oi.Order.Status.ToLower())
                 && (oi.Order.UserId == userId
                     || (_db.Enrollments.Any(e => e.UserId == userId && e.SubjectId == oi.SubjectId)
@@ -87,7 +93,7 @@ public class LibraryController : ControllerBase
                         && _db.ParentStudentLinks.Any(l => l.ParentId == oi.Order.UserId
                                                          && l.StudentId == userId
                                                          && l.Status == "accepted"))))
-            .Select(oi => new { oi.SubjectId, oi.Order.CreatedAt })
+            .Select(oi => new { SubjectId = oi.SubjectId!.Value, oi.Order.CreatedAt })
             .ToListAsync();
 
         if (purchases.Count > 0)
