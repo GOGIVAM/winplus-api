@@ -11,8 +11,16 @@
 --      seules lignes actives ("IsDeleted" = false), pour qu'une réinscription
 --      après désinscription logique ne se heurte plus à l'unicité.
 --
--- Les colonnes IsDeleted/UnenrolledAt/UnenrollReason existent déjà depuis la
--- migration EF AddUnenrollToEnrollment (20260120) : non recréées ici.
+-- Correctif (2026-10-05) : la migration EF AddUnenrollToEnrollment (20260120)
+-- n'avait en réalité jamais été appliquée en production (ce projet déploie
+-- par scripts SQL manuels, pas par `dotnet ef database update`  voir §3.2
+-- point 18 du suivi). "IsDeleted" existait déjà via un autre script, mais
+-- "UnenrolledAt"/"UnenrollReason" manquaient réellement, ce qui faisait
+-- échouer toute requête EF incluant Enrollment (ex. GET /api/users/me) avec
+-- "column e.UnenrollReason does not exist". Ajoutées ci-dessous, idempotent.
+--
+ALTER TABLE "Enrollments" ADD COLUMN IF NOT EXISTS "UnenrolledAt" TIMESTAMP WITH TIME ZONE NULL;
+ALTER TABLE "Enrollments" ADD COLUMN IF NOT EXISTS "UnenrollReason" TEXT NULL;
 --
 -- Idempotent : peut être rejoué sans casser une base déjà migrée. Les noms de
 -- contrainte/d'index réels ne sont pas supposés connus à l'avance (deux
