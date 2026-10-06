@@ -381,6 +381,29 @@ public class SubjectsController : ControllerBase
             }
 
             var created = await _subjectService.CreateSubjectAsync(subject);
+
+            // Pont manquant trouvé en production : "Mes contenus" côté
+            // professeur (TeacherContentController.GetMine/GetStats) lit
+            // exclusivement CourseContents.CreatedByUserId, jamais Subjects.
+            // Rien ne créait jamais cette ligne pour un dépôt via ce contrôleur
+            // (upload admin/professeur, Module 8) : le contenu publié restait
+            // invisible du professeur bien qu'enregistré. Un seul
+            // CourseContent par Subject suffit ici (pas une leçon de
+            // formation), avec le même statut de revue que Subject.IsPublished.
+            if (created.AuthorUserId.HasValue)
+            {
+                _context.CourseContents.Add(new Models.Entities.CourseContent
+                {
+                    SubjectId = created.Id,
+                    Title = created.Title,
+                    Description = created.Description,
+                    DocumentUrl = created.DocumentUrl,
+                    CreatedByUserId = created.AuthorUserId,
+                    Status = created.IsPublished ? "published" : "review",
+                });
+                await _context.SaveChangesAsync();
+            }
+
             return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
         }
         catch (Exception ex)
