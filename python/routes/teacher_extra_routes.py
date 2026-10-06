@@ -1652,6 +1652,12 @@ class AnalyzeContentUploadRequest(BaseModel):
     filename: Optional[str] = None
     # epreuve | correction | livre | quiz | pack | formation | video
     content_kind: str = "epreuve"
+    # Si le client a des listes fermées (ex. <select> matière/niveau cote
+    # professeur), les lui transmettre ici fait choisir WinAI dans CETTE
+    # liste exacte plutot que de deviner un rapprochement apres coup cote
+    # client (matiere/niveau libres cote admin : laisser vide).
+    allowed_categories: Optional[List[str]] = None
+    allowed_levels: Optional[List[str]] = None
 
 
 class SuggestedContentFields(BaseModel):
@@ -1924,10 +1930,23 @@ def analyze_content_upload(
         )
 
     hints = _CONTENT_KIND_FIELD_HINTS.get(body.content_kind, _CONTENT_KIND_FIELD_HINTS["epreuve"])
+    constraint_lines = []
+    if body.allowed_categories:
+        constraint_lines.append(
+            "Pour \"category\", choisis EXACTEMENT une valeur parmi cette liste fermée (recopie-la telle quelle, "
+            "caractère pour caractère), ou une chaîne vide si aucune ne correspond au contenu réel : "
+            + ", ".join(body.allowed_categories)
+        )
+    if body.allowed_levels:
+        constraint_lines.append(
+            "Pour \"level\", choisis EXACTEMENT une valeur parmi cette liste fermée (recopie-la telle quelle), "
+            "ou une chaîne vide si aucune ne correspond : " + ", ".join(body.allowed_levels)
+        )
+    constraints = (" " + " ".join(constraint_lines)) if constraint_lines else ""
     prompt = (
         f"Voici le contenu réel d'un fichier déposé sur WinPlus (type déclaré : {body.content_kind}) :\n\n"
         f"{text}\n\n"
-        f"À partir de CE contenu réel (pas du nom de fichier), propose des valeurs pour : {hints}. "
+        f"À partir de CE contenu réel (pas du nom de fichier), propose des valeurs pour : {hints}.{constraints} "
         "Propose aussi un score de pertinence et de valeur pédagogique entre 0 et 100 (winai_score) avec une "
         "justification courte et lisible (winai_justification), et une suggestion de prix de vente en FCFA "
         "(price_suggestion) cohérente avec un contenu éducatif camerounais. "

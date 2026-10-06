@@ -19,6 +19,17 @@ public class AnalyzeContentUploadRequest
     /// <summary>epreuve | correction | livre | quiz | pack | formation | video.</summary>
     [JsonPropertyName("content_kind")]
     public string ContentKind { get; set; } = "epreuve";
+
+    /// <summary>
+    /// Listes fermées du <select> appelant (ex. matière/niveau côté professeur) :
+    /// WinAI choisit EXACTEMENT une valeur dedans plutôt que du texte libre à
+    /// rapprocher après coup. Laisser vide pour un champ libre (admin).
+    /// </summary>
+    [JsonPropertyName("allowed_categories")]
+    public List<string>? AllowedCategories { get; set; }
+
+    [JsonPropertyName("allowed_levels")]
+    public List<string>? AllowedLevels { get; set; }
 }
 
 public class SuggestedContentFieldsDto
