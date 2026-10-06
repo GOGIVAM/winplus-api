@@ -1668,6 +1668,9 @@ class SuggestedContentFields(BaseModel):
     prerequisites: List[str] = []
     duration_seconds: Optional[int] = None
     price_suggestion: Optional[float] = None
+    author: Optional[str] = None
+    publisher: Optional[str] = None
+    page_count: Optional[int] = None
 
 
 class AnalyzeContentUploadResponse(BaseModel):
@@ -1887,7 +1890,7 @@ def _extract_text_for_analysis(raw_bytes: bytes, filename: Optional[str]) -> tup
 _CONTENT_KIND_FIELD_HINTS = {
     "epreuve": "titre, description, matière, niveau, difficulté estimée, année/session si mentionnée, type d'épreuve si détectable",
     "correction": "titre, description, matière, niveau",
-    "livre": "titre, description, matière, niveau, étiquettes",
+    "livre": "titre, description, matière, niveau, étiquettes, auteur (tel qu'indiqué sur la page de titre/couverture, jamais inventé), éditeur si mentionné, nombre de pages si détectable",
     "pack": "titre, description, matière, niveau, étiquettes",
     "quiz": "titre, description, matière, niveau",
     "formation": "titre, description longue, description courte, matière, niveau, étiquettes, objectifs, prérequis",
@@ -1930,7 +1933,8 @@ def analyze_content_upload(
         "(price_suggestion) cohérente avec un contenu éducatif camerounais. "
         "Réponds en JSON strict avec exactement les clés : title, description, description_courte, category, "
         "level, difficulty (easy|medium|hard), year, exam_type, tags (liste), objectives (liste), "
-        "prerequisites (liste), price_suggestion (nombre), winai_score (nombre 0-100), winai_justification (texte). "
+        "prerequisites (liste), author, publisher, page_count (nombre), price_suggestion (nombre), "
+        "winai_score (nombre 0-100), winai_justification (texte). "
         "Mets une chaîne vide ou une liste vide pour tout champ non pertinent ou non détectable  n'invente rien "
         "qui ne soit pas appuyé par le texte fourni. Limite description à 400 caractères maximum et "
         "description_courte à 120 caractères maximum, pour rester dans la place disponible."
@@ -1981,6 +1985,9 @@ def analyze_content_upload(
         prerequisites=_str_list(raw.get("prerequisites")),
         duration_seconds=duration_seconds,
         price_suggestion=price,
+        author=(str(raw.get("author") or "").strip() or None),
+        publisher=(str(raw.get("publisher") or "").strip() or None),
+        page_count=(lambda v: int(v) if isinstance(v, (int, float)) and v > 0 else None)(raw.get("page_count")),
     )
 
     return AnalyzeContentUploadResponse(

@@ -44,6 +44,12 @@ public class SuggestedContentFieldsDto
 
     [JsonPropertyName("price_suggestion")]
     public decimal? PriceSuggestion { get; set; }
+
+    public string? Author { get; set; }
+    public string? Publisher { get; set; }
+
+    [JsonPropertyName("page_count")]
+    public int? PageCount { get; set; }
 }
 
 /// <summary>
