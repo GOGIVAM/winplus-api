@@ -66,6 +66,15 @@ public class PaymentStatusResponse
     public DateTime? CompletedAt { get; set; }
     public string? ErrorMessage { get; set; }
     public string? ErrorCode { get; set; }
+
+    /// <summary>
+    /// Nuls pour l'historique "mes paiements" d'un utilisateur (l'intéressé
+    /// connaît déjà son propre nom) ; renseignés pour la liste admin
+    /// (GET /api/admin/payments), qui en a besoin pour identifier qui a payé.
+    /// </summary>
+    public string? CustomerName { get; set; }
+    public string? CustomerEmail { get; set; }
+    public string? OrderNumber { get; set; }
 }
 
 public class PaymentHistoryResponse

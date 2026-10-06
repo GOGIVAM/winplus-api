@@ -892,7 +892,12 @@ public class PaymentService : IPaymentService
         InitiatedAt = p.InitiatedAt,
         CompletedAt = p.CompletedAt,
         ErrorMessage = p.ErrorMessage,
-        ErrorCode = p.ErrorCode
+        ErrorCode = p.ErrorCode,
+        // Nul si User/Order n'ont pas été chargés (Include) par l'appelant  ne
+        // force jamais de requête supplémentaire ici (lazy loading désactivé).
+        CustomerName = p.User != null ? $"{p.User.FirstName} {p.User.LastName}".Trim() : null,
+        CustomerEmail = p.User?.Email ?? p.GuestEmail,
+        OrderNumber = p.Order?.OrderNumber,
     };
 
     private static PaymentResponse MapToResponse(Payment p) => new()

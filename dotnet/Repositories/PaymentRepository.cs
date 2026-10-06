@@ -60,6 +60,9 @@ public class PaymentRepository : IPaymentRepository
 
     public async Task<List<Payment>> GetAllAsync(int page = 1, int limit = 50)
         => await _context.Payments
+            .AsNoTracking()
+            .Include(p => p.User)
+            .Include(p => p.Order)
             .OrderByDescending(p => p.CreatedAt)
             .Skip((page - 1) * limit)
             .Take(limit)
@@ -67,6 +70,9 @@ public class PaymentRepository : IPaymentRepository
 
     public async Task<List<Payment>> GetByStatusAsync(string status, int page = 1, int limit = 50)
         => await _context.Payments
+            .AsNoTracking()
+            .Include(p => p.User)
+            .Include(p => p.Order)
             .Where(p => p.Status == status)
             .OrderByDescending(p => p.CreatedAt)
             .Skip((page - 1) * limit)
