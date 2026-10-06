@@ -705,13 +705,23 @@ public class AdminController : ControllerBase
                 .Select(g => new { SubjectId = g.Key, Url = g.First().DocumentUrl })
                 .ToDictionaryAsync(x => x.SubjectId, x => x.Url);
 
+            var authorIds = subjectList.Where(s => s.AuthorUserId.HasValue).Select(s => s.AuthorUserId!.Value).Distinct().ToList();
+            var authorNames = await _db.Users.AsNoTracking()
+                .Where(u => authorIds.Contains(u.Id))
+                .ToDictionaryAsync(u => u.Id, u => $"{u.FirstName} {u.LastName}".Trim());
+
             var subjects = subjectList.Select(s => new
             {
                 id           = s.Id,
                 title        = s.Title,
                 type         = "epreuve",
                 subject      = s.Category,
-                teacherName  = "Admin",
+                // Était codé en dur à "Admin" pour tout le monde, quel que
+                // soit l'auteur réel (AuthorUserId) : l'admin ne pouvait pas
+                // savoir qui avait vraiment soumis un contenu à valider.
+                teacherName  = s.AuthorUserId.HasValue && authorNames.TryGetValue(s.AuthorUserId.Value, out var n) && !string.IsNullOrWhiteSpace(n)
+                    ? n : "Admin",
+                teacherId    = s.AuthorUserId,
                 submittedAt  = s.CreatedAt,
                 thumbnailUrl = s.ThumbnailUrl,
                 documentUrl  = docUrls.TryGetValue(s.Id, out var url) ? url : null,
@@ -738,6 +748,11 @@ public class AdminController : ControllerBase
             if (subject == null) return NotFound(new { error = "Subject not found" });
             subject.IsPublished = true;
             subject.UpdatedAt = DateTime.UtcNow;
+            // Garde "Mes contenus" (CourseContent.Status) cohérent avec la
+            // décision d'approbation : sinon le badge restait "En révision"
+            // à vie même après publication.
+            await _db.CourseContents.Where(cc => cc.SubjectId == id)
+                .ExecuteUpdateAsync(s => s.SetProperty(cc => cc.Status, "published").SetProperty(cc => cc.UpdatedAt, DateTime.UtcNow));
             await _db.SaveChangesAsync();
             _logger.LogInformation("Subject {Id} approved by admin", id);
             return Ok(new { success = true });
@@ -759,6 +774,8 @@ public class AdminController : ControllerBase
             if (subject == null) return NotFound(new { error = "Subject not found" });
             subject.IsDeleted = true;
             subject.UpdatedAt = DateTime.UtcNow;
+            await _db.CourseContents.Where(cc => cc.SubjectId == id)
+                .ExecuteUpdateAsync(s => s.SetProperty(cc => cc.Status, "archived").SetProperty(cc => cc.UpdatedAt, DateTime.UtcNow));
             await _db.SaveChangesAsync();
             _logger.LogInformation("Subject {Id} rejected: {Reason}", id, request.Reason);
             return Ok(new { success = true });
@@ -766,6 +783,45 @@ public class AdminController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error rejecting subject {Id}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// POST /admin/subjects/bulk-approve  Validation groupée (plusieurs
+    /// documents sélectionnés, ou "Tout valider"). Chaque id est re-vérifié
+    /// encore en attente juste avant d'être approuvé : un contenu déjà
+    /// publié ou rejeté entre-temps (par un autre admin, un autre onglet) ne
+    /// peut jamais être re-traité par ce point d'entrée.
+    /// </summary>
+    [HttpPost("subjects/bulk-approve")]
+    public async Task<IActionResult> BulkApproveSubjects([FromBody] BulkApproveRequest request)
+    {
+        if (request.Ids == null || request.Ids.Count == 0)
+            return BadRequest(new { error = "Aucun identifiant fourni." });
+        if (request.Ids.Count > 200)
+            return BadRequest(new { error = "200 documents maximum par validation groupée." });
+
+        try
+        {
+            var stillPendingIds = await _db.Subjects
+                .Where(s => request.Ids.Contains(s.Id) && !s.IsPublished && !s.IsDeleted)
+                .Select(s => s.Id)
+                .ToListAsync();
+
+            var now = DateTime.UtcNow;
+            await _db.Subjects.Where(s => stillPendingIds.Contains(s.Id))
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.IsPublished, true).SetProperty(x => x.UpdatedAt, now));
+            await _db.CourseContents.Where(cc => stillPendingIds.Contains(cc.SubjectId))
+                .ExecuteUpdateAsync(s => s.SetProperty(cc => cc.Status, "published").SetProperty(cc => cc.UpdatedAt, now));
+
+            var skipped = request.Ids.Except(stillPendingIds).ToList();
+            _logger.LogInformation("Validation groupée : {Approved} approuvés, {Skipped} déjà traités/invalides", stillPendingIds.Count, skipped.Count);
+            return Ok(new { success = true, approvedIds = stillPendingIds, skippedIds = skipped });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error bulk-approving subjects");
             return StatusCode(500, new { error = "Internal server error" });
         }
     }
@@ -1731,6 +1787,7 @@ public class AdminController : ControllerBase
 
 public record AdminActivityEntry(string Id, string Type, DateTime Timestamp, string Title, string Description, string Status, string UserName, string UserEmail, string Target);
 public record RejectSubjectRequest(string? Reason);
+public record BulkApproveRequest(List<int> Ids);
 public record AdminEmailRequest(string Target, string Subject, string Body, string? CustomEmail);
 public record AdminChatMessageRequest(string? Content);
 public record SendSupportReply(string Content);
