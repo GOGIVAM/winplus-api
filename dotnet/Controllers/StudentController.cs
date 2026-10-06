@@ -562,22 +562,33 @@ public class StudentController : ControllerBase
                 })
                 .ToListAsync();
 
-            var teachersViaClass = await _db.TeacherClassStudents
+            // Classes de l'élève, séparées des professeurs : une classe est un
+            // groupe encadré par un professeur, pas une personne du réseau.
+            var classes = await _db.TeacherClassStudents
                 .AsNoTracking()
-                .Where(tcs => tcs.StudentId == me)
-                .Include(tcs => tcs.TeacherClass).ThenInclude(tc => tc.Teacher)
+                .Where(tcs => tcs.StudentId == me && tcs.TeacherClass!.IsActive)
+                .OrderBy(tcs => tcs.TeacherClass!.Name)
                 .Select(tcs => new
                 {
-                    tcs.TeacherClass.Teacher!.Id,
-                    tcs.TeacherClass.Teacher.FirstName,
-                    tcs.TeacherClass.Teacher.LastName,
-                    tcs.TeacherClass.Teacher.AvatarUrl,
-                    Role = "teacher",
-                    Source = "class",
-                    ClassName = tcs.TeacherClass.Name,
+                    tcs.TeacherClass!.Id,
+                    tcs.TeacherClass.Name,
+                    tcs.TeacherClass.Level,
+                    tcs.TeacherClass.AcademicYear,
+                    Teacher = new
+                    {
+                        tcs.TeacherClass.Teacher!.Id,
+                        tcs.TeacherClass.Teacher.FirstName,
+                        tcs.TeacherClass.Teacher.LastName,
+                        tcs.TeacherClass.Teacher.AvatarUrl,
+                    },
                 })
-                .Distinct()
                 .ToListAsync();
+
+            // Professeurs : une seule entrée par professeur (liaison directe ou
+            // via une classe), sans répéter le même professeur pour chaque classe.
+            var teachersViaClass = classes
+                .Select(c => new { c.Teacher.Id, c.Teacher.FirstName, c.Teacher.LastName, c.Teacher.AvatarUrl })
+                .ToList();
 
             var teachersDirect = await _db.TeacherStudentLinks
                 .AsNoTracking()
@@ -589,11 +600,14 @@ public class StudentController : ControllerBase
                     l.Teacher.FirstName,
                     l.Teacher.LastName,
                     l.Teacher.AvatarUrl,
-                    Role = "teacher",
-                    Source = "direct",
-                    ClassName = (string?)null,
                 })
                 .ToListAsync();
+
+            var teachers = teachersDirect.Concat(teachersViaClass)
+                .GroupBy(t => t.Id)
+                .Select(g => g.First())
+                .Select(t => new { t.Id, t.FirstName, t.LastName, t.AvatarUrl, Role = "teacher" })
+                .ToList();
 
             object? institution = null;
             var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == me);
@@ -614,7 +628,8 @@ public class StudentController : ControllerBase
             return Ok(new
             {
                 parents,
-                teachers = teachersViaClass.Cast<object>().Concat(teachersDirect.Cast<object>()),
+                teachers,
+                classes,
                 institution,
                 groups,
             });
