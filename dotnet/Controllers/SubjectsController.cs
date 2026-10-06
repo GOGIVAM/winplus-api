@@ -402,7 +402,7 @@ public class SubjectsController : ControllerBase
         {
             var result = await _fastApiClient.PostAsync<AnalyzeContentUploadResponse>(
                 "/api/teacher/analyze-content-upload",
-                new AnalyzeContentUploadRequest { FileUrl = subject.DocumentUrl!, Filename = title, ContentKind = "epreuve" });
+                new AnalyzeContentUploadRequest { FileUrl = _storage.PresignGetUrl(subject.DocumentUrl!, TimeSpan.FromMinutes(10)), Filename = title, ContentKind = "epreuve" });
 
             subject.WinAiScore = result?.WinAiScore;
             subject.WinAiJustification = result?.WinAiJustification
@@ -433,6 +433,7 @@ public class SubjectsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.FileUrl))
             return BadRequest(new { error = "file_url requis" });
 
+        request.FileUrl = _storage.PresignGetUrl(request.FileUrl, TimeSpan.FromMinutes(10));
         var result = await _fastApiClient.PostAsync<AnalyzeContentUploadResponse>("/api/teacher/analyze-content-upload", request);
         // Module 7, §7B : « le professeur doit pouvoir comprendre, avant
         // publication, quelle part lui revient ». Le score vient de Python,

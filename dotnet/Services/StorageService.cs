@@ -49,6 +49,13 @@ public interface IStorageService
 
     /// <summary>URL publique d'une clé S3.</summary>
     string PublicUrl(string key);
+
+    /// <summary>
+    /// URL de lecture temporaire signée pour un fichier du bucket privé
+    /// (documents d'épreuves, jamais publics). Renvoie l'entrée telle quelle si
+    /// elle n'appartient pas à ce bucket.
+    /// </summary>
+    string PresignGetUrl(string urlOrKey, TimeSpan ttl);
 }
 
 public class StorageService : IStorageService
@@ -112,6 +119,27 @@ public class StorageService : IStorageService
         if (!string.IsNullOrWhiteSpace(PublicBaseUrl))
             return $"{PublicBaseUrl}/{key.TrimStart('/')}";
         return $"https://{Bucket}.s3.{Region}.amazonaws.com/{key.TrimStart('/')}";
+    }
+
+    public string PresignGetUrl(string urlOrKey, TimeSpan ttl)
+    {
+        var prefix = $"https://{Bucket}.s3.{Region}.amazonaws.com/";
+        string key;
+        if (urlOrKey.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            key = Uri.UnescapeDataString(urlOrKey.Substring(prefix.Length).Split('?')[0]);
+        else if (!urlOrKey.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            key = urlOrKey.TrimStart('/');
+        else
+            return urlOrKey;
+
+        using var s3 = CreateS3Client();
+        return s3.GetPreSignedURL(new GetPreSignedUrlRequest
+        {
+            BucketName = Bucket,
+            Key = key,
+            Verb = HttpVerb.GET,
+            Expires = DateTime.UtcNow.Add(ttl),
+        });
     }
 
     // ── Vérification unique du bucket ──────────────────────────────────────
