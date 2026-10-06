@@ -70,6 +70,7 @@ def _deepseek_json(prompt: str, system: str, max_tokens: int = 600) -> Any:
             system_prompt=system,
             max_tokens=max_tokens,
             temperature=0.5,
+            json_mode=True,
         )
         raw = res.get("content", "").strip()
         if raw.startswith("```"):
@@ -1931,14 +1932,15 @@ def analyze_content_upload(
         "level, difficulty (easy|medium|hard), year, exam_type, tags (liste), objectives (liste), "
         "prerequisites (liste), price_suggestion (nombre), winai_score (nombre 0-100), winai_justification (texte). "
         "Mets une chaîne vide ou une liste vide pour tout champ non pertinent ou non détectable  n'invente rien "
-        "qui ne soit pas appuyé par le texte fourni."
+        "qui ne soit pas appuyé par le texte fourni. Limite description à 400 caractères maximum et "
+        "description_courte à 120 caractères maximum, pour rester dans la place disponible."
     )
     system = (
         "Tu es WinAI, évaluateur pédagogique pour la plateforme WinPlus. Tu lis le contenu réel d'un document "
         "ou d'une transcription et tu en tires des métadonnées fidèles, jamais inventées. Réponds uniquement "
         "en JSON valide."
     )
-    raw = _deepseek_json(prompt, system, max_tokens=1400)
+    raw = _deepseek_json(prompt, system, max_tokens=2200)
 
     if not isinstance(raw, dict):
         return AnalyzeContentUploadResponse(

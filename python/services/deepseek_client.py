@@ -35,7 +35,8 @@ class DeepSeekClient:
         messages: List[Dict[str, str]],
         system_prompt: Optional[str] = None,
         max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None
+        temperature: Optional[float] = None,
+        json_mode: bool = False
     ) -> Dict[str, Any]:
         """
         Envoie une requête de chat à DeepSeek
@@ -68,7 +69,11 @@ class DeepSeekClient:
             "temperature": temperature or self.temperature,
             "stream": False
         }
-        
+        if json_mode:
+            # Mode JSON strict de l'API DeepSeek (garantit une syntaxe JSON
+            # valide, mais ne protege pas d'une reponse coupee par max_tokens).
+            request_body["response_format"] = {"type": "json_object"}
+
         headers = {
             "Content-Type": "application/json"
         }
