@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -112,6 +113,66 @@ public sealed class WeeklyParentReportService : BackgroundService
         return next - now;
     }
 
+    // Noms explicites (JsonPropertyName) : la réponse JSON de FastAPI/Pydantic
+    // est en snake_case, System.Text.Json ne la fait PAS correspondre
+    // automatiquement aux propriétés PascalCase .NET par défaut.
+    private sealed class WeeklyTrendDto
+    {
+        [JsonPropertyName("child_id")] public int ChildId { get; set; }
+        [JsonPropertyName("week_avg")] public double WeekAvg { get; set; }
+        [JsonPropertyName("prev_avg")] public double PrevAvg { get; set; }
+        [JsonPropertyName("quiz_count")] public int QuizCount { get; set; }
+        [JsonPropertyName("delta")] public double Delta { get; set; }
+    }
+
+    private sealed class WeeklyTrendResponseDto
+    {
+        [JsonPropertyName("results")] public List<WeeklyTrendDto> Results { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Écart technique (rapport lot 6) : ce service recalculait seul (requêtes EF
+    /// directes sur DailyScores/QuizAttempts) le même indicateur hebdomadaire déjà
+    /// disponible dans la base de contexte partagée parent_child_context.py (Module 13,
+    /// lot 6), avec le risque de divergence que deux calculs parallèles entraînent.
+    /// Un seul appel pour tous les enfants du jour (compute_weekly_trend, même fenêtre
+    /// 7j/7j précédents, même formule qu'avant  le format de l'e-mail ne change pas).
+    /// Renvoie null si l'appel échoue : RunAsync retombe alors sur l'ancien calcul direct
+    /// pour ne jamais faire échouer l'envoi du rapport faute de WinAI disponible.
+    /// </summary>
+    private async Task<Dictionary<int, WeeklyTrendDto>?> GetWeeklyTrendsAsync(List<int> childIds, CancellationToken ct)
+    {
+        if (childIds.Count == 0) return new Dictionary<int, WeeklyTrendDto>();
+        try
+        {
+            var client = _httpFactory.CreateClient("FastApiClient");
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/parent-advisor/weekly-trend")
+            {
+                Content = JsonContent.Create(new { child_ids = childIds.Distinct() }),
+            };
+            req.Headers.TryAddWithoutValidation("Authorization", _serviceToken.CreateAuthorizationHeader(ServiceScopes.ParentWeeklyTrend));
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(30));
+            var res = await client.SendAsync(req, cts.Token);
+            if (!res.IsSuccessStatusCode)
+            {
+                var body = await res.Content.ReadAsStringAsync(cts.Token);
+                if (res.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+                    _logger.LogError("weekly-trend : authentification service à service refusée par Python ({Status}) : {Body}", (int)res.StatusCode, body);
+                else
+                    _logger.LogWarning("weekly-trend : Python a répondu {Status} : {Body}", (int)res.StatusCode, body);
+                return null;
+            }
+            var parsed = await res.Content.ReadFromJsonAsync<WeeklyTrendResponseDto>(cancellationToken: cts.Token);
+            return parsed?.Results.ToDictionary(r => r.ChildId, r => r);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "weekly-trend : appel WinAI impossible, repli sur le calcul direct.");
+            return null;
+        }
+    }
+
     private async Task RunAsync(CancellationToken ct)
     {
         _logger.LogInformation("Running WeeklyParentReport at {Time}", DateTime.UtcNow);
@@ -126,11 +187,9 @@ public sealed class WeeklyParentReportService : BackgroundService
             .Where(u => u.Role == "parent" && u.IsActive && !u.IsDeleted && u.IsEmailVerified)
             .ToListAsync(ct);
 
+        var eligibleParents = new List<User>();
         foreach (var parent in parents)
         {
-            if (ct.IsCancellationRequested) break;
-
-            // Check if weekly report is enabled in Bio settings
             if (!IsWeeklyReportEnabled(parent.Bio)) continue;
 
             // Module 22 : e-mail non transactionnel, soumis à la préférence
@@ -139,10 +198,28 @@ public sealed class WeeklyParentReportService : BackgroundService
             // ce pré-contrôle est conservé pour ne pas payer les appels WinAI
             // (rapport + capsule) d'un parent qui ne recevra pas l'e-mail.
             if (!await preferences.AllowsAsync(parent.Id, NotificationChannel.Email, NotificationCategory.General, ct)) continue;
+            eligibleParents.Add(parent);
+        }
+
+        if (eligibleParents.Count == 0) return;
+
+        var eligibleParentIds = eligibleParents.Select(p => p.Id).ToList();
+        var allChildIds = await db.ParentStudentLinks
+            .Where(l => eligibleParentIds.Contains(l.ParentId) && l.Status == "accepted")
+            .Select(l => l.StudentId)
+            .ToListAsync(ct);
+
+        // Un seul appel WinAI pour tous les enfants concernés par le run du jour,
+        // plutôt qu'un appel par enfant.
+        var trends = await GetWeeklyTrendsAsync(allChildIds, ct);
+
+        foreach (var parent in eligibleParents)
+        {
+            if (ct.IsCancellationRequested) break;
 
             try
             {
-                await SendWeeklyReportAsync(parent.Email, parent.FirstName ?? "Parent", db, email, ct);
+                await SendWeeklyReportAsync(parent.Email, parent.FirstName ?? "Parent", db, email, trends, ct);
             }
             catch (Exception ex)
             {
@@ -167,6 +244,7 @@ public sealed class WeeklyParentReportService : BackgroundService
         string parentFirstName,
         ApplicationDbContext db,
         IEmailService emailService,
+        Dictionary<int, WeeklyTrendDto>? trends,
         CancellationToken ct)
     {
         var cutoff = DateTime.UtcNow.AddDays(-7);
@@ -195,19 +273,35 @@ public sealed class WeeklyParentReportService : BackgroundService
         {
             if (child == null) continue;
 
-            var scores = await db.DailyScores
-                .Where(s => s.UserId == child.Id && s.CreatedAt >= cutoff)
-                .ToListAsync(ct);
+            double weekAvg, prevAvg, delta;
+            int quizCount;
 
-            var weekAvg = scores.Any() ? scores.Average(s => (double)s.AverageScore) : 0.0;
-            var prevScores = await db.DailyScores
-                .Where(s => s.UserId == child.Id && s.CreatedAt >= cutoff.AddDays(-7) && s.CreatedAt < cutoff)
-                .ToListAsync(ct);
-            var prevAvg = prevScores.Any() ? prevScores.Average(s => (double)s.AverageScore) : 0.0;
-            var delta = weekAvg - prevAvg;
+            // Écart technique lot 6 : source unique (WinAI, parent_child_context.py)
+            // quand disponible ; repli sur l'ancien calcul EF direct sinon (WinAI
+            // indisponible), pour ne jamais faire échouer l'envoi du rapport.
+            if (trends != null && trends.TryGetValue(child.Id, out var t))
+            {
+                weekAvg = t.WeekAvg;
+                prevAvg = t.PrevAvg;
+                delta = t.Delta;
+                quizCount = t.QuizCount;
+            }
+            else
+            {
+                var scores = await db.DailyScores
+                    .Where(s => s.UserId == child.Id && s.CreatedAt >= cutoff)
+                    .ToListAsync(ct);
 
-            var quizCount = await db.QuizAttempts
-                .CountAsync(a => a.UserId == child.Id && a.CompletedAt >= cutoff, ct);
+                weekAvg = scores.Any() ? scores.Average(s => (double)s.AverageScore) : 0.0;
+                var prevScores = await db.DailyScores
+                    .Where(s => s.UserId == child.Id && s.CreatedAt >= cutoff.AddDays(-7) && s.CreatedAt < cutoff)
+                    .ToListAsync(ct);
+                prevAvg = prevScores.Any() ? prevScores.Average(s => (double)s.AverageScore) : 0.0;
+                delta = weekAvg - prevAvg;
+
+                quizCount = await db.QuizAttempts
+                    .CountAsync(a => a.UserId == child.Id && a.CompletedAt >= cutoff, ct);
+            }
 
             var trend = delta > 2 ? "en progression" : delta < -2 ? "en baisse" : "stable";
             childSummaries.Add(

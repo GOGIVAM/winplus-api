@@ -26,6 +26,7 @@ from routes.chatbot_routes import chatbot_router
 from routes.quiz_explain_routes import quiz_explain_router
 from routes.exam_coach_routes import exam_coach_router
 from routes.parent_alert_routes import parent_alert_router
+from routes.parent_advisor_routes import parent_advisor_router
 from routes.study_session_routes import study_session_router
 from routes.parent_extra_routes import parent_extra_router
 from routes.teacher_extra_routes import teacher_ai_router
@@ -122,6 +123,7 @@ app.include_router(chatbot_router, prefix="/api/chatbot", tags=["chatbot"])
 app.include_router(quiz_explain_router, prefix="/api/quiz", tags=["quiz"])
 app.include_router(exam_coach_router, prefix="/api/exam-coach", tags=["exam-coach"])
 app.include_router(parent_alert_router, prefix="/api/parent-alerts", tags=["parent"])
+app.include_router(parent_advisor_router, prefix="/api/parent-advisor", tags=["parent-advisor"])
 app.include_router(study_session_router, prefix="/api/study-session", tags=["study-session"])
 app.include_router(exam_quiz_router, prefix="/api/exam-quiz", tags=["exam-quiz"])
 app.include_router(parent_extra_router, prefix="/api", tags=["parent-extra"])

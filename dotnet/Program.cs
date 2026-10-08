@@ -560,6 +560,9 @@ builder.Services.AddHostedService<AffiliateRateRecalculationService>();
 builder.Services.AddHostedService<SectionUnlockNotificationService>();
 builder.Services.AddHostedService<CourseInactivityAlertService>();
 
+// Partie 14.1 (2026-10-08) : proactivité du conseiller parent par alertes ciblées sur seuils.
+builder.Services.AddHostedService<ParentAdvisorThresholdService>();
+
 // Add health checks
 builder.Services.AddHealthChecks();
 

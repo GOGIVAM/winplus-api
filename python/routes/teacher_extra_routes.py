@@ -38,9 +38,14 @@ from auth import verify_token, require_role, require_user_or_service, UserTokenD
 from database import (
     Database, QuizAttempt, DailyScore, Enrollment, Subject, User,
     TutorProfile, TutorSubject, TutorLevel, CourseContent, Order, OrderItem,
-    DownloadHistory,
+    DownloadHistory, TeacherClassStudent, TeacherClass,
 )
 from services.deepseek_client import get_deepseek_client
+# Module 16 (14.2, décision du 2026-10-08) : réutilise TEL QUEL la brique de
+# lecture de profil déjà exposée pour la génération auto-personnalisée de
+# l'élève (style d'apprentissage VARK + matières inscrites), plutôt que d'en
+# écrire une seconde version pour le compte professeur.
+from routes.smart_ai_routes import _load_student_generation_signals
 
 logger = logging.getLogger(__name__)
 
@@ -119,9 +124,39 @@ class GenerateQuizRequest(BaseModel):
     subject: Optional[str] = None
     level: Optional[str] = None
     topics: Optional[List[str]] = None
+    # 14.2 (décision du 2026-10-08, Module 16) : ajout additif, aucun champ
+    # existant renommé ni retiré  cet endpoint reste partagé avec les
+    # appelants qui ne fournissent pas d'élève (génération générique de
+    # classe, comportement inchangé). Quand renseigné, personnalise la
+    # génération avec le style d'apprentissage et les matières inscrites de
+    # CET élève précis (voir _assert_teacher_can_target_student ci-dessous).
+    student_id: Optional[int] = None
 
 class GenerateQuizResponse(BaseModel):
     questions: List[QuizQuestionOut]
+
+
+def _assert_teacher_can_target_student(session, teacher_id: int, student_id: int) -> None:
+    """
+    14.2 : un professeur ne peut personnaliser une génération que pour un
+    élève appartenant à une de ses classes  sans ce garde-fou, l'identifiant
+    optionnel permettrait à n'importe quel compte professeur de lire le style
+    d'apprentissage de n'importe quel élève en devinant son id (même défaut
+    que _assert_can_access_child dans parent_alert_routes.py, corrigé à
+    l'identique ici).
+    """
+    linked = (
+        session.query(TeacherClassStudent.Id)
+        .join(TeacherClass, TeacherClass.Id == TeacherClassStudent.TeacherClassId)
+        .filter(TeacherClass.TeacherId == teacher_id, TeacherClassStudent.StudentId == student_id)
+        .first()
+    )
+    if linked is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Cet élève n'appartient à aucune de vos classes.",
+        )
+
 
 @teacher_ai_router.post("/ai/generate-quiz-questions", response_model=GenerateQuizResponse)
 async def generate_quiz_questions(
@@ -132,13 +167,36 @@ async def generate_quiz_questions(
     subject_str = body.subject or ""
     level_str = body.level or ""
 
+    # 14.2 : signaux de profil de l'élève ciblé, chaîne vide si aucun élève
+    # fourni (comportement générique inchangé) ou si le style n'est pas
+    # renseigné pour cet élève  même repli que la génération élève (Module 16).
+    style_line = ""
+    enrolled_line = ""
+    if body.student_id is not None:
+        db = Database()
+        session = db.SessionLocal()
+        try:
+            # L'administrateur n'a pas de classe propre ; seul un professeur
+            # authentifié avec son propre id peut cibler un élève de sa classe.
+            if (current_user.role or "").lower() != "admin":
+                _assert_teacher_can_target_student(session, current_user.user_id, body.student_id)
+            style_instruction, enrolled_subjects = _load_student_generation_signals(body.student_id)
+        finally:
+            session.close()
+        if style_instruction:
+            style_line = f"\n[Style d'apprentissage de l'élève ciblé]\n{style_instruction}\n"
+        if enrolled_subjects:
+            enrolled_line = f"Matières dans lesquelles cet élève est inscrit : {', '.join(enrolled_subjects)}.\n"
+
     prompt = (
         f"Génère exactement 10 questions QCM de niveau {level_str} en {subject_str} "
         f"sur le thème : {topic_str}. "
+        f"{enrolled_line}"
         "Chaque question doit avoir 4 options (A/B/C/D), une seule correcte. "
         "Format JSON : tableau de 10 objets avec les champs exactement : "
         '{"id":"q1","text":"...","options":[{"id":"a","text":"..."},{"id":"b","text":"..."},{"id":"c","text":"..."},{"id":"d","text":"..."}],"correctOptionId":"a","explanation":"..."} '
         "Les options doivent être plausibles, l'explication doit justifier la bonne réponse. "
+        f"{style_line}"
         "Réponds avec UNIQUEMENT le tableau JSON, rien d'autre."
     )
     system = (

@@ -35,6 +35,16 @@ public class ParentAlert
 
     public bool IsRead { get; set; } = false;
 
+    /// <summary>
+    /// Clé de déduplication stable pour un même évènement (ex. mois civil pour une
+    /// baisse de score, id de devoir pour un retard, date d'examen pour une veille).
+    /// Ajoutée en 14.1 (2026-10-08) pour ParentAdvisorThresholdService : NULL pour les
+    /// alertes générées par l'ancien flux à la volée (parent_alert_routes.py), qui garde
+    /// sa déduplication 24h existante, inchangée.
+    /// </summary>
+    [MaxLength(100)]
+    public string? DedupKey { get; set; }
+
     /// <summary>Moment où le signal a été détecté dans l'activité de l'enfant (peut différer de CreatedAt).</summary>
     public DateTime DetectedAt { get; set; }
 

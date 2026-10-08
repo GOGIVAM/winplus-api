@@ -37,6 +37,8 @@ public static class ServiceScopes
     public const string InstitutionReport = "ai.institution-report"; // /api/institution/action-plan
     public const string ParentReport = "ai.parent-report";          // /api/chatbot/chat
     public const string Decrochage = "ai.decrochage";               // /api/winai/detection-decrochage
+    public const string ParentAdvisorThresholds = "ai.parent-advisor-thresholds"; // /api/parent-advisor/threshold-alerts
+    public const string ParentWeeklyTrend = "ai.parent-weekly-trend";             // /api/parent-advisor/weekly-trend
 }
 
 public class ServiceTokenProvider : IServiceTokenProvider

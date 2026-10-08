@@ -1361,9 +1361,16 @@ modelBuilder.Entity<Exam>(entity =>
             entity.Property(e => e.Severity).IsRequired().HasMaxLength(10).HasDefaultValue("Low");
             entity.Property(e => e.Content).IsRequired();
             entity.Property(e => e.IsRead).HasDefaultValue(false);
+            entity.Property(e => e.DedupKey).HasMaxLength(100);
             entity.HasIndex(e => e.ParentId);
             entity.HasIndex(e => e.ChildId);
             entity.HasIndex(e => new { e.ParentId, e.ChildId, e.IsRead });
+            // 14.1 : une seule ligne par évènement précis (ParentAdvisorThresholdService).
+            // Partiel (WHERE DedupKey IS NOT NULL) : ne contraint pas les alertes de
+            // l'ancien flux parent_alert_routes.py, qui ne renseigne jamais cette colonne.
+            entity.HasIndex(e => new { e.ParentId, e.ChildId, e.Type, e.DedupKey })
+                .IsUnique()
+                .HasFilter("\"DedupKey\" IS NOT NULL");
             entity.HasOne(e => e.Parent)
                 .WithMany()
                 .HasForeignKey(e => e.ParentId)

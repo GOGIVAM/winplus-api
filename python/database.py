@@ -130,6 +130,18 @@ class TeacherClassStudent(Base):
     StudentId = Column(Integer, nullable=False, index=True)
 
 
+class TeacherClass(Base):
+    """Lecture seule : classe d'un professeur (.NET, Module 11, TeacherClass.cs).
+    Module 16 (lot 6) : nécessaire pour vérifier qu'un élève ciblé par un
+    professeur pour une génération de contenu personnalisée appartient bien
+    à une de ses classes, avant d'exploiter son profil (voir
+    _assert_teacher_can_target_student, teacher_extra_routes.py)."""
+    __tablename__ = 'TeacherClasses'
+
+    Id = Column(Integer, primary_key=True)
+    TeacherId = Column(Integer, nullable=False, index=True)
+
+
 class Assignment(Base):
     """Lecture seule : devoir donné par un professeur à une classe (.NET,
     Module 4/11). Module 13 (lot 6) : base du calcul des devoirs en retard
