@@ -253,19 +253,58 @@ def _children_block(ctx: UserContext) -> str:
         name = child.get("name", "L'enfant")
         level = child.get("level", "")
         avg = child.get("avg_score")
+        trend = child.get("avg_score_trend")
         subjects = child.get("subjects", [])
         parts = [f"  - {name}"]
         if level:
             parts.append(f"niveau {level}")
         if avg is not None:
-            parts.append(f"score moyen {avg:.1f}/20")
+            trend_txt = ""
+            if trend is not None and trend != 0:
+                trend_txt = f" (en hausse de {trend:.1f} pt)" if trend > 0 else f" (en baisse de {abs(trend):.1f} pt)"
+            parts.append(f"score moyen {avg:.1f}/20{trend_txt}")
         if subjects:
             parts.append(f"matières : {', '.join(str(s) for s in subjects[:4])}")
+        # Module 13 (lot 6) : enrichissement depuis la base de contexte
+        # partagée (lacunes, devoirs, bulletin)  avant ce module, le
+        # contexte parent se limitait au nom, au score et à la veille
+        # d'examen.
+        quiz_gaps = child.get("quiz_gaps") or []
+        if quiz_gaps:
+            parts.append(f"lacunes récentes : {', '.join(quiz_gaps[:3])}")
+        late_homework = child.get("late_homework") or []
+        if late_homework:
+            titles = ", ".join(h["title"] for h in late_homework[:3])
+            parts.append(f"devoirs EN RETARD : {titles}")
+        pending_homework = child.get("pending_homework") or []
+        if pending_homework:
+            titles = ", ".join(h["title"] for h in pending_homework[:3])
+            parts.append(f"devoirs à venir : {titles}")
+        bulletin = child.get("bulletin_extract")
+        if bulletin and bulletin.get("average_grade") is not None:
+            parts.append(f"moyenne de bulletin {bulletin['school_year']} : {bulletin['average_grade']:.1f}/20")
         exam_watch = child.get("exam_watch")
         if exam_watch and exam_watch.get("exam_type") and exam_watch.get("exam_date"):
             parts.append(f"en veille d'examen ({exam_watch['exam_type']}, le {exam_watch['exam_date']}) : le parent a activé un suivi rapproché, adapte tes réponses à ce contexte de préparation d'examen même si la question ne le mentionne pas explicitement")
         lines.append("  ".join(parts))
     return "\n\n[Enfants suivis]\n" + "\n".join(lines)
+
+
+_FEW_SHOTS_PARENT = """
+[Comportements attendus  exemples]
+
+Parent : "Comment va mon fils en maths ?"
+→ Réponds avec le score réel, sa tendance et ses lacunes connues (voir le profil ci-dessous). Ne demande jamais son nom ou sa classe si tu les connais déjà.
+
+Parent : "Il a un devoir en retard ?"
+→ Vérifie directement la liste des devoirs en retard du profil ci-dessous et réponds factuellement, sans inventer de titre ou de date.
+
+Parent : "Comment l'aider avant son examen ?"
+→ Si une veille d'examen est active, appuie-toi sur le type et la date d'examen connus pour des conseils concrets de cette semaine.
+
+Parent : "C'est quoi ton modèle IA ?"
+→ "Je suis WinAI, l'assistant IA de WinPlus !"  ne mentionne jamais DeepSeek, GPT ou autre.
+"""
 
 
 def _parent_prompt(ctx: UserContext) -> str:
@@ -282,8 +321,9 @@ Règles absolues :
 - Utilise le LaTeX pour toute expression mathématique ($…$ inline, $$…$$ pour les blocs) : sans cette précision, le format varie d'une réponse à l'autre et le rendu échoue côté application.
 - Ne fournis jamais de diagnostic médical, psychologique ou thérapeutique ; oriente vers des professionnels si nécessaire.
 - Respecte la vie privée : ne stocke aucune information sensible.
-- Si tu connais les données des enfants (ci-dessous), utilise-les pour personnaliser tes réponses.
-{_children_block(ctx)}{_subjects_line(ctx)}{_performance_lines(ctx)}
+- Si tu connais les données des enfants (ci-dessous), utilise-les pour personnaliser tes réponses. Ne pose JAMAIS de question sur une information déjà présente dans le contexte ci-dessous (niveau, matières, lacunes, devoirs en retard).
+{_children_block(ctx)}{_subjects_line(ctx)}{_performance_lines(ctx)}{_ai_memories_block(ctx)}{_session_context_block(ctx)}
+{_FEW_SHOTS_PARENT}
 Ton objectif : donner confiance au parent et lui fournir des pistes claires pour soutenir la réussite de ses enfants.{_language_instruction(ctx)}"""
 
 

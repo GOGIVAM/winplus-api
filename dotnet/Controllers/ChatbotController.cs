@@ -707,6 +707,27 @@ public class ChatbotController : ControllerBase
             // IChatbotService.GetLiveProfileContextAsync).
             var liveProfile = await _chatbotService.GetLiveProfileContextAsync(userId);
 
+            // Module 13 (lot 6) : ce même endpoint est le chemin principal du
+            // frontend web pour l'onglet WinAI parent (ParentWinAITab.tsx),
+            // qui envoie déjà un `user_context.role`/`child_ids` dans le
+            // corps de sa requête  mais StreamChatRequest ne déclare pas ce
+            // champ, donc ASP.NET le désérialise en l'ignorant silencieusement
+            // : il n'atteignait jamais FastAPI. Recalculé ici en direct depuis
+            // la base plutôt que relayé tel quel depuis le client, pour que le
+            // lien parent-enfant soit systématiquement vérifié côté serveur
+            // (jamais un child_id arbitraire fourni par le client) et pour que
+            // le mobile, qui n'envoie pas ce champ du tout, obtienne le même
+            // contexte que le web.
+            var role = await _dbContext.Users.Where(u => u.Id == userId).Select(u => u.Role).FirstOrDefaultAsync(cancellationToken);
+            List<int>? childIds = null;
+            if (role == "parent")
+            {
+                childIds = await _dbContext.ParentStudentLinks
+                    .Where(l => l.ParentId == userId && l.Status == "accepted")
+                    .Select(l => l.StudentId)
+                    .ToListAsync(cancellationToken);
+            }
+
             // Forward request to FastAPI stream endpoint
             var fastApiBody = new
             {
@@ -719,6 +740,8 @@ public class ChatbotController : ControllerBase
                 temperature = 0.7,
                 user_context = new
                 {
+                    role,
+                    child_ids = childIds,
                     grade = liveProfile.Grade,
                     enrolled_subjects = liveProfile.EnrolledSubjects.Select(s => new { id = s.SubjectId, title = s.Title }),
                     enrolled_courses = liveProfile.EnrolledCourses.Select(c => new { id = c.CourseId, title = c.Title }),

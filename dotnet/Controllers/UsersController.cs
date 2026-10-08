@@ -83,6 +83,8 @@ public class UsersController : ControllerBase
                 TargetExam = user.TargetExam,
                 TeachingSubjects = user.TeachingSubjects,
                 TeachingLevels = user.TeachingLevels,
+                ParentChildObjective = user.ParentChildObjective,
+                ParentFollowUpPreference = user.ParentFollowUpPreference,
                 AvatarUrl = user.AvatarUrl,
                 CoverUrl = user.CoverUrl,
                 Role = user.Role,
@@ -173,6 +175,8 @@ public class UsersController : ControllerBase
             if (request.TargetExam != null) user.TargetExam = request.TargetExam;
             if (request.TeachingSubjects != null) user.TeachingSubjects = request.TeachingSubjects;
             if (request.TeachingLevels != null) user.TeachingLevels = request.TeachingLevels;
+            if (request.ParentChildObjective != null) user.ParentChildObjective = request.ParentChildObjective;
+            if (request.ParentFollowUpPreference is "close" or "weekly" or "minimal") user.ParentFollowUpPreference = request.ParentFollowUpPreference;
 
             var updated = await _userService.UpdateUserAsync(user);
 
@@ -208,6 +212,8 @@ public class UsersController : ControllerBase
                 TargetExam = updated.TargetExam,
                 TeachingSubjects = updated.TeachingSubjects,
                 TeachingLevels = updated.TeachingLevels,
+                ParentChildObjective = updated.ParentChildObjective,
+                ParentFollowUpPreference = updated.ParentFollowUpPreference,
                 AvatarUrl = updated.AvatarUrl,
                 CoverUrl = updated.CoverUrl,
                 Role = updated.Role,
@@ -218,6 +224,87 @@ public class UsersController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error updating profile");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// GET /api/users/profile/completion  Module 15 (lot 6) : généralise à
+    /// l'élève, au professeur (catalogue) et au parent le score de
+    /// complétude 0-100 + liste d'éléments manquants déjà en place pour le
+    /// mode Répétiteur (TutorProfileService.ComputeCompletion). Un seul
+    /// endpoint paramétré par le rôle réel de l'appelant plutôt qu'un par
+    /// rôle : la forme de la réponse (score + liste) est strictement
+    /// identique pour les trois, seule la composition des items change.
+    /// </summary>
+    [HttpGet("profile/completion")]
+    [Authorize]
+    public async Task<IActionResult> GetProfileCompletion()
+    {
+        try
+        {
+            var userId = User.GetUserId();
+            var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+            if (user == null) return NotFound();
+
+            var missing = new List<ProfileMissingItemDto>();
+            var score = 100;
+            void Check(bool present, int weight, string field, string label)
+            {
+                if (!present)
+                {
+                    score -= weight;
+                    missing.Add(new ProfileMissingItemDto { Field = field, Label = label });
+                }
+            }
+
+            switch (user.Role)
+            {
+                case "student":
+                    var learningStyle = await _db.ChatbotContexts.AsNoTracking()
+                        .Where(c => c.UserId == userId).Select(c => c.LearningStyle).FirstOrDefaultAsync();
+                    var hasEnrollment = await _db.Enrollments.AsNoTracking()
+                        .AnyAsync(e => e.UserId == userId && !e.IsDeleted);
+                    Check(!string.IsNullOrWhiteSpace(user.Level), 20, "level", "Niveau");
+                    Check(!string.IsNullOrWhiteSpace(user.Specialization), 15, "specialization", "Filière / série");
+                    Check(!string.IsNullOrWhiteSpace(user.TargetExam), 15, "targetExam", "Examen ou concours visé");
+                    Check(!string.IsNullOrWhiteSpace(learningStyle), 15, "learningStyle", "Style d'apprentissage");
+                    Check(hasEnrollment, 20, "enrollment", "Au moins une matière suivie");
+                    Check(!string.IsNullOrWhiteSpace(user.AvatarUrl), 5, "avatar", "Photo de profil");
+                    Check(!string.IsNullOrWhiteSpace(user.Phone), 10, "phone", "Numéro de téléphone");
+                    break;
+
+                case "teacher":
+                    Check(user.TeachingSubjects.Count > 0, 25, "teachingSubjects", "Matières enseignées");
+                    Check(user.TeachingLevels.Count > 0, 20, "teachingLevels", "Niveaux enseignés");
+                    Check(!string.IsNullOrWhiteSpace(user.Bio), 15, "bio", "Bio courte");
+                    Check(!string.IsNullOrWhiteSpace(user.AvatarUrl), 15, "avatar", "Photo de profil");
+                    Check(!string.IsNullOrWhiteSpace(user.Phone), 15, "phone", "Numéro de téléphone");
+                    Check(!string.IsNullOrWhiteSpace(user.City), 10, "city", "Ville");
+                    break;
+
+                case "parent":
+                    var hasChild = await _db.ParentStudentLinks.AsNoTracking()
+                        .AnyAsync(l => l.ParentId == userId && l.Status == "accepted");
+                    Check(hasChild, 30, "children", "Au moins un enfant lié");
+                    Check(!string.IsNullOrWhiteSpace(user.ParentChildObjective), 20, "childObjective", "Objectif déclaré pour l'enfant");
+                    Check(!string.IsNullOrWhiteSpace(user.ParentFollowUpPreference), 15, "followUpPreference", "Préférence de suivi");
+                    Check(!string.IsNullOrWhiteSpace(user.Phone), 20, "phone", "Numéro de téléphone");
+                    Check(!string.IsNullOrWhiteSpace(user.AvatarUrl), 15, "avatar", "Photo de profil");
+                    break;
+
+                default:
+                    // Rôle sans profil applicatif dédié (admin, institution) :
+                    // réponse propre plutôt qu'une erreur, comme l'exige le
+                    // cas limite du Module 15.
+                    return Ok(new ProfileCompletionDto { Score = 100, MissingItems = new() });
+            }
+
+            return Ok(new ProfileCompletionDto { Score = Math.Max(0, score), MissingItems = missing });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error computing profile completion");
             return StatusCode(500, new { error = "Internal server error" });
         }
     }

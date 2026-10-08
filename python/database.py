@@ -8,6 +8,7 @@ Utilise SQLAlchemy ORM pour PostgreSQL avec les schémas ASP.NET.
 
 import os
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, Numeric, DateTime, Date, Text, ForeignKey, func, and_, or_, desc, text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -106,6 +107,66 @@ class User(Base):
     FirstName = Column(String(100))
     LastName = Column(String(100))
     Role = Column(String(50))
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    # Module 15 (lot 6) : mappings ajoutés pour que le chargement serveur du
+    # profil professeur (_load_teacher_profile_data) et la correction du champ
+    # "level" mort côté parent (_load_parent_children_data) puissent lire ces
+    # colonnes .NET sans repasser par le frontend. Colonnes déjà existantes
+    # côté .NET (SQL_AddProfileOnboardingFields.sql) ; ici on ne fait
+    # qu'exposer le mapping SQLAlchemy manquant.
+    Level = Column(String(100))
+    TeachingSubjects = Column(ARRAY(String))
+    TeachingLevels = Column(ARRAY(String))
+
+
+class TeacherClassStudent(Base):
+    """Lecture seule : appartenance d'un élève à une classe (.NET, Module 11).
+    Nécessaire pour Module 13 (lot 6) : savoir quels devoirs (Assignment)
+    s'appliquent à un enfant donné pour calculer les devoirs en retard."""
+    __tablename__ = 'TeacherClassStudents'
+
+    Id = Column(Integer, primary_key=True)
+    TeacherClassId = Column(Integer, nullable=False, index=True)
+    StudentId = Column(Integer, nullable=False, index=True)
+
+
+class Assignment(Base):
+    """Lecture seule : devoir donné par un professeur à une classe (.NET,
+    Module 4/11). Module 13 (lot 6) : base du calcul des devoirs en retard
+    dans le contexte parent partagé."""
+    __tablename__ = 'Assignments'
+
+    Id = Column(Integer, primary_key=True)
+    TeacherId = Column(Integer, nullable=False)
+    TeacherClassId = Column(Integer, nullable=False, index=True)
+    Title = Column(String(200), nullable=False)
+    DueDate = Column(DateTime(timezone=True))
+    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
+class Submission(Base):
+    """Lecture seule : copie d'un élève pour un devoir (.NET, Module 4).
+    Module 13 (lot 6) : détermine si un devoir a déjà été rendu."""
+    __tablename__ = 'Submissions'
+
+    Id = Column(Integer, primary_key=True)
+    AssignmentId = Column(Integer, ForeignKey('Assignments.Id'), nullable=False, index=True)
+    StudentId = Column(Integer, nullable=False, index=True)
+    SubmittedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    Status = Column(String(20), nullable=False, default='pending')
+    Score = Column(Numeric)
+
+
+class AcademicRecord(Base):
+    """Lecture seule : moyenne scolaire réelle (bulletin d'établissement,
+    .NET). Module 13 (lot 6) : extraits de bulletin dans le contexte parent."""
+    __tablename__ = 'AcademicRecords'
+
+    Id = Column(Integer, primary_key=True)
+    StudentId = Column(Integer, nullable=False, index=True)
+    SchoolYear = Column(String(20), nullable=False)
+    AverageGrade = Column(Numeric(4, 2), nullable=False)
+    UpdatedAt = Column(DateTime(timezone=True))
     CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
 
@@ -304,6 +365,18 @@ class QuizMistake(Base):
     IsResolved = Column(Boolean, nullable=False, default=False)
     ResolvedAt = Column(DateTime(timezone=True), nullable=True)
     CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
+class ChatbotContext(Base):
+    """Lecture seule : contexte chatbot (.NET, ChatbotContext.cs). Module 16
+    (lot 6) : seule colonne lue ici est LearningStyle (VARK), pour le
+    brancher dans les générateurs de contenu de quiz et de révision  qui
+    ne le lisaient pas du tout jusqu'ici."""
+    __tablename__ = 'ChatbotContexts'
+
+    Id = Column(Integer, primary_key=True)
+    UserId = Column(Integer, nullable=False, index=True)
+    LearningStyle = Column(String(50))
 
 
 class UserAIMemory(Base):

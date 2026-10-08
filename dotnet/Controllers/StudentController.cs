@@ -246,7 +246,20 @@ public class StudentController : ControllerBase
     }
 
     /// <summary>
-    /// Récupère les examens recommandés
+    /// Récupère les examens recommandés.
+    ///
+    /// Note de décision (Module 16, lot 6) : cet endpoint et GetPriorities
+    /// ci-dessous utilisent un tri/filtre déterministe (Goals, Enrollment.
+    /// ProgressPercentage, Users.Level), sans appel à un modèle de langage.
+    /// Décision du 2026-10-08 : aucun changement. Un tri déterministe sur
+    /// des critères déjà pertinents (progression, échéance d'objectif,
+    /// niveau) est prévisible et rapide ; y substituer un appel LLM
+    /// ajouterait de la latence et un coût de token pour un gain non démontré
+    /// sur ces deux listes précises (contrairement aux générateurs de
+    /// contenu de quiz/révision, où le LLM produit du contenu nouveau). Si
+    /// une personnalisation plus fine s'avère nécessaire plus tard (ex.
+    /// pondérer par lacunes WinAI), ce sera un changement ciblé, pas un
+    /// changement par principe.
     /// </summary>
     [HttpGet("exams/recommended")]
     [ProducesResponseType(StatusCodes.Status200OK)]

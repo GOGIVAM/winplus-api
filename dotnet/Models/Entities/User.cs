@@ -89,6 +89,26 @@ public class User
     public List<string> TeachingLevels { get; set; } = new();
 
     /// <summary>
+    /// Module 15 (lot 6) : onboarding parent, jusqu'ici inexistant (le parent
+    /// était redirigé directement vers son espace, voir CompleteProfile.tsx).
+    /// Objectif libre déclaré pour un ou plusieurs enfants à l'inscription.
+    /// Champ simple sur User, à l'image de Specialization/TargetExam pour
+    /// l'élève : ne duplique pas Goal.cs (proposition d'objectif ciblée sur
+    /// un enfant déjà lié), nécessaire car un parent peut faire l'onboarding
+    /// avant d'avoir lié le moindre enfant.
+    /// </summary>
+    [MaxLength(300)]
+    public string? ParentChildObjective { get; set; }
+
+    /// <summary>
+    /// Module 15 : préférence de suivi déclarée à l'onboarding parent.
+    /// Valeurs attendues : "close" (suivi rapproché), "weekly" (rapport
+    /// hebdomadaire seulement) ou "minimal". Facultatif, non bloquant.
+    /// </summary>
+    [MaxLength(30)]
+    public string? ParentFollowUpPreference { get; set; }
+
+    /// <summary>
     /// Institution rattachée (comptes institution et leurs élèves).
     /// Avant cette colonne, le dashboard institution utilisait l'id de
     /// l'utilisateur comme id d'établissement : les KPIs ne pouvaient pas

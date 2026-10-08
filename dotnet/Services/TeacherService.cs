@@ -225,7 +225,14 @@ public class TeacherService : ITeacherService
                 phone = teacher.Phone,
                 profileImageUrl = teacher.ProfileImageUrl,
                 bio = teacher.Bio,
-                createdAt = teacher.CreatedAt
+                createdAt = teacher.CreatedAt,
+                // Module 15 (lot 6) : corrige le bug où ces matières/niveaux
+                // n'étaient visibles que sur /users/profile (UsersController),
+                // jamais sur ce profil professeur dédié. Champs ajoutés sans
+                // renommer les champs existants pour ne casser aucun
+                // consommateur actuel.
+                teachingSubjects = teacher.TeachingSubjects,
+                teachingLevels = teacher.TeachingLevels
             };
         }
         catch (Exception ex)

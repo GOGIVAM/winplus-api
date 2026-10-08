@@ -21,7 +21,11 @@ from services.ai_quota import check_quota
 from sqlalchemy import text as sql_text
 from auth import verify_token, require_user_or_service, UserTokenData
 from schemas import ChatRequest, ChatResponse, ChatbotHealthResponse, ChatMessage, ChatbotContextRequest
-from database import Database, Conversation, ChatMessage as ChatMessageDB, UserAIMemory, User, QuizAttempt, DailyScore, QuizMistake, ExamCoachPlanNet
+from database import (
+    Database, Conversation, ChatMessage as ChatMessageDB, UserAIMemory, User,
+    QuizAttempt, DailyScore, QuizMistake, ExamCoachPlanNet,
+    TutorProfile, TutorSubject, TutorLevel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -124,83 +128,121 @@ def _load_user_memories(user_id: int, current_message: str = "") -> list:
         return []
 
 
-def _load_parent_children_data(child_ids: list) -> list:
-    """Charge un résumé des enfants pour enrichir le contexte parental WinAI."""
-    if not child_ids:
+def _load_parent_children_data(child_ids: list, parent_id: Optional[int] = None) -> list:
+    """Charge un résumé des enfants pour enrichir le contexte parental WinAI.
+
+    Module 13 (lot 6) : délègue désormais à la base de contexte partagée
+    (services/parent_child_context.build_child_context), réutilisée aussi
+    par le rapport hebdomadaire et les insights inter-enfants, pour qu'un
+    même indicateur affiche la même valeur dans les trois. Vérifie
+    systématiquement le lien parent-enfant (ParentAccessDenied) : avant ce
+    module, cette fonction faisait confiance aux child_ids transmis sans
+    aucune vérification  n'importe quel enfant devinable était lisible.
+    `parent_id` est obligatoire pour cette vérification ; sans lui (appel
+    historique), aucune donnée n'est renvoyée plutôt que de régresser sur la
+    sécurité.
+    """
+    if not child_ids or not parent_id:
         return []
+    from services.parent_child_context import build_child_context, ParentAccessDenied
+
+    children = []
+    for child_id in child_ids[:5]:
+        try:
+            ctx = build_child_context(parent_id, child_id)
+        except ParentAccessDenied:
+            logger.warning(f"Parent {parent_id} tried to access unlinked child {child_id}")
+            continue
+        if not ctx:
+            continue
+        child_entry = {
+            "name": ctx["name"],
+            "level": ctx["level"],
+            "avg_score": ctx["avg_score"],
+            "avg_score_trend": ctx["avg_score_trend"],
+            "subjects": ctx["subjects"],
+            "quiz_gaps": ctx["quiz_gaps"],
+            "pending_homework": ctx["pending_homework"],
+            "late_homework": ctx["late_homework"],
+            "bulletin_extract": ctx["bulletin_extract"],
+        }
+        if ctx.get("exam_watch"):
+            child_entry["exam_watch"] = ctx["exam_watch"]
+        children.append(child_entry)
+    return children
+
+
+def _load_teacher_profile_data(teacher_id: int) -> dict:
+    """Charge le profil professeur côté serveur pour WinAI (Module 15, lot 6),
+    sur le modèle exact de _load_parent_children_data : jusqu'ici, aucune
+    fonction équivalente n'existait pour ce rôle, et l'enrichissement du
+    prompt professeur dépendait entièrement de ce que le frontend choisissait
+    de transmettre. Matières/niveaux déclarés (profil "catalogue",
+    User.TeachingSubjects/TeachingLevels) + éléments du Mode Répétiteur si ce
+    sous-mode est actif (TutorProfile.IsActive), comme le demande l'audit.
+    Ne mélange pas les deux sources sans les distinguer : la liste de
+    matières/niveaux réellement utilisée par le prompt panache catalogue et
+    répétiteur, dédupliqués, en cas de contradiction entre les deux profils
+    (cas explicitement laissé à arbitrer par l'audit)."""
     try:
-        from datetime import datetime, timedelta, timezone
         db = Database()
         session = db.SessionLocal()
-        now = datetime.now(timezone.utc)
-        cutoff_30 = now - timedelta(days=30)
-        children = []
         try:
-            for child_id in child_ids[:5]:
-                child = session.query(User).filter(User.Id == child_id).first()
-                if not child:
-                    continue
-                try:
-                    scores = (
-                        session.query(DailyScore)
-                        .filter(DailyScore.UserId == child_id, DailyScore.CreatedAt >= cutoff_30)
-                        .all()
-                    )
-                except Exception:
-                    session.rollback()
-                    scores = []
-                avg_score = (
-                    sum(float(s.AverageScore) for s in scores) / len(scores) * 20 / 100
-                    if scores else None
-                )
+            teacher = session.query(User).filter(User.Id == teacher_id).first()
+            if not teacher:
+                return {}
 
-                child_entry = {
-                    "name": child.FirstName or f"Enfant {child_id}",
-                    "avg_score": round(avg_score, 1) if avg_score is not None else None,
-                    "subjects": [],
-                }
+            subjects = list(teacher.TeachingSubjects or [])
+            levels = list(teacher.TeachingLevels or [])
+            teaching_style = None
 
-                try:
-                    watch_plan = (
-                        session.query(ExamCoachPlanNet)
-                        .filter(
-                            ExamCoachPlanNet.UserId == child_id,
-                            ExamCoachPlanNet.IsActive == True,
-                            ExamCoachPlanNet.ParentWatchModeActivatedAt.isnot(None),
-                        )
-                        .first()
-                    )
-                    if watch_plan is not None:
-                        child_entry["exam_watch"] = {
-                            "exam_type": watch_plan.ExamType,
-                            "exam_date": watch_plan.ExamDate.date().isoformat(),
-                        }
-                except Exception:
-                    session.rollback()
+            tutor_profile = (
+                session.query(TutorProfile)
+                .filter(TutorProfile.UserId == teacher_id, TutorProfile.IsActive == True)
+                .first()
+            )
+            if tutor_profile is not None:
+                tutor_subjects = [
+                    s.Subject for s in
+                    session.query(TutorSubject).filter(TutorSubject.TutorProfileId == tutor_profile.Id).all()
+                ]
+                tutor_levels = [
+                    l.Level for l in
+                    session.query(TutorLevel).filter(TutorLevel.TutorProfileId == tutor_profile.Id).all()
+                ]
+                # Dédoublonnage en conservant l'ordre : le catalogue en
+                # premier, le répétiteur en complément.
+                subjects = list(dict.fromkeys(subjects + tutor_subjects))
+                levels = list(dict.fromkeys(levels + tutor_levels))
+                teaching_style = tutor_profile.Title or None
 
-                children.append(child_entry)
+            return {
+                "subjects": subjects,
+                "levels": levels,
+                "teaching_style": teaching_style,
+                "is_tutor_mode_active": tutor_profile is not None,
+            }
         finally:
             session.close()
-        return children
     except Exception as e:
-        logger.warning(f"Could not load parent children data: {e}")
-        return []
+        logger.warning(f"Could not load teacher profile data for user {teacher_id}: {e}")
+        return {}
 
 
-_MEMORY_EXTRACTION_PROMPT = """Tu es un extracteur de mémoires pédagogiques. Analyse la réponse WinAI ci-dessous et extrait les informations mémorisables sur l'étudiant.
+_MEMORY_EXTRACTION_PROMPT = """Tu es un extracteur de mémoires pédagogiques. Analyse la réponse WinAI ci-dessous et extrait les informations mémorisables sur l'utilisateur (un élève qui parle de lui-même, ou un parent qui parle de son enfant  module 13, lot 6).
 
 Retourne un tableau JSON (peut être vide []) avec des objets :
 {"type": "<type>", "content": "<contenu court>"}
 
 Types autorisés :
-- struggling_topics : notion que l'étudiant a du mal à comprendre
-- understood_topics : notion que l'étudiant maîtrise bien
+- struggling_topics : notion que l'élève (ou l'enfant du parent) a du mal à comprendre
+- understood_topics : notion que l'élève (ou l'enfant du parent) maîtrise bien
 - exam_context : examen ou objectif mentionné (ex: "Prépare le BAC C 2027")
 - learning_preference : préférence d'apprentissage détectée
 - motivation_style : style de motivation observé
 - unfinished_topic : la conversation semble s'arrêter en plein milieu d'un sujet
   ou d'une tâche non résolue (exercice commencé sans conclusion, question posée
-  sans réponse claire de l'étudiant, plan annoncé mais pas terminé). Contenu =
+  sans réponse claire de l'utilisateur, plan annoncé mais pas terminé). Contenu =
   description courte du sujet interrompu (ex: "Résolution d'équations du 2nd degré").
   Ne pas extraire ce type si la conversation se termine normalement (remerciement,
   question résolue, salutation de fin).
@@ -348,19 +390,39 @@ def _build_prompt_from_request(
     if role == "parent":
         raw_child_ids = getattr(user_context, "child_ids", None) or []
         if raw_child_ids:
-            children_data = _load_parent_children_data(list(raw_child_ids))
+            children_data = _load_parent_children_data(list(raw_child_ids), token_data.user_id)
+
+    # Module 15 (lot 6) : chargement serveur dédié pour le professeur, sur le
+    # modèle du parent ci-dessus. Avant ce module, rien n'était lu côté
+    # serveur pour ce rôle  l'enrichissement dépendait entièrement de ce que
+    # le frontend transmettait dans user_context. Le serveur est désormais
+    # la source d'autorité ; on ne retombe sur le frontend que s'il n'a
+    # rien à donner (professeur sans aucune matière renseignée).
+    teacher_subjects: list = []
+    teacher_levels: list = []
+    if role == "teacher" and token_data.user_id:
+        teacher_profile_data = _load_teacher_profile_data(token_data.user_id)
+        teacher_subjects = teacher_profile_data.get("subjects") or []
+        teacher_levels = teacher_profile_data.get("levels") or []
 
     # Résoudre la langue : préférence explicite > auto-détection depuis le dernier message
     force_lang = getattr(user_context, "force_language", None) if user_context else None
+
+    front_subjects = [
+        s.title for s in (user_context.enrolled_subjects or []) if s.title
+    ] if user_context and user_context.enrolled_subjects else []
 
     ctx = UserContext(
         role=role,
         first_name=getattr(user_context, "first_name", None),
         education_level=getattr(user_context, "education_level", None),
-        grade=getattr(user_context, "grade", None),
-        enrolled_subjects=[
-            s.title for s in (user_context.enrolled_subjects or []) if s.title
-        ] if user_context and user_context.enrolled_subjects else [],
+        grade=(
+            ", ".join(teacher_levels) if role == "teacher" and teacher_levels
+            else getattr(user_context, "grade", None)
+        ),
+        enrolled_subjects=(
+            teacher_subjects if role == "teacher" and teacher_subjects else front_subjects
+        ),
         objectives=list(user_context.objectives or []) if user_context else [],
         learning_style=getattr(user_context, "learning_style", None),
         performance_history=performance_history,
@@ -626,7 +688,11 @@ async def chat(
         # réellement utilisé par le frontend aujourd'hui (useChatbot.ts). En
         # tâche de fond : ne retarde jamais la réponse HTTP pour un coût
         # supplémentaire (appel DeepSeek dédié à l'extraction).
-        if winai_role == "student" and result.get("success") and result.get("content"):
+        # Module 13 (lot 6) : étendu au rôle parent (l'extraction ne
+        # concernait que l'élève jusqu'ici), pour que le conseiller parent se
+        # souvienne aussi de ce qui a été dit sur l'enfant d'une conversation
+        # à l'autre.
+        if winai_role in ("student", "parent") and result.get("success") and result.get("content"):
             asyncio.create_task(asyncio.to_thread(
                 _extract_memories_background, current_user.user_id, result["content"]
             ))
@@ -760,8 +826,9 @@ async def stream_chat(
                 except Exception as e:
                     logger.error(f"Failed to save assistant message: {e}")
                     session.rollback()
-            # Extraction asynchrone des mémoires (rôle étudiant seulement)
-            if full_content and current_user.user_id and winai_role == "student":
+            # Extraction asynchrone des mémoires (Module 13, lot 6 : étendue
+            # au rôle parent, auparavant réservée à l'élève).
+            if full_content and current_user.user_id and winai_role in ("student", "parent"):
                 _extract_and_save_memories(current_user.user_id, full_content, session)
             session.close()
 

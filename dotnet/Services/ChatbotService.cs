@@ -398,6 +398,25 @@ public class ChatbotService : IChatbotService
             request.UserContext.Grade = liveProfile.Grade;
             request.UserContext.EnrolledSubjects = liveProfile.EnrolledSubjects;
             request.UserContext.EnrolledCourses = liveProfile.EnrolledCourses;
+
+            // Module 13 (lot 6) : bug mobile confirmé par l'audit  ce même
+            // objet UserContext ne portait ni le rôle ni les identifiants des
+            // enfants, si bien que le conseiller mobile ignorait
+            // systématiquement quels enfants sont liés au parent (le web
+            // transmet ces champs lui-même depuis ParentWinAITab.tsx, mais le
+            // mobile appelle ce même service .NET sans jamais les connaître).
+            // Toujours recalculés en direct comme Grade/EnrolledSubjects
+            // ci-dessus : le rôle peut changer, et le lien parent-enfant doit
+            // rester vérifié côté serveur, jamais transmis tel quel par le client.
+            var role = await _db.Users.Where(u => u.Id == userId).Select(u => u.Role).FirstOrDefaultAsync();
+            request.UserContext.Role = role;
+            if (role == "parent")
+            {
+                request.UserContext.ChildIds = await _db.ParentStudentLinks
+                    .Where(l => l.ParentId == userId && l.Status == "accepted")
+                    .Select(l => l.StudentId)
+                    .ToListAsync();
+            }
         }
 
         return request;

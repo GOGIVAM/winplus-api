@@ -231,7 +231,11 @@ public class ParentService : IParentService
                 email = parent.Email,
                 phone = parent.Phone,
                 profileImageUrl = parent.ProfileImageUrl,
-                createdAt = parent.CreatedAt
+                createdAt = parent.CreatedAt,
+                // Module 15 (lot 6) : le profil parent ne retournait que les
+                // 5 champs ci-dessus. Ajoutés sans renommer l'existant.
+                childObjective = parent.ParentChildObjective,
+                followUpPreference = parent.ParentFollowUpPreference
             };
         }
         catch (Exception ex)

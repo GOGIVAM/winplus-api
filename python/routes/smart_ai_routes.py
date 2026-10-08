@@ -13,8 +13,9 @@ import time
 from datetime import datetime, timedelta
 
 from services.deepseek_client import get_deepseek_client
+from services.prompt_builder import _VARK_INSTRUCTIONS
 from auth import verify_token, require_user_or_service, UserTokenData
-from database import Database, User, QuizAttempt, DailyScore, Subject, DownloadHistory, Goal, QuizMistake
+from database import Database, User, QuizAttempt, DailyScore, Subject, DownloadHistory, Goal, QuizMistake, ChatbotContext, Enrollment
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,47 @@ _notif_daily: Dict[int, tuple[int, str]] = {}         # user_id → (count, date
 
 _CACHE_TTL  = 86_400   # 24 h en secondes
 _RATE_LIMIT = 3        # max notifications personnalisées par user par jour
+
+
+def _load_student_generation_signals(user_id: int) -> tuple[str, list[str]]:
+    """
+    Module 16 (lot 6)  Signaux de profil supplémentaires pour les
+    générateurs de contenu de quiz et de révision, qui n'exploitaient déjà
+    les lacunes/objectifs/bulletins mais ignoraient le style d'apprentissage
+    et les matières réellement inscrites.
+
+    Retourne (style_instruction, enrolled_subjects) :
+    - style_instruction : bloc d'instructions VARK réutilisé TEL QUEL depuis
+      prompt_builder._VARK_INSTRUCTIONS (chat)  ne duplique jamais ce texte,
+      conformément à l'audit. Chaîne vide si style non renseigné (repli
+      identique au comportement précédent, cas "élève sans style").
+    - enrolled_subjects : matières réellement inscrites (max 6), jamais
+      utilisées jusqu'ici comme signal de génération.
+    """
+    db = Database()
+    session = db.SessionLocal()
+    try:
+        style = (
+            session.query(ChatbotContext.LearningStyle)
+            .filter(ChatbotContext.UserId == user_id)
+            .scalar()
+        )
+        style_instruction = _VARK_INSTRUCTIONS.get(style, "") if style else ""
+
+        subjects = [
+            title for (title,) in
+            session.query(Subject.Title)
+            .join(Enrollment, Enrollment.SubjectId == Subject.Id)
+            .filter(Enrollment.UserId == user_id, Enrollment.IsDeleted == False)
+            .limit(6)
+            .all()
+        ]
+        return style_instruction, subjects
+    except Exception as e:
+        logger.warning(f"[generation-signals] could not load signals for user {user_id}: {e}")
+        return "", []
+    finally:
+        session.close()
 
 
 def _rate_ok(user_id: int) -> bool:
@@ -386,6 +428,14 @@ async def generate_revision_content(
     finally:
         session.close()
 
+    # Module 16 (lot 6) : style d'apprentissage + matières réellement
+    # inscrites, en complément des lacunes/téléchargements/objectifs déjà
+    # exploités ci-dessus. N'importe jamais le texte du style si vide (élève
+    # sans style renseigné)  génération inchangée dans ce cas.
+    style_instruction, enrolled_subjects = _load_student_generation_signals(body.user_id)
+    style_block = f"\n[Style d'apprentissage de l'élève]\n{style_instruction}\n" if style_instruction else ""
+    enrolled_line = f"Matières dans lesquelles l'élève est inscrit : {', '.join(enrolled_subjects)}.\n" if enrolled_subjects else ""
+
     topic_line = f"Sous-thème demandé : {body.topic}\n" if body.topic else ""
     level_line = f"Niveau scolaire de l'élève : {body.level}.\n" if body.level else ""
 
@@ -419,7 +469,7 @@ async def generate_revision_content(
 
     prompt = (
         f"Tu es WinAI, professeur particulier pour un lycéen camerounais préparant ses examens.\n"
-        f"{subject_line}{level_line}{topic_line}{difficulty_line}\n"
+        f"{subject_line}{level_line}{topic_line}{difficulty_line}{enrolled_line}{style_block}\n"
         f"{context_lines}"
         f"Concentre la fiche sur ce que l'élève a réellement raté ou doit travailler en priorité, pas "
         f"un résumé générique du programme. Réponds UNIQUEMENT en JSON (sans balises markdown autour) :\n"
@@ -582,10 +632,18 @@ async def generate_quiz_content(
             f"PAS, même reformulées, choisis d'autres notions ou d'autres angles :\n{recent_list}\n\n"
         )
 
+    # Module 16 (lot 6) : style d'apprentissage + matières réellement
+    # inscrites, jusqu'ici absents de ce générateur (seuls les lacunes et le
+    # niveau l'étaient déjà). Chaîne vide si rien à ajouter  comportement
+    # inchangé pour un élève sans style renseigné.
+    style_instruction, enrolled_subjects = _load_student_generation_signals(body.user_id)
+    style_line = f"\n[Style d'apprentissage de l'élève]\n{style_instruction}\n" if style_instruction else ""
+    enrolled_line = f"Matières dans lesquelles l'élève est inscrit : {', '.join(enrolled_subjects)}.\n" if enrolled_subjects else ""
+
     prompt = (
         f"Génère exactement {QUIZ_QUESTION_COUNT} questions à choix multiples de niveau lycée/examens "
-        f"camerounais.\n{subject_line}{level_line}{topic_line}\n{context_line}"
-        f"{difficulty_line}{variety_line}{avoid_repeat_line}"
+        f"camerounais.\n{subject_line}{level_line}{topic_line}{enrolled_line}\n{context_line}"
+        f"{difficulty_line}{variety_line}{avoid_repeat_line}{style_line}"
         f'Format JSON strict, un objet unique : '
         f'{{{subject_json_field}"questions":[{{"id":"q1","question":"...",'
         f'"options":["A) ...","B) ...","C) ...","D) ..."],'

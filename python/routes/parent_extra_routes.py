@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from auth import verify_token, require_role, UserTokenData
 from database import Database, QuizAttempt, DailyScore, User, ParentStudentLink
 from services.deepseek_client import get_deepseek_client
+from services.parent_child_context import compute_child_context
 
 logger = logging.getLogger(__name__)
 
@@ -77,17 +78,24 @@ async def get_children_insights(
 
         for child_id in ids:
             _assert_can_access_child(session, current_user, child_id)
-            child_user = session.query(User).filter(User.Id == child_id).first()
-            child_name = child_user.FirstName or f"Enfant {child_id}" if child_user else f"Enfant {child_id}"
 
-            scores = (
-                session.query(DailyScore)
-                .filter(
-                    DailyScore.UserId == child_id,
-                    DailyScore.CreatedAt >= cutoff_30,
-                )
-                .all()
-            )
+            # Module 13 (lot 6) : le score moyen vient désormais de la même
+            # base de contexte partagée que le chat et le rapport
+            # hebdomadaire (services/parent_child_context), au lieu d'un
+            # recalcul local sur une fenêtre identique mais indépendante  un
+            # même score moyen doit afficher la même valeur dans les trois.
+            ctx = compute_child_context(child_id, session=session)
+            child_name = ctx["name"] if ctx else f"Enfant {child_id}"
+            avg_score_20 = ctx["avg_score"] if ctx and ctx.get("avg_score") is not None else 0.0
+            # Cet endpoint affichait jusqu'ici le score sur 100 (moyenne brute
+            # de DailyScore.AverageScore) ; le contexte partagé le renvoie sur
+            # 20 (convention du reste de l'app)  on revient à /100 ici pour
+            # ne pas changer la forme de réponse déjà consommée par le
+            # frontend (children_summary.avg_score), conformément à la règle
+            # du Module 15 "n'ajoute pas, ne renomme pas sans vérifier les
+            # consommateurs".
+            avg_score = avg_score_20 * 100 / 20 if avg_score_20 else 0.0
+
             attempts = (
                 session.query(QuizAttempt)
                 .filter(
@@ -96,24 +104,33 @@ async def get_children_insights(
                 )
                 .count()
             )
-
-            avg_score = (
-                sum(float(s.AverageScore) for s in scores) / len(scores)
-                if scores else 0.0
+            scores_30d = (
+                session.query(DailyScore.Date)
+                .filter(DailyScore.UserId == child_id, DailyScore.CreatedAt >= cutoff_30)
+                .all()
             )
+            active_days = len({d for (d,) in scores_30d})
 
             children_data.append({
                 "child_id": child_id,
                 "child_name": child_name,
                 "avg_score": round(avg_score, 1),
                 "quiz_count": attempts,
-                "active_days": len(set(s.Date for s in scores)),
+                "active_days": active_days,
+                # Module 16 (lot 6) : enrichi seulement après que la base de
+                # contexte partagée du Module 13 soit en place (ctx ci-dessus),
+                # pour ne pas reconstruire une seconde collecte de signaux.
+                # Avant, cet endpoint se limitait au score moyen et au nombre
+                # de quiz.
+                "late_homework_count": len(ctx["late_homework"]) if ctx else 0,
+                "quiz_gaps": ctx["quiz_gaps"] if ctx else [],
             })
 
         # Generate bienveillant insights with DeepSeek
         summary = "; ".join(
             f"{c['child_name']} (score moy. {c['avg_score']}%, {c['quiz_count']} quiz, "
-            f"{c['active_days']} jours actifs ce mois)"
+            f"{c['active_days']} jours actifs ce mois, {c['late_homework_count']} devoir(s) en retard, "
+            f"lacunes : {', '.join(c['quiz_gaps']) or 'aucune'})"
             for c in children_data
         )
         try:

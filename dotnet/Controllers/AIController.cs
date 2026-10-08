@@ -863,6 +863,72 @@ namespace Backend.Controllers;
             return Content(content, "application/json");
         }
 
+        /// <summary>
+        /// POST /api/ai/study-session/phase2/quiz  Module 32 (lot 6).
+        /// Proxy → Python /api/study-session/phase2/quiz. Avant ce module, ce
+        /// relais n'existait pas du tout : la phase 2 (quiz interactif),
+        /// pourtant écrite et testée côté Python, était inatteignable depuis
+        /// le web. Même patron exact que StudySessionGenerate ci-dessus :
+        /// même relais de jeton, même gestion d'erreur.
+        /// </summary>
+        [HttpPost("study-session/phase2/quiz")]
+        public async Task<IActionResult> StudySessionPhase2Quiz([FromBody] object body, CancellationToken ct)
+        {
+            var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/study-session/phase2/quiz");
+            req.Content = JsonContent.Create(body);
+            var auth = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+            var res = await httpClient.SendAsync(req, ct);
+            var content = await res.Content.ReadAsStringAsync(ct);
+            if (!res.IsSuccessStatusCode)
+                return StatusCode((int)res.StatusCode, content);
+            return Content(content, "application/json");
+        }
+
+        /// <summary>
+        /// POST /api/ai/study-session/phase3/summary  Module 32 (lot 6).
+        /// Proxy → Python /api/study-session/phase3/summary. Même raison
+        /// d'être que le relais phase2 ci-dessus : aucun relais n'existait.
+        /// </summary>
+        [HttpPost("study-session/phase3/summary")]
+        public async Task<IActionResult> StudySessionPhase3Summary([FromBody] object body, CancellationToken ct)
+        {
+            var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/study-session/phase3/summary");
+            req.Content = JsonContent.Create(body);
+            var auth = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+            var res = await httpClient.SendAsync(req, ct);
+            var content = await res.Content.ReadAsStringAsync(ct);
+            if (!res.IsSuccessStatusCode)
+                return StatusCode((int)res.StatusCode, content);
+            return Content(content, "application/json");
+        }
+
+        /// <summary>
+        /// GET /api/ai/study-session/history  Module 32 (lot 6).
+        /// Proxy → Python /api/study-session/history/{userId}. Jusqu'ici
+        /// aucun relais : l'écran n'avait aucun moyen d'afficher les sessions
+        /// passées. userId pris du jeton authentifié (jamais depuis un
+        /// paramètre client), pour qu'un élève ne puisse jamais lire
+        /// l'historique d'un autre en changeant l'id dans l'URL.
+        /// </summary>
+        [HttpGet("study-session/history")]
+        public async Task<IActionResult> StudySessionHistory(CancellationToken ct)
+        {
+            var userId = GetCurrentUserId();
+            var httpClient = _httpClientFactory.CreateClient("FastApiClient");
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"/api/study-session/history/{userId}");
+            var auth = HttpContext.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+            var res = await httpClient.SendAsync(req, ct);
+            var content = await res.Content.ReadAsStringAsync(ct);
+            if (!res.IsSuccessStatusCode)
+                return StatusCode((int)res.StatusCode, content);
+            return Content(UnwrapPythonData(content), "application/json");
+        }
+
         /// Extracts the inner `data` field from Python's { success, data } response envelope.
         private static string UnwrapPythonData(string raw)
         {

@@ -32,6 +32,11 @@ public class UpdateProfileRequest
     public List<string>? TeachingSubjects { get; set; }
     /// <summary>Onboarding professeur  niveaux enseignés (US-PRO-02). Null = inchangé.</summary>
     public List<string>? TeachingLevels { get; set; }
+
+    /// <summary>Onboarding parent (Module 15)  objectif libre pour l'enfant/les enfants.</summary>
+    [MaxLength(300)] public string? ParentChildObjective { get; set; }
+    /// <summary>Onboarding parent (Module 15)  préférence de suivi : "close" | "weekly" | "minimal".</summary>
+    [MaxLength(30)] public string? ParentFollowUpPreference { get; set; }
 }
 
 public class ProfileResponse
@@ -50,6 +55,8 @@ public class ProfileResponse
     public string? TargetExam { get; set; }
     public List<string> TeachingSubjects { get; set; } = new();
     public List<string> TeachingLevels { get; set; } = new();
+    public string? ParentChildObjective { get; set; }
+    public string? ParentFollowUpPreference { get; set; }
     public string? AvatarUrl { get; set; }
     public string? CoverUrl { get; set; }
     public string? Role { get; set; }

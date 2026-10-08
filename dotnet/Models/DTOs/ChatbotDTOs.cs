@@ -379,6 +379,24 @@ public class ChatbotContextResponse
 {
     public int Id { get; set; }
     public int UserId { get; set; }
+
+    /// <summary>
+    /// Module 13 (lot 6) : rôle de l'utilisateur, absent jusqu'ici de cet
+    /// objet envoyé à FastAPI (ChatRequest.user_context.role, Python). Sans
+    /// ce champ, le conseiller mobile ne pouvait jamais savoir qu'il
+    /// s'adressait à un parent  tombait systématiquement sur le prompt
+    /// élève côté Python (role par défaut "student").
+    /// </summary>
+    public string? Role { get; set; }
+
+    /// <summary>
+    /// Module 13 (lot 6) : identifiants des enfants liés, absents jusqu'ici
+    /// (ChatRequest.user_context.child_ids, Python). Sans ce champ, le
+    /// conseiller mobile ignorait systématiquement quels enfants sont liés
+    /// au parent, contrairement au web (ParentWinAITab.tsx les transmet).
+    /// </summary>
+    public List<int>? ChildIds { get; set; }
+
     public string? EducationLevel { get; set; }
     public string? Grade { get; set; }
     public List<string>? Objectives { get; set; }
