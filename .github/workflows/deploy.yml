@@ -18,7 +18,22 @@ jobs:
           script: |
             set -e
             cd ~/winplus-repo
+            OLD_HEAD=$(git rev-parse HEAD)
             git pull
+
+            echo "--- Migrations SQL nouvelles ou modifiees ---"
+            # Seuls les scripts ajoutes/modifies par ce pull sont executes : certains
+            # scripts historiques ne sont PAS rejouables sans effet (ex. Seed*Quotas,
+            # AddAccessRequestStages). Chaque nouveau script doit etre idempotent.
+            # Sans cette etape, une colonne ajoutee a une entite mais pas en base fait
+            # echouer toutes les requetes concernees (ex. connexion en 401).
+            source ~/winplus/backup.env
+            export PGPASSWORD="$DB_PASSWORD"
+            for f in $(git diff --name-only --diff-filter=AM "$OLD_HEAD" HEAD -- 'dotnet/Migrations/SQL_*.sql' | grep -v Validation_Check); do
+              echo "Application de $f"
+              psql -h 172.31.2.201 -U cademi -d winplus_db -v ON_ERROR_STOP=1 -1 -q -f "$f"
+            done
+            unset PGPASSWORD
 
             echo "--- Build .NET ---"
             cd dotnet
