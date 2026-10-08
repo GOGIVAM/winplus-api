@@ -14,6 +14,7 @@ public class QuizService : IQuizService
     private readonly ApplicationDbContext _context;
     private readonly IFastApiClient _fastApiClient;
     private readonly ILogger<QuizService> _logger;
+    private readonly INtfyService _ntfy;
     private const double PASSING_SCORE = 50.0;
 
     // ParsePlayQuestions et SubmitQuizAttemptAsync lisent QuestionsJson avec des
@@ -24,11 +25,12 @@ public class QuizService : IQuizService
     // sans erreur mais s'affichait vide côté élève (questions/options blanches).
     private static readonly JsonSerializerOptions CamelCaseJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public QuizService(ApplicationDbContext context, IFastApiClient fastApiClient, ILogger<QuizService> logger)
+    public QuizService(ApplicationDbContext context, IFastApiClient fastApiClient, ILogger<QuizService> logger, INtfyService ntfy)
     {
         _context = context;
         _fastApiClient = fastApiClient;
         _logger = logger;
+        _ntfy = ntfy;
     }
 
     public async Task<QuizDto?> GetQuizByIdAsync(int id)
@@ -173,6 +175,25 @@ public class QuizService : IQuizService
                 throw new InvalidOperationException("Tu as déjà répondu à ce quiz généré par WinAI. Génère-en un nouveau.");
         }
 
+        // Module 11 : quiz répondu dans le cadre d'une assignation de classe.
+        Assignment? assignment = null;
+        if (request.AssignmentId.HasValue)
+        {
+            assignment = await _context.Assignments.Include(a => a.TeacherClass)
+                .FirstOrDefaultAsync(a => a.Id == request.AssignmentId.Value)
+                ?? throw new KeyNotFoundException("Devoir introuvable.");
+            if (assignment.QuizId != quizId)
+                throw new InvalidOperationException("Ce devoir ne correspond pas à ce quiz.");
+            var isMember = await _context.TeacherClassStudents
+                .AnyAsync(cs => cs.TeacherClassId == assignment.TeacherClassId && cs.StudentId == userId);
+            if (!isMember)
+                throw new InvalidOperationException("Tu n'es pas dans la classe concernée par ce devoir.");
+            var alreadySubmitted = await _context.Submissions
+                .AnyAsync(s => s.AssignmentId == assignment.Id && s.StudentId == userId);
+            if (alreadySubmitted)
+                throw new InvalidOperationException("Tu as déjà répondu à ce quiz/épreuve.");
+        }
+
         // Parser les questions depuis JSON
         var questionsJson = JsonDocument.Parse(quiz.QuestionsJson);
         var questions = questionsJson.RootElement.EnumerateArray().ToList();
@@ -180,16 +201,52 @@ public class QuizService : IQuizService
         if (questions.Count == 0)
             throw new InvalidOperationException("Quiz has no questions");
 
-        // Évaluer les réponses
+        // Évaluer les réponses. Module 9 : une question peut porter
+        // "type": "open" (réponse libre)  elle n'est jamais auto-corrigée
+        // par comparaison exacte de chaîne et attend la validation du
+        // professeur, au même titre qu'une copie de devoir. Absence du champ
+        // "type" = "mcq" (comportement historique inchangé).
         int correctAnswers = 0;
+        int mcqCount = 0;
         var questionResults = new List<QuizQuestionResultDto>();
+        var openGrading = new List<Dictionary<string, object?>>();
 
         for (int i = 0; i < questions.Count; i++)
         {
             var question = questions[i];
             var questionId = question.GetProperty("id").GetString();
-            var correctAnswer = question.GetProperty("correctAnswer").GetString();
+            var questionType = question.TryGetProperty("type", out var tEl) ? (tEl.GetString() ?? "mcq") : "mcq";
             var userAnswer = request.Answers.FirstOrDefault(a => a.QuestionId == questionId)?.Answer ?? "";
+            var points = question.TryGetProperty("points", out var pts) ? pts.GetInt32() : 1;
+
+            if (questionType == "open")
+            {
+                openGrading.Add(new Dictionary<string, object?>
+                {
+                    ["questionId"] = questionId,
+                    ["label"] = question.TryGetProperty("question", out var qLabel) ? qLabel.GetString() : questionId,
+                    ["studentAnswer"] = userAnswer,
+                    ["maxPoints"] = points,
+                    ["score"] = (double?)null,
+                    ["confidence"] = (double?)null,
+                    ["note"] = "",
+                    ["graded"] = false,
+                });
+                questionResults.Add(new QuizQuestionResultDto
+                {
+                    QuestionId = questionId,
+                    UserAnswer = userAnswer,
+                    CorrectAnswer = question.TryGetProperty("correctAnswer", out var ca) ? (ca.GetString() ?? "") : "",
+                    IsCorrect = false,
+                    Explanation = question.TryGetProperty("explanation", out var exp1) ? exp1.GetString() : null,
+                    Points = points,
+                    NeedsReview = true,
+                });
+                continue;
+            }
+
+            mcqCount++;
+            var correctAnswer = question.GetProperty("correctAnswer").GetString();
             var isCorrect = userAnswer.Equals(correctAnswer, StringComparison.OrdinalIgnoreCase);
 
             if (isCorrect)
@@ -204,14 +261,17 @@ public class QuizService : IQuizService
                 Explanation = question.TryGetProperty("explanation", out var exp)
                     ? exp.GetString()
                     : null,
-                Points = question.TryGetProperty("points", out var pts)
-                    ? pts.GetInt32()
-                    : 1,
+                Points = points,
+                NeedsReview = false,
             });
         }
 
-        // Calculer le score
-        decimal score = (correctAnswers / (decimal)questions.Count) * 100;
+        var hasOpenQuestions = openGrading.Count > 0;
+        // Score provisoire basé uniquement sur les questions à choix multiples
+        // tant que les questions ouvertes n'ont pas été validées par le
+        // professeur (cas limite explicite du Module 9 : ne jamais inventer
+        // une note sur la part non corrigée).
+        decimal score = mcqCount > 0 ? (correctAnswers / (decimal)mcqCount) * 100 : 0;
         int timeSpentSeconds = request.TimeSpentSeconds;
 
         // Sauvegarder la tentative
@@ -219,16 +279,20 @@ public class QuizService : IQuizService
         {
             QuizId = quizId,
             UserId = userId,
+            AssignmentId = assignment?.Id,
             UserAnswersJson = JsonSerializer.Serialize(request.Answers),
             Score = score,
             TimeSpentSeconds = timeSpentSeconds,
             CompletedAt = DateTime.UtcNow,
             Passed = score >= (decimal)PASSING_SCORE,
+            Status = hasOpenQuestions ? "PendingReview" : "Submitted",
+            OpenGradingJson = hasOpenQuestions ? JsonSerializer.Serialize(openGrading) : null,
         };
 
         _context.QuizAttempts.Add(attempt);
 
-        // Incrémenter les statistiques du quiz
+        // Incrémenter les statistiques du quiz (sur le score provisoire,
+        // comme pour un quiz catalogue classique).
         quiz.Attempts++;
         if (score >= (decimal)PASSING_SCORE)
             quiz.PassingAttempts++;
@@ -236,6 +300,63 @@ public class QuizService : IQuizService
 
         _context.Quizzes.Update(quiz);
         await _context.SaveChangesAsync();
+
+        // Module 11 : pont vers la file de correction des devoirs, pour que
+        // l'élève comme le professeur retrouvent cette réponse au même
+        // endroit qu'un devoir classique (aucun écran parallèle).
+        if (assignment != null)
+        {
+            var scaledScore = assignment.MaxScore > 0 ? Math.Round(score / 100m * assignment.MaxScore, 2) : score;
+            var openSummary = hasOpenQuestions
+                ? string.Join("\n\n", openGrading.Select(g => $"Q: {g["label"]}\nRéponse : {g["studentAnswer"]}"))
+                : null;
+            var submission = new Submission
+            {
+                AssignmentId = assignment.Id,
+                StudentId = userId,
+                Content = openSummary,
+                Source = "student",
+                QuizAttemptId = attempt.Id,
+                SubmittedAt = attempt.CompletedAt,
+                Status = hasOpenQuestions ? "pending" : "corrected",
+                Score = hasOpenQuestions ? null : scaledScore,
+                Comment = hasOpenQuestions ? null : $"Corrigé automatiquement : {correctAnswers}/{mcqCount} bonnes réponses.",
+                GradedAt = hasOpenQuestions ? null : DateTime.UtcNow,
+            };
+            _context.Submissions.Add(submission);
+            await _context.SaveChangesAsync();
+
+            // Module 10 : notifier le professeur s'il reste des questions
+            // ouvertes à valider (comme une soumission de devoir classique) ;
+            // sinon, notifier directement l'élève puisque la correction est
+            // déjà entièrement automatique.
+            try
+            {
+                var student = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+                if (hasOpenQuestions)
+                {
+                    await _ntfy.PublishAsync(
+                        $"winplus-user-{assignment.TeacherId}",
+                        "Nouvelle copie à corriger",
+                        $"{(student == null ? "Un élève" : $"{student.FirstName} {student.LastName}".Trim())} a répondu à « {assignment.Title} » (questions ouvertes à valider).",
+                        userId: assignment.TeacherId, type: "Submission",
+                        relatedEntityType: "Submission", relatedEntityId: submission.Id);
+                }
+                else
+                {
+                    await _ntfy.PublishAsync(
+                        $"winplus-user-{userId}",
+                        "Quiz corrigé",
+                        $"Ta réponse à « {assignment.Title} » a été corrigée automatiquement : {scaledScore}/{assignment.MaxScore}.",
+                        userId: userId, type: "Submission",
+                        relatedEntityType: "Submission", relatedEntityId: submission.Id);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Notification de la réponse au quiz assigné {AssignmentId} échouée", assignment.Id);
+            }
+        }
 
         // Retourner la réponse avec résultats
         return new QuizResultResponseDto
@@ -248,6 +369,7 @@ public class QuizService : IQuizService
             TimeSpentSeconds = timeSpentSeconds,
             CompletedAt = attempt.CompletedAt,
             QuestionResults = questionResults,
+            PendingHumanReview = hasOpenQuestions,
         };
     }
 

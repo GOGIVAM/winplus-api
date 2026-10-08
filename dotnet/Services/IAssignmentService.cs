@@ -8,6 +8,8 @@ public interface IAssignmentService
     Task<List<AssignmentDto>> GetTeacherAssignmentsAsync(int teacherId);
     Task<AssignmentDto?> GetAssignmentAsync(int teacherId, int assignmentId);
     Task SetRubricAsync(int assignmentId, string rubricJson);
+    /// <summary>Module 9  dépose/remplace le corrigé de référence du professeur après coup (facultatif à la création).</summary>
+    Task<AssignmentDto> SetReferenceAnswerAsync(int teacherId, int assignmentId, string? referenceAnswerText, string? referenceAnswerFileUrl);
 
     Task<List<AssignmentDto>> GetStudentAssignmentsAsync(int studentId);
     Task<PendingCorrectionDto> StudentSubmitAsync(int studentId, int assignmentId, StudentSubmitRequestDto request);

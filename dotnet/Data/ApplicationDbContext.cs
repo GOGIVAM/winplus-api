@@ -404,6 +404,11 @@ public partial class ApplicationDbContext : DbContext
                   .WithMany()
                   .HasForeignKey(e => e.TeacherClassId)
                   .OnDelete(DeleteBehavior.Cascade);
+            // Module 11 : quiz/épreuve assigné (null = devoir libre classique).
+            entity.HasOne(e => e.Quiz)
+                  .WithMany()
+                  .HasForeignKey(e => e.QuizId)
+                  .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<Submission>(entity =>
@@ -1037,6 +1042,11 @@ modelBuilder.Entity<Exam>(entity =>
                 .WithMany(q => q.Attempts_Collection)
                 .HasForeignKey(e => e.QuizId)
                 .OnDelete(DeleteBehavior.Cascade);
+            // Module 11 : tentative rattachée à une assignation de classe (null = jeu libre catalogue).
+            entity.HasOne(e => e.Assignment)
+                .WithMany()
+                .HasForeignKey(e => e.AssignmentId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // Configure Revision entity

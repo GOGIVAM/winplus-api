@@ -49,6 +49,15 @@ public class Submission
 
     public int? GradedByUserId { get; set; }
 
+    /// <summary>
+    /// Module 11 : renseigné quand cette soumission provient d'une réponse à
+    /// un quiz/épreuve assigné à la classe (Assignment.QuizId), plutôt que
+    /// d'un dépôt de texte/fichier libre. Permet au professeur de retrouver
+    /// le détail des réponses (QuizAttempt.UserAnswersJson) depuis la même
+    /// file de correction que les devoirs classiques.
+    /// </summary>
+    public int? QuizAttemptId { get; set; }
+
     [ForeignKey(nameof(AssignmentId))]
     public Assignment? Assignment { get; set; }
 

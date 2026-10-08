@@ -91,6 +91,19 @@ public class AssignmentsController : ControllerBase
         return assignment == null ? NotFound(new { success = false, error = "Devoir introuvable." }) : Ok(new { data = assignment, success = true });
     }
 
+    /// <summary>Module 9 : dépose ou remplace le corrigé de référence (texte et/ou fichier), facultatif et modifiable après la création du devoir.</summary>
+    [HttpPatch("{id:int}/reference-answer")]
+    public async Task<IActionResult> SetReferenceAnswer(int id, [FromBody] SetReferenceAnswerRequest request)
+    {
+        try
+        {
+            var teacherId = User.GetUserId();
+            var assignment = await _service.SetReferenceAnswerAsync(teacherId, id, request.ReferenceAnswerText, request.ReferenceAnswerFileUrl);
+            return Ok(new { data = assignment, success = true });
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new { success = false, error = ex.Message }); }
+    }
+
     /// <summary>Copie papier scannée par le professeur (US-COR-01, flux "upload professeur").</summary>
     [HttpPost("{id:int}/submissions")]
     public async Task<IActionResult> UploadSubmission(int id, [FromBody] TeacherUploadSubmissionRequestDto request)
@@ -128,3 +141,4 @@ public class AssignmentsController : ControllerBase
 }
 
 public record DismissSimilarityRequest(int SubmissionAId, int SubmissionBId);
+public record SetReferenceAnswerRequest(string? ReferenceAnswerText, string? ReferenceAnswerFileUrl);

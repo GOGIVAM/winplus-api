@@ -155,6 +155,91 @@ public class TeacherController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Module 38 : statistiques des quiz et fiches de révision dont ce
+    /// professeur est l'auteur, jamais montrées nulle part jusqu'ici.
+    ///
+    /// Écart avec l'hypothèse de départ du module, confirmé à l'audit : il
+    /// n'existe aujourd'hui aucun écran permettant à un professeur de créer
+    /// un quiz ou une fiche de révision « de catalogue » (POST /quizzes et
+    /// POST /revisions sont réservés à l'administrateur). Le seul contenu
+    /// dont un professeur est réellement l'auteur, au sens de CreatedByUserId,
+    /// est : (1) un quiz ou une fiche qu'il a lui-même générés par IA pour
+    /// lui via /quizzes/me/generate ou l'équivalent révision (CreatedByUserId
+    /// = lui) ; (2) un quiz qu'il a assigné à une de ses classes (Module 11,
+    /// Assignment.QuizId), même s'il n'en est pas l'auteur IA  l'avoir
+    /// assigné le rend responsable d'en suivre les résultats. Filtré
+    /// strictement par identité du demandeur : un professeur ne peut jamais
+    /// voir les statistiques d'un contenu qui n'est ni l'un ni l'autre.
+    /// </summary>
+    [HttpGet("content-stats")]
+    public async Task<IActionResult> GetContentStats()
+    {
+        try
+        {
+            var teacherId = User.GetUserId();
+
+            var ownQuizIds = await _db.Quizzes.AsNoTracking()
+                .Where(q => q.CreatedByUserId == teacherId)
+                .Select(q => q.Id).ToListAsync();
+            var assignedQuizIds = await _db.Assignments.AsNoTracking()
+                .Where(a => a.TeacherId == teacherId && a.QuizId != null)
+                .Select(a => a.QuizId!.Value).ToListAsync();
+            var quizIds = ownQuizIds.Union(assignedQuizIds).Distinct().ToList();
+
+            var quizzes = await _db.Quizzes.AsNoTracking()
+                .Where(q => quizIds.Contains(q.Id) && !q.IsDeleted)
+                .ToListAsync();
+            var assignedClassNames = await _db.Assignments.AsNoTracking()
+                .Where(a => a.TeacherId == teacherId && a.QuizId != null)
+                .Include(a => a.TeacherClass)
+                .GroupBy(a => a.QuizId!.Value)
+                .Select(g => new { QuizId = g.Key, ClassNames = g.Select(a => a.TeacherClass!.Name).Distinct() })
+                .ToListAsync();
+            var classNamesByQuiz = assignedClassNames.ToDictionary(x => x.QuizId, x => string.Join(", ", x.ClassNames));
+
+            var quizStats = quizzes.Select(q => new
+            {
+                id = q.Id,
+                title = q.Title,
+                subject = q.Subject,
+                isPublished = q.IsPublished,
+                attemptsCount = q.Attempts,
+                averageScore = q.Attempts > 0 ? Math.Round((double)q.TotalScore / q.Attempts, 1) : (double?)null,
+                assignedToClass = classNamesByQuiz.TryGetValue(q.Id, out var names) ? names : null,
+                source = ownQuizIds.Contains(q.Id) ? "self_generated" : "assigned_to_class",
+            }).OrderByDescending(q => q.attemptsCount).ToList();
+
+            var revisions = await _db.Revisions.AsNoTracking()
+                .Where(r => r.CreatedByUserId == teacherId && !r.IsDeleted)
+                .ToListAsync();
+            var revisionStats = new List<object>();
+            foreach (var r in revisions)
+            {
+                var enrolledCount = await _db.RevisionEnrollments.CountAsync(e => e.RevisionId == r.Id);
+                var avgImprovement = await _db.RevisionEnrollments
+                    .Where(e => e.RevisionId == r.Id && e.Status == "Completed" && e.ScoreImprovement.HasValue)
+                    .AverageAsync(e => (double?)e.ScoreImprovement);
+                revisionStats.Add(new
+                {
+                    id = r.Id,
+                    title = r.Title,
+                    subject = r.Subject,
+                    isPublished = r.IsPublished,
+                    attemptsCount = enrolledCount,
+                    averageScore = avgImprovement.HasValue ? Math.Round(avgImprovement.Value, 1) : (double?)null,
+                });
+            }
+
+            return Ok(new { data = new { quizzes = quizStats, revisions = revisionStats }, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting teacher content stats");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
     [HttpGet("students/recent")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]

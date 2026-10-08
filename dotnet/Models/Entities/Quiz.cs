@@ -225,6 +225,22 @@ public class QuizAttempt
     /// </summary>
     public int AttemptNumber { get; set; } = 1;
 
+    /// <summary>
+    /// Module 11 : renseigné quand cette tentative répond à un quiz/épreuve
+    /// assigné à une classe (Assignment.QuizId), par opposition au jeu libre
+    /// depuis le catalogue (reste null dans ce cas, comportement inchangé).
+    /// </summary>
+    public int? AssignmentId { get; set; }
+
+    /// <summary>
+    /// Module 9 : détail de la correction des questions ouvertes de ce quiz
+    /// (JSON, liste de {questionId, label, studentAnswer, maxPoints, score,
+    /// confidence, note, graded}), rempli à la soumission puis mis à jour par
+    /// le professeur lors de la validation. Null si le quiz ne comporte que
+    /// des questions à choix multiples (rien à revoir).
+    /// </summary>
+    public string? OpenGradingJson { get; set; }
+
     // Timestamps
     [Required]
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
@@ -238,4 +254,7 @@ public class QuizAttempt
 
     [ForeignKey(nameof(QuizId))]
     public virtual Quiz? Quiz { get; set; }
+
+    [ForeignKey(nameof(AssignmentId))]
+    public virtual Assignment? Assignment { get; set; }
 }

@@ -747,9 +747,32 @@ async def predict_popularity(
 # Feature 6  POST /teacher/analyze-submission
 # ─────────────────────────────────────────────────────────────────────────────
 
+class RubricCriterionIn(BaseModel):
+    """Module 9 : critère explicite (question du barème, ou question ouverte
+    d'un quiz) sur lequel aligner la décomposition de la note. Quand fourni,
+    la réponse doit reprendre exactement ces libellés/points, dans l'ordre,
+    plutôt que d'en inventer  pour que l'écran puisse relier chaque critère
+    à la bonne question."""
+    label: str
+    max_points: float
+
+
 class AnalyzeSubmissionRequest(BaseModel):
-    submission_text: str
+    # Rendu optionnel (Module 9) : un fichier seul (copie scannée/photo) peut
+    # suffire, le texte étant alors extrait côté serveur via file_url.
+    submission_text: Optional[str] = None
+    #  Copie scannée ou photographiée, non encore transformée en texte
+    # (Module 9). Réutilise les briques de téléchargement/extraction/OCR déjà
+    # écrites pour le Module 8, jamais recréées ici.
+    file_url: Optional[str] = None
     expected_answer: Optional[str] = None
+    #  Corrigé de référence déposé par le professeur lui-même (Module 9),
+    # distinct du barème WinAI généré à la création du devoir (expected_answer
+    # reste utilisé pour une question isolée hors devoir, ex. quiz).
+    reference_answer: Optional[str] = None
+    #  Barème explicite (questions du devoir, ou questions ouvertes d'un
+    # quiz) sur lequel aligner la décomposition par critère (Module 9).
+    rubric_criteria: Optional[List[RubricCriterionIn]] = None
     subject: Optional[str] = None
     level: Optional[str] = None
     #  mcq | short | essay (US-COR-06) : conditionne la forme de l'analyse.
@@ -759,6 +782,18 @@ class AnalyzeSubmissionRequest(BaseModel):
     question_type: str = "essay"
     is_correct: Optional[bool] = None
     max_score: int = 20
+
+
+class GradingCriterionOut(BaseModel):
+    """Module 9 : un critère/une question de la décomposition de note, avec
+    son niveau de confiance  jamais une note globale opaque."""
+    label: str
+    score: float
+    max_score: float
+    #  0.0 à 1.0. Bas = le professeur doit impérativement revérifier ce point.
+    confidence: float
+    note: str = ""
+
 
 class AnalyzeSubmissionResponse(BaseModel):
     error_type: str
@@ -775,6 +810,48 @@ class AnalyzeSubmissionResponse(BaseModel):
     #  Éléments présents/absents par rapport au barème, pour un développement long.
     highlights_present: List[str] = []
     highlights_absent: List[str] = []
+    #  Module 9  note structurée par critère/question, avec confiance.
+    # Toujours alimenté (même avec un seul critère global) pour que l'écran
+    # affiche une seule forme de rendu.
+    criteria: List[GradingCriterionOut] = []
+    #  Module 9  toujours égale à la somme de "criteria[].score" : jamais
+    # laissée incohérente avec le détail (cas limite explicitement couvert).
+    overall_score: float = 0
+    #  Module 9  libellés des critères sous le seuil de confiance, à mettre
+    # en évidence côté écran.
+    low_confidence_criteria: List[str] = []
+    #  Module 9  avertissement d'extraction (OCR, copie vide, IA indisponible...).
+    extraction_warning: Optional[str] = None
+
+
+_LOW_CONFIDENCE_THRESHOLD = 0.6
+
+
+def _coherent_criteria(raw_criteria: Any, max_score: float) -> List[GradingCriterionOut]:
+    """Force la cohérence critère/note globale : les scores sont bornés
+    individuellement, jamais recalculés à l'envers à partir d'un total que le
+    modèle aurait pu inventer (cas limite "somme incohérente avec la note
+    globale", Module 9)."""
+    out: List[GradingCriterionOut] = []
+    if isinstance(raw_criteria, list):
+        for c in raw_criteria:
+            if not isinstance(c, dict):
+                continue
+            try:
+                c_max = max(0.0, float(c.get("max_score", 0)))
+                c_score = min(c_max, max(0.0, float(c.get("score", 0))))
+                confidence = min(1.0, max(0.0, float(c.get("confidence", 0.5))))
+            except (TypeError, ValueError):
+                continue
+            out.append(GradingCriterionOut(
+                label=str(c.get("label", "Critère"))[:200],
+                score=round(c_score, 2),
+                max_score=round(c_max, 2),
+                confidence=round(confidence, 2),
+                note=str(c.get("note", ""))[:500],
+            ))
+    return out
+
 
 @teacher_ai_router.post("/teacher/analyze-submission", response_model=AnalyzeSubmissionResponse)
 async def analyze_submission(
@@ -796,68 +873,168 @@ async def analyze_submission(
             "score_range": None,
             "highlights_present": [],
             "highlights_absent": [],
+            "criteria": [{"label": "Réponse", "score": score, "max_score": body.max_score, "confidence": 1.0, "note": ""}],
+            "overall_score": score,
+            "low_confidence_criteria": [],
+            "extraction_warning": None,
         }
 
-    expected_block = (
-        f"RÉPONSE ATTENDUE :\n{body.expected_answer[:1000]}\n\n"
-        if body.expected_answer else ""
-    )
+    # Module 9 : copie scannée/photographiée sans texte fourni  extraction
+    # réutilisant les briques du Module 8 (téléchargement + OCR/vision),
+    # jamais recréées ici.
+    submission_text = (body.submission_text or "").strip()
+    extraction_warning: Optional[str] = None
+    if not submission_text and body.file_url:
+        try:
+            raw_bytes, _content_type = _download_for_analysis(body.file_url)
+            filename = body.file_url.rsplit("/", 1)[-1]
+            extracted, _duration, warn = _extract_text_for_analysis(raw_bytes, filename)
+            submission_text = (extracted or "").strip()
+            extraction_warning = warn
+        except HTTPException as e:
+            extraction_warning = str(e.detail)
+        except Exception as e:
+            logger.warning(f"[Module9] Extraction de la copie {body.file_url} échouée : {e}")
+            extraction_warning = "Copie illisible : l'analyse automatique n'a pas pu s'exécuter, corrige manuellement."
+
+    # Copie vide ou illisible après extraction : ne jamais inventer de note
+    # (cas limite explicite du Module 9)  laisse le professeur corriger seul.
+    if not submission_text:
+        return {
+            "error_type": "none",
+            "error_details": extraction_warning or "Copie vide ou illisible : impossible d'analyser automatiquement.",
+            "suggested_comment": "Aucune analyse automatique n'a pu être produite pour cette copie  corrige-la manuellement.",
+            "score_suggestion": 0,
+            "alternative_comments": [],
+            "score_range": None,
+            "highlights_present": [],
+            "highlights_absent": [],
+            "criteria": [],
+            "overall_score": 0,
+            "low_confidence_criteria": [],
+            "extraction_warning": extraction_warning or "Copie vide ou illisible.",
+        }
+
+    reference_block = ""
+    if body.reference_answer:
+        reference_block += f"CORRIGÉ DE RÉFÉRENCE DU PROFESSEUR :\n{body.reference_answer[:2000]}\n\n"
+    if body.expected_answer:
+        reference_block += f"RÉPONSE ATTENDUE :\n{body.expected_answer[:1000]}\n\n"
+    has_rubric_or_reference = bool(body.rubric_criteria) or bool(body.reference_answer) or bool(body.expected_answer)
+
     is_essay = body.question_type == "essay"
     type_instructions = (
         (
-            '5. "highlights_present" : tableau des éléments/notions du barème correctement traités par l\'élève\n'
-            '6. "highlights_absent" : tableau des éléments/notions du barème manquants ou mal traités\n'
+            '"highlights_present" : tableau des éléments/notions correctement traités par l\'élève, '
+            '"highlights_absent" : tableau des éléments/notions manquants ou mal traités, '
         ) if is_essay else (
-            '5. "score_range" : intervalle de confiance de la note sous forme "min-max" (ex: "13-15"), max_score inclus\n'
+            '"score_range" : intervalle de confiance de la note globale sous forme "min-max" (ex: "13-15"), max_score inclus, '
         )
     )
+
+    if body.rubric_criteria:
+        criteria_list = "\n".join(f"- {c.label} (sur {c.max_points} points)" for c in body.rubric_criteria)
+        criteria_instructions = (
+            f'"criteria" : un tableau avec EXACTEMENT ces {len(body.rubric_criteria)} critères, dans cet ordre, '
+            'reprenant le libellé tel quel pour chacun :\n' + criteria_list + '\n'
+            'Pour chaque critère : {"label": le libellé recopié, "score": note proposée (<= max_points du critère), '
+            '"max_score": le max_points du critère, "confidence": 0 à 1, "note": courte remarque}.\n'
+        )
+    else:
+        criteria_instructions = (
+            '"criteria" : un tableau de 2 à 5 critères que tu identifies toi-même dans le travail '
+            '(par exemple une étape de la démarche, une partie de la réponse), chacun '
+            '{"label", "score", "max_score", "confidence" 0 à 1, "note"}. La somme des "max_score" doit égaler '
+            f'{body.max_score}.\n'
+        )
+
+    confidence_note = (
+        "Aucun barème ni corrigé de référence n'a été fourni : base ton analyse sur ta propre expertise de la "
+        "matière, mais abaisse la confiance de chaque critère (0.3 à 0.5 maximum), cette évaluation étant moins fiable.\n"
+        if not has_rubric_or_reference else
+        "Un barème ou corrigé de référence a été fourni : compare précisément la copie à ce corrigé pour fixer "
+        "score et confiance de chaque critère.\n"
+    )
+
     prompt = (
         f"Matière : {body.subject or 'non précisée'}  Niveau : {body.level or 'non précisé'}  "
         f"Type de question : {'développement long' if is_essay else 'réponse courte'}  Barème sur {body.max_score}.\n\n"
-        f"TRAVAIL DE L'ÉLÈVE :\n{body.submission_text[:2000]}\n\n"
-        + expected_block
-        + "Analyse ce travail et génère :\n"
-        '1. "error_type" : "methodological" (erreur de méthode) | "calculation" (erreur de calcul) | "conceptual" (incompréhension du concept) | "none" (correct)\n'
-        '2. "error_details" : description précise de l\'erreur, 1-2 phrases\n'
-        '3. "suggested_comment" : commentaire pédagogique bienveillant pour l\'élève, 3-4 phrases\n'
-        f'4. "score_suggestion" : note suggérée sur {body.max_score} (entier)\n'
-        + type_instructions +
-        '7. "alternative_comments" : tableau de 2-3 reformulations courtes et différentes du commentaire, même sens\n'
-        'Réponds en JSON strict avec exactement ces champs.'
+        f"TRAVAIL DE L'ÉLÈVE (éventuellement issu d'une lecture OCR d'une copie manuscrite, donc possiblement "
+        f"imparfait) :\n{submission_text[:2000]}\n\n"
+        + reference_block
+        + confidence_note
+        + "Analyse ce travail et génère un JSON strict avec exactement ces champs :\n"
+        '"error_type" : "methodological" (erreur de méthode) | "calculation" (erreur de calcul) | '
+        '"conceptual" (incompréhension du concept) | "none" (correct), '
+        '"error_details" : description précise de l\'erreur, 1-2 phrases, '
+        '"suggested_comment" : commentaire pédagogique bienveillant pour l\'élève, 3-4 phrases, '
+        f'"score_suggestion" : note globale suggérée sur {body.max_score} (entier), '
+        + type_instructions
+        + criteria_instructions +
+        '"alternative_comments" : tableau de 2-3 reformulations courtes et différentes du commentaire, même sens.'
     )
     system = (
         "Tu es WinAI, assistant de correction pédagogique bienveillant. "
-        "Analyse les erreurs avec précision et propose des commentaires constructifs. "
+        "Analyse les erreurs avec précision, décompose la note par critère avec un niveau de confiance honnête "
+        "(bas si tu n'es pas sûr), et propose des commentaires constructifs. "
         "Réponds uniquement avec du JSON valide."
     )
 
-    raw = _deepseek_json(prompt, system, max_tokens=600)
+    raw = _deepseek_json(prompt, system, max_tokens=900)
     if raw and isinstance(raw, dict):
         error_type = raw.get("error_type", "methodological")
         if error_type not in ("methodological", "calculation", "conceptual", "none"):
             error_type = "methodological"
         alt = raw.get("alternative_comments", [])
         alt = [str(a) for a in alt][:3] if isinstance(alt, list) else []
+
+        criteria = _coherent_criteria(raw.get("criteria"), body.max_score)
+        if not criteria:
+            # L'IA n'a pas produit de décomposition exploitable : on retombe
+            # sur un critère unique plutôt que de laisser l'écran sans rien,
+            # avec une confiance volontairement basse (rien à vérifier dessus).
+            fallback_score = max(0, min(body.max_score, int(raw.get("score_suggestion", body.max_score // 2))))
+            criteria = [GradingCriterionOut(
+                label="Ensemble de la copie", score=fallback_score, max_score=body.max_score,
+                confidence=0.4, note="Décomposition par critère indisponible pour cette analyse.",
+            )]
+        overall_score = round(sum(c.score for c in criteria), 2)
+        low_confidence = [c.label for c in criteria if c.confidence < _LOW_CONFIDENCE_THRESHOLD]
+
         return {
             "error_type": error_type,
             "error_details": str(raw.get("error_details", "Vérifiez la démarche utilisée.")),
             "suggested_comment": str(raw.get("suggested_comment", "Bon travail  quelques points à consolider.")),
-            "score_suggestion": max(0, min(body.max_score, int(raw.get("score_suggestion", body.max_score // 2)))),
+            "score_suggestion": int(round(overall_score)),
             "alternative_comments": alt,
             "score_range": str(raw.get("score_range")) if not is_essay and raw.get("score_range") else None,
             "highlights_present": [str(h) for h in raw.get("highlights_present", [])] if is_essay else [],
             "highlights_absent": [str(h) for h in raw.get("highlights_absent", [])] if is_essay else [],
+            "criteria": criteria,
+            "overall_score": overall_score,
+            "low_confidence_criteria": low_confidence,
+            "extraction_warning": extraction_warning,
         }
 
+    # Service IA indisponible : le professeur doit pouvoir corriger
+    # entièrement à la main (cas limite explicite du Module 9).
+    fallback_score = body.max_score // 2
     return {
         "error_type": "methodological",
         "error_details": "WinAI a analysé le travail  vérifiez manuellement la démarche appliquée.",
-        "suggested_comment": "Vous montrez une bonne compréhension générale. Revoyez la démarche étape par étape pour consolider vos acquis.",
-        "score_suggestion": body.max_score // 2,
+        "suggested_comment": "Service d'analyse temporairement indisponible. Corrige cette copie manuellement.",
+        "score_suggestion": fallback_score,
         "alternative_comments": [],
         "score_range": None,
         "highlights_present": [],
         "highlights_absent": [],
+        "criteria": [{
+            "label": "Ensemble de la copie", "score": fallback_score, "max_score": body.max_score,
+            "confidence": 0.2, "note": "Service IA indisponible : estimation non fiable.",
+        }],
+        "overall_score": fallback_score,
+        "low_confidence_criteria": ["Ensemble de la copie"],
+        "extraction_warning": extraction_warning or "Service d'analyse WinAI temporairement indisponible.",
     }
 
 

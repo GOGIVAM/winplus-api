@@ -15,17 +15,25 @@ public class AssignmentService : IAssignmentService
 {
     private readonly ApplicationDbContext _context;
     private readonly ILogger<AssignmentService> _logger;
+    private readonly INtfyService _ntfy;
 
-    public AssignmentService(ApplicationDbContext context, ILogger<AssignmentService> logger)
+    public AssignmentService(ApplicationDbContext context, ILogger<AssignmentService> logger, INtfyService ntfy)
     {
         _context = context;
         _logger = logger;
+        _ntfy = ntfy;
     }
 
     public async Task<AssignmentDto> CreateAssignmentAsync(int teacherId, CreateAssignmentRequestDto request)
     {
-        var owns = await _context.TeacherClasses.AnyAsync(c => c.Id == request.TeacherClassId && c.TeacherId == teacherId);
-        if (!owns) throw new InvalidOperationException("Classe introuvable ou non autorisée.");
+        var klass = await _context.TeacherClasses.FirstOrDefaultAsync(c => c.Id == request.TeacherClassId && c.TeacherId == teacherId);
+        if (klass == null) throw new InvalidOperationException("Classe introuvable ou non autorisée.");
+
+        if (request.QuizId.HasValue)
+        {
+            var quizExists = await _context.Quizzes.AnyAsync(q => q.Id == request.QuizId.Value && !q.IsDeleted);
+            if (!quizExists) throw new InvalidOperationException("Quiz ou épreuve introuvable.");
+        }
 
         var assignment = new Assignment
         {
@@ -33,11 +41,47 @@ public class AssignmentService : IAssignmentService
             TeacherClassId = request.TeacherClassId,
             Title = request.Title.Trim(),
             StatementText = request.StatementText,
-            MaxScore = request.MaxScore is > 0 and <= 100 ? request.MaxScore : 20,
+            ReferenceAnswerText = request.ReferenceAnswerText,
+            ReferenceAnswerFileUrl = request.ReferenceAnswerFileUrl,
+            QuizId = request.QuizId,
+            MaxScore = request.QuizId.HasValue ? 100 : (request.MaxScore is > 0 and <= 100 ? request.MaxScore : 20),
             DueDate = request.DueDate,
         };
         _context.Assignments.Add(assignment);
         await _context.SaveChangesAsync();
+
+        // Module 10 : notifier chaque élève de la classe  l'opération métier
+        // (devoir déjà enregistré ci-dessus) ne doit jamais échouer à cause
+        // d'une notification. Une classe vide n'envoie simplement rien.
+        try
+        {
+            var studentIds = await _context.TeacherClassStudents
+                .Where(cs => cs.TeacherClassId == request.TeacherClassId)
+                .Select(cs => cs.StudentId)
+                .ToListAsync();
+
+            if (studentIds.Count > 0)
+            {
+                var dueInfo = assignment.DueDate.HasValue
+                    ? $" à rendre pour le {assignment.DueDate.Value:dd/MM/yyyy}"
+                    : "";
+                foreach (var studentId in studentIds)
+                {
+                    await _ntfy.PublishAsync(
+                        $"winplus-user-{studentId}",
+                        "Nouveau devoir",
+                        $"« {assignment.Title} » a été donné à ta classe « {klass.Name} »{dueInfo}.",
+                        userId: studentId,
+                        type: "Assignment",
+                        relatedEntityType: "Assignment",
+                        relatedEntityId: assignment.Id);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Notification de création du devoir {AssignmentId} échouée (devoir créé malgré tout)", assignment.Id);
+        }
 
         return await MapToDtoAsync(assignment, teacherId: teacherId);
     }
@@ -72,6 +116,17 @@ public class AssignmentService : IAssignmentService
         await _context.SaveChangesAsync();
     }
 
+    public async Task<AssignmentDto> SetReferenceAnswerAsync(int teacherId, int assignmentId, string? referenceAnswerText, string? referenceAnswerFileUrl)
+    {
+        var a = await _context.Assignments.Include(x => x.TeacherClass)
+            .FirstOrDefaultAsync(x => x.Id == assignmentId && x.TeacherId == teacherId)
+            ?? throw new KeyNotFoundException("Devoir introuvable ou non autorisé.");
+        a.ReferenceAnswerText = referenceAnswerText;
+        a.ReferenceAnswerFileUrl = referenceAnswerFileUrl;
+        await _context.SaveChangesAsync();
+        return await MapToDtoAsync(a, teacherId: teacherId);
+    }
+
     public async Task<List<AssignmentDto>> GetStudentAssignmentsAsync(int studentId)
     {
         var classIds = await _context.TeacherClassStudents
@@ -97,6 +152,8 @@ public class AssignmentService : IAssignmentService
     {
         var assignment = await _context.Assignments.FirstOrDefaultAsync(a => a.Id == assignmentId)
             ?? throw new KeyNotFoundException("Devoir introuvable.");
+        if (assignment.QuizId.HasValue)
+            throw new InvalidOperationException("Ce devoir est un quiz/épreuve : réponds-y depuis l'écran du quiz, pas par ce formulaire.");
         var isMember = await _context.TeacherClassStudents.AnyAsync(cs => cs.TeacherClassId == assignment.TeacherClassId && cs.StudentId == studentId);
         if (!isMember) throw new InvalidOperationException("Tu n'es pas dans la classe concernée par ce devoir.");
         if (string.IsNullOrWhiteSpace(request.Content) && string.IsNullOrWhiteSpace(request.FileUrl))
@@ -117,6 +174,24 @@ public class AssignmentService : IAssignmentService
         };
         _context.Submissions.Add(submission);
         await _context.SaveChangesAsync();
+
+        // Module 10 : notifier le professeur propriétaire du devoir.
+        try
+        {
+            var student = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == studentId);
+            await _ntfy.PublishAsync(
+                $"winplus-user-{assignment.TeacherId}",
+                "Nouvelle copie à corriger",
+                $"{FullName(student)} a soumis sa copie pour « {assignment.Title} ».",
+                userId: assignment.TeacherId,
+                type: "Submission",
+                relatedEntityType: "Submission",
+                relatedEntityId: submission.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Notification de soumission {SubmissionId} échouée (copie enregistrée malgré tout)", submission.Id);
+        }
 
         return await MapSubmissionToDtoAsync(submission, assignment);
     }
@@ -193,11 +268,52 @@ public class AssignmentService : IAssignmentService
         {
             if (request.Note is null || request.Note < 0 || request.Note > s.Assignment!.MaxScore)
                 throw new InvalidOperationException($"La note doit être comprise entre 0 et {s.Assignment!.MaxScore}.");
+            var wasAlreadyCorrected = s.Status == "corrected";
             s.Status = "corrected";
             s.Score = request.Note;
             s.Comment = request.Comment;
             s.GradedAt = DateTime.UtcNow;
             s.GradedByUserId = teacherId;
+
+            // Module 9/11 : cette soumission vient d'une réponse à un quiz/
+            // épreuve assigné (questions ouvertes)  répercute la validation
+            // sur la tentative de quiz, pour que son statut ne reste pas
+            // indéfiniment "en attente" une fois la note humaine enregistrée.
+            // Connu et documenté : les agrégats globaux du quiz (Quiz.TotalScore,
+            // Quiz.PassingAttempts) gardent le score provisoire de la soumission
+            // (QCM seuls), pas cette note finale  éviter de les recalculer ici
+            // pour ne pas introduire une dérive sur les quiz catalogue partagés.
+            if (s.QuizAttemptId.HasValue)
+            {
+                var attempt = await _context.QuizAttempts.FirstOrDefaultAsync(a => a.Id == s.QuizAttemptId.Value);
+                if (attempt != null && attempt.Status == "PendingReview")
+                {
+                    attempt.Status = "Reviewed";
+                }
+            }
+            await _context.SaveChangesAsync();
+
+            // Module 10 : notifier l'élève. Une correction déjà validée puis
+            // re-corrigée renotifie (la note peut avoir changé) ; ce n'est
+            // qu'une rafale si le professeur valide plusieurs fois de suite la
+            // même copie sans changement, cas marginal jugé acceptable plutôt
+            // que de risquer de ne jamais renotifier une note corrigée après coup.
+            try
+            {
+                await _ntfy.PublishAsync(
+                    $"winplus-user-{s.StudentId}",
+                    wasAlreadyCorrected ? "Correction mise à jour" : "Copie corrigée",
+                    $"Ta copie pour « {s.Assignment!.Title} » a été corrigée : {s.Score}/{s.Assignment!.MaxScore}.",
+                    userId: s.StudentId,
+                    type: "Submission",
+                    relatedEntityType: "Submission",
+                    relatedEntityId: s.Id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Notification de correction {SubmissionId} échouée (note enregistrée malgré tout)", s.Id);
+            }
+            return await MapSubmissionToDtoAsync(s, s.Assignment!);
         }
         await _context.SaveChangesAsync();
         return await MapSubmissionToDtoAsync(s, s.Assignment!);
@@ -300,6 +416,9 @@ public class AssignmentService : IAssignmentService
             Title = a.Title,
             StatementText = a.StatementText,
             RubricJson = a.RubricJson,
+            ReferenceAnswerText = a.ReferenceAnswerText,
+            ReferenceAnswerFileUrl = a.ReferenceAnswerFileUrl,
+            QuizId = a.QuizId,
             MaxScore = a.MaxScore,
             DueDate = a.DueDate,
             TeacherClassId = a.TeacherClassId,
@@ -333,6 +452,10 @@ public class AssignmentService : IAssignmentService
             Status = s.Status,
             Score = s.Score,
             Comment = s.Comment,
+            MaxScore = assignment.MaxScore,
+            ReferenceAnswerText = assignment.ReferenceAnswerText,
+            ReferenceAnswerFileUrl = assignment.ReferenceAnswerFileUrl,
+            IsQuizSubmission = s.QuizAttemptId.HasValue,
             // Brouillon non envoyé depuis 72h (US-COR-04).
             IsStaleDraft = s.Status == "draft" && s.DraftUpdatedAt.HasValue && (DateTime.UtcNow - s.DraftUpdatedAt.Value).TotalHours >= 72,
         };

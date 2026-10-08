@@ -9,6 +9,16 @@ public class CreateAssignmentRequestDto
     public DateTime? DueDate { get; set; }
     /// <summary>Génère le barème WinAI immédiatement si un énoncé est fourni (US-COR-05).</summary>
     public bool GenerateRubric { get; set; } = true;
+    /// <summary>Module 9  corrigé de référence du professeur, saisi ou collé.</summary>
+    public string? ReferenceAnswerText { get; set; }
+    /// <summary>Module 9  corrigé de référence du professeur, déposé en fichier.</summary>
+    public string? ReferenceAnswerFileUrl { get; set; }
+    /// <summary>
+    /// Module 11  quand renseigné, ce devoir assigne ce quiz/épreuve (déjà
+    /// existant au catalogue, ou obtenu via POST /quizzes/exam/{examId} pour
+    /// une épreuve) à la classe, au lieu d'un énoncé libre.
+    /// </summary>
+    public int? QuizId { get; set; }
 }
 
 public class AssignmentDto
@@ -17,6 +27,9 @@ public class AssignmentDto
     public string Title { get; set; } = null!;
     public string? StatementText { get; set; }
     public string? RubricJson { get; set; }
+    public string? ReferenceAnswerText { get; set; }
+    public string? ReferenceAnswerFileUrl { get; set; }
+    public int? QuizId { get; set; }
     public decimal MaxScore { get; set; }
     public DateTime? DueDate { get; set; }
     public int TeacherClassId { get; set; }
@@ -57,6 +70,13 @@ public class PendingCorrectionDto
     public decimal? Score { get; set; }
     public string? Comment { get; set; }
     public bool IsStaleDraft { get; set; }
+    /// <summary>Module 9  note maximale réelle du devoir (20 par défaut, 100 pour un quiz assigné) : l'écran ne doit plus supposer /20.</summary>
+    public decimal MaxScore { get; set; } = 20;
+    /// <summary>Module 9  corrigé de référence du professeur, pour enrichir l'analyse WinAI côté écran.</summary>
+    public string? ReferenceAnswerText { get; set; }
+    public string? ReferenceAnswerFileUrl { get; set; }
+    /// <summary>Module 11  vrai si la copie provient d'une réponse à un quiz/épreuve assigné (QuizAttempt), pas d'un dépôt libre.</summary>
+    public bool IsQuizSubmission { get; set; }
 }
 
 public class GradeSubmissionRequestDto

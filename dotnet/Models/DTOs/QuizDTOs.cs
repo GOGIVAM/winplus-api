@@ -58,11 +58,20 @@ public class QuizQuestionDto
     public string Id { get; set; } = null!;
     public string Question { get; set; } = null!;
     public List<string> Options { get; set; } = new();
-    public string CorrectAnswer { get; set; } = null!;
+    /// <summary>Facultative pour une question "open" (Module 9) : sert alors de corrigé de référence indicatif, pas de comparaison exacte.</summary>
+    public string? CorrectAnswer { get; set; }
     public string? Explanation { get; set; }
     public int? Difficulty { get; set; }
     public string? Topic { get; set; }
     public string? Statement { get; set; }
+    /// <summary>
+    /// Module 9 : "mcq" (choix multiples, par défaut, comportement historique
+    /// inchangé) | "open" (réponse libre, non auto-corrigée  attend la
+    /// validation du professeur, voir QuizService.SubmitQuizAttemptAsync).
+    /// Aucun écran d'autorat ne propose encore ce choix ; le champ existe pour
+    /// qu'un futur écran puisse l'activer sans nouvelle migration.
+    /// </summary>
+    public string? Type { get; set; }
 }
 
 /// <summary>Résultat de génération IA d'un quiz d'entraînement (matière parfois choisie par DeepSeek lui-même).</summary>
@@ -115,6 +124,13 @@ public class SubmitQuizAttemptRequestDto
 {
     public List<QuizAnswerDto> Answers { get; set; } = new();
     public int TimeSpentSeconds { get; set; }
+    /// <summary>
+    /// Module 11 : renseigné quand ce quiz est répondu dans le cadre d'un
+    /// devoir de classe (Assignment.QuizId), par opposition au jeu libre
+    /// depuis le catalogue. Déclenche la création d'une Submission dans la
+    /// même file de correction que les devoirs classiques.
+    /// </summary>
+    public int? AssignmentId { get; set; }
 }
 
 public class QuizAnswerDto
@@ -144,6 +160,13 @@ public class QuizResultResponseDto
     public int TimeSpentSeconds { get; set; }
     public DateTime CompletedAt { get; set; }
     public List<QuizQuestionResultDto> QuestionResults { get; set; } = new();
+    /// <summary>
+    /// Module 9 : vrai si ce quiz comporte au moins une question ouverte en
+    /// attente de validation humaine  le score ci-dessus est alors partiel
+    /// (seules les questions à choix multiples y sont comptées) et n'est pas
+    /// la note finale tant que le professeur n'a pas validé le reste.
+    /// </summary>
+    public bool PendingHumanReview { get; set; }
 }
 
 public class QuizQuestionResultDto
@@ -154,6 +177,8 @@ public class QuizQuestionResultDto
     public bool IsCorrect { get; set; }
     public string? Explanation { get; set; }
     public int Points { get; set; }
+    /// <summary>Module 9 : question à réponse libre, non auto-corrigée  en attente du professeur.</summary>
+    public bool NeedsReview { get; set; }
 }
 
 /// <summary>Corps de POST /quizzes/{id}/feedback  signalement libre de l'élève.</summary>
