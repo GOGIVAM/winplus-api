@@ -126,4 +126,17 @@ public interface IQuizService
 
     /// <summary>Supprime définitivement (IsDeleted) un seul quiz IA généré par cet utilisateur.</summary>
     Task DeleteMyQuizAsync(int userId, int id);
+
+    /// <summary>
+    /// Supprime une tentative de l'utilisateur courant (historique « Vos
+    /// tentatives »). Une tentative rattachée à un devoir de classe n'est pas
+    /// supprimable : elle sert à la correction du professeur.
+    /// </summary>
+    Task DeleteMyAttemptAsync(int userId, int attemptId);
+
+    /// <summary>
+    /// Vide l'historique des tentatives de l'utilisateur courant (hors devoirs
+    /// de classe). Renvoie le nombre de tentatives supprimées.
+    /// </summary>
+    Task<int> ClearMyAttemptsAsync(int userId);
 }

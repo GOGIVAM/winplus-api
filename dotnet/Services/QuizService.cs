@@ -894,6 +894,63 @@ public class QuizService : IQuizService
         await _context.SaveChangesAsync();
     }
 
+    public async Task DeleteMyAttemptAsync(int userId, int attemptId)
+    {
+        var attempt = await _context.QuizAttempts.FirstOrDefaultAsync(a => a.Id == attemptId);
+        if (attempt == null)
+            throw new KeyNotFoundException($"Tentative {attemptId} introuvable.");
+        if (attempt.UserId != userId)
+            throw new UnauthorizedAccessException("Tu ne peux supprimer que tes propres tentatives.");
+        if (attempt.AssignmentId != null)
+            throw new InvalidOperationException("Cette tentative répond à un devoir de classe : elle est conservée pour la correction de ton professeur.");
+
+        await RemoveAttemptsAsync(new List<QuizAttempt> { attempt });
+    }
+
+    public async Task<int> ClearMyAttemptsAsync(int userId)
+    {
+        var attempts = await _context.QuizAttempts
+            .Where(a => a.UserId == userId && a.AssignmentId == null)
+            .ToListAsync();
+        if (attempts.Count == 0) return 0;
+
+        await RemoveAttemptsAsync(attempts);
+        return attempts.Count;
+    }
+
+    /// <summary>
+    /// Supprime des tentatives en gardant les statistiques des quiz justes
+    /// (Attempts / PassingAttempts / TotalScore étaient incrémentés à la
+    /// soumission) et efface les erreurs de révision (QuizMistake) qui en
+    /// provenaient. Aucune clé étrangère ne pointe vers QuizAttempt
+    /// (Submission.QuizAttemptId et QuizMistake.QuizAttemptId sont de simples
+    /// entiers), et les tentatives de devoir sont exclues en amont.
+    /// </summary>
+    private async Task RemoveAttemptsAsync(List<QuizAttempt> attempts)
+    {
+        var quizIds = attempts.Select(a => a.QuizId).Distinct().ToList();
+        var quizzes = await _context.Quizzes.Where(q => quizIds.Contains(q.Id)).ToListAsync();
+
+        foreach (var group in attempts.GroupBy(a => a.QuizId))
+        {
+            var quiz = quizzes.FirstOrDefault(q => q.Id == group.Key);
+            if (quiz == null) continue;
+            quiz.Attempts = Math.Max(0, quiz.Attempts - group.Count());
+            quiz.PassingAttempts = Math.Max(0, quiz.PassingAttempts - group.Count(a => a.Score >= (decimal)PASSING_SCORE));
+            quiz.TotalScore = Math.Max(0, quiz.TotalScore - group.Sum(a => a.Score));
+            quiz.UpdatedAt = DateTime.UtcNow;
+        }
+
+        var attemptIds = attempts.Select(a => a.Id).ToList();
+        var mistakes = await _context.QuizMistakes
+            .Where(m => m.QuizAttemptId != null && attemptIds.Contains(m.QuizAttemptId.Value))
+            .ToListAsync();
+        _context.QuizMistakes.RemoveRange(mistakes);
+
+        _context.QuizAttempts.RemoveRange(attempts);
+        await _context.SaveChangesAsync();
+    }
+
     public async Task DeleteMyQuizAsync(int userId, int id)
     {
         var quiz = await _context.Quizzes.FirstOrDefaultAsync(q => q.Id == id);

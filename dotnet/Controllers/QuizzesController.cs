@@ -491,6 +491,56 @@ public class QuizzesController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Supprime une tentative de l'utilisateur courant (tableau « Historique de
+    /// vos tentatives »). 409 si elle répond à un devoir de classe.
+    /// </summary>
+    [HttpDelete("me/attempts/{attemptId:int}")]
+    [ProducesResponseType(204)]
+    [ProducesResponseType(403)]
+    [ProducesResponseType(404)]
+    [ProducesResponseType(409)]
+    public async Task<IActionResult> DeleteMyAttempt(int attemptId)
+    {
+        var userId = GetUserId();
+        if (userId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        try
+        {
+            await _quizService.DeleteMyAttemptAsync(userId, attemptId);
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(403, new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Vide l'historique des tentatives de l'utilisateur courant, hors devoirs
+    /// de classe (conservés pour la correction du professeur).
+    /// </summary>
+    [HttpDelete("me/attempts")]
+    [ProducesResponseType(200)]
+    public async Task<IActionResult> ClearMyAttempts()
+    {
+        var userId = GetUserId();
+        if (userId == 0)
+            return Unauthorized(new { message = "User not authenticated" });
+
+        var deleted = await _quizService.ClearMyAttemptsAsync(userId);
+        return Ok(new { deleted });
+    }
+
     /// <summary>Supprime définitivement les quiz déjà masqués de l'utilisateur courant.</summary>
     [HttpDelete("me/history")]
     [ProducesResponseType(204)]
