@@ -1831,7 +1831,11 @@ async def generate_syllabus(
         "Tu es WinAI, assistant pédagogique pour professeurs sur WinPlus. Construis un plan de "
         "cours réaliste et actionnable. Réponds uniquement en JSON valide."
     )
-    raw = _deepseek_json(prompt, system, max_tokens=2200)
+    # ~230 tokens par semaine (titre + concepts + activités + ressources) + marge fixe :
+    # à 2200 tokens fixes, un plan de 12+ semaines était tronqué en plein JSON par DeepSeek
+    # (finish_reason=length), faisant échouer le parsing et renvoyer un 500 systématique.
+    syllabus_max_tokens = min(8000, 230 * weeks + 500)
+    raw = _deepseek_json(prompt, system, max_tokens=syllabus_max_tokens)
     if raw and isinstance(raw, dict) and raw.get("weeks"):
         parsed_weeks = []
         for w in raw["weeks"][:weeks]:
