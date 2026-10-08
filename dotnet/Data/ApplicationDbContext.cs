@@ -493,6 +493,9 @@ public partial class ApplicationDbContext : DbContext
             entity.Property(e => e.Bio).HasMaxLength(1000);
             entity.Property(e => e.TeachingSubjects).HasColumnType("text[]");
             entity.Property(e => e.TeachingLevels).HasColumnType("text[]");
+            // Décision 15.3 : date pure (pas d'heure), cohérent avec son usage
+            // (calcul d'âge/minorité), jamais de fuseau horaire à gérer.
+            entity.Property(e => e.DateOfBirth).HasColumnType("date");
             entity.HasIndex(e => e.CognitoId).IsUnique().HasFilter("\"CognitoId\" IS NOT NULL");
             entity.HasIndex(e => e.Email).IsUnique();
         });

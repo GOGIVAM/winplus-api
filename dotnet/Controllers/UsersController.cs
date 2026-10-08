@@ -88,6 +88,7 @@ public class UsersController : ControllerBase
                 TeachingLevels = user.TeachingLevels,
                 ParentChildObjective = user.ParentChildObjective,
                 ParentFollowUpPreference = user.ParentFollowUpPreference,
+                DateOfBirth = user.DateOfBirth,
                 AvatarUrl = user.AvatarUrl,
                 CoverUrl = user.CoverUrl,
                 Role = user.Role,
@@ -180,6 +181,10 @@ public class UsersController : ControllerBase
             if (request.TeachingLevels != null) user.TeachingLevels = request.TeachingLevels;
             if (request.ParentChildObjective != null) user.ParentChildObjective = request.ParentChildObjective;
             if (request.ParentFollowUpPreference is "close" or "weekly" or "minimal") user.ParentFollowUpPreference = request.ParentFollowUpPreference;
+            // Décision 15.3 : jamais de date dans le futur (pas de contrôle d'âge
+            // minimum ici  seule la conformité RGPD de l'export est concernée).
+            if (request.DateOfBirth.HasValue && request.DateOfBirth.Value.Date <= DateTime.UtcNow.Date)
+                user.DateOfBirth = request.DateOfBirth.Value.Date;
 
             var updated = await _userService.UpdateUserAsync(user);
 
@@ -217,6 +222,7 @@ public class UsersController : ControllerBase
                 TeachingLevels = updated.TeachingLevels,
                 ParentChildObjective = updated.ParentChildObjective,
                 ParentFollowUpPreference = updated.ParentFollowUpPreference,
+                DateOfBirth = updated.DateOfBirth,
                 AvatarUrl = updated.AvatarUrl,
                 CoverUrl = updated.CoverUrl,
                 Role = updated.Role,

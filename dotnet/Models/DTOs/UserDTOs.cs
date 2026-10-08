@@ -37,6 +37,14 @@ public class UpdateProfileRequest
     [MaxLength(300)] public string? ParentChildObjective { get; set; }
     /// <summary>Onboarding parent (Module 15)  préférence de suivi : "close" | "weekly" | "minimal".</summary>
     [MaxLength(30)] public string? ParentFollowUpPreference { get; set; }
+
+    /// <summary>
+    /// Décision 15.3 (arbitrages lot 7, 2026-10-08)  date de naissance,
+    /// capturable à l'inscription ou à la complétion de profil, qui fiabilise
+    /// la vérification de minorité de l'export RGPD (module 43). Null =
+    /// inchangé (pattern identique aux autres champs de ce DTO).
+    /// </summary>
+    public DateTime? DateOfBirth { get; set; }
 }
 
 public class ProfileResponse
@@ -57,6 +65,7 @@ public class ProfileResponse
     public List<string> TeachingLevels { get; set; } = new();
     public string? ParentChildObjective { get; set; }
     public string? ParentFollowUpPreference { get; set; }
+    public DateTime? DateOfBirth { get; set; }
     public string? AvatarUrl { get; set; }
     public string? CoverUrl { get; set; }
     public string? Role { get; set; }

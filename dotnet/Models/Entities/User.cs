@@ -78,6 +78,17 @@ public class User
     public string? TargetExam { get; set; }
 
     /// <summary>
+    /// Décision 15.3 (arbitrages lot 7, 2026-10-08) : champ additif, nullable,
+    /// capturable à l'inscription ou à la complétion de profil (web et
+    /// mobile). Sert à fiabiliser la vérification de minorité de l'export
+    /// RGPD (module 43) : en son absence, le comportement précédent est
+    /// conservé à l'identique (export autorisé, `minorityVerified:false`,
+    /// jamais de blocage sur ce seul motif). Ne remplace ni ne renomme aucune
+    /// colonne existante.
+    /// </summary>
+    public DateTime? DateOfBirth { get; set; }
+
+    /// <summary>
     /// Matières enseignées déclarées par un professeur (Role = "teacher") à la complétion
     /// de profil  US-PRO-02. Indépendant du mode Répétiteur (voir TutorProfile.Subjects) :
     /// sert de base au profil "Professeur Catalogue" et peut préremplir l'onboarding

@@ -70,11 +70,32 @@ public sealed class UserDataExportService : IUserDataExportService
             user.TargetExam,
             user.TeachingSubjects,
             user.TeachingLevels,
+            // Décision 15.3 : donnée personnelle de l'utilisateur comme les
+            // autres champs de profil ci-dessus  exposée en lecture ici.
+            user.DateOfBirth,
             user.CreatedAt,
             user.LastLoginAt,
             // Note explicitement pas exportés : PasswordHash, VerificationCode,
             // VerificationCodeExpiredAt, EmailChangeToken, tout jeton de session.
         };
+
+        // Décision 15.3 (arbitrages lot 7, 2026-10-08) : si la date de
+        // naissance de l'utilisateur exporté (l'enfant, en cas d'export par
+        // un parent) est renseignée, la minorité est désormais calculée
+        // réellement plutôt que supposée, et signalée comme vérifiée. En son
+        // absence, comportement précédent inchangé : minorityVerified=false,
+        // isMinor non déterminable (null)  jamais de blocage de l'export sur
+        // ce seul motif.
+        bool minorityVerified = user.DateOfBirth.HasValue;
+        bool? isMinor = null;
+        if (user.DateOfBirth.HasValue)
+        {
+            var dob = user.DateOfBirth.Value;
+            var now = DateTime.UtcNow;
+            var age = now.Year - dob.Year;
+            if (now.Month < dob.Month || (now.Month == dob.Month && now.Day < dob.Day)) age--;
+            isMinor = age < 18;
+        }
 
         var orders = await _db.Orders.AsNoTracking()
             .Where(o => o.UserId == targetUserId)
@@ -223,11 +244,14 @@ public sealed class UserDataExportService : IUserDataExportService
         {
             exportedAt = DateTime.UtcNow,
             exportedForParent,
-            // §6.8 du suivi : autorisé pour un enfant mineur lié par un lien
-            // accepté. La minorité elle-même n'est techniquement pas
-            // vérifiable aujourd'hui (pas de champ de date de naissance) :
-            // ce drapeau le dit explicitement plutôt que de le supposer.
-            minorityVerified = false,
+            // §6.8 du suivi, affiné par la décision 15.3 : autorisé pour un
+            // enfant mineur lié par un lien accepté. Si sa date de naissance
+            // est renseignée, la minorité est désormais réellement vérifiée
+            // (isMinor calculé) ; sinon ce drapeau reste à false plutôt que
+            // de supposer la minorité  jamais de blocage de l'export sur ce
+            // seul motif.
+            minorityVerified,
+            isMinor,
             profile,
             orders,
             payments,
