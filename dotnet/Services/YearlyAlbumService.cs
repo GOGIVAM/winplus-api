@@ -30,9 +30,12 @@ public interface IYearlyAlbumService
     /// <summary>
     /// Génère l'album de fin d'année de tous les enfants actuellement liés
     /// (accepted) à ce parent, pour l'année scolaire donnée. persist=false ne
-    /// touche jamais la base (aperçu dry-run).
+    /// touche jamais la base (aperçu dry-run, 1 parent test depuis l'écran
+    /// admin). markPreviewPending=true (persist doit alors valoir true) :
+    /// écrit l'album avec IsPreviewPending=true  invisible côté parent tant
+    /// qu'un administrateur n'a pas confirmé la diffusion (Module 33, lot 7).
     /// </summary>
-    Task<ParentAlbumResult> GenerateAlbumForParentAsync(int parentId, string schoolYear, bool persist, CancellationToken ct = default);
+    Task<ParentAlbumResult> GenerateAlbumForParentAsync(int parentId, string schoolYear, bool persist, CancellationToken ct = default, bool markPreviewPending = false);
 }
 
 public sealed class YearlyAlbumService : IYearlyAlbumService
@@ -69,7 +72,7 @@ public sealed class YearlyAlbumService : IYearlyAlbumService
     private static bool TryParseYearPart(string s, out int year)
         => int.TryParse(s, out year) && year is > 0 and < 10000;
 
-    public async Task<ParentAlbumResult> GenerateAlbumForParentAsync(int parentId, string schoolYear, bool persist, CancellationToken ct = default)
+    public async Task<ParentAlbumResult> GenerateAlbumForParentAsync(int parentId, string schoolYear, bool persist, CancellationToken ct = default, bool markPreviewPending = false)
     {
         var normalized = NormalizeSchoolYear(schoolYear)
             ?? throw new ArgumentException($"Année scolaire mal formée : « {schoolYear} ». Format attendu : 2024-2025.");
@@ -119,6 +122,7 @@ public sealed class YearlyAlbumService : IYearlyAlbumService
                         ReportType = "AlbumAnnuel",
                         Content = JsonSerializer.Serialize(content),
                         EmitterType = "System",
+                        IsPreviewPending = markPreviewPending,
                     });
                 }
 

@@ -48,6 +48,15 @@ public class ParentReport
 
     public bool IsRead { get; set; } = false;
 
+    /// <summary>
+    /// Module 33 (lot 7) : album de fin d'année en déclenchement hybride.
+    /// true = aperçu généré automatiquement par YearlyAlbumSchedulerService,
+    /// en attente de validation manuelle par un administrateur ; l'écran
+    /// parent (GetAlbum) ne le renvoie jamais tant que cet indicateur est
+    /// vrai. Sans objet pour les autres ReportType (toujours false).
+    /// </summary>
+    public bool IsPreviewPending { get; set; } = false;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     [ForeignKey(nameof(ParentId))]

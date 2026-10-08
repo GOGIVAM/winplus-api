@@ -22,6 +22,7 @@ public class UsersController : ControllerBase
     private readonly IEmailService _emailService;
     private readonly Microsoft.Extensions.Caching.Memory.IMemoryCache _cache;
     private readonly ApplicationDbContext _db;
+    private readonly IUserDataExportService _dataExportService;
     private readonly ILogger<UsersController> _logger;
 
     public UsersController(
@@ -33,6 +34,7 @@ public class UsersController : ControllerBase
         IEmailService emailService,
         Microsoft.Extensions.Caching.Memory.IMemoryCache cache,
         ApplicationDbContext db,
+        IUserDataExportService dataExportService,
         ILogger<UsersController> logger)
     {
         _userService = userService;
@@ -43,6 +45,7 @@ public class UsersController : ControllerBase
         _emailService = emailService;
         _cache = cache;
         _db = db;
+        _dataExportService = dataExportService;
         _logger = logger;
     }
 
@@ -833,6 +836,57 @@ public class UsersController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error confirming email change");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Module 43 (lot 7)  export RGPD. GET /api/users/me/export exporte
+    /// l'utilisateur courant ; ?childId=N exporte à la place un enfant
+    /// mineur lié par un lien parent-enfant ACCEPTED (§6.8 du suivi), jamais
+    /// un autre tiers. Retourné directement en pièce jointe JSON : pas
+    /// d'archive intermédiaire à protéger dans le temps, pas de jeton de
+    /// téléchargement à gérer  le fichier n'existe que dans la réponse HTTP,
+    /// elle-même protégée par l'authentification de cette route.
+    /// </summary>
+    [HttpGet("me/export")]
+    [Authorize]
+    public async Task<IActionResult> ExportMyData([FromQuery] int? childId)
+    {
+        try
+        {
+            var requesterId = User.GetUserId();
+            var targetUserId = requesterId;
+            var exportedForParent = false;
+
+            if (childId.HasValue && childId.Value != requesterId)
+            {
+                var linkAccepted = await _db.ParentStudentLinks.AsNoTracking()
+                    .AnyAsync(l => l.ParentId == requesterId && l.StudentId == childId.Value && l.Status == "accepted");
+                if (!linkAccepted)
+                    return StatusCode(403, new { error = "Aucun lien parent-enfant accepté avec ce compte : export refusé." });
+
+                targetUserId = childId.Value;
+                exportedForParent = true;
+            }
+
+            var export = await _dataExportService.BuildExportAsync(targetUserId, exportedForParent);
+            var json = System.Text.Json.JsonSerializer.Serialize(export, new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true,
+                ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles,
+            });
+            var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+            var fileName = $"winplus-export-{targetUserId}-{DateTime.UtcNow:yyyyMMdd}.json";
+            return File(bytes, "application/json", fileName);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = "Utilisateur introuvable." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error exporting user data");
             return StatusCode(500, new { error = "Internal server error" });
         }
     }

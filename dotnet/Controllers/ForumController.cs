@@ -106,7 +106,7 @@ public class ForumController : ControllerBase
     /// <summary>
     /// Récupère un thread par son identifiant
     /// </summary>
-    [HttpGet("threads/{id}")]
+    [HttpGet("threads/{id:int}")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(ForumThreadResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -155,7 +155,7 @@ public class ForumController : ControllerBase
     /// <summary>
     /// Récupère les posts d'un thread et incrémente le compteur de vues
     /// </summary>
-    [HttpGet("threads/{id}/posts")]
+    [HttpGet("threads/{id:int}/posts")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(ForumPostListResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -180,7 +180,7 @@ public class ForumController : ControllerBase
     /// <summary>
     /// Crée un post dans un thread et notifie l'auteur du thread via Ntfy
     /// </summary>
-    [HttpPost("threads/{id}/posts")]
+    [HttpPost("threads/{id:int}/posts")]
     [ProducesResponseType(typeof(ForumPostResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -300,7 +300,7 @@ public class ForumController : ControllerBase
     /// <summary>
     /// Soft-delete un thread  réservé à l'auteur ou aux admins
     /// </summary>
-    [HttpDelete("threads/{id}")]
+    [HttpDelete("threads/{id:int}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -324,6 +324,99 @@ public class ForumController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error deleting forum thread {ThreadId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    // ── Module 42 : routes manquantes (décision §5.5.Q  construire le backend) ──
+    //
+    // forumService.ts (frontend) déclarait déjà ces quatre opérations sans
+    // qu'aucune route ne les serve. L'entité de liaison ForumThreadFollow et
+    // le calcul des abonnés existaient déjà pour la notification de réponse ;
+    // il manquait seulement ces points d'entrée.
+
+    /// <summary>
+    /// Fil d'actualité du forum, trié et filtrable. Remplace l'ancien repli
+    /// client (tri local + /forums/threads) côté frontend dès que déployé.
+    /// Accessible sans connexion ; un visiteur anonyme ne voit jamais isFollowed
+    /// et le filtre "followed" est ignoré pour lui plutôt que de lui renvoyer
+    /// une liste vide qu'il confondrait avec une erreur.
+    /// </summary>
+    [HttpGet("threads/feed")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ForumThreadListResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetFeed(
+        [FromQuery] string? category,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string sort = "recent",
+        [FromQuery] bool followed = false)
+    {
+        try
+        {
+            int? userId = (User?.Identity?.IsAuthenticated == true) ? User.GetUserId() : null;
+            var result = await _forumService.GetFeedAsync(userId, category, page, pageSize, sort, followed);
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting forum feed");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>Identifiants des fils suivis par l'utilisateur courant.</summary>
+    [HttpGet("follows")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetFollows()
+    {
+        try
+        {
+            var threadIds = await _forumService.GetFollowedThreadIdsAsync(User.GetUserId());
+            return Ok(new { threadIds });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting followed threads");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>Suit un fil. Idempotent : suivre un fil déjà suivi ne crée pas de doublon.</summary>
+    [HttpPost("threads/{id:int}/follow")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> FollowThread(int id)
+    {
+        try
+        {
+            await _forumService.FollowThreadAsync(User.GetUserId(), id);
+            return Ok(new { success = true, isFollowed = true });
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = "Thread not found" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error following forum thread {ThreadId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>Arrête de suivre un fil. Idempotent : ne pas suivre déjà n'est pas une erreur.</summary>
+    [HttpDelete("threads/{id:int}/follow")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> UnfollowThread(int id)
+    {
+        try
+        {
+            await _forumService.UnfollowThreadAsync(User.GetUserId(), id);
+            return Ok(new { success = true, isFollowed = false });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error unfollowing forum thread {ThreadId}", id);
             return StatusCode(500, new { error = "Internal server error" });
         }
     }

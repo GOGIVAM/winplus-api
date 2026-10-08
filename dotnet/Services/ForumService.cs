@@ -28,6 +28,13 @@ public interface IForumService
     Task DeleteThreadAsync(int threadId, int requestingUserId, string userRole);
     Task<int?> GetThreadAuthorIdAsync(int threadId);
     Task<List<int>> GetThreadFollowerIdsAsync(int threadId);
+
+    // ── Module 42 : fils suivis (le service frontal les attendait déjà) ──
+    /// <summary>Fils triés/filtrés pour le fil d'actualité du forum. `userId` null pour un visiteur anonyme (isFollowed non calculé, followedOnly ignoré).</summary>
+    Task<ForumThreadListResponse> GetFeedAsync(int? userId, string? category, int page, int pageSize, string sort, bool followedOnly);
+    Task<List<int>> GetFollowedThreadIdsAsync(int userId);
+    Task FollowThreadAsync(int userId, int threadId);
+    Task UnfollowThreadAsync(int userId, int threadId);
 }
 
 public class ForumService : IForumService
@@ -343,4 +350,138 @@ public class ForumService : IForumService
             .Where(f => f.ThreadId == threadId)
             .Select(f => f.UserId)
             .ToListAsync();
+
+    // ── Module 42 : routes manquantes du service frontal du forum ──────────
+    //
+    // L'entité ForumThreadFollow et GetThreadFollowerIdsAsync existaient déjà
+    // (consommés par la distribution de notification à chaque réponse), mais
+    // aucune route ne permettait à un utilisateur de suivre/ne plus suivre un
+    // fil lui-même, ni de lister ses fils suivis, ni de trier/filtrer le fil
+    // d'actualité. Le service frontal (forumService.ts) les appelait déjà :
+    // c'est du code mort côté client qu'on raccorde, conformément à la
+    // décision produit (construire le backend plutôt que retirer le front).
+
+    public async Task<List<int>> GetFollowedThreadIdsAsync(int userId) =>
+        await _db.ForumThreadFollows
+            .Where(f => f.UserId == userId)
+            .Select(f => f.ThreadId)
+            .ToListAsync();
+
+    public async Task FollowThreadAsync(int userId, int threadId)
+    {
+        var thread = await _db.ForumThreads.FindAsync(threadId);
+        if (thread == null || thread.IsDeleted)
+            throw new KeyNotFoundException($"Thread {threadId} not found");
+
+        var already = await _db.ForumThreadFollows
+            .AnyAsync(f => f.UserId == userId && f.ThreadId == threadId);
+        if (already) return; // idempotent : suivre deux fois ne crée pas de doublon
+
+        _db.ForumThreadFollows.Add(new ForumThreadFollow
+        {
+            UserId = userId,
+            ThreadId = threadId,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task UnfollowThreadAsync(int userId, int threadId)
+    {
+        var follow = await _db.ForumThreadFollows
+            .FirstOrDefaultAsync(f => f.UserId == userId && f.ThreadId == threadId);
+        if (follow == null) return; // ne suivait déjà pas : pas d'erreur
+
+        _db.ForumThreadFollows.Remove(follow);
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task<ForumThreadListResponse> GetFeedAsync(
+        int? userId, string? category, int page, int pageSize, string sort, bool followedOnly)
+    {
+        if (page < 1) page = 1;
+        if (pageSize < 1) pageSize = 20;
+        if (pageSize > 100) pageSize = 100;
+
+        var query = _db.ForumThreads.Where(t => !t.IsDeleted);
+
+        if (!string.IsNullOrWhiteSpace(category) && category != "all")
+            query = query.Where(t => t.Category == category);
+
+        // Un visiteur anonyme ne peut rien suivre : le filtre est ignoré pour lui
+        // plutôt que de renvoyer une liste vide qui ressemblerait à une erreur.
+        if (followedOnly && userId.HasValue)
+        {
+            var followedIds = _db.ForumThreadFollows.Where(f => f.UserId == userId.Value).Select(f => f.ThreadId);
+            query = query.Where(t => followedIds.Contains(t.Id));
+        }
+
+        var total = await query.CountAsync();
+
+        // Les fils épinglés restent toujours en tête, quel que soit le tri choisi.
+        IQueryable<Backend.Models.Entities.ForumThread> sorted = sort switch
+        {
+            "active"      => query.OrderByDescending(t => t.IsPinned).ThenByDescending(t => t.UpdatedAt),
+            "unanswered"  => query.OrderByDescending(t => t.IsPinned).ThenBy(t => t.RepliesCount).ThenByDescending(t => t.CreatedAt),
+            "popular"     => query.OrderByDescending(t => t.IsPinned).ThenByDescending(t => t.Upvotes).ThenByDescending(t => t.CreatedAt),
+            "oldest"      => query.OrderByDescending(t => t.IsPinned).ThenBy(t => t.CreatedAt),
+            _ /* recent */ => query.OrderByDescending(t => t.IsPinned).ThenByDescending(t => t.CreatedAt),
+        };
+
+        var pageThreadIds = await sorted
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(t => t.Id)
+            .ToListAsync();
+
+        var threads = await _db.ForumThreads
+            .Where(t => pageThreadIds.Contains(t.Id))
+            .Include(t => t.User)
+            .Select(t => new ForumThreadResponse
+            {
+                Id = t.Id,
+                UserId = t.UserId,
+                AuthorName = t.User != null ? (t.User.FirstName + " " + t.User.LastName).Trim() : null,
+                AuthorRole = t.User != null ? t.User.Role : null,
+                IsVerifiedInstitution = t.User != null && t.User.Role == "institution" && t.User.IsEmailVerified,
+                IsVerifiedTeacher = t.User != null && t.User.Role == "teacher"
+                    && _db.TutorProfiles.Any(tp => tp.UserId == t.UserId && tp.IsDiplomaVerified),
+                Title = t.Title,
+                Content = t.Content,
+                Category = t.Category,
+                Tag = t.Tag,
+                IsPinned = t.IsPinned,
+                IsSolved = t.IsSolved,
+                ViewsCount = t.ViewsCount,
+                RepliesCount = t.RepliesCount,
+                Upvotes = t.Upvotes,
+                CreatedAt = t.CreatedAt,
+                UpdatedAt = t.UpdatedAt,
+            })
+            .ToListAsync();
+
+        // Remet l'ordre décidé par le tri (la requête Where ci-dessus ne le conserve pas).
+        var byId = threads.ToDictionary(t => t.Id);
+        var ordered = pageThreadIds.Where(byId.ContainsKey).Select(id => byId[id]).ToList();
+
+        if (userId.HasValue && ordered.Count > 0)
+        {
+            var followedSet = await _db.ForumThreadFollows
+                .Where(f => f.UserId == userId.Value && pageThreadIds.Contains(f.ThreadId))
+                .Select(f => f.ThreadId)
+                .ToListAsync();
+            var followedHash = followedSet.ToHashSet();
+            foreach (var t in ordered)
+                t.IsFollowed = followedHash.Contains(t.Id);
+        }
+
+        return new ForumThreadListResponse
+        {
+            Threads = ordered,
+            Total = total,
+            Page = page,
+            PageSize = pageSize,
+            TotalPages = (int)Math.Ceiling(total / (double)pageSize),
+        };
+    }
 }

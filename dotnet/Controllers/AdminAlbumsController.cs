@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Services;
+using Backend.Extensions;
 
 namespace Backend.Controllers;
 
@@ -121,5 +122,173 @@ public class AdminAlbumsController : ControllerBase
             edgeCases,
             preview = (object?)null,
         });
+    }
+
+    // ── Module 33 (lot 7) : déclenchement hybride ───────────────────────────
+    //
+    // Le déclenchement manuel ci-dessus (POST /generate) reste utilisable
+    // pour un test ponctuel. Ce qui suit ajoute le volet automatique : une
+    // date de fin d'année scolaire configurable par un administrateur, un
+    // service planifié qui génère l'aperçu pour TOUS les parents à cette
+    // date, et une confirmation manuelle explicite avant toute diffusion
+    // réelle (jamais automatique).
+
+    public class SetAlbumScheduleRequest
+    {
+        /// <summary>Ex: "2024-2025". Normalisé par YearlyAlbumService.</summary>
+        public string SchoolYear { get; set; } = string.Empty;
+        /// <summary>Date (UTC) de déclenchement automatique de l'aperçu.</summary>
+        public DateTime TriggerDate { get; set; }
+    }
+
+    /// <summary>Liste les paramétrages d'album (historique + à venir), les plus récents en premier.</summary>
+    [HttpGet("schedule")]
+    public async Task<IActionResult> GetSchedules()
+    {
+        var schedules = await _db.AlbumSchedules.AsNoTracking()
+            .OrderByDescending(s => s.TriggerDate)
+            .Select(s => new
+            {
+                s.Id,
+                s.SchoolYear,
+                s.TriggerDate,
+                s.Status,
+                s.GeneratedAt,
+                s.DispatchedAt,
+            })
+            .ToListAsync();
+        return Ok(schedules);
+    }
+
+    /// <summary>
+    /// Crée ou met à jour la date de déclenchement pour une année scolaire.
+    /// Ne modifie jamais un paramétrage déjà passé en PreviewGenerated/Dispatched :
+    /// il faut créer une nouvelle ligne pour une nouvelle campagne plutôt que
+    /// de réécrire l'historique d'une diffusion déjà effectuée.
+    /// </summary>
+    [HttpPost("schedule")]
+    public async Task<IActionResult> SetSchedule([FromBody] SetAlbumScheduleRequest request)
+    {
+        if (YearlyAlbumService.NormalizeSchoolYear(request.SchoolYear) == null)
+            return BadRequest(new { error = $"Année scolaire mal formée : « {request.SchoolYear} ». Format attendu : 2024-2025." });
+
+        var existing = await _db.AlbumSchedules.FirstOrDefaultAsync(s => s.SchoolYear == request.SchoolYear);
+        if (existing != null)
+        {
+            if (existing.Status != "Pending")
+                return Conflict(new { error = $"Le paramétrage de {request.SchoolYear} est déjà « {existing.Status} » : il ne peut plus être modifié." });
+
+            existing.TriggerDate = request.TriggerDate;
+            existing.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return Ok(new { id = existing.Id, existing.SchoolYear, existing.TriggerDate, existing.Status });
+        }
+
+        var schedule = new Models.Entities.AlbumSchedule
+        {
+            SchoolYear = request.SchoolYear,
+            TriggerDate = request.TriggerDate,
+            Status = "Pending",
+            CreatedByUserId = User.GetUserId(),
+        };
+        _db.AlbumSchedules.Add(schedule);
+        await _db.SaveChangesAsync();
+        return Ok(new { schedule.Id, schedule.SchoolYear, schedule.TriggerDate, schedule.Status });
+    }
+
+    /// <summary>
+    /// Aperçu généré automatiquement pour une année scolaire, à consulter
+    /// avant de confirmer (ou non) la diffusion réelle.
+    /// </summary>
+    [HttpGet("preview")]
+    public async Task<IActionResult> GetPreview([FromQuery] string schoolYear)
+    {
+        var canonical = YearlyAlbumService.NormalizeSchoolYear(schoolYear);
+        if (canonical == null)
+            return BadRequest(new { error = $"Année scolaire mal formée : « {schoolYear} »." });
+        var canonicalLabel = $"{canonical.Value.Start}-{canonical.Value.End}";
+
+        var reports = await _db.ParentReports.AsNoTracking()
+            .Where(r => r.ReportType == "AlbumAnnuel" && r.IsPreviewPending)
+            .Include(r => r.Parent)
+            .Include(r => r.Child)
+            .ToListAsync();
+
+        // Filtré en mémoire : SchoolYear vit dans le JSON Content, pas en colonne.
+        var filtered = reports.Where(r =>
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(r.Content ?? "{}");
+                return doc.RootElement.TryGetProperty("SchoolYear", out var y) && y.GetString() == canonicalLabel;
+            }
+            catch { return false; }
+        }).ToList();
+
+        var items = filtered.Select(r => new
+        {
+            r.Id,
+            parentId = r.ParentId,
+            parentName = r.Parent != null ? $"{r.Parent.FirstName} {r.Parent.LastName}".Trim() : null,
+            childId = r.ChildId,
+            childName = r.Child != null ? $"{r.Child.FirstName} {r.Child.LastName}".Trim() : null,
+            r.CreatedAt,
+        });
+
+        return Ok(new { schoolYear = canonicalLabel, count = filtered.Count, items });
+    }
+
+    public class DispatchAlbumsRequest
+    {
+        public string SchoolYear { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Confirmation explicite de la diffusion réelle : les aperçus en attente
+    /// deviennent visibles pour tous les parents concernés. Action manuelle
+    /// obligatoire (décision §5.5.P), jamais automatique, et idempotente :
+    /// une seconde confirmation sur une campagne déjà diffusée est refusée
+    /// plutôt que de ré-envoyer.
+    /// </summary>
+    [HttpPost("dispatch")]
+    public async Task<IActionResult> Dispatch([FromBody] DispatchAlbumsRequest request)
+    {
+        var canonical = YearlyAlbumService.NormalizeSchoolYear(request.SchoolYear);
+        if (canonical == null)
+            return BadRequest(new { error = $"Année scolaire mal formée : « {request.SchoolYear} »." });
+        var canonicalLabel = $"{canonical.Value.Start}-{canonical.Value.End}";
+
+        var schedule = await _db.AlbumSchedules.FirstOrDefaultAsync(s => s.SchoolYear == canonicalLabel);
+        if (schedule == null || schedule.Status != "PreviewGenerated")
+            return Conflict(new { error = "Aucun aperçu en attente de diffusion pour cette année scolaire (déjà diffusé, ou pas encore généré)." });
+
+        var pending = await _db.ParentReports
+            .Where(r => r.ReportType == "AlbumAnnuel" && r.IsPreviewPending)
+            .ToListAsync();
+
+        var toDispatch = pending.Where(r =>
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(r.Content ?? "{}");
+                return doc.RootElement.TryGetProperty("SchoolYear", out var y) && y.GetString() == canonicalLabel;
+            }
+            catch { return false; }
+        }).ToList();
+
+        foreach (var r in toDispatch)
+            r.IsPreviewPending = false;
+
+        schedule.Status = "Dispatched";
+        schedule.DispatchedAt = DateTime.UtcNow;
+        schedule.DispatchedByUserId = User.GetUserId();
+        schedule.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("Admin {AdminId} a confirmé la diffusion de l'album {SchoolYear} à {Count} parent(s).",
+            User.GetUserId(), canonicalLabel, toDispatch.Count);
+
+        return Ok(new { schoolYear = canonicalLabel, dispatchedCount = toDispatch.Count });
     }
 }

@@ -170,8 +170,12 @@ public class ParentReportController : ControllerBase
         if (!linked)
             return StatusCode(403, new { error = "Accès refusé : cet enfant n'est pas lié à votre compte." });
 
+        // Module 33 (lot 7) : un aperçu généré automatiquement (IsPreviewPending)
+        // reste invisible ici jusqu'à la confirmation de diffusion par un
+        // administrateur  sans quoi la diffusion "manuelle et confirmée"
+        // deviendrait automatique de fait.
         var report = await _db.ParentReports.AsNoTracking()
-            .Where(r => r.ParentId == parentId && r.ChildId == childId && r.ReportType == "AlbumAnnuel")
+            .Where(r => r.ParentId == parentId && r.ChildId == childId && r.ReportType == "AlbumAnnuel" && !r.IsPreviewPending)
             .OrderByDescending(r => r.CreatedAt)
             .FirstOrDefaultAsync();
 

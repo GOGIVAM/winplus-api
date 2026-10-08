@@ -103,6 +103,7 @@ public partial class ApplicationDbContext : DbContext
     // Historique des alertes WinAI et des rapports destinés aux parents (distinct de DirectMessage/Notification)
     public DbSet<ParentAlert> ParentAlerts => Set<ParentAlert>();
     public DbSet<ParentReport> ParentReports => Set<ParentReport>();
+    public DbSet<AlbumSchedule> AlbumSchedules => Set<AlbumSchedule>();
 
     // Mode Répétiteur (Module 1  profil et onboarding cours particuliers)
     public DbSet<TutorProfile> TutorProfiles => Set<TutorProfile>();
@@ -1389,6 +1390,7 @@ modelBuilder.Entity<Exam>(entity =>
             entity.Property(e => e.CapsuleText).HasMaxLength(500);
             entity.Property(e => e.EmitterType).IsRequired().HasMaxLength(10).HasDefaultValue("System");
             entity.Property(e => e.IsRead).HasDefaultValue(false);
+            entity.Property(e => e.IsPreviewPending).HasDefaultValue(false);
             entity.HasIndex(e => e.ParentId);
             entity.HasIndex(e => e.ChildId);
             entity.HasIndex(e => new { e.ParentId, e.ChildId, e.ReportType });
@@ -1403,6 +1405,23 @@ modelBuilder.Entity<Exam>(entity =>
             entity.HasOne(e => e.Emitter)
                 .WithMany()
                 .HasForeignKey(e => e.EmitterId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Module 33 (lot 7) : paramétrage du déclenchement hybride de l'album de fin d'année
+        modelBuilder.Entity<AlbumSchedule>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.SchoolYear).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.Status).IsRequired().HasMaxLength(20).HasDefaultValue("Pending");
+            entity.HasIndex(e => e.SchoolYear).IsUnique();
+            entity.HasOne(e => e.CreatedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.CreatedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.DispatchedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.DispatchedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 

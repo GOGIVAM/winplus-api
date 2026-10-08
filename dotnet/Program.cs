@@ -421,6 +421,8 @@ builder.Services.AddScoped<IAffiliateService, AffiliateService>();
 builder.Services.AddScoped<IParentService, ParentService>();
 builder.Services.AddScoped<IStudentService, StudentService>();
 builder.Services.AddScoped<IYearlyAlbumService, YearlyAlbumService>();
+// Module 43 (lot 7) : export RGPD des données utilisateur.
+builder.Services.AddScoped<IUserDataExportService, UserDataExportService>();
 builder.Services.AddScoped<IHomeService, HomeService>();
 builder.Services.AddScoped<ICategoryService, CategoryService>();
 
@@ -536,6 +538,9 @@ builder.Services.AddHostedService<SubscriptionReminderService>();
 builder.Services.AddHostedService<WeeklyParentReportService>();
 builder.Services.AddHostedService<ExamWatchModeExpirationService>();
 builder.Services.AddHostedService<MonthlyPortfolioService>();
+// Module 33 (lot 7) : déclenchement hybride de l'album de fin d'année (date
+// configurable par un administrateur via AlbumSchedule, voir AdminAlbumsController).
+builder.Services.AddHostedService<YearlyAlbumSchedulerService>();
 
 // Background services for institution features
 builder.Services.AddHostedService<MonthlyInstitutionReportService>();

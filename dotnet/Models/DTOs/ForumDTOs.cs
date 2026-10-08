@@ -40,6 +40,8 @@ public class ForumThreadResponse
     public int Upvotes { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+    /// <summary>Module 42 : le fil est suivi par l'utilisateur courant. Null pour un visiteur anonyme (non calculé).</summary>
+    public bool? IsFollowed { get; set; }
 }
 
 public class ForumThreadListResponse
