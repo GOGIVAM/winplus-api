@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Extensions;
+using Backend.Services;
 
 namespace Backend.Controllers;
 
@@ -20,12 +21,22 @@ public class CourseCatalogController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
     private readonly ILogger<CourseCatalogController> _logger;
+    private readonly IStorageService _storage;
 
-    public CourseCatalogController(ApplicationDbContext db, ILogger<CourseCatalogController> logger)
+    // Module 27 (lot 8) : même TTL que CoursePlayerController pour les leçons
+    // en libre aperçu (pas d'inscription requise, mais pas de lien S3 permanent
+    // non plus).
+    private static readonly TimeSpan LessonMediaTtl = TimeSpan.FromMinutes(60);
+
+    public CourseCatalogController(ApplicationDbContext db, ILogger<CourseCatalogController> logger, IStorageService storage)
     {
         _db = db;
         _logger = logger;
+        _storage = storage;
     }
+
+    private string? Presign(string? urlOrKey) =>
+        string.IsNullOrWhiteSpace(urlOrKey) ? null : _storage.PresignGetUrl(urlOrKey, LessonMediaTtl);
 
     [HttpGet]
     public async Task<IActionResult> List(
@@ -164,9 +175,10 @@ public class CourseCatalogController : ControllerBase
                     {
                         l.Id, l.Title, l.LessonType, l.VideoDurationSec,
                         l.IsPreview, l.Position,
-                        // Contenu uniquement si preview ou inscrit
-                        videoUrl    = (l.IsPreview || enrolled) ? l.VideoUrl : null,
-                        fileUrl     = (l.IsPreview || enrolled) ? l.FileUrl : null,
+                        // Contenu uniquement si preview ou inscrit ; jamais de lien S3
+                        // permanent (Module 27, lot 8) — toujours une URL présignée.
+                        videoUrl    = (l.IsPreview || enrolled) ? Presign(l.VideoUrl) : null,
+                        fileUrl     = (l.IsPreview || enrolled) ? Presign(l.FileUrl) : null,
                         articleContent = (l.IsPreview || enrolled) ? l.ArticleContent : null,
                     }),
                 }),

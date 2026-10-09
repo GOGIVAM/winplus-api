@@ -23,11 +23,18 @@ public class CoursePlayerController : ControllerBase
     private readonly ILogger<CoursePlayerController> _logger;
     private readonly ICourseAccessService _access;
     private readonly ICourseGamificationService _gamification;
+    private readonly IStorageService _storage;
 
-    public CoursePlayerController(ApplicationDbContext db, ILogger<CoursePlayerController> logger, ICourseAccessService access, ICourseGamificationService gamification)
+    // Module 27 (lot 8) : URL présignée à durée limitée pour la vidéo/le fichier
+    // d'une leçon de formation, jamais de lien S3 permanent. 60 minutes couvre
+    // la durée d'une leçon sans forcer un renouvellement en cours de lecture.
+    private static readonly TimeSpan LessonMediaTtl = TimeSpan.FromMinutes(60);
+
+    public CoursePlayerController(ApplicationDbContext db, ILogger<CoursePlayerController> logger, ICourseAccessService access, ICourseGamificationService gamification, IStorageService storage)
     {
         _db = db;
         _logger = logger;
+        _storage = storage;
         _access = access;
         _gamification = gamification;
     }
@@ -166,11 +173,22 @@ public class CoursePlayerController : ControllerBase
             var prog = await _db.LessonProgress.AsNoTracking()
                 .FirstOrDefaultAsync(p => p.UserId == userId && p.LessonId == lessonId);
 
+            // Module 27 (lot 8) : jamais de lien S3 permanent vers la vidéo ou le
+            // fichier d'une leçon  toujours une URL de lecture présignée à
+            // durée limitée, sur le même principe que SubjectsController pour
+            // les épreuves.
+            var videoUrl = string.IsNullOrWhiteSpace(lesson.VideoUrl)
+                ? null
+                : _storage.PresignGetUrl(lesson.VideoUrl, LessonMediaTtl);
+            var fileUrl = string.IsNullOrWhiteSpace(lesson.FileUrl)
+                ? null
+                : _storage.PresignGetUrl(lesson.FileUrl, LessonMediaTtl);
+
             return Ok(new
             {
                 lesson.Id, lesson.Title, lesson.LessonType, lesson.Description,
-                lesson.VideoUrl, lesson.VideoDurationSec,
-                lesson.ArticleContent, lesson.FileUrl, lesson.FileName,
+                videoUrl, lesson.VideoDurationSec,
+                lesson.ArticleContent, fileUrl, lesson.FileName,
                 lesson.IsPreview, lesson.Position, lesson.QuizId,
                 checkpoints = string.IsNullOrEmpty(lesson.CheckpointsJson)
                     ? new List<CheckpointDto>()
