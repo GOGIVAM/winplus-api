@@ -180,6 +180,9 @@ public partial class ApplicationDbContext : DbContext
     public DbSet<StudentCoursePoints> StudentCoursePoints => Set<StudentCoursePoints>();
     public DbSet<StudentCourseBadge> StudentCourseBadges => Set<StudentCourseBadge>();
     public DbSet<CourseCertificate> CourseCertificates => Set<CourseCertificate>();
+    // Module 24 (lot 8, rattrapage 16.2) : catalogue des badges plateforme et débloqués par utilisateur.
+    public DbSet<BadgeDefinition> BadgeDefinitions => Set<BadgeDefinition>();
+    public DbSet<UserBadge> UserBadges => Set<UserBadge>();
     public DbSet<CourseSection> CourseSections => Set<CourseSection>();
     public DbSet<CourseLesson> CourseLessons => Set<CourseLesson>();
     public DbSet<CourseEnrollment> CourseEnrollments => Set<CourseEnrollment>();

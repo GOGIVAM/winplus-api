@@ -438,6 +438,7 @@ builder.Services.AddScoped<ITutorInsightsService, TutorInsightsService>();
 builder.Services.AddScoped<ICourseAccessService, CourseAccessService>();
 builder.Services.AddScoped<ICourseGamificationService, CourseGamificationService>();
 builder.Services.AddScoped<ICourseCertificateService, CourseCertificateService>();
+builder.Services.AddScoped<IBadgeService, BadgeService>();
 builder.Services.AddScoped<IDailyScoreService, DailyScoreService>();
 builder.Services.AddScoped<IRevisionService, RevisionService>();
 
@@ -564,6 +565,7 @@ builder.Services.AddHostedService<AffiliateRateRecalculationService>();
 // Background services for Formations (drip content)
 builder.Services.AddHostedService<SectionUnlockNotificationService>();
 builder.Services.AddHostedService<CourseInactivityAlertService>();
+builder.Services.AddHostedService<BadgeBacklogUnlockService>();
 
 // Partie 14.1 (2026-10-08) : proactivité du conseiller parent par alertes ciblées sur seuils.
 builder.Services.AddHostedService<ParentAdvisorThresholdService>();

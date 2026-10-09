@@ -15,6 +15,7 @@ public class QuizService : IQuizService
     private readonly IFastApiClient _fastApiClient;
     private readonly ILogger<QuizService> _logger;
     private readonly INtfyService _ntfy;
+    private readonly IBadgeService _badges;
     private const double PASSING_SCORE = 50.0;
 
     // ParsePlayQuestions et SubmitQuizAttemptAsync lisent QuestionsJson avec des
@@ -25,12 +26,13 @@ public class QuizService : IQuizService
     // sans erreur mais s'affichait vide côté élève (questions/options blanches).
     private static readonly JsonSerializerOptions CamelCaseJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public QuizService(ApplicationDbContext context, IFastApiClient fastApiClient, ILogger<QuizService> logger, INtfyService ntfy)
+    public QuizService(ApplicationDbContext context, IFastApiClient fastApiClient, ILogger<QuizService> logger, INtfyService ntfy, IBadgeService badges)
     {
         _context = context;
         _fastApiClient = fastApiClient;
         _logger = logger;
         _ntfy = ntfy;
+        _badges = badges;
     }
 
     public async Task<QuizDto?> GetQuizByIdAsync(int id)
@@ -300,6 +302,17 @@ public class QuizService : IQuizService
 
         _context.Quizzes.Update(quiz);
         await _context.SaveChangesAsync();
+
+        // Module 24 (lot 8, rattrapage 16.2) : déblocage des badges "quiz"
+        // (premier quiz réussi, 10 quiz réussis, score parfait) au moment de
+        // l'action concernée — la série de jours actifs est, elle, rattrapée
+        // en tâche de fond (BadgeBacklogUnlockService), car son calcul lit
+        // plusieurs tables indépendamment de ce flux.
+        if (attempt.Passed || score == 100m)
+        {
+            try { await _badges.EvaluateForUserAsync(userId); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Badge evaluation failed after quiz attempt {AttemptId}", attempt.Id); }
+        }
 
         // Module 11 : pont vers la file de correction des devoirs, pour que
         // l'élève comme le professeur retrouvent cette réponse au même

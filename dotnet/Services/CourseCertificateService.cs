@@ -25,14 +25,16 @@ public class CourseCertificateService : ICourseCertificateService
     private readonly IStorageService _storage;
     private readonly IConfiguration _config;
     private readonly ILogger<CourseCertificateService> _logger;
+    private readonly IBadgeService _badges;
 
-    public CourseCertificateService(ApplicationDbContext db, IPdfService pdf, IStorageService storage, IConfiguration config, ILogger<CourseCertificateService> logger)
+    public CourseCertificateService(ApplicationDbContext db, IPdfService pdf, IStorageService storage, IConfiguration config, ILogger<CourseCertificateService> logger, IBadgeService badges)
     {
         _db = db;
         _pdf = pdf;
         _storage = storage;
         _config = config;
         _logger = logger;
+        _badges = badges;
     }
 
     public async Task<CourseCertificate> GenerateForCompletedCourseAsync(int userId, int courseId)
@@ -82,6 +84,11 @@ public class CourseCertificateService : ICourseCertificateService
         };
         _db.CourseCertificates.Add(cert);
         await _db.SaveChangesAsync();
+
+        // Module 24 (lot 8, rattrapage 16.2) : déblocage du badge "première
+        // formation terminée" au moment de la délivrance du certificat.
+        try { await _badges.EvaluateForUserAsync(userId); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Badge evaluation failed after certificate {CertId}", cert.Id); }
 
         try
         {
