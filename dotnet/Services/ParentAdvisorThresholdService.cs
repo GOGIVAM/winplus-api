@@ -31,6 +31,11 @@ namespace Backend.Services;
 public sealed class ParentAdvisorThresholdService : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromHours(24);
+    // L'instance redémarre chaque matin et FastAPI met ~30 s à charger ses
+    // modèles : sans attente, le premier (et souvent seul) passage du jour
+    // tombait systématiquement sur une connexion refusée.
+    private static readonly TimeSpan StartupDelay = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(30);
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ParentAdvisorThresholdService> _logger;
@@ -44,12 +49,16 @@ public sealed class ParentAdvisorThresholdService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("ParentAdvisorThresholdService started.");
+        try { await Task.Delay(StartupDelay, stoppingToken); }
+        catch (OperationCanceledException) { return; }
+
         while (!stoppingToken.IsCancellationRequested)
         {
-            try { await RunAsync(stoppingToken); }
+            var succeeded = false;
+            try { succeeded = await RunAsync(stoppingToken); }
             catch (Exception ex) { _logger.LogError(ex, "ParentAdvisorThresholdService run failed."); }
 
-            try { await Task.Delay(Interval, stoppingToken); }
+            try { await Task.Delay(succeeded ? Interval : RetryDelay, stoppingToken); }
             catch (OperationCanceledException) { break; }
         }
     }
@@ -82,7 +91,8 @@ public sealed class ParentAdvisorThresholdService : BackgroundService
         ["ExamenImminentSansRevision"] = "Examen proche  pas de révision récente",
     };
 
-    private async Task RunAsync(CancellationToken ct)
+    /// <returns>false si WinAI n'a pas pu être interrogé (nouvel essai plus tôt).</returns>
+    private async Task<bool> RunAsync(CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -96,7 +106,7 @@ public sealed class ParentAdvisorThresholdService : BackgroundService
             .Distinct()
             .ToListAsync(ct);
 
-        if (links.Count == 0) return;
+        if (links.Count == 0) return true;
 
         // Un seul appel pour tous les couples parent-enfant du jour : évite N
         // appels HTTP (un par enfant), comme CourseInactivityAlertService le
@@ -120,17 +130,17 @@ public sealed class ParentAdvisorThresholdService : BackgroundService
                     _logger.LogError("threshold-alerts : authentification service à service refusée par Python ({Status}) : {Body}", (int)res.StatusCode, body);
                 else
                     _logger.LogWarning("threshold-alerts : Python a répondu {Status} : {Body}", (int)res.StatusCode, body);
-                return;
+                return false;
             }
             response = await res.Content.ReadFromJsonAsync<ThresholdScanResponseDto>(cancellationToken: cts.Token);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "threshold-alerts : appel WinAI impossible.");
-            return;
+            return false;
         }
 
-        if (response == null || response.Alerts.Count == 0) return;
+        if (response == null || response.Alerts.Count == 0) return true;
 
         // Dédoublonne contre les alertes déjà persistées (même parent/enfant/type/DedupKey).
         var existingKeys = (await db.ParentAlerts.AsNoTracking()
@@ -185,5 +195,6 @@ public sealed class ParentAdvisorThresholdService : BackgroundService
 
         if (newCount > 0)
             _logger.LogInformation("ParentAdvisorThresholdService : {New} nouvelle(s) alerte(s) sur {Total} détectée(s).", newCount, response.Alerts.Count);
+        return true;
     }
 }

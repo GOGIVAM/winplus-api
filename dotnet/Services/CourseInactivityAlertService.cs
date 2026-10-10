@@ -21,6 +21,11 @@ namespace Backend.Services;
 public sealed class CourseInactivityAlertService : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromHours(24);
+    // L'instance redémarre chaque matin et FastAPI met ~30 s à charger ses
+    // modèles : sans attente, la détection de décrochage du passage du jour
+    // tombait systématiquement sur une connexion refusée. Pas de nouvel essai
+    // rapproché : il renverrait les notifications d'inactivité en double.
+    private static readonly TimeSpan StartupDelay = TimeSpan.FromMinutes(5);
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<CourseInactivityAlertService> _logger;
@@ -34,6 +39,9 @@ public sealed class CourseInactivityAlertService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("CourseInactivityAlertService started.");
+        try { await Task.Delay(StartupDelay, stoppingToken); }
+        catch (OperationCanceledException) { return; }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try { await RunAsync(stoppingToken); }
