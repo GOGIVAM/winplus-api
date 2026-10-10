@@ -97,6 +97,12 @@ public sealed class UserDataExportService : IUserDataExportService
             isMinor = age < 18;
         }
 
+        // Décision 16.4 : un parent ne reçoit les messages privés, conversations
+        // et mémoires WinAI de l'enfant que si sa minorité est réellement
+        // vérifiée (date de naissance). Sinon le compte lié peut être celui d'un
+        // élève majeur, et ces échanges contiennent aussi le texte de tiers.
+        bool includePrivateCommunications = !exportedForParent || isMinor == true;
+
         var orders = await _db.Orders.AsNoTracking()
             .Where(o => o.UserId == targetUserId)
             .Select(o => new
@@ -212,28 +218,33 @@ public sealed class UserDataExportService : IUserDataExportService
             .Select(d => new { d.Id, d.SubjectId, d.ExamId, d.FileName, d.CreatedAt })
             .ToListAsync(ct);
 
-        // Messages directs : seulement ceux de l'utilisateur cible, jamais le
-        // contenu provenant d'un autre compte au-delà de ce strict nécessaire
-        // pour comprendre l'échange (identifiant de l'autre partie, pas son
-        // propre profil complet).
-        var directMessages = await _db.DirectMessages.AsNoTracking()
-            .Where(m => m.FromUserId == targetUserId || m.ToUserId == targetUserId)
-            .Select(m => new { m.Id, m.FromUserId, m.ToUserId, m.Content, m.Type, m.CreatedAt, m.IsRead })
-            .ToListAsync(ct);
+        // Messages envoyés et reçus par l'utilisateur cible (le contenu reçu est
+        // écrit par l'autre partie : l'autre profil n'est jamais exporté, seul
+        // son identifiant l'est). Exclus d'un export parent non vérifié (16.4).
+        var directMessages = includePrivateCommunications
+            ? await _db.DirectMessages.AsNoTracking()
+                .Where(m => m.FromUserId == targetUserId || m.ToUserId == targetUserId)
+                .Select(m => new { m.Id, m.FromUserId, m.ToUserId, m.Content, m.Type, m.CreatedAt, m.IsRead })
+                .ToListAsync(ct)
+            : null;
 
-        var aiConversations = await _db.Conversations.AsNoTracking()
-            .Where(c => c.UserId == targetUserId)
-            .Select(c => new
-            {
-                c.Id, c.Title, c.CreatedAt, c.UpdatedAt,
-                messages = c.Messages.Select(m => new { m.Id, m.Role, m.Content, m.CreatedAt }),
-            })
-            .ToListAsync(ct);
+        var aiConversations = includePrivateCommunications
+            ? await _db.Conversations.AsNoTracking()
+                .Where(c => c.UserId == targetUserId)
+                .Select(c => new
+                {
+                    c.Id, c.Title, c.CreatedAt, c.UpdatedAt,
+                    messages = c.Messages.Select(m => new { m.Id, m.Role, m.Content, m.CreatedAt }),
+                })
+                .ToListAsync(ct)
+            : null;
 
-        var aiMemories = await _db.UserAIMemories.AsNoTracking()
-            .Where(m => m.UserId == targetUserId)
-            .Select(m => new { m.Id, m.MemoryType, m.Content, m.CreatedAt, m.UpdatedAt })
-            .ToListAsync(ct);
+        var aiMemories = includePrivateCommunications
+            ? await _db.UserAIMemories.AsNoTracking()
+                .Where(m => m.UserId == targetUserId)
+                .Select(m => new { m.Id, m.MemoryType, m.Content, m.CreatedAt, m.UpdatedAt })
+                .ToListAsync(ct)
+            : null;
 
         var parentReports = await _db.ParentReports.AsNoTracking()
             .Where(r => (r.ParentId == targetUserId || r.ChildId == targetUserId) && !r.IsPreviewPending)
@@ -252,6 +263,10 @@ public sealed class UserDataExportService : IUserDataExportService
             // seul motif.
             minorityVerified,
             isMinor,
+            privateCommunicationsIncluded = includePrivateCommunications,
+            privateCommunicationsNote = includePrivateCommunications
+                ? null
+                : "Messages privés, conversations et mémoires WinAI non inclus : la minorité de ce compte n'est pas vérifiée (date de naissance absente ou compte majeur). L'utilisateur peut les exporter lui-même depuis son propre compte.",
             profile,
             orders,
             payments,
