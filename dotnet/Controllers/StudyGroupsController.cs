@@ -23,6 +23,7 @@ public class JoinStudyGroupRequest
 /// Groupes d'étude collaboratifs (S7-2).
 /// GET    /api/study-groups/me
 /// GET    /api/study-groups/{id}
+/// GET    /api/study-groups/{id}/leaderboard
 /// POST   /api/study-groups
 /// POST   /api/study-groups/join
 /// DELETE /api/study-groups/{id}/leave
@@ -128,6 +129,82 @@ public class StudyGroupsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting study group {Id}", id);
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Classement hebdomadaire réel du groupe (restait fictif après le lot 8,
+    /// §16.3 du suivi) : classe les membres sur leur activité des 7 derniers
+    /// jours, à partir de données déjà en base (quiz réussis, minutes
+    /// étudiées) -- même fenêtre et mêmes tables que le calcul de série
+    /// (streak) de UsersController, aucune nouvelle mesure à instrumenter.
+    /// Points = (quiz réussis x 10) + minutes de session d'étude.
+    /// </summary>
+    [HttpGet("{id:int}/leaderboard")]
+    public async Task<IActionResult> GetLeaderboard([FromRoute] int id)
+    {
+        try
+        {
+            var userId = User.GetUserId();
+
+            var isMember = await _db.StudyGroupMembers.AnyAsync(m => m.StudyGroupId == id && m.UserId == userId);
+            if (!isMember)
+                return StatusCode(403, new { success = false, error = "Vous n'êtes pas membre de ce groupe." });
+
+            var since = DateTime.UtcNow.AddDays(-7);
+
+            var members = await _db.StudyGroupMembers
+                .AsNoTracking()
+                .Where(m => m.StudyGroupId == id)
+                .Select(m => new { m.UserId, m.User!.FirstName, m.User.LastName, m.User.AvatarUrl })
+                .ToListAsync();
+            var memberIds = members.Select(m => m.UserId).ToList();
+
+            var quizPoints = await _db.QuizAttempts
+                .Where(a => memberIds.Contains(a.UserId) && a.Passed && a.CompletedAt >= since)
+                .GroupBy(a => a.UserId)
+                .Select(g => new { UserId = g.Key, Count = g.Count() })
+                .ToListAsync();
+
+            var studyMinutes = await _db.StudySessions
+                .Where(s => memberIds.Contains(s.UserId) && s.CreatedAt >= since)
+                .GroupBy(s => s.UserId)
+                .Select(g => new { UserId = g.Key, Minutes = g.Sum(s => s.Duration) })
+                .ToListAsync();
+
+            var quizPointsByUser = quizPoints.ToDictionary(x => x.UserId, x => x.Count);
+            var minutesByUser = studyMinutes.ToDictionary(x => x.UserId, x => x.Minutes);
+
+            var ranking = members
+                .Select(m =>
+                {
+                    var quizzesPassed = quizPointsByUser.GetValueOrDefault(m.UserId, 0);
+                    var minutes = minutesByUser.GetValueOrDefault(m.UserId, 0);
+                    return new
+                    {
+                        userId = m.UserId,
+                        firstName = m.FirstName,
+                        lastName = m.LastName,
+                        avatarUrl = m.AvatarUrl,
+                        quizzesPassed,
+                        studyMinutes = minutes,
+                        points = quizzesPassed * 10 + minutes
+                    };
+                })
+                .OrderByDescending(x => x.points)
+                .ThenByDescending(x => x.quizzesPassed)
+                .ToList();
+
+            return Ok(new
+            {
+                data = new { periodDays = 7, since, ranking },
+                success = true
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error computing study group leaderboard {Id}", id);
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }
