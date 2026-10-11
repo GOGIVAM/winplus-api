@@ -41,6 +41,25 @@ public class TutorBookingController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Devis d'une séance (lot 9.1, suivi 17.3) : le client affiche ce prix
+    /// avant paiement, jamais un montant calculé de son côté. Recalculé de
+    /// toute façon à la création de la réservation.
+    /// </summary>
+    [HttpPost("quote")]
+    [AllowAnonymous]
+    public async Task<ActionResult<TutorPriceQuoteDto>> Quote([FromBody] TutorPriceQuoteRequestDto request)
+    {
+        try
+        {
+            return Ok(await _service.GetQuoteAsync(request));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     /// <summary>Statut d'une réservation (polling du paiement depuis le front).</summary>
     [HttpGet("{id:int}")]
     public async Task<ActionResult<TutorBookingDto>> GetById(int id)

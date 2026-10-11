@@ -31,7 +31,15 @@ public class TutorBooking
     [MaxLength(30)]
     public string Mode { get; set; } = "online";
 
+    /// <summary>Prix figé à la création : jamais recalculé ensuite, même si le répétiteur change sa grille.</summary>
     public decimal PriceXaf { get; set; }
+
+    /// <summary>
+    /// Devis serveur figé à la création (lot 9.1) : détail du calcul de
+    /// PriceXaf (tarif de base, modulations par tranche, dégressivité),
+    /// sérialisé en JSON. Null pour les réservations antérieures au 9.1.
+    /// </summary>
+    public string? PriceBreakdownJson { get; set; }
 
     /// <summary>
     /// pending_payment (paiement en cours) → pending_tutor_approval (payé, en
@@ -101,4 +109,7 @@ public class TutorBooking
 
     [ForeignKey(nameof(StudentUserId))]
     public User? Student { get; set; }
+
+    /// <summary>Sujets à travailler saisis à la réservation (lot 9.1, suivi 17.5).</summary>
+    public ICollection<TutorBookingTopic> Topics { get; set; } = new List<TutorBookingTopic>();
 }

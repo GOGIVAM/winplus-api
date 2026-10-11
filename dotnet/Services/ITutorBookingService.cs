@@ -5,6 +5,8 @@ namespace Backend.Services;
 
 public interface ITutorBookingService
 {
+    /// <summary>Devis serveur d'une séance (lot 9.1) : prix détaillé + disponibilité du créneau.</summary>
+    Task<TutorPriceQuoteDto> GetQuoteAsync(TutorPriceQuoteRequestDto request);
     Task<TutorBookingCreatedResponseDto> CreateBookingAsync(int studentUserId, CreateTutorBookingRequestDto request);
     Task<TutorBookingDto> GetByIdAsync(int userId, int bookingId);
     Task<List<TutorBookingDto>> GetMyBookingsAsStudentAsync(int studentUserId);

@@ -89,6 +89,11 @@ public class TutorProfile
     public ICollection<TutorPackage> Packages { get; set; } = new List<TutorPackage>();
     public ICollection<TutorAvailabilitySlot> AvailabilitySlots { get; set; } = new List<TutorAvailabilitySlot>();
     public ICollection<TutorVerificationDocument> VerificationDocuments { get; set; } = new List<TutorVerificationDocument>();
+
+    // ── Grille tarifaire (lot 9.1, voir TutorPricing.cs) ──────────────────
+    public ICollection<TutorRate> Rates { get; set; } = new List<TutorRate>();
+    public ICollection<TutorRateModifier> RateModifiers { get; set; } = new List<TutorRateModifier>();
+    public ICollection<TutorDurationDiscount> DurationDiscounts { get; set; } = new List<TutorDurationDiscount>();
 }
 
 /// <summary>Matière enseignée en cours particulier (multiselect, US-PRO-02).</summary>

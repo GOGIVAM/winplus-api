@@ -1109,6 +1109,40 @@ class SuggestTutorRateRequest(BaseModel):
     subject: str
     level: Optional[str] = None
     city: Optional[str] = None
+    # Lot 9.1 (suivi 17.3) : extension facultative. Avec include_grid=True, la
+    # réponse propose aussi une grille complète. Les anciens appels (subject,
+    # level, city seuls) obtiennent exactement la même réponse qu'avant.
+    include_grid: bool = False
+    subjects: List[str] = []
+    modes: List[str] = []  # "online" | "in_person"
+
+
+class SuggestedBaseRate(BaseModel):
+    subject: Optional[str] = None
+    mode: Optional[str] = None
+    hourly_rate_xaf: int
+    based_on: str  # "market_data" | "estimation"
+    sample_size: int
+
+
+class SuggestedRateModifier(BaseModel):
+    label: str
+    days_of_week: List[int]  # 0 = dimanche … 6 = samedi ; vide = tous les jours
+    start_time: Optional[str] = None  # "HH:mm"
+    end_time: Optional[str] = None
+    percent_adjustment: int
+
+
+class SuggestedDurationDiscount(BaseModel):
+    min_duration_minutes: int
+    percent_discount: int
+
+
+class TutorRateGridSuggestion(BaseModel):
+    base_rates: List[SuggestedBaseRate]
+    modifiers: List[SuggestedRateModifier]
+    duration_discounts: List[SuggestedDurationDiscount]
+    explanation: str
 
 
 class SuggestTutorRateResponse(BaseModel):
@@ -1118,9 +1152,85 @@ class SuggestTutorRateResponse(BaseModel):
     based_on: str  # "market_data" | "estimation"
     sample_size: int
     explanation: str
+    grid: Optional[TutorRateGridSuggestion] = None
 
 
 MIN_SAMPLE_FOR_MARKET_DATA = 3
+# Repères de la grille suggérée (lot 9.1). Ce sont des valeurs de départ
+# raisonnées, présentées comme telles au répétiteur, qui reste libre de tout
+# modifier ; elles ne prétendent pas être une donnée de marché.
+IN_PERSON_MARKUP_PERCENT = 15       # déplacement et temps de trajet du présentiel
+EVENING_MARKUP_PERCENT = 10         # lun-ven 18:00-21:00
+WEEKEND_MARKUP_PERCENT = 15         # samedi et dimanche
+DURATION_DISCOUNT_TIERS = [(120, 5), (180, 10)]
+MAX_GRID_SUBJECTS = 8
+
+
+def _round_xaf_100(value: float) -> int:
+    """Arrondi à la centaine de francs, plus lisible pour un tarif affiché."""
+    return int(round(value / 100.0)) * 100
+
+
+def _market_rates(session, subject: str, level: Optional[str]) -> List[float]:
+    """Tarifs horaires réels des répétiteurs actifs pour une matière (et un niveau)."""
+    query = (
+        session.query(TutorProfile.HourlyRateXaf)
+        .join(TutorSubject, TutorSubject.TutorProfileId == TutorProfile.Id)
+        .filter(
+            TutorProfile.IsActive == True,  # noqa: E712
+            TutorProfile.HourlyRateXaf.isnot(None),
+            func.lower(TutorSubject.Subject) == subject.strip().lower(),
+        )
+    )
+    if level:
+        query = query.join(TutorLevel, TutorLevel.TutorProfileId == TutorProfile.Id).filter(
+            func.lower(TutorLevel.Level) == level.strip().lower()
+        )
+    return sorted(float(r[0]) for r in query.all() if r[0] is not None)
+
+
+def _median(values: List[float]) -> float:
+    mid = len(values) // 2
+    return values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
+
+
+def _build_grid_suggestion(session, body: "SuggestTutorRateRequest", fallback_rate: int) -> TutorRateGridSuggestion:
+    subjects = [s.strip() for s in (body.subjects or [body.subject]) if s and s.strip()][:MAX_GRID_SUBJECTS]
+    modes = [m for m in (body.modes or ["online", "in_person"]) if m in ("online", "in_person")] or ["online"]
+
+    base_rates: List[SuggestedBaseRate] = []
+    for subject in subjects:
+        rates = _market_rates(session, subject, body.level)
+        if len(rates) >= MIN_SAMPLE_FOR_MARKET_DATA:
+            online_rate, based_on = _median(rates), "market_data"
+        else:
+            online_rate, based_on = float(fallback_rate), "estimation"
+        for mode in modes:
+            value = online_rate if mode == "online" else online_rate * (100 + IN_PERSON_MARKUP_PERCENT) / 100
+            base_rates.append(SuggestedBaseRate(
+                subject=subject, mode=mode, hourly_rate_xaf=max(500, _round_xaf_100(value)),
+                based_on=based_on, sample_size=len(rates),
+            ))
+
+    return TutorRateGridSuggestion(
+        base_rates=base_rates,
+        modifiers=[
+            SuggestedRateModifier(label="Soir", days_of_week=[1, 2, 3, 4, 5], start_time="18:00",
+                                  end_time="21:00", percent_adjustment=EVENING_MARKUP_PERCENT),
+            SuggestedRateModifier(label="Week-end", days_of_week=[0, 6], percent_adjustment=WEEKEND_MARKUP_PERCENT),
+        ],
+        duration_discounts=[
+            SuggestedDurationDiscount(min_duration_minutes=m, percent_discount=p) for m, p in DURATION_DISCOUNT_TIERS
+        ],
+        explanation=(
+            "Base en ligne : tarif médian observé sur WinPlus quand au moins "
+            f"{MIN_SAMPLE_FOR_MARKET_DATA} répétiteurs sont actifs dans la matière, sinon l'estimation WinAI. "
+            f"Présentiel : +{IN_PERSON_MARKUP_PERCENT} % pour le déplacement. Soirs de semaine "
+            f"+{EVENING_MARKUP_PERCENT} %, week-end +{WEEKEND_MARKUP_PERCENT} %, et une remise de "
+            f"{DURATION_DISCOUNT_TIERS[0][1]} % dès 2 h ({DURATION_DISCOUNT_TIERS[1][1]} % dès 3 h) "
+            "pour encourager les séances longues. Ce sont des points de départ : ajuste-les librement."
+        ),
+    )
 
 
 @teacher_ai_router.post("/teacher/suggest-tutor-rate", response_model=SuggestTutorRateResponse)
@@ -1128,29 +1238,27 @@ async def suggest_tutor_rate(
     body: SuggestTutorRateRequest,
     current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
+    response = _suggest_single_rate(body)
+    if body.include_grid:
+        db = Database()
+        session = db.SessionLocal()
+        try:
+            response.grid = _build_grid_suggestion(session, body, response.suggested_rate_xaf)
+        finally:
+            session.close()
+    return response
+
+
+def _suggest_single_rate(body: SuggestTutorRateRequest) -> SuggestTutorRateResponse:
     db = Database()
     session = db.SessionLocal()
     try:
-        query = (
-            session.query(TutorProfile.HourlyRateXaf)
-            .join(TutorSubject, TutorSubject.TutorProfileId == TutorProfile.Id)
-            .filter(
-                TutorProfile.IsActive == True,  # noqa: E712
-                TutorProfile.HourlyRateXaf.isnot(None),
-                func.lower(TutorSubject.Subject) == body.subject.strip().lower(),
-            )
-        )
-        if body.level:
-            query = query.join(TutorLevel, TutorLevel.TutorProfileId == TutorProfile.Id).filter(
-                func.lower(TutorLevel.Level) == body.level.strip().lower()
-            )
-        rates = sorted(r[0] for r in query.all() if r[0] is not None)
+        rates = _market_rates(session, body.subject, body.level)
     finally:
         session.close()
 
     if len(rates) >= MIN_SAMPLE_FOR_MARKET_DATA:
-        mid = len(rates) // 2
-        median = rates[mid] if len(rates) % 2 else (rates[mid - 1] + rates[mid]) / 2
+        median = _median(rates)
         low, high = rates[0], rates[-1]
         return SuggestTutorRateResponse(
             suggested_rate_xaf=int(median),

@@ -117,6 +117,10 @@ public partial class ApplicationDbContext : DbContext
 
     // Mode Répétiteur (Module 6  réservation de séances)
     public DbSet<TutorBooking> TutorBookings => Set<TutorBooking>();
+    public DbSet<TutorRate> TutorRates => Set<TutorRate>();
+    public DbSet<TutorRateModifier> TutorRateModifiers => Set<TutorRateModifier>();
+    public DbSet<TutorDurationDiscount> TutorDurationDiscounts => Set<TutorDurationDiscount>();
+    public DbSet<TutorBookingTopic> TutorBookingTopics => Set<TutorBookingTopic>();
     public DbSet<TutorReview> TutorReviews => Set<TutorReview>();
     public DbSet<TutorRevisionSheet> TutorRevisionSheets => Set<TutorRevisionSheet>();
     public DbSet<TutorCoachingReport> TutorCoachingReports => Set<TutorCoachingReport>();
@@ -278,6 +282,44 @@ public partial class ApplicationDbContext : DbContext
             entity.HasOne(e => e.TutorProfile)
                   .WithMany(t => t.AvailabilitySlots)
                   .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── Grille tarifaire et sujets de séance (lot 9.1) ─────────────────
+        modelBuilder.Entity<TutorRate>(entity =>
+        {
+            entity.Property(e => e.HourlyRateXaf).HasColumnType("numeric(10,2)");
+            entity.HasIndex(e => e.TutorProfileId);
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany(t => t.Rates)
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorRateModifier>(entity =>
+        {
+            entity.HasIndex(e => e.TutorProfileId);
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany(t => t.RateModifiers)
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorDurationDiscount>(entity =>
+        {
+            entity.HasIndex(e => e.TutorProfileId);
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany(t => t.DurationDiscounts)
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorBookingTopic>(entity =>
+        {
+            entity.HasIndex(e => e.TutorBookingId);
+            entity.HasOne(e => e.TutorBooking)
+                  .WithMany(b => b.Topics)
+                  .HasForeignKey(e => e.TutorBookingId)
                   .OnDelete(DeleteBehavior.Cascade);
         });
 

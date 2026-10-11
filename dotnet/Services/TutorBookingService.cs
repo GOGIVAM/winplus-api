@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.Json;
 using Backend.Data;
 using Backend.Models.DTOs;
 using Backend.Models.Entities;
@@ -20,6 +21,7 @@ public class TutorBookingService : ITutorBookingService
     private static readonly TimeSpan DisputeWindow = TimeSpan.FromHours(2);
     private static readonly string[] AllowedModes = { "online", "student_home", "tutor_home", "neutral_place" };
     private const string ReferencePrefix = "TBK";
+    private static readonly JsonSerializerOptions QuoteJson = new(JsonSerializerDefaults.Web);
 
     private readonly ApplicationDbContext _context;
     private readonly INotchPayService _notchPay;
@@ -27,59 +29,154 @@ public class TutorBookingService : ITutorBookingService
     private readonly ILogger<TutorBookingService> _logger;
     private readonly IWalletService _wallet;
 
-    public TutorBookingService(ApplicationDbContext context, INotchPayService notchPay, INtfyService ntfy, ILogger<TutorBookingService> logger, IWalletService wallet)
+    /// <summary>
+    /// Borne haute d'une séance unique (lot 9.1). Le suivi 17.2 limite déjà la
+    /// durée à la plage libre en continu ; cette borne de sécurité évite
+    /// qu'une plage déclarée « 08:00-20:00 » permette une séance de 12 h par
+    /// erreur. Réglable par <c>TutorBooking:MaxSessionMinutes</c> (défaut 360,
+    /// soit 6 h, ramené à un multiple de 30 entre 30 et 720).
+    /// </summary>
+    private readonly int _maxSessionMinutes;
+    public const int DefaultMaxSessionMinutes = 360;
+
+    public TutorBookingService(ApplicationDbContext context, INotchPayService notchPay, INtfyService ntfy, ILogger<TutorBookingService> logger, IWalletService wallet, IConfiguration configuration)
     {
         _wallet = wallet;
         _context = context;
         _notchPay = notchPay;
         _ntfy = ntfy;
         _logger = logger;
+        var configured = configuration.GetValue<int?>("TutorBooking:MaxSessionMinutes") ?? DefaultMaxSessionMinutes;
+        _maxSessionMinutes = Math.Clamp(configured / TutorPricing.SliceMinutes * TutorPricing.SliceMinutes, TutorPricing.SliceMinutes, 720);
     }
 
-    public async Task<TutorBookingCreatedResponseDto> CreateBookingAsync(int studentUserId, CreateTutorBookingRequestDto request)
+    private IQueryable<TutorProfile> ProfilesWithPricing() => _context.TutorProfiles
+        .Include(p => p.AvailabilitySlots)
+        .Include(p => p.User)
+        .Include(p => p.Subjects)
+        .Include(p => p.Rates)
+        .Include(p => p.RateModifiers)
+        .Include(p => p.DurationDiscounts);
+
+    /// <summary>
+    /// Contrôles communs au devis et à la réservation, hors chevauchement (lu
+    /// séparément, dans la transaction Serializable pour la réservation) :
+    /// profil actif, tranches de 30 min, durée bornée, séance contenue dans une
+    /// plage de disponibilité continue, préavis respecté. Renvoie la matière
+    /// retenue (canonique, telle que déclarée par le répétiteur).
+    /// </summary>
+    private string? ValidateRequestedSession(TutorProfile tutorProfile, DateOnly date, TimeSpan start, int durationMinutes, string? subject)
     {
-        var mode = AllowedModes.Contains(request.Mode) ? request.Mode : "online";
-        var start = TimeSpan.Parse(request.StartTime);
-        var end = TimeSpan.Parse(request.EndTime);
-        if (end <= start)
-            throw new InvalidOperationException("L'heure de fin doit être après l'heure de début.");
-
-        var tutorProfile = await _context.TutorProfiles
-            .Include(p => p.AvailabilitySlots)
-            .Include(p => p.User)
-            .Include(p => p.Subjects)
-            .FirstOrDefaultAsync(p => p.UserId == request.TutorUserId)
-            ?? throw new InvalidOperationException("Ce répétiteur n'existe pas.");
-
         if (!tutorProfile.IsActive)
             throw new InvalidOperationException("Ce répétiteur n'est pas actif pour l'instant.");
         if (tutorProfile.IsOnVacation)
             throw new InvalidOperationException("Ce répétiteur a suspendu ses réservations (vacances).");
 
-        var slotMatches = tutorProfile.AvailabilitySlots.Any(s =>
-            s.IsActive && s.DayOfWeek == (int)request.SessionDate.DayOfWeek && s.StartTime <= start && s.EndTime >= end);
-        if (!slotMatches)
+        if (!TutorPricing.IsAlignedOnSlice(start))
+            throw new InvalidOperationException("Une séance commence à l'heure pile ou à la demie (tranches de 30 min).");
+        if (durationMinutes < TutorPricing.SliceMinutes || durationMinutes % TutorPricing.SliceMinutes != 0)
+            throw new InvalidOperationException("La durée d'une séance doit être un multiple de 30 minutes (30 minutes minimum).");
+        if (durationMinutes > _maxSessionMinutes)
+            throw new InvalidOperationException($"Une séance ne peut pas dépasser {_maxSessionMinutes / 60.0:0.#} h.");
+
+        var end = start + TimeSpan.FromMinutes(durationMinutes);
+        var inRange = TutorPricing.MergedRanges(tutorProfile.AvailabilitySlots, (int)date.DayOfWeek)
+            .Any(r => r.Start <= start && r.End >= end);
+        if (!inRange)
             throw new InvalidOperationException("Ce créneau ne correspond à aucune disponibilité déclarée par le répétiteur.");
 
-        var sessionStartUtc = request.SessionDate.ToDateTime(TimeOnly.FromTimeSpan(start), DateTimeKind.Utc);
+        var sessionStartUtc = date.ToDateTime(TimeOnly.FromTimeSpan(start), DateTimeKind.Utc);
         if (sessionStartUtc < DateTime.UtcNow.AddHours(tutorProfile.NoticeHours))
             throw new InvalidOperationException($"Ce répétiteur demande un préavis minimum de {tutorProfile.NoticeHours} heures.");
 
-        var durationHours = (decimal)(end - start).TotalHours;
-        var price = Math.Round((tutorProfile.HourlyRateXaf ?? 0) * durationHours, 0);
+        if (string.IsNullOrWhiteSpace(subject))
+            return null;
+        var canonical = tutorProfile.Subjects
+            .FirstOrDefault(s => string.Equals(s.Subject.Trim(), subject.Trim(), StringComparison.OrdinalIgnoreCase))?.Subject;
+        return canonical ?? throw new InvalidOperationException("Ce répétiteur n'enseigne pas cette matière.");
+    }
+
+    public async Task<TutorPriceQuoteDto> GetQuoteAsync(TutorPriceQuoteRequestDto request)
+    {
+        var mode = AllowedModes.Contains(request.Mode) ? request.Mode : "online";
+        if (!TimeSpan.TryParse(request.StartTime, out var start))
+            throw new InvalidOperationException("Heure de début invalide.");
+        // Endpoint anonyme : la borne de durée est vérifiée avant tout calcul,
+        // pour qu'une durée démesurée ne fasse pas boucler le découpage en tranches.
+        if (request.DurationMinutes > _maxSessionMinutes)
+            throw new InvalidOperationException($"Une séance ne peut pas dépasser {_maxSessionMinutes / 60.0:0.#} h.");
+
+        var tutorProfile = await ProfilesWithPricing().AsNoTracking()
+            .FirstOrDefaultAsync(p => p.UserId == request.TutorUserId)
+            ?? throw new InvalidOperationException("Ce répétiteur n'existe pas.");
+
+        // Le prix se calcule même si le créneau n'est plus libre, pour que
+        // l'élève voie le tarif ; la disponibilité est signalée à part.
+        var subject = string.IsNullOrWhiteSpace(request.Subject) ? tutorProfile.Subjects.FirstOrDefault()?.Subject : request.Subject;
+        string? unavailable = null;
+        try
+        {
+            subject = ValidateRequestedSession(tutorProfile, request.SessionDate, start, request.DurationMinutes, subject) ?? subject;
+            var end = start + TimeSpan.FromMinutes(request.DurationMinutes);
+            var conflict = await _context.TutorBookings.AsNoTracking().AnyAsync(b =>
+                b.TutorProfileId == tutorProfile.Id && b.SessionDate == request.SessionDate &&
+                ActiveStatuses.Contains(b.Status) && b.StartTime < end && b.EndTime > start);
+            if (conflict) unavailable = "Ce créneau chevauche une séance déjà réservée.";
+        }
+        catch (InvalidOperationException ex) when (ex.Message != "Ce répétiteur n'enseigne pas cette matière.")
+        {
+            unavailable = ex.Message;
+        }
+
+        var quote = TutorPricing.Compute(TutorPricing.Grid.FromProfile(tutorProfile), request.SessionDate, start, request.DurationMinutes, mode, subject);
+        quote.IsAvailable = unavailable == null;
+        quote.UnavailableReason = unavailable;
+        return quote;
+    }
+
+    public async Task<TutorBookingCreatedResponseDto> CreateBookingAsync(int studentUserId, CreateTutorBookingRequestDto request)
+    {
+        var mode = AllowedModes.Contains(request.Mode) ? request.Mode : "online";
+        if (!TimeSpan.TryParse(request.StartTime, out var start))
+            throw new InvalidOperationException("Heure de début invalide.");
+
+        // Lot 9.1 : durée explicite (multiple de 30 min). Les anciens clients
+        // envoient encore début + fin : la durée en est déduite.
+        int durationMinutes;
+        if (request.DurationMinutes is int d)
+            durationMinutes = d;
+        else if (TimeSpan.TryParse(request.EndTime, out var legacyEnd) && legacyEnd > start)
+            durationMinutes = (int)(legacyEnd - start).TotalMinutes;
+        else
+            throw new InvalidOperationException("L'heure de fin doit être après l'heure de début.");
+        var end = start + TimeSpan.FromMinutes(durationMinutes);
+
+        var tutorProfile = await ProfilesWithPricing()
+            .FirstOrDefaultAsync(p => p.UserId == request.TutorUserId)
+            ?? throw new InvalidOperationException("Ce répétiteur n'existe pas.");
+
+        var subject = ValidateRequestedSession(tutorProfile, request.SessionDate, start, durationMinutes, request.Subject)
+            ?? tutorProfile.Subjects.FirstOrDefault()?.Subject;
+
+        // Prix toujours recalculé ici, jamais repris du client (17.3).
+        var quote = TutorPricing.Compute(TutorPricing.Grid.FromProfile(tutorProfile), request.SessionDate, start, durationMinutes, mode, subject);
+        var price = quote.TotalXaf;
+        var topics = TutorPricing.SanitizeTopics(request.Topics);
 
         var booking = new TutorBooking
         {
             TutorProfileId = tutorProfile.Id,
             StudentUserId = studentUserId,
-            Subject = string.IsNullOrWhiteSpace(request.Subject) ? tutorProfile.Subjects.FirstOrDefault()?.Subject : request.Subject,
+            Subject = subject,
             SessionDate = request.SessionDate,
             StartTime = start,
             EndTime = end,
             Mode = mode,
             PriceXaf = price,
+            PriceBreakdownJson = JsonSerializer.Serialize(quote, QuoteJson),
             Status = "pending_payment",
             PhoneNumber = request.Phone,
+            Topics = topics.Select(t => new TutorBookingTopic { Label = t }).ToList(),
         };
 
         // Vérifier le conflit puis insérer n'est pas atomique : sans protection,
@@ -88,6 +185,11 @@ public class TutorBookingService : ITutorBookingService
         // encore écrit sa ligne, et les deux réservations sont créées. Une
         // transaction Serializable détecte cette collision au COMMIT (Postgres
         // lève 40001) plutôt que d'écrire silencieusement un double-booking.
+        // Lot 9.1 : le test de chevauchement porte sur des intervalles
+        // [début, fin[ quelconques (durées variables, multiples de 30 min) ;
+        // deux séances qui se suivent (14:00-15:30 puis 15:30-16:00) ne se
+        // chevauchent pas, deux séances qui se recouvrent même d'une tranche
+        // sont refusées.
         await using var tx = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
         try
         {
@@ -171,6 +273,7 @@ public class TutorBookingService : ITutorBookingService
     {
         var booking = await _context.TutorBookings
             .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
+            .Include(b => b.Topics)
             .Include(b => b.Student)
             .FirstOrDefaultAsync(b => b.Id == bookingId)
             ?? throw new InvalidOperationException("Réservation introuvable.");
@@ -185,6 +288,7 @@ public class TutorBookingService : ITutorBookingService
     {
         var bookings = await _context.TutorBookings
             .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
+            .Include(b => b.Topics)
             .Where(b => b.StudentUserId == studentUserId)
             .OrderByDescending(b => b.SessionDate).ThenByDescending(b => b.StartTime)
             .ToListAsync();
@@ -195,6 +299,7 @@ public class TutorBookingService : ITutorBookingService
     {
         var bookings = await _context.TutorBookings
             .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
+            .Include(b => b.Topics)
             .Include(b => b.Student)
             .Where(b => b.TutorProfile!.UserId == tutorUserId)
             .OrderByDescending(b => b.SessionDate).ThenByDescending(b => b.StartTime)
@@ -206,6 +311,7 @@ public class TutorBookingService : ITutorBookingService
     {
         var booking = await _context.TutorBookings
             .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
+            .Include(b => b.Topics)
             .FirstOrDefaultAsync(b => b.Id == bookingId)
             ?? throw new InvalidOperationException("Réservation introuvable.");
 
@@ -310,6 +416,7 @@ public class TutorBookingService : ITutorBookingService
     {
         var booking = await _context.TutorBookings
             .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
+            .Include(b => b.Topics)
             .FirstOrDefaultAsync(b => b.Id == bookingId)
             ?? throw new InvalidOperationException("Réservation introuvable.");
         if (booking.StudentUserId != studentUserId)
@@ -340,6 +447,7 @@ public class TutorBookingService : ITutorBookingService
     {
         var bookings = await _context.TutorBookings
             .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
+            .Include(b => b.Topics)
             .Include(b => b.Student)
             .Where(b => b.TutorProfile!.UserId == tutorUserId && b.Status == "pending_tutor_approval")
             .OrderBy(b => b.CreatedAt)
@@ -357,6 +465,7 @@ public class TutorBookingService : ITutorBookingService
     {
         var booking = await _context.TutorBookings
             .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
+            .Include(b => b.Topics)
             .Include(b => b.Student)
             .FirstOrDefaultAsync(b => b.Id == bookingId)
             ?? throw new InvalidOperationException("Réservation introuvable.");
@@ -410,10 +519,8 @@ public class TutorBookingService : ITutorBookingService
         }
     }
 
-    /// <summary>Durées de séance proposées, en minutes  "une heure ou deux" (US-ELV-01).</summary>
-    private static readonly int[] BookableDurationsMinutes = { 60, 120 };
-    /// <summary>Pas entre deux points de départ réservables dans une fenêtre de disponibilité.</summary>
-    private static readonly TimeSpan OccurrenceStep = TimeSpan.FromMinutes(30);
+    /// <summary>Pas entre deux points de départ réservables, et unité de durée (17.2 : tranches de 30 min).</summary>
+    private static readonly TimeSpan OccurrenceStep = TimeSpan.FromMinutes(TutorPricing.SliceMinutes);
 
     public async Task<List<TutorAvailabilityOccurrenceDto>> GetAvailabilityCalendarAsync(int tutorUserId, DateOnly weekStart)
     {
@@ -437,23 +544,29 @@ public class TutorBookingService : ITutorBookingService
             var dayOfWeek = (int)date.DayOfWeek;
             var dayBookings = weekBookings.Where(b => b.SessionDate == date).ToList();
 
-            foreach (var slot in tutorProfile.AvailabilitySlots.Where(s => s.IsActive && s.DayOfWeek == dayOfWeek))
+            // Lot 9.1 : plages fusionnées (deux lignes contiguës = une plage
+            // continue), un point de départ par tranche de 30 min, et depuis
+            // chacun toute durée multiple de 30 min jusqu'à la prochaine
+            // séance déjà réservée ou la fin de la plage (bornée par
+            // _maxSessionMinutes). Une plage accueille ainsi plusieurs
+            // réservations de personnes différentes à la suite.
+            foreach (var range in TutorPricing.MergedRanges(tutorProfile.AvailabilitySlots, dayOfWeek))
             {
-                // Plusieurs points de départ par fenêtre (pas de 30 min) : une
-                // réservation de 13h-14h dans une fenêtre 12h-16h ne doit
-                // plus rendre 14h-16h invisible pour les autres élèves.
-                for (var start = slot.StartTime; start < slot.EndTime; start += OccurrenceStep)
+                for (var start = TutorPricing.CeilToSlice(range.Start); start + OccurrenceStep <= range.End; start += OccurrenceStep)
                 {
-                    var availableDurations = BookableDurationsMinutes
-                        .Where(d =>
-                        {
-                            var end = start + TimeSpan.FromMinutes(d);
-                            if (end > slot.EndTime) return false;
-                            return !dayBookings.Any(b => b.StartTime < end && b.EndTime > start);
-                        })
-                        .ToList();
+                    var s0 = start;
+                    if (dayBookings.Any(b => b.StartTime <= s0 && b.EndTime > s0)) continue;
 
-                    if (availableDurations.Count == 0) continue;
+                    var freeUntil = range.End;
+                    var nextBooking = dayBookings.Where(b => b.StartTime > s0).Select(b => b.StartTime).DefaultIfEmpty(range.End).Min();
+                    if (nextBooking < freeUntil) freeUntil = nextBooking;
+                    var maxMinutes = (int)(freeUntil - start).TotalMinutes / TutorPricing.SliceMinutes * TutorPricing.SliceMinutes;
+                    maxMinutes = Math.Min(maxMinutes, _maxSessionMinutes);
+                    if (maxMinutes < TutorPricing.SliceMinutes) continue;
+
+                    var availableDurations = Enumerable.Range(1, maxMinutes / TutorPricing.SliceMinutes)
+                        .Select(n => n * TutorPricing.SliceMinutes)
+                        .ToList();
 
                     var sessionStartUtc = date.ToDateTime(TimeOnly.FromTimeSpan(start), DateTimeKind.Utc);
                     var respectsNotice = sessionStartUtc >= DateTime.UtcNow.AddHours(tutorProfile.NoticeHours);
@@ -463,6 +576,7 @@ public class TutorBookingService : ITutorBookingService
                         Date = date,
                         StartTime = start.ToString(@"hh\:mm"),
                         AvailableDurationsMinutes = availableDurations,
+                        MaxDurationMinutes = maxMinutes,
                         IsBookable = !weekClosed && respectsNotice && !tutorProfile.IsOnVacation,
                     });
                 }
@@ -479,6 +593,7 @@ public class TutorBookingService : ITutorBookingService
 
         var booking = await _context.TutorBookings
             .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
+            .Include(b => b.Topics)
             .FirstOrDefaultAsync(b => b.NotchpayReference == transaction.Reference);
         if (booking == null)
         {
@@ -500,9 +615,10 @@ public class TutorBookingService : ITutorBookingService
             await _context.SaveChangesAsync();
 
             var tutorUserId = booking.TutorProfile?.UserId;
+            var topicsText = booking.Topics.Count > 0 ? $" Sujets : {string.Join(", ", booking.Topics.Select(t => t.Label))}." : "";
             if (tutorUserId.HasValue)
                 await _ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Nouvelle demande de réservation",
-                    $"Séance du {booking.SessionDate:dd/MM/yyyy} de {booking.StartTime:hh\\:mm} à {booking.EndTime:hh\\:mm}  réponds avant expiration du délai.",
+                    $"Séance du {booking.SessionDate:dd/MM/yyyy} de {booking.StartTime:hh\\:mm} à {booking.EndTime:hh\\:mm}{(booking.Subject != null ? $" ({booking.Subject})" : "")}.{topicsText} Réponds avant expiration du délai.",
                     priority: "high", userId: tutorUserId.Value, type: "TutorBooking");
             await _ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Paiement reçu  en attente du répétiteur",
                 $"Ta demande du {booking.SessionDate:dd/MM/yyyy} est payée et en attente d'acceptation par le répétiteur.",
@@ -622,11 +738,21 @@ public class TutorBookingService : ITutorBookingService
             DisputeResolutionNote = b.DisputeResolutionNote,
             DisputeResolvedAt = b.DisputeResolvedAt,
             Subject = b.Subject,
+            Topics = b.Topics.Select(t => t.Label).ToList(),
+            DurationMinutes = (int)(b.EndTime - b.StartTime).TotalMinutes,
+            PriceBreakdown = ParseBreakdown(b.PriceBreakdownJson),
             SummaryText = b.SummaryText,
             CanMarkCompleted = b.Status == "confirmed" && now >= sessionEndUtc,
             CanDispute = b.Status == "completed" && b.CompletedAt.HasValue && now <= b.CompletedAt.Value.Add(DisputeWindow),
             CreatedAt = b.CreatedAt,
         };
+    }
+
+    private static TutorPriceQuoteDto? ParseBreakdown(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<TutorPriceQuoteDto>(json, QuoteJson); }
+        catch (JsonException) { return null; }
     }
 
     private async Task<TutorBookingDto> MapToDtoAsync(TutorBooking b)
@@ -656,6 +782,7 @@ public class TutorBookingService : ITutorBookingService
 
         var booking = await _context.TutorBookings
             .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
+            .Include(b => b.Topics)
             .FirstOrDefaultAsync(b => b.Id == bookingId)
             ?? throw new InvalidOperationException("Réservation introuvable.");
         if (booking.Status != "disputed")
@@ -750,6 +877,7 @@ public class TutorBookingService : ITutorBookingService
     {
         var bookings = await _context.TutorBookings
             .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
+            .Include(b => b.Topics)
             .Include(b => b.Student)
             .Where(b => b.Status == "disputed")
             .OrderBy(b => b.DisputedAt)

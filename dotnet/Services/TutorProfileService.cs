@@ -32,6 +32,9 @@ public class TutorProfileService : ITutorProfileService
             .Include(p => p.Packages)
             .Include(p => p.AvailabilitySlots)
             .Include(p => p.VerificationDocuments)
+            .Include(p => p.Rates)
+            .Include(p => p.RateModifiers)
+            .Include(p => p.DurationDiscounts)
             .Include(p => p.User)
             .FirstOrDefaultAsync(p => p.UserId == userId);
 
@@ -69,6 +72,9 @@ public class TutorProfileService : ITutorProfileService
         profile.Packages = new List<TutorPackage>();
         profile.AvailabilitySlots = new List<TutorAvailabilitySlot>();
         profile.VerificationDocuments = new List<TutorVerificationDocument>();
+        profile.Rates = new List<TutorRate>();
+        profile.RateModifiers = new List<TutorRateModifier>();
+        profile.DurationDiscounts = new List<TutorDurationDiscount>();
         return profile;
     }
 
@@ -82,6 +88,7 @@ public class TutorProfileService : ITutorProfileService
     {
         var profile = await _context.TutorProfiles.AsNoTracking()
             .Include(p => p.User)
+            .Include(p => p.Rates)
             .FirstOrDefaultAsync(p => p.UserId == userId);
         if (profile == null)
             return new TutorOnboardingStatusDto { Started = false, OnboardingStep = 0, CompletionScore = 0, IsActive = false, MissingItems = new() };
@@ -158,6 +165,28 @@ public class TutorProfileService : ITutorProfileService
 
         if (request.AvailabilitySlots != null)
             ReplaceAvailabilitySlots(profile, request.AvailabilitySlots);
+
+        // Grille tarifaire (lot 9.1, 17.3) : validée entièrement avant toute
+        // écriture, pour qu'une règle invalide ne laisse pas une grille à moitié
+        // remplacée. N'affecte jamais le PriceXaf des réservations existantes.
+        if (request.Rates != null)
+        {
+            var rates = TutorPricing.ValidateRates(request.Rates, profile.Id);
+            _context.TutorRates.RemoveRange(profile.Rates);
+            profile.Rates = rates;
+        }
+        if (request.RateModifiers != null)
+        {
+            var modifiers = TutorPricing.ValidateModifiers(request.RateModifiers, profile.Id);
+            _context.TutorRateModifiers.RemoveRange(profile.RateModifiers);
+            profile.RateModifiers = modifiers;
+        }
+        if (request.DurationDiscounts != null)
+        {
+            var discounts = TutorPricing.ValidateDurationDiscounts(request.DurationDiscounts, profile.Id);
+            _context.TutorDurationDiscounts.RemoveRange(profile.DurationDiscounts);
+            profile.DurationDiscounts = discounts;
+        }
 
         profile.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
@@ -273,28 +302,29 @@ public class TutorProfileService : ITutorProfileService
         var profile = await _context.TutorProfiles
             .Include(p => p.Subjects).Include(p => p.Levels).Include(p => p.Specialties)
             .Include(p => p.InterventionZones).Include(p => p.Packages).Include(p => p.AvailabilitySlots)
+            .Include(p => p.Rates).Include(p => p.RateModifiers).Include(p => p.DurationDiscounts)
             .FirstOrDefaultAsync(p => p.UserId == userId && p.IsActive);
         return profile == null ? null : await MapToDtoAsync(profile, isPublicView: true);
     }
 
-    public async Task<List<TutorSearchResultDto>> SearchAsync(string? subject, string? level, decimal? maxHourlyRateXaf, bool verifiedOnly, int page, int pageSize, string? mode = null, string? city = null, bool availableSoon = false, double? minRating = null, string? sort = null)
+    public async Task<List<TutorSearchResultDto>> SearchAsync(string? subject, string? level, decimal? maxHourlyRateXaf, bool verifiedOnly, int page, int pageSize, string? mode = null, string? city = null, bool availableSoon = false, double? minRating = null, string? sort = null, string? topics = null)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 50);
 
         var query = _context.TutorProfiles
-            .Include(p => p.Subjects).Include(p => p.Levels)
+            .Include(p => p.Subjects).Include(p => p.Levels).Include(p => p.Specialties)
             .Include(p => p.InterventionZones).Include(p => p.AvailabilitySlots)
+            .Include(p => p.Rates)
             .Include(p => p.User)
             .Where(p => p.IsActive && !p.IsOnVacation)
+            .AsSplitQuery()
             .AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(subject))
             query = query.Where(p => p.Subjects.Any(s => s.Subject.ToLower() == subject.ToLower()));
         if (!string.IsNullOrWhiteSpace(level))
             query = query.Where(p => p.Levels.Any(l => l.Level.ToLower() == level.ToLower()));
-        if (maxHourlyRateXaf.HasValue)
-            query = query.Where(p => p.HourlyRateXaf != null && p.HourlyRateXaf <= maxHourlyRateXaf.Value);
         if (verifiedOnly)
             query = query.Where(p => p.IsDiplomaVerified);
         query = mode switch
@@ -309,6 +339,37 @@ public class TutorProfileService : ITutorProfileService
             query = query.Where(p => p.InterventionZones.Any(z => z.City.ToLower() == city.ToLower()));
 
         var candidates = await query.ToListAsync();
+
+        // Lot 9.1 : le tarif comparé est le « à partir de » de la grille
+        // (plus bas tarif de base), plus seulement HourlyRateXaf.
+        var fromRates = candidates.ToDictionary(p => p.Id, p => TutorPricing.FromHourlyRate(TutorPricing.Grid.FromProfile(p)));
+        if (maxHourlyRateXaf.HasValue)
+            candidates = candidates.Where(p => fromRates[p.Id] is decimal r && r <= maxHourlyRateXaf.Value).ToList();
+
+        // Sujets de séance (17.5) : classement par correspondance avec ce que
+        // le répétiteur couvre (matières, spécialités, titre, bio) et avec les
+        // sujets des séances qu'il a déjà données ou acceptées.
+        var topicList = TutorTopicMatcher.ParseTopicsQuery(topics);
+        var matchedTopics = new Dictionary<int, List<string>>();
+        if (topicList.Count > 0 && candidates.Count > 0)
+        {
+            var ids = candidates.Select(p => p.Id).ToList();
+            var pastTopics = await _context.TutorBookingTopics.AsNoTracking()
+                .Where(t => ids.Contains(t.TutorBooking!.TutorProfileId)
+                    && (t.TutorBooking.Status == "confirmed" || t.TutorBooking.Status == "completed"))
+                .Select(t => new { t.TutorBooking!.TutorProfileId, t.Label })
+                .ToListAsync();
+            var pastByTutor = pastTopics.GroupBy(x => x.TutorProfileId).ToDictionary(g => g.Key, g => g.Select(x => x.Label).ToList());
+            foreach (var p in candidates)
+            {
+                var corpus = p.Subjects.Select(s => s.Subject)
+                    .Concat(p.Specialties.Select(s => s.Label))
+                    .Append(p.Title).Append(p.TutorBio)
+                    .Concat(pastByTutor.GetValueOrDefault(p.Id) ?? new List<string>());
+                matchedTopics[p.Id] = TutorTopicMatcher.MatchedTopics(topicList, corpus);
+            }
+        }
+        int TopicScore(TutorProfile p) => matchedTopics.TryGetValue(p.Id, out var m) ? m.Count : 0;
 
         // "Disponibilité immédiate" (US-REP-01) : approximation par les créneaux
         // hebdo déclarés sur les 48h à venir, en respectant le préavis minimum.
@@ -396,13 +457,17 @@ public class TutorProfileService : ITutorProfileService
 
         var ordered = sort switch
         {
-            "price-asc" => candidates.OrderBy(p => p.HourlyRateXaf ?? decimal.MaxValue).ToList(),
-            "price-desc" => candidates.OrderByDescending(p => p.HourlyRateXaf ?? 0).ToList(),
+            "price-asc" => candidates.OrderBy(p => fromRates[p.Id] ?? decimal.MaxValue).ToList(),
+            "price-desc" => candidates.OrderByDescending(p => fromRates[p.Id] ?? 0).ToList(),
             "next-slot" => candidates.OrderBy(p => nextSlots[p.Id] ?? DateTime.MaxValue).ToList(),
+            // Pertinence : d'abord le nombre de sujets couverts (si l'élève en
+            // a saisi), puis la note, le volume et la réactivité. Les profils
+            // sans correspondance restent listés, après.
             _ => candidates
-                .OrderByDescending(RelevanceScore)
+                .OrderByDescending(TopicScore)
+                .ThenByDescending(RelevanceScore)
                 .ThenByDescending(p => p.IsDiplomaVerified)
-                .ThenBy(p => p.HourlyRateXaf)
+                .ThenBy(p => fromRates[p.Id])
                 .ToList(),
         };
 
@@ -415,6 +480,8 @@ public class TutorProfileService : ITutorProfileService
             AvatarUrl = p.User?.AvatarUrl,
             Title = p.Title,
             HourlyRateXaf = p.HourlyRateXaf,
+            FromHourlyRateXaf = fromRates[p.Id],
+            MatchedTopics = matchedTopics.GetValueOrDefault(p.Id) ?? new List<string>(),
             IsDiplomaVerified = p.IsDiplomaVerified,
             AverageRating = ratingStats.TryGetValue(p.Id, out var pr) ? pr.Avg : null,
             ReviewCount = ratingStats.TryGetValue(p.Id, out var prc) ? prc.Count : 0,
@@ -534,6 +601,21 @@ public class TutorProfileService : ITutorProfileService
                 EndTime = s.EndTime.ToString(@"hh\:mm"),
                 IsActive = s.IsActive,
             }).ToList(),
+            Rates = profile.Rates
+                .OrderBy(r => r.Subject == null).ThenBy(r => r.Subject).ThenBy(r => r.Mode)
+                .Select(r => new TutorRateDto { Id = r.Id, Subject = r.Subject, Mode = r.Mode, HourlyRateXaf = r.HourlyRateXaf }).ToList(),
+            RateModifiers = profile.RateModifiers.Select(m => new TutorRateModifierDto
+            {
+                Id = m.Id,
+                Label = m.Label,
+                DaysOfWeek = TutorPricing.FromMask(m.DaysOfWeekMask),
+                StartTime = m.StartTime.HasValue ? TutorPricing.Hhmm(m.StartTime.Value) : null,
+                EndTime = m.EndTime.HasValue ? TutorPricing.Hhmm(m.EndTime.Value) : null,
+                PercentAdjustment = m.PercentAdjustment,
+            }).ToList(),
+            DurationDiscounts = profile.DurationDiscounts.OrderBy(d => d.MinDurationMinutes)
+                .Select(d => new TutorDurationDiscountDto { Id = d.Id, MinDurationMinutes = d.MinDurationMinutes, PercentDiscount = d.PercentDiscount }).ToList(),
+            FromHourlyRateXaf = TutorPricing.FromHourlyRate(TutorPricing.Grid.FromProfile(profile)),
             PendingOrLatestDocument = latestDoc == null ? null : new TutorVerificationDocumentDto
             {
                 Id = latestDoc.Id,
@@ -576,7 +658,7 @@ public class TutorProfileService : ITutorProfileService
         Check(profile.Subjects.Count > 0, 20, "subjects", "Matières enseignées");
         Check(profile.Levels.Count > 0, 15, "levels", "Niveaux couverts");
         Check(profile.OffersAtStudentHome || profile.OffersAtTutorHome || profile.OffersOnline || profile.OffersNeutralPlace, 15, "interventionMode", "Au moins un mode d'intervention");
-        Check(profile.HourlyRateXaf is > 0, 15, "hourlyRate", "Tarif horaire");
+        Check(profile.HourlyRateXaf is > 0 || profile.Rates.Any(r => r.HourlyRateXaf > 0), 15, "hourlyRate", "Tarif horaire");
         Check(profile.AvailabilitySlots.Count > 0, 10, "availability", "Disponibilités hebdomadaires");
         Check(!string.IsNullOrWhiteSpace(profile.TutorBio), 10, "bio", "Bio courte");
         Check(!string.IsNullOrWhiteSpace(profile.Title), 5, "title", "Titre professionnel");

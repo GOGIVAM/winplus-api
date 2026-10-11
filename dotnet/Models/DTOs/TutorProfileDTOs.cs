@@ -50,6 +50,13 @@ public class TutorProfileDto
     public List<TutorAvailabilitySlotDto> AvailabilitySlots { get; set; } = new();
     public TutorVerificationDocumentDto? PendingOrLatestDocument { get; set; }
 
+    // ── Grille tarifaire (lot 9.1) : publique, l'élève voit comment son prix est construit ──
+    public List<TutorRateDto> Rates { get; set; } = new();
+    public List<TutorRateModifierDto> RateModifiers { get; set; } = new();
+    public List<TutorDurationDiscountDto> DurationDiscounts { get; set; } = new();
+    /// <summary>Plus bas tarif de base de la grille (ou HourlyRateXaf) : « à partir de ».</summary>
+    public decimal? FromHourlyRateXaf { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
 }
@@ -78,6 +85,38 @@ public class TutorAvailabilitySlotDto
     public string StartTime { get; set; } = null!;
     public string EndTime { get; set; } = null!;
     public bool IsActive { get; set; } = true;
+}
+
+/// <summary>Tarif de base (17.3) : Subject/Mode null = « toutes les matières » / « tous les modes ».</summary>
+public class TutorRateDto
+{
+    public int? Id { get; set; }
+    public string? Subject { get; set; }
+    /// <summary>"online" | "in_person" | null.</summary>
+    public string? Mode { get; set; }
+    public decimal HourlyRateXaf { get; set; }
+}
+
+/// <summary>Modulation par créneau (17.3).</summary>
+public class TutorRateModifierDto
+{
+    public int? Id { get; set; }
+    public string Label { get; set; } = "";
+    /// <summary>0 = dimanche … 6 = samedi ; liste vide = tous les jours.</summary>
+    public List<int> DaysOfWeek { get; set; } = new();
+    /// <summary>"HH:mm" ; null avec EndTime null = toute la journée.</summary>
+    public string? StartTime { get; set; }
+    public string? EndTime { get; set; }
+    /// <summary>De -50 à +100.</summary>
+    public int PercentAdjustment { get; set; }
+}
+
+/// <summary>Palier de dégressivité (17.3).</summary>
+public class TutorDurationDiscountDto
+{
+    public int? Id { get; set; }
+    public int MinDurationMinutes { get; set; }
+    public int PercentDiscount { get; set; }
 }
 
 public class TutorVerificationDocumentDto
@@ -117,6 +156,11 @@ public class UpdateTutorProfileRequestDto
     public bool? TrialSessionEnabled { get; set; }
     public decimal? TrialSessionPriceXaf { get; set; }
     public List<TutorPackageDto>? Packages { get; set; }
+
+    /// <summary>Grille tarifaire (lot 9.1) : chaque liste fournie remplace entièrement la précédente.</summary>
+    public List<TutorRateDto>? Rates { get; set; }
+    public List<TutorRateModifierDto>? RateModifiers { get; set; }
+    public List<TutorDurationDiscountDto>? DurationDiscounts { get; set; }
 
     public int? NoticeHours { get; set; }
     public int? MaxSessionsPerWeek { get; set; }
@@ -180,6 +224,8 @@ public class TutorSearchResultDto
     public string? AvatarUrl { get; set; }
     public string? Title { get; set; }
     public decimal? HourlyRateXaf { get; set; }
+    /// <summary>Plus bas tarif de base de la grille (lot 9.1), « à partir de ».</summary>
+    public decimal? FromHourlyRateXaf { get; set; }
     public bool IsDiplomaVerified { get; set; }
     public double? AverageRating { get; set; }
     public int ReviewCount { get; set; }
@@ -187,4 +233,6 @@ public class TutorSearchResultDto
     public List<string> Levels { get; set; } = new();
     /// <summary>Premier créneau réservable dans les 14 prochains jours (null si aucun).</summary>
     public DateTime? NextAvailableSlot { get; set; }
+    /// <summary>Sujets de séance recherchés (17.5) que ce répétiteur couvre ; vide si aucun sujet saisi.</summary>
+    public List<string> MatchedTopics { get; set; } = new();
 }

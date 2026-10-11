@@ -220,7 +220,12 @@ public class TutorProfileController : ControllerBase
         return profile == null ? NotFound(new { message = "Profil répétiteur introuvable ou non actif." }) : Ok(profile);
     }
 
-    /// <summary>WinAI  suggestion de tarif horaire (US-PRO-05/US-PRO-07).</summary>
+    /// <summary>
+    /// WinAI  suggestion de tarif horaire (US-PRO-05/US-PRO-07). Lot 9.1 :
+    /// avec include_grid=true, propose aussi une grille complète (base par
+    /// matière et par mode, modulations, dégressivité) que le répétiteur reste
+    /// libre de modifier avant d'enregistrer.
+    /// </summary>
     [HttpPost("me/suggest-rate")]
     public Task<IActionResult> SuggestRate([FromBody] object body, CancellationToken ct)
         => ProxyToWinAI("/api/teacher/suggest-tutor-rate", body, ct);
@@ -244,6 +249,7 @@ public class TutorProfileController : ControllerBase
         [FromQuery] string? city = null,
         [FromQuery] bool availableSoon = false,
         [FromQuery] double? minRating = null,
-        [FromQuery] string? sort = null)
-        => Ok(await _service.SearchAsync(subject, level, maxHourlyRateXaf, verifiedOnly, page, pageSize, mode, city, availableSoon, minRating, sort));
+        [FromQuery] string? sort = null,
+        [FromQuery] string? topics = null)
+        => Ok(await _service.SearchAsync(subject, level, maxHourlyRateXaf, verifiedOnly, page, pageSize, mode, city, availableSoon, minRating, sort, topics));
 }
