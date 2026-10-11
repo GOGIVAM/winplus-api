@@ -76,11 +76,29 @@ public class TutorProfile
     /// <summary>Aucun remboursement en-deçà de N heures avant la séance.</summary>
     public int NoRefundHours { get; set; } = 2;
 
+    // ── Séances de groupe (lot 9.3, suivi 17.3) ──────────────────────────
+    /// <summary>
+    /// null = pas de séance de groupe (une réservation = un élève) ;
+    /// per_student = prix par élève dégressif selon la taille du groupe
+    /// (paliers <see cref="GroupDiscounts"/>) ; flat = prix fixe pour le groupe
+    /// (prix individuel × <see cref="GroupFlatPricePercent"/> %).
+    /// </summary>
+    [MaxLength(20)]
+    public string? GroupPricingMethod { get; set; }
+
+    /// <summary>Taille maximale d'un groupe (2 à 20) ; 1 = séances individuelles seulement.</summary>
+    public int MaxGroupSize { get; set; } = 1;
+
+    /// <summary>Méthode flat : prix du groupe en % du prix individuel de la même séance (100 à 1000).</summary>
+    public int? GroupFlatPricePercent { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 
     [ForeignKey(nameof(UserId))]
     public User? User { get; set; }
+
+    public ICollection<TutorGroupDiscount> GroupDiscounts { get; set; } = new List<TutorGroupDiscount>();
 
     public ICollection<TutorSubject> Subjects { get; set; } = new List<TutorSubject>();
     public ICollection<TutorLevel> Levels { get; set; } = new List<TutorLevel>();

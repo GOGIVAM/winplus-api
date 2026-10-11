@@ -41,7 +41,10 @@ public class WalletController : ControllerBase
     [HttpGet("me")]
     public async Task<IActionResult> GetMine()
     {
-        var userId = User.GetUserId();
+        // Lot 9.3 : un compte institution lit le portefeuille partagé de son
+        // institution (titulaire unique), les autres comptes le leur.
+        var userId = await InstitutionWallet.ResolveWalletOwnerAsync(_db, User.GetUserId());
+        var isInstitution = string.Equals(User.GetUserRole(), "institution", StringComparison.OrdinalIgnoreCase);
         var balance = await _wallet.GetBalanceAsync(userId);
         var active = await _db.Withdrawals.AsNoTracking()
             .Where(w => w.UserId == userId && (w.Status == WithdrawalStatus.Pending || w.Status == WithdrawalStatus.Processing))
@@ -59,6 +62,9 @@ public class WalletController : ControllerBase
                 minWithdrawalXaf = WithdrawalService.MinimumXaf,
                 minRechargeXaf = WalletTopUpService.MinimumXaf,
                 activeWithdrawal = active == null ? null : WithdrawalsController.ToDto(active),
+                // Lot 9.3 : portefeuille institution, jamais retirable vers Mobile Money.
+                walletType = isInstitution ? WalletOwnerTypes.Institution : null,
+                canWithdraw = !isInstitution,
             },
             success = true,
         });
@@ -90,7 +96,7 @@ public class WalletController : ControllerBase
     [HttpGet("me/entries")]
     public async Task<IActionResult> GetEntries([FromQuery] string? source = "all", [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
-        var userId = User.GetUserId();
+        var userId = await InstitutionWallet.ResolveWalletOwnerAsync(_db, User.GetUserId());
         var (items, total) = await _wallet.GetHistoryAsync(userId, source, page, pageSize);
         return Ok(new { data = new { items, total, page = Math.Max(1, page), pageSize = Math.Clamp(pageSize, 1, 200) }, success = true });
     }
@@ -100,7 +106,11 @@ public class WalletController : ControllerBase
     {
         try
         {
-            var result = await _topUps.StartAsync(User.GetUserId(), request.Amount, request.Operator, request.Phone, request.ClientRequestId);
+            var userId = User.GetUserId();
+            // Lot 9.3 : la recharge d'un compte institution crédite le
+            // portefeuille partagé de l'institution (même parcours NotchPay).
+            var walletOwner = await InstitutionWallet.ResolveWalletOwnerAsync(_db, userId);
+            var result = await _topUps.StartAsync(userId, request.Amount, request.Operator, request.Phone, request.ClientRequestId, walletOwner);
             return Ok(new
             {
                 data = new

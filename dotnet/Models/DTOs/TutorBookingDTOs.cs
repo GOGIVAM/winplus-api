@@ -27,6 +27,19 @@ public class CreateTutorBookingRequestDto
     public string? Subject { get; set; }
     /// <summary>Sujets à travailler (17.5), textes courts, 5 au plus.</summary>
     public List<string>? Topics { get; set; }
+
+    // ── Lot 9.3 (17.4) : qui réserve, qui paie, qui participe ──
+    /// <summary>
+    /// student (défaut) | parent | institution | study_group. Contrôlé contre
+    /// le rôle réel du compte : un parent ne peut pas se déclarer institution.
+    /// </summary>
+    public string? PayerType { get; set; }
+    /// <summary>Élèves participants. Vide = le compte élève qui réserve. Chaque élève doit avoir un lien vérifié avec le payeur.</summary>
+    public List<int>? ParticipantUserIds { get; set; }
+    /// <summary>Groupe d'étude (PayerType = study_group) : le réservant et chaque participant doivent en être membres.</summary>
+    public int? StudyGroupId { get; set; }
+    /// <summary>Attribution active à l'origine de la réservation (facultatif) : les participants doivent en être bénéficiaires.</summary>
+    public int? TutorAssignmentId { get; set; }
 }
 
 /// <summary>Demande de devis (lot 9.1) : le prix affiché avant paiement vient toujours du serveur.</summary>
@@ -39,6 +52,91 @@ public class TutorPriceQuoteRequestDto
     public int DurationMinutes { get; set; }
     public string Mode { get; set; } = "online";
     public string? Subject { get; set; }
+    /// <summary>Lot 9.3 : nombre d'élèves (1 par défaut) pour le prix de groupe.</summary>
+    public int ParticipantCount { get; set; } = 1;
+}
+
+/// <summary>Participant d'une séance (lot 9.3).</summary>
+public class TutorBookingParticipantDto
+{
+    public int UserId { get; set; }
+    public string? Name { get; set; }
+    public string? AvatarUrl { get; set; }
+}
+
+/// <summary>
+/// Ce que le compte connecté peut réserver (lot 9.3) : enfants liés (parent),
+/// élèves rattachés (institution), groupes d'étude (élève), attributions
+/// actives. Les mêmes liens sont revérifiés à la création de la réservation.
+/// </summary>
+public class TutorBookingContextDto
+{
+    public string Role { get; set; } = "";
+    /// <summary>Types de payeur ouverts à ce compte (student, parent, institution, study_group).</summary>
+    public List<string> AllowedPayerTypes { get; set; } = new();
+    public List<TutorBookingParticipantDto> Children { get; set; } = new();
+    public int? InstitutionId { get; set; }
+    public string? InstitutionName { get; set; }
+    public List<TutorBookableStudentDto> InstitutionStudents { get; set; } = new();
+    public List<TutorBookableStudyGroupDto> StudyGroups { get; set; } = new();
+    public List<TutorAssignmentDto> ActiveAssignments { get; set; } = new();
+}
+
+public class TutorBookableStudentDto
+{
+    public int UserId { get; set; }
+    public string? Name { get; set; }
+    public string? GroupName { get; set; }
+    public string? Level { get; set; }
+}
+
+public class TutorBookableStudyGroupDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public string? Subject { get; set; }
+    public List<TutorBookingParticipantDto> Members { get; set; } = new();
+}
+
+/// <summary>Attribution de tuteur (lot 9.3).</summary>
+public class TutorAssignmentDto
+{
+    public int Id { get; set; }
+    public int TutorUserId { get; set; }
+    public string? TutorName { get; set; }
+    public string? TutorAvatarUrl { get; set; }
+    public int AssignedByUserId { get; set; }
+    public string? AssignedByName { get; set; }
+    /// <summary>parent | institution.</summary>
+    public string AssignerType { get; set; } = "";
+    public int? InstitutionId { get; set; }
+    public string? InstitutionName { get; set; }
+    public string? GroupName { get; set; }
+    public string? Subject { get; set; }
+    public string? Note { get; set; }
+    /// <summary>pending | active | declined | ended.</summary>
+    public string Status { get; set; } = "";
+    public string? ResponseNote { get; set; }
+    public List<TutorBookingParticipantDto> Beneficiaries { get; set; } = new();
+    public DateTime CreatedAt { get; set; }
+    public DateTime? RespondedAt { get; set; }
+    public DateTime? EndedAt { get; set; }
+}
+
+public class CreateTutorAssignmentRequestDto
+{
+    public int TutorUserId { get; set; }
+    /// <summary>Élèves bénéficiaires (enfants liés du parent, ou élèves de l'institution).</summary>
+    public List<int>? StudentUserIds { get; set; }
+    /// <summary>Institution : classe/groupe entier (InstitutionStudents.GroupName), élèves actifs ajoutés aux bénéficiaires.</summary>
+    public string? GroupName { get; set; }
+    public string? Subject { get; set; }
+    public string? Note { get; set; }
+}
+
+public class RespondTutorAssignmentRequestDto
+{
+    public string? Note { get; set; }
 }
 
 /// <summary>
@@ -66,9 +164,24 @@ public class TutorPriceQuoteDto
     /// <summary>Somme des tranches, arrondie à l'unité XAF.</summary>
     public decimal SubtotalXaf { get; set; }
     public int DurationDiscountPercent { get; set; }
-    /// <summary>SubtotalXaf - TotalXaf (déduit, jamais arrondi séparément : décision §4.E).</summary>
+    /// <summary>SubtotalXaf - SoloTotalXaf (déduit, jamais arrondi séparément : décision §4.E).</summary>
     public decimal DurationDiscountXaf { get; set; }
-    /// <summary>Montant facturé, arrondi à 0 décimale.</summary>
+
+    // ── Groupe (lot 9.3) ──
+    /// <summary>Nombre d'élèves de la séance (1 = séance individuelle).</summary>
+    public int ParticipantCount { get; set; } = 1;
+    /// <summary>Prix de la séance pour un seul élève (après dégressivité de durée).</summary>
+    public decimal SoloTotalXaf { get; set; }
+    /// <summary>null (individuel) | per_student | flat.</summary>
+    public string? GroupPricingMethod { get; set; }
+    /// <summary>Remise par élève du palier atteint (per_student).</summary>
+    public int GroupDiscountPercent { get; set; }
+    /// <summary>Prix du groupe en % du prix individuel (flat).</summary>
+    public int? GroupFlatPercent { get; set; }
+    /// <summary>Prix par élève (exact en per_student, indicatif en flat).</summary>
+    public decimal PerStudentXaf { get; set; }
+
+    /// <summary>Montant facturé au payeur pour toute la séance, arrondi à 0 décimale.</summary>
     public decimal TotalXaf { get; set; }
 
     /// <summary>Renseignés par l'endpoint de devis uniquement (pas figés sur la réservation).</summary>
@@ -146,6 +259,26 @@ public class TutorBookingDto
     public string? RefundFeeBorneBy { get; set; }
     public decimal? TutorFeeChargedXaf { get; set; }
     public decimal? TutorRetainedXaf { get; set; }
+
+    // ── Payeur, participants, objet (lot 9.3) ──
+    /// <summary>student | parent | institution | study_group.</summary>
+    public string PayerType { get; set; } = "student";
+    public int PayerUserId { get; set; }
+    /// <summary>Nom affiché du payeur (parent, institution, membre du groupe).</summary>
+    public string? PayerName { get; set; }
+    public int? BookedByUserId { get; set; }
+    public int? PayerInstitutionId { get; set; }
+    public int? StudyGroupId { get; set; }
+    public string? StudyGroupName { get; set; }
+    public int ParticipantCount { get; set; } = 1;
+    public List<TutorBookingParticipantDto> Participants { get; set; } = new();
+    public int? TutorAssignmentId { get; set; }
+    /// <summary>single_session (9.3) ; le 9.4 ajoutera l'engagement mensuel.</summary>
+    public string ObjectType { get; set; } = "single_session";
+    /// <summary>Le compte connecté est du côté du payeur (payeur, réservant, compte de l'institution payeuse).</summary>
+    public bool ViewerIsPayer { get; set; }
+    /// <summary>Le compte connecté est un élève participant.</summary>
+    public bool ViewerIsParticipant { get; set; }
     public DateTime CreatedAt { get; set; }
 }
 

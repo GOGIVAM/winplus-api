@@ -56,7 +56,17 @@ public class Institution
     /// Indicateur d'activité
     /// </summary>
     public bool IsActive { get; set; } = true;
-    
+
+    /// <summary>
+    /// Portefeuille institution (lot 9.3, suivi 17.4) : compte institution
+    /// titulaire des écritures du registre (WalletTransactions, OwnerType
+    /// « institution »). Fixé une fois, au premier usage, sur le premier compte
+    /// institution qui l'ouvre ; tous les comptes de l'institution voient et
+    /// utilisent ce même portefeuille. Jamais réaffecté : l'argent ne peut pas
+    /// changer de titulaire.
+    /// </summary>
+    public int? WalletOwnerUserId { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
     public bool IsDeleted { get; set; } = false;

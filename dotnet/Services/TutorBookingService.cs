@@ -45,10 +45,14 @@ public class TutorBookingService : ITutorBookingService
     private readonly int _maxSessionMinutes;
     public const int DefaultMaxSessionMinutes = 360;
 
+    /// <summary>Contrôles payeur / participants (lot 9.3).</summary>
+    private readonly TutorBookingPartyResolver _parties;
+
     public TutorBookingService(ApplicationDbContext context, INotchPayService notchPay, INtfyService ntfy, ILogger<TutorBookingService> logger, IWalletService wallet, IConfiguration configuration, ITutorRefundService refunds)
     {
         _wallet = wallet;
         _refunds = refunds;
+        _parties = new TutorBookingPartyResolver(context);
         _policy = TutorPolicySettings.From(configuration);
         _context = context;
         _notchPay = notchPay;
@@ -64,7 +68,39 @@ public class TutorBookingService : ITutorBookingService
         .Include(p => p.Subjects)
         .Include(p => p.Rates)
         .Include(p => p.RateModifiers)
-        .Include(p => p.DurationDiscounts);
+        .Include(p => p.DurationDiscounts)
+        .Include(p => p.GroupDiscounts);
+
+    /// <summary>Réservation avec tout ce que l'affichage et les contrôles d'accès lisent (lot 9.3 : participants, payeur, groupe).</summary>
+    private IQueryable<TutorBooking> BookingsWithDetails() => _context.TutorBookings
+        .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
+        .Include(b => b.Topics)
+        .Include(b => b.Student)
+        .Include(b => b.Participants).ThenInclude(p => p.Student)
+        .Include(b => b.Payer)
+        .Include(b => b.StudyGroup);
+
+    /// <summary>Institution du compte s'il s'agit d'un compte institution (lot 9.3), sinon null.</summary>
+    private async Task<int?> ViewerInstitutionAsync(int userId) =>
+        await _context.Users.AsNoTracking()
+            .Where(u => u.Id == userId && u.Role == "institution")
+            .Select(u => u.InstitutionId)
+            .FirstOrDefaultAsync();
+
+    /// <summary>
+    /// Côté payeur (lot 9.3) : le portefeuille payeur, le compte qui a réservé,
+    /// ou tout compte de l'institution payeuse. Avant le 9.3, l'élève.
+    /// </summary>
+    private static bool IsPayerSide(TutorBooking b, int userId, int? viewerInstitutionId) =>
+        (b.PayerUserId ?? b.StudentUserId) == userId
+        || b.BookedByUserId == userId
+        || (viewerInstitutionId != null && b.PayerInstitutionId == viewerInstitutionId);
+
+    private static bool IsParticipant(TutorBooking b, int userId) =>
+        b.StudentUserId == userId || b.Participants.Any(p => p.StudentUserId == userId);
+
+    private static IEnumerable<int> ParticipantIds(TutorBooking b) =>
+        b.Participants.Count > 0 ? b.Participants.Select(p => p.StudentUserId) : new[] { b.StudentUserId };
 
     /// <summary>
     /// Contrôles communs au devis et à la réservation, hors chevauchement (lu
@@ -113,6 +149,8 @@ public class TutorBookingService : ITutorBookingService
         // pour qu'une durée démesurée ne fasse pas boucler le découpage en tranches.
         if (request.DurationMinutes > _maxSessionMinutes)
             throw new InvalidOperationException($"Une séance ne peut pas dépasser {_maxSessionMinutes / 60.0:0.#} h.");
+        if (request.ParticipantCount < 1 || request.ParticipantCount > TutorPricing.MaxGroupSizeCap)
+            throw new InvalidOperationException($"Une séance compte de 1 à {TutorPricing.MaxGroupSizeCap} élèves.");
 
         var tutorProfile = await ProfilesWithPricing().AsNoTracking()
             .FirstOrDefaultAsync(p => p.UserId == request.TutorUserId)
@@ -136,13 +174,13 @@ public class TutorBookingService : ITutorBookingService
             unavailable = ex.Message;
         }
 
-        var quote = TutorPricing.Compute(TutorPricing.Grid.FromProfile(tutorProfile), request.SessionDate, start, request.DurationMinutes, mode, subject);
+        var quote = TutorPricing.Compute(TutorPricing.Grid.FromProfile(tutorProfile), request.SessionDate, start, request.DurationMinutes, mode, subject, request.ParticipantCount);
         quote.IsAvailable = unavailable == null;
         quote.UnavailableReason = unavailable;
         return quote;
     }
 
-    public async Task<TutorBookingCreatedResponseDto> CreateBookingAsync(int studentUserId, CreateTutorBookingRequestDto request)
+    public async Task<TutorBookingCreatedResponseDto> CreateBookingAsync(int actingUserId, CreateTutorBookingRequestDto request)
     {
         var mode = AllowedModes.Contains(request.Mode) ? request.Mode : "online";
         if (!TimeSpan.TryParse(request.StartTime, out var start))
@@ -166,18 +204,24 @@ public class TutorBookingService : ITutorBookingService
         var subject = ValidateRequestedSession(tutorProfile, request.SessionDate, start, durationMinutes, request.Subject)
             ?? tutorProfile.Subjects.FirstOrDefault()?.Subject;
 
-        // Prix toujours recalculé ici, jamais repris du client (17.3).
-        var quote = TutorPricing.Compute(TutorPricing.Grid.FromProfile(tutorProfile), request.SessionDate, start, durationMinutes, mode, subject);
+        // Lot 9.3 (17.4) : payeur et participants vérifiés côté serveur (rôle
+        // réel du compte, liens parent/institution/groupe en base). Jamais
+        // d'élève ajouté sans lien vérifié avec le payeur.
+        var parties = await _parties.ResolveAsync(actingUserId, request.PayerType, request.ParticipantUserIds,
+            request.StudyGroupId, request.TutorAssignmentId, tutorProfile.Id);
+
+        // Prix toujours recalculé ici, jamais repris du client (17.3), pour le
+        // nombre réel de participants (prix de groupe 9.3).
+        var quote = TutorPricing.Compute(TutorPricing.Grid.FromProfile(tutorProfile), request.SessionDate, start, durationMinutes, mode, subject, parties.ParticipantIds.Count);
         var price = quote.TotalXaf;
         var topics = TutorPricing.SanitizeTopics(request.Topics);
 
         // Lot 9.2 (17.6) : Mobile Money (flux NotchPay inchangé) ou solde du
-        // portefeuille. Au 9.2 le payeur est toujours l'élève qui réserve ;
-        // le 9.3 ajoutera le parent ou l'institution comme payeur (débit par
-        // IWalletService.DebitParentWalletAsync ou portefeuille institution),
-        // en passant par le même point de débit ci-dessous.
+        // portefeuille du payeur. Lot 9.3 : le payeur est l'élève, le parent
+        // (portefeuille parent : dotation puis recharges), le titulaire du
+        // portefeuille institution, ou le membre du groupe qui réserve.
         var payByWallet = TutorPaymentMethods.IsWallet(request.PaymentMethod);
-        var payerUserId = studentUserId;
+        var payerUserId = parties.PayerUserId;
         if (payByWallet)
         {
             if (price <= 0)
@@ -196,7 +240,16 @@ public class TutorBookingService : ITutorBookingService
         var booking = new TutorBooking
         {
             TutorProfileId = tutorProfile.Id,
-            StudentUserId = studentUserId,
+            // Élève principal = premier participant (avis, historique élève, anciens clients).
+            StudentUserId = parties.ParticipantIds[0],
+            PayerType = parties.PayerType,
+            BookedByUserId = parties.BookedByUserId,
+            PayerInstitutionId = parties.InstitutionId,
+            StudyGroupId = parties.StudyGroupId,
+            ParticipantCount = parties.ParticipantIds.Count,
+            TutorAssignmentId = parties.AssignmentId,
+            ObjectType = TutorBookingObjectTypes.SingleSession,
+            Participants = parties.ParticipantIds.Select(id => new TutorBookingParticipant { StudentUserId = id }).ToList(),
             Subject = subject,
             SessionDate = request.SessionDate,
             StartTime = start,
@@ -252,10 +305,24 @@ public class TutorBookingService : ITutorBookingService
             // sans réservation, ni réservation sans débit.
             if (payByWallet)
             {
-                await _wallet.RunLockedAsync(payerUserId, () => _wallet.DebitAsync(new WalletEntry(
-                    payerUserId, WalletEntryTypes.TutoringPayment, price, WalletService.TutoringPaymentKey(booking.Id),
-                    $"Cours particulier du {booking.SessionDate:dd/MM/yyyy} ({booking.StartTime:hh\\:mm}-{booking.EndTime:hh\\:mm})",
-                    "TutorBooking", booking.Id)));
+                var label = $"Cours particulier du {booking.SessionDate:dd/MM/yyyy} ({booking.StartTime:hh\\:mm}-{booking.EndTime:hh\\:mm})"
+                            + (booking.ParticipantCount > 1 ? $", {booking.ParticipantCount} élèves" : "");
+                if (parties.PayerType == TutorPayerTypes.Parent)
+                {
+                    // Portefeuille parent (Module 14) : dotation mensuelle
+                    // encore valide d'abord, puis part permanente (recharges).
+                    await _wallet.RunLockedAsync(payerUserId, async () =>
+                    {
+                        await _wallet.DebitParentWalletAsync(payerUserId, price, WalletService.TutoringPaymentKey(booking.Id), label, "TutorBooking", booking.Id);
+                        return true;
+                    });
+                }
+                else
+                {
+                    await _wallet.RunLockedAsync(payerUserId, () => _wallet.DebitAsync(new WalletEntry(
+                        payerUserId, WalletEntryTypes.TutoringPayment, price, WalletService.TutoringPaymentKey(booking.Id),
+                        label, "TutorBooking", booking.Id)));
+                }
             }
 
             await tx.CommitAsync();
@@ -276,8 +343,10 @@ public class TutorBookingService : ITutorBookingService
             return new TutorBookingCreatedResponseDto { Booking = await MapToDtoAsync(booking) };
         }
 
-        var student = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == studentUserId);
-        var studentEmail = student?.Email ?? $"user{studentUserId}@winplus.cm";
+        // Le compte qui réserve règle le paiement Mobile Money (parent,
+        // institution ou élève) ; le remboursement éventuel ira au payeur.
+        var student = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == actingUserId);
+        var studentEmail = student?.Email ?? $"user{actingUserId}@winplus.cm";
         var studentName = $"{student?.FirstName} {student?.LastName}".Trim();
         if (string.IsNullOrWhiteSpace(studentName)) studentName = studentEmail.Split('@')[0];
 
@@ -328,54 +397,64 @@ public class TutorBookingService : ITutorBookingService
 
     public async Task<TutorBookingDto> GetByIdAsync(int userId, int bookingId)
     {
-        var booking = await _context.TutorBookings
-            .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
-            .Include(b => b.Topics)
-            .Include(b => b.Student)
+        var booking = await BookingsWithDetails()
             .FirstOrDefaultAsync(b => b.Id == bookingId)
             ?? throw new InvalidOperationException("Réservation introuvable.");
 
-        if (booking.StudentUserId != userId && booking.TutorProfile?.UserId != userId)
+        // Lot 9.3 : tuteur, participants, et côté payeur (parent, comptes de
+        // l'institution payeuse, membre du groupe qui a réservé).
+        var viewerInstitution = await ViewerInstitutionAsync(userId);
+        if (booking.TutorProfile?.UserId != userId && !IsParticipant(booking, userId) && !IsPayerSide(booking, userId, viewerInstitution))
             throw new InvalidOperationException("Tu n'as pas accès à cette réservation.");
 
-        return MapToDto(booking);
+        return (await MapManyAsync(new List<TutorBooking> { booking }, userId, viewerInstitution))[0];
     }
 
-    public async Task<List<TutorBookingDto>> GetMyBookingsAsStudentAsync(int studentUserId)
+    /// <summary>
+    /// Réservations du compte connecté côté élève ou payeur (lot 9.3) : celles
+    /// où il participe (un enfant voit les séances réservées pour lui par son
+    /// parent), celles qu'il paie ou a réservées, et pour un compte
+    /// institution toutes celles payées par son institution.
+    /// </summary>
+    public async Task<List<TutorBookingDto>> GetMyBookingsAsStudentAsync(int userId)
     {
-        var bookings = await _context.TutorBookings
-            .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
-            .Include(b => b.Topics)
-            .Where(b => b.StudentUserId == studentUserId)
+        var viewerInstitution = await ViewerInstitutionAsync(userId);
+        var bookings = await BookingsWithDetails()
+            .Where(b => b.StudentUserId == userId
+                     || b.Participants.Any(p => p.StudentUserId == userId)
+                     || b.PayerUserId == userId
+                     || b.BookedByUserId == userId
+                     || (viewerInstitution != null && b.PayerInstitutionId == viewerInstitution))
             .OrderByDescending(b => b.SessionDate).ThenByDescending(b => b.StartTime)
             .ToListAsync();
-        return bookings.Select(MapToDto).ToList();
+        return await MapManyAsync(bookings, userId, viewerInstitution);
     }
 
     public async Task<List<TutorBookingDto>> GetMyBookingsAsTutorAsync(int tutorUserId)
     {
-        var bookings = await _context.TutorBookings
-            .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
-            .Include(b => b.Topics)
-            .Include(b => b.Student)
+        var bookings = await BookingsWithDetails()
             .Where(b => b.TutorProfile!.UserId == tutorUserId)
             .OrderByDescending(b => b.SessionDate).ThenByDescending(b => b.StartTime)
             .ToListAsync();
-        return bookings.Select(MapToDto).ToList();
+        return await MapManyAsync(bookings, tutorUserId, null);
     }
 
     public async Task<TutorBookingDto> CancelBookingAsync(int userId, int bookingId, string? reason)
     {
-        var booking = await _context.TutorBookings
-            .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
-            .Include(b => b.Topics)
+        var booking = await BookingsWithDetails()
             .FirstOrDefaultAsync(b => b.Id == bookingId)
             ?? throw new InvalidOperationException("Réservation introuvable.");
 
-        var isStudent = booking.StudentUserId == userId;
+        // Lot 9.3 : seul le côté payeur (il récupère l'argent) ou le tuteur
+        // annule. Un participant qui n'a pas payé (enfant, membre du groupe)
+        // demande l'annulation à celui qui a réservé.
+        var isPayerSide = IsPayerSide(booking, userId, await ViewerInstitutionAsync(userId));
         var isTutor = booking.TutorProfile?.UserId == userId;
-        if (!isStudent && !isTutor)
-            throw new InvalidOperationException("Tu ne peux pas annuler cette réservation.");
+        if (!isPayerSide && !isTutor)
+            throw new InvalidOperationException(IsParticipant(booking, userId)
+                ? "Cette séance a été réservée et payée par quelqu'un d'autre : demande-lui de l'annuler."
+                : "Tu ne peux pas annuler cette réservation.");
+        var isStudent = isPayerSide;
         // Module 21 (décision §4.H) : un litige ouvert doit être tranché par
         // l'administrateur (Module 29) avant tout nouveau changement de
         // statut — sans cette garde, l'élève pouvait annuler une réservation
@@ -401,14 +480,27 @@ public class TutorBookingService : ITutorBookingService
         if (decision != null)
             await NotifyRefundAsync(booking, decision, "annulée");
 
-        var notifiedUserId = isStudent ? booking.TutorProfile?.UserId : booking.StudentUserId;
-        if (notifiedUserId.HasValue)
-        {
-            await _ntfy.PublishAsync($"winplus-user-{notifiedUserId.Value}", "Séance annulée",
-                $"Une séance du {booking.SessionDate:dd/MM/yyyy} a été annulée.", userId: notifiedUserId.Value, type: "TutorBooking");
-        }
+        // Lot 9.3 : le tuteur si le payeur annule ; le payeur et tous les
+        // participants si le tuteur annule (participants prévenus dans les
+        // deux cas : un enfant voit sa séance disparaître).
+        var notified = new HashSet<int>(ParticipantIds(booking));
+        if (isStudent && booking.TutorProfile?.UserId is int tutorId) notified.Add(tutorId);
+        if (isTutor) notified.Add(booking.PayerUserId ?? booking.StudentUserId);
+        notified.Remove(userId);
+        foreach (var id in notified)
+            await _ntfy.PublishAsync($"winplus-user-{id}", "Séance annulée",
+                $"Une séance du {booking.SessionDate:dd/MM/yyyy} a été annulée.", userId: id, type: "TutorBooking");
 
         return MapToDto(booking);
+    }
+
+    /// <summary>Prévient les participants (et le payeur s'il n'en fait pas partie) d'un événement de la séance (lot 9.3).</summary>
+    private async Task NotifyParticipantsAndPayerAsync(TutorBooking booking, string title, string message, bool includePayer = true)
+    {
+        var ids = new HashSet<int>(ParticipantIds(booking));
+        if (includePayer) ids.Add(booking.PayerUserId ?? booking.StudentUserId);
+        foreach (var id in ids)
+            await _ntfy.PublishAsync($"winplus-user-{id}", title, message, userId: id, type: "TutorBooking");
     }
 
     public async Task<TutorBookingDto> ConfirmBookingAsync(int tutorUserId, int bookingId)
@@ -422,8 +514,8 @@ public class TutorBookingService : ITutorBookingService
         booking.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
-        await _ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Séance confirmée !",
-            $"Le répétiteur a accepté ta demande du {booking.SessionDate:dd/MM/yyyy}.", userId: booking.StudentUserId, type: "TutorBooking");
+        await NotifyParticipantsAndPayerAsync(booking, "Séance confirmée !",
+            $"Le répétiteur a accepté la séance du {booking.SessionDate:dd/MM/yyyy}.");
         return MapToDto(booking);
     }
 
@@ -457,20 +549,20 @@ public class TutorBookingService : ITutorBookingService
         booking.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
-        await _ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Comment s'est passée ta séance ?",
-            $"Laisse un avis pour ce répétiteur. Tu as {_policy.DisputeWindowHours} h pour contester la séance si elle ne s'est pas bien passée ; ensuite le paiement est versé au répétiteur.",
-            userId: booking.StudentUserId, type: "TutorBooking");
+        await NotifyParticipantsAndPayerAsync(booking, "Comment s'est passée la séance ?",
+            $"Laisse un avis pour ce répétiteur. Tu as {_policy.DisputeWindowHours} h pour contester la séance si elle ne s'est pas bien passée ; ensuite le paiement est versé au répétiteur.");
         return MapToDto(booking);
     }
 
     public async Task<TutorBookingDto> DisputeBookingAsync(int studentUserId, int bookingId, string reason)
     {
-        var booking = await _context.TutorBookings
-            .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
-            .Include(b => b.Topics)
+        var booking = await BookingsWithDetails()
             .FirstOrDefaultAsync(b => b.Id == bookingId)
             ?? throw new InvalidOperationException("Réservation introuvable.");
-        if (booking.StudentUserId != studentUserId)
+        // Lot 9.3 : un participant (qui a suivi la séance) ou le côté payeur
+        // (dont l'argent est en jeu) peut contester ; le remboursement éventuel
+        // va toujours au payeur.
+        if (!IsParticipant(booking, studentUserId) && !IsPayerSide(booking, studentUserId, await ViewerInstitutionAsync(studentUserId)))
             throw new InvalidOperationException("Cette réservation ne t'appartient pas.");
         if (booking.Status != "completed" || booking.CompletedAt == null)
             throw new InvalidOperationException("Cette séance ne peut pas être contestée.");
@@ -489,35 +581,30 @@ public class TutorBookingService : ITutorBookingService
                 $"L'élève conteste la séance du {booking.SessionDate:dd/MM/yyyy}. Le support WinPlus va examiner le dossier.",
                 priority: "high", userId: tutorUserId.Value, type: "TutorBooking");
         await _ntfy.PublishAdminAsync("Litige cours particulier",
-            $"Réservation #{booking.Id} contestée par l'élève #{booking.StudentUserId}  motif : {reason}", tags: new[] { "warning" });
+            $"Réservation #{booking.Id} contestée par le compte #{studentUserId} (payeur {booking.PayerType ?? "student"} #{booking.PayerUserId ?? booking.StudentUserId})  motif : {reason}", tags: new[] { "warning" });
 
         return MapToDto(booking);
     }
 
     public async Task<List<TutorPendingBookingDto>> GetPendingRequestsAsync(int tutorUserId)
     {
-        var bookings = await _context.TutorBookings
-            .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
-            .Include(b => b.Topics)
-            .Include(b => b.Student)
+        var bookings = await BookingsWithDetails()
             .Where(b => b.TutorProfile!.UserId == tutorUserId && b.Status == "pending_tutor_approval")
             .OrderBy(b => b.CreatedAt)
             .ToListAsync();
 
         var now = DateTime.UtcNow;
-        return bookings.Select(b => new TutorPendingBookingDto
+        var dtos = await MapManyAsync(bookings, tutorUserId, null);
+        return bookings.Select((b, i) => new TutorPendingBookingDto
         {
-            Booking = MapToDto(b),
+            Booking = dtos[i],
             MinutesRemaining = Math.Max(0, (int)(GetResponseDeadline(b).Subtract(now)).TotalMinutes),
         }).ToList();
     }
 
     private async Task<TutorBooking> LoadForTutorActionAsync(int tutorUserId, int bookingId)
     {
-        var booking = await _context.TutorBookings
-            .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
-            .Include(b => b.Topics)
-            .Include(b => b.Student)
+        var booking = await BookingsWithDetails()
             .FirstOrDefaultAsync(b => b.Id == bookingId)
             ?? throw new InvalidOperationException("Réservation introuvable.");
         if (booking.TutorProfile?.UserId != tutorUserId)
@@ -644,9 +731,7 @@ public class TutorBookingService : ITutorBookingService
         if (string.IsNullOrEmpty(transaction.Reference) || !transaction.Reference.StartsWith($"{ReferencePrefix}-"))
             return false;
 
-        var booking = await _context.TutorBookings
-            .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
-            .Include(b => b.Topics)
+        var booking = await BookingsWithDetails()
             .FirstOrDefaultAsync(b => b.NotchpayReference == transaction.Reference);
         if (booking == null)
         {
@@ -714,6 +799,13 @@ public class TutorBookingService : ITutorBookingService
         await _ntfy.PublishAsync($"winplus-user-{payerId}", "Paiement reçu — en attente du répétiteur",
             $"Ta demande du {booking.SessionDate:dd/MM/yyyy} est payée et en attente d'acceptation par le répétiteur.",
             userId: payerId, type: "TutorBooking");
+
+        // Lot 9.3 : chaque élève pour qui la séance a été réservée (par un
+        // parent, une institution, un membre du groupe) en est prévenu.
+        foreach (var participantId in ParticipantIds(booking).Where(id => id != payerId && id != booking.BookedByUserId).Distinct())
+            await _ntfy.PublishAsync($"winplus-user-{participantId}", "Une séance a été réservée pour toi",
+                $"Séance du {booking.SessionDate:dd/MM/yyyy} de {booking.StartTime:hh\\:mm} à {booking.EndTime:hh\\:mm}, en attente d'acceptation du répétiteur. Retrouve-la dans Mes séances.",
+                userId: participantId, type: "TutorBooking");
     }
 
     /// <summary>
@@ -767,9 +859,42 @@ public class TutorBookingService : ITutorBookingService
         _ => null
     };
 
+    private static string? DisplayName(User? u) =>
+        u == null ? null : ($"{u.FirstName} {u.LastName}".Trim() is { Length: > 0 } n ? n : u.Email?.Split('@')[0]);
+
+    /// <summary>
+    /// Conversion d'une liste (lot 9.3) : charge en une requête les noms des
+    /// institutions payeuses et renseigne les indicateurs du compte connecté.
+    /// </summary>
+    private async Task<List<TutorBookingDto>> MapManyAsync(List<TutorBooking> bookings, int? viewerUserId, int? viewerInstitutionId)
+    {
+        var institutionIds = bookings.Where(b => b.PayerInstitutionId != null).Select(b => b.PayerInstitutionId!.Value).Distinct().ToList();
+        var names = institutionIds.Count == 0
+            ? new Dictionary<int, string>()
+            : await _context.Institutions.AsNoTracking().IgnoreQueryFilters()
+                .Where(i => institutionIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id, i => i.Name);
+        return bookings.Select(b =>
+        {
+            var dto = MapToDto(b);
+            if (b.PayerInstitutionId is int iid && names.TryGetValue(iid, out var n)) dto.PayerName = n;
+            if (viewerUserId is int v)
+            {
+                dto.ViewerIsPayer = IsPayerSide(b, v, viewerInstitutionId);
+                dto.ViewerIsParticipant = IsParticipant(b, v);
+                // Contester : participant ou payeur ; annuler : payeur seulement (CancelBookingAsync).
+                if (!dto.ViewerIsPayer && !dto.ViewerIsParticipant) dto.CanDispute = false;
+            }
+            return dto;
+        }).ToList();
+    }
+
     private TutorBookingDto MapToDto(TutorBooking b)
     {
         var now = DateTime.UtcNow;
+        var participants = b.Participants.Count > 0
+            ? b.Participants.OrderBy(p => p.StudentUserId == b.StudentUserId ? 0 : 1).ThenBy(p => p.Id)
+                .Select(p => new TutorBookingParticipantDto { UserId = p.StudentUserId, Name = DisplayName(p.Student), AvatarUrl = p.Student?.AvatarUrl }).ToList()
+            : new List<TutorBookingParticipantDto> { new() { UserId = b.StudentUserId, Name = DisplayName(b.Student), AvatarUrl = b.Student?.AvatarUrl } };
         var sessionEndUtc = b.SessionDate.ToDateTime(TimeOnly.FromTimeSpan(b.EndTime), DateTimeKind.Utc);
         var disputeDeadline = b.CompletedAt?.Add(_policy.DisputeWindow);
         return new TutorBookingDto
@@ -814,6 +939,17 @@ public class TutorBookingService : ITutorBookingService
             RefundFeeBorneBy = b.RefundFeeBorneBy,
             TutorFeeChargedXaf = b.TutorFeeChargedXaf,
             TutorRetainedXaf = b.TutorRetainedXaf,
+            PayerType = b.PayerType ?? TutorPayerTypes.Student,
+            PayerUserId = b.PayerUserId ?? b.StudentUserId,
+            PayerName = b.PayerUserId == null || b.PayerUserId == b.StudentUserId ? DisplayName(b.Student) ?? DisplayName(b.Payer) : DisplayName(b.Payer),
+            BookedByUserId = b.BookedByUserId,
+            PayerInstitutionId = b.PayerInstitutionId,
+            StudyGroupId = b.StudyGroupId,
+            StudyGroupName = b.StudyGroup?.Name,
+            ParticipantCount = Math.Max(b.ParticipantCount, participants.Count),
+            Participants = participants,
+            TutorAssignmentId = b.TutorAssignmentId,
+            ObjectType = b.ObjectType,
             CreatedAt = b.CreatedAt,
         };
     }
@@ -829,7 +965,12 @@ public class TutorBookingService : ITutorBookingService
     {
         if (b.TutorProfile?.User == null)
             await _context.Entry(b).Reference(x => x.TutorProfile!).Query().Include(p => p.User).LoadAsync();
-        return MapToDto(b);
+        // Lot 9.3 : noms des participants, du payeur et du groupe (réservation tout juste créée).
+        await _context.Entry(b).Collection(x => x.Participants).Query().Include(p => p.Student).LoadAsync();
+        if (b.PayerUserId != null && b.Payer == null) await _context.Entry(b).Reference(x => x.Payer).LoadAsync();
+        if (b.StudyGroupId != null && b.StudyGroup == null) await _context.Entry(b).Reference(x => x.StudyGroup).LoadAsync();
+        var viewer = b.BookedByUserId ?? b.PayerUserId ?? b.StudentUserId;
+        return (await MapManyAsync(new List<TutorBooking> { b }, viewer, b.PayerInstitutionId))[0];
     }
 
     public async Task<TutorBookingDto> SetSummaryAsync(int tutorUserId, int bookingId, string summaryText)
@@ -850,9 +991,7 @@ public class TutorBookingService : ITutorBookingService
         if (!ValidDisputeResolutions.Contains(resolution))
             throw new InvalidOperationException("Décision invalide.");
 
-        var booking = await _context.TutorBookings
-            .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
-            .Include(b => b.Topics)
+        var booking = await BookingsWithDetails()
             .FirstOrDefaultAsync(b => b.Id == bookingId)
             ?? throw new InvalidOperationException("Réservation introuvable.");
         if (booking.Status != "disputed")
@@ -920,13 +1059,10 @@ public class TutorBookingService : ITutorBookingService
 
     public async Task<List<TutorBookingDto>> GetDisputedBookingsAsync()
     {
-        var bookings = await _context.TutorBookings
-            .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
-            .Include(b => b.Topics)
-            .Include(b => b.Student)
+        var bookings = await BookingsWithDetails()
             .Where(b => b.Status == "disputed")
             .OrderBy(b => b.DisputedAt)
             .ToListAsync();
-        return bookings.Select(MapToDto).ToList();
+        return await MapManyAsync(bookings, null, null);
     }
 }

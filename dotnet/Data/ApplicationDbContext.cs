@@ -121,6 +121,11 @@ public partial class ApplicationDbContext : DbContext
     public DbSet<TutorRateModifier> TutorRateModifiers => Set<TutorRateModifier>();
     public DbSet<TutorDurationDiscount> TutorDurationDiscounts => Set<TutorDurationDiscount>();
     public DbSet<TutorBookingTopic> TutorBookingTopics => Set<TutorBookingTopic>();
+    // Lot 9.3 : participants, prix de groupe, attribution de tuteur.
+    public DbSet<TutorBookingParticipant> TutorBookingParticipants => Set<TutorBookingParticipant>();
+    public DbSet<TutorGroupDiscount> TutorGroupDiscounts => Set<TutorGroupDiscount>();
+    public DbSet<TutorAssignment> TutorAssignments => Set<TutorAssignment>();
+    public DbSet<TutorAssignmentBeneficiary> TutorAssignmentBeneficiaries => Set<TutorAssignmentBeneficiary>();
     public DbSet<TutorReview> TutorReviews => Set<TutorReview>();
     public DbSet<TutorRevisionSheet> TutorRevisionSheets => Set<TutorRevisionSheet>();
     public DbSet<TutorCoachingReport> TutorCoachingReports => Set<TutorCoachingReport>();
@@ -337,6 +342,75 @@ public partial class ApplicationDbContext : DbContext
             entity.HasOne(e => e.TutorProfile)
                   .WithMany()
                   .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Student)
+                  .WithMany()
+                  .HasForeignKey(e => e.StudentUserId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            // Lot 9.3 : payeur et groupe d'étude (colonnes sans contrainte FK
+            // en base, comme PayerUserId au 9.2 : relations de lecture seules).
+            entity.HasOne(e => e.Payer)
+                  .WithMany()
+                  .HasForeignKey(e => e.PayerUserId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.StudyGroup)
+                  .WithMany()
+                  .HasForeignKey(e => e.StudyGroupId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.PayerUserId);
+            entity.HasIndex(e => e.PayerInstitutionId);
+        });
+
+        // ── Lot 9.3 : participants, prix de groupe, attribution ─────────────
+        modelBuilder.Entity<TutorBookingParticipant>(entity =>
+        {
+            entity.ToTable("TutorBookingParticipants");
+            entity.HasIndex(e => new { e.TutorBookingId, e.StudentUserId }).IsUnique();
+            entity.HasIndex(e => e.StudentUserId);
+            entity.HasOne(e => e.TutorBooking)
+                  .WithMany(b => b.Participants)
+                  .HasForeignKey(e => e.TutorBookingId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Student)
+                  .WithMany()
+                  .HasForeignKey(e => e.StudentUserId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<TutorGroupDiscount>(entity =>
+        {
+            entity.ToTable("TutorGroupDiscounts");
+            entity.HasIndex(e => e.TutorProfileId);
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany(t => t.GroupDiscounts)
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorAssignment>(entity =>
+        {
+            entity.ToTable("TutorAssignments");
+            entity.HasIndex(e => new { e.TutorProfileId, e.Status });
+            entity.HasIndex(e => e.AssignedByUserId);
+            entity.HasIndex(e => e.InstitutionId);
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany()
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.AssignedBy)
+                  .WithMany()
+                  .HasForeignKey(e => e.AssignedByUserId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<TutorAssignmentBeneficiary>(entity =>
+        {
+            entity.ToTable("TutorAssignmentBeneficiaries");
+            entity.HasIndex(e => new { e.TutorAssignmentId, e.StudentUserId }).IsUnique();
+            entity.HasIndex(e => e.StudentUserId);
+            entity.HasOne(e => e.TutorAssignment)
+                  .WithMany(a => a.Beneficiaries)
+                  .HasForeignKey(e => e.TutorAssignmentId)
                   .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(e => e.Student)
                   .WithMany()

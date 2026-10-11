@@ -57,6 +57,14 @@ public class TutorProfileDto
     /// <summary>Plus bas tarif de base de la grille (ou HourlyRateXaf) : « à partir de ».</summary>
     public decimal? FromHourlyRateXaf { get; set; }
 
+    // ── Séances de groupe (lot 9.3) ──
+    /// <summary>null (pas de groupe) | per_student | flat.</summary>
+    public string? GroupPricingMethod { get; set; }
+    /// <summary>Taille maximale d'un groupe ; 1 = séances individuelles seulement.</summary>
+    public int MaxGroupSize { get; set; } = 1;
+    public int? GroupFlatPricePercent { get; set; }
+    public List<TutorGroupDiscountDto> GroupDiscounts { get; set; } = new();
+
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
 }
@@ -119,6 +127,14 @@ public class TutorDurationDiscountDto
     public int PercentDiscount { get; set; }
 }
 
+/// <summary>Palier de prix de groupe par élève (lot 9.3).</summary>
+public class TutorGroupDiscountDto
+{
+    public int? Id { get; set; }
+    public int MinGroupSize { get; set; }
+    public int PercentDiscount { get; set; }
+}
+
 public class TutorVerificationDocumentDto
 {
     public int Id { get; set; }
@@ -161,6 +177,17 @@ public class UpdateTutorProfileRequestDto
     public List<TutorRateDto>? Rates { get; set; }
     public List<TutorRateModifierDto>? RateModifiers { get; set; }
     public List<TutorDurationDiscountDto>? DurationDiscounts { get; set; }
+
+    /// <summary>
+    /// Lot 9.3 : réglages de groupe, pris en compte seulement si
+    /// <see cref="UpdateGroupPricing"/> est vrai (enregistrer une autre étape
+    /// ne touche pas aux groupes). Méthode vide ou "none" = groupes désactivés.
+    /// </summary>
+    public bool? UpdateGroupPricing { get; set; }
+    public string? GroupPricingMethod { get; set; }
+    public int? MaxGroupSize { get; set; }
+    public int? GroupFlatPricePercent { get; set; }
+    public List<TutorGroupDiscountDto>? GroupDiscounts { get; set; }
 
     public int? NoticeHours { get; set; }
     public int? MaxSessionsPerWeek { get; set; }

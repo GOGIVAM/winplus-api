@@ -434,6 +434,8 @@ builder.Services.AddScoped<IAssignmentService, AssignmentService>();
 builder.Services.AddScoped<ITeachingSessionService, TeachingSessionService>();
 builder.Services.AddScoped<ITutorRefundService, TutorRefundService>();
 builder.Services.AddScoped<ITutorBookingService, TutorBookingService>();
+// Lot 9.3 : attribution d'un tuteur par un parent ou une institution.
+builder.Services.AddScoped<ITutorAssignmentService, TutorAssignmentService>();
 builder.Services.AddScoped<ITutorReviewService, TutorReviewService>();
 builder.Services.AddScoped<ITutorInsightsService, TutorInsightsService>();
 builder.Services.AddScoped<ICourseAccessService, CourseAccessService>();

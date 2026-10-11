@@ -19,7 +19,11 @@ public sealed record WalletTopUpStart(int TopUpId, int OrderId, int PaymentId, s
 /// </summary>
 public interface IWalletTopUpService
 {
-    Task<WalletTopUpStart> StartAsync(int userId, decimal amount, string? operatorCode, string? phone, string? clientRequestId);
+    /// <param name="walletOwnerId">
+    /// Portefeuille crédité (lot 9.3) : par défaut celui de <paramref name="userId"/> ;
+    /// pour un compte institution, le titulaire du portefeuille de l'institution.
+    /// </param>
+    Task<WalletTopUpStart> StartAsync(int userId, decimal amount, string? operatorCode, string? phone, string? clientRequestId, int? walletOwnerId = null);
 }
 
 public class WalletTopUpService : IWalletTopUpService
@@ -39,7 +43,7 @@ public class WalletTopUpService : IWalletTopUpService
         _logger = logger;
     }
 
-    public async Task<WalletTopUpStart> StartAsync(int userId, decimal amount, string? operatorCode, string? phone, string? clientRequestId)
+    public async Task<WalletTopUpStart> StartAsync(int userId, decimal amount, string? operatorCode, string? phone, string? clientRequestId, int? walletOwnerId = null)
     {
         var op = (operatorCode ?? string.Empty).Trim().ToLowerInvariant();
         if (op is not ("mtn" or "orange"))
@@ -57,18 +61,21 @@ public class WalletTopUpService : IWalletTopUpService
             .Select(u => new { u.Role, u.IsActive, u.IsDeleted }).FirstOrDefaultAsync();
         if (user == null || !user.IsActive || user.IsDeleted)
             throw new WithdrawalRejectedException(403, "account_inactive", "Ce compte ne peut pas être rechargé (compte suspendu ou supprimé).");
-        // Portefeuille professeur (lot 2) et portefeuille parent (Module 14,
-        // lot 3) : les deux seuls portefeuilles individuels rechargeables.
+        // Portefeuille professeur (lot 2), portefeuille parent (Module 14,
+        // lot 3) et portefeuille institution (lot 9.3, suivi 17.4).
         var role = (user.Role ?? string.Empty).Trim().ToLowerInvariant();
-        if (role is not ("teacher" or "parent"))
-            throw new WithdrawalRejectedException(403, "not_eligible", "La recharge du portefeuille est réservée aux comptes professeur et parent.");
+        if (role is not ("teacher" or "parent" or "institution"))
+            throw new WithdrawalRejectedException(403, "not_eligible", "La recharge du portefeuille est réservée aux comptes professeur, parent et institution.");
+        // Le portefeuille crédité est celui du compte, sauf le portefeuille
+        // partagé d'une institution (résolu par l'appelant, jamais par le client).
+        var creditedOwner = role == "institution" && walletOwnerId is int owner ? owner : userId;
 
         var requestId = string.IsNullOrWhiteSpace(clientRequestId) ? null : clientRequestId.Trim();
         if (requestId is { Length: > 64 }) requestId = requestId[..64];
 
         if (requestId != null)
         {
-            var existing = await _db.WalletTopUps.AsNoTracking().FirstOrDefaultAsync(t => t.UserId == userId && t.ClientRequestId == requestId);
+            var existing = await _db.WalletTopUps.AsNoTracking().FirstOrDefaultAsync(t => t.UserId == creditedOwner && t.ClientRequestId == requestId);
             if (existing != null)
             {
                 var paymentId = await _db.Payments.AsNoTracking().Where(p => p.OrderId == existing.OrderId)
@@ -90,7 +97,7 @@ public class WalletTopUpService : IWalletTopUpService
         _db.Orders.Add(order);
         await _db.SaveChangesAsync();
 
-        var topUp = new WalletTopUp { UserId = userId, OrderId = order.Id, AmountXaf = amount, ClientRequestId = requestId };
+        var topUp = new WalletTopUp { UserId = creditedOwner, OrderId = order.Id, AmountXaf = amount, ClientRequestId = requestId };
         _db.WalletTopUps.Add(topUp);
         await _db.SaveChangesAsync();
 

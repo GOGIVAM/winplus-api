@@ -90,11 +90,20 @@ public static class WalletOwnerTypes
     public const string User = "user";
     public const string Platform = "platform";
 
+    /// <summary>
+    /// Portefeuille institution (lot 9.3, suivi 17.4) : tenu par le compte
+    /// titulaire (Institution.WalletOwnerUserId), partagé par tous les comptes
+    /// de l'institution. Rechargeable, débité par les réservations de tutorat,
+    /// crédité des remboursements ; jamais retirable vers Mobile Money.
+    /// </summary>
+    public const string Institution = "institution";
+
     /// <summary>Catégorie de portefeuille déduite du rôle du compte au moment de l'écriture.</summary>
     public static string ForRole(string? role) => (role ?? string.Empty).Trim().ToLowerInvariant() switch
     {
         "teacher" => Teacher,
         "parent" => Parent,
+        "institution" => Institution,
         _ => User,
     };
 }

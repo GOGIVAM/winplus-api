@@ -23,6 +23,8 @@ namespace Backend.Services;
 ///   5. total T = arrondi XAF (0 décimale, au plus proche) de S × (1 - d / 100).
 ///      Le montant de la remise affiché = arrondi(S) - T, déduit et non
 ///      arrondi séparément (décision §4.E).
+///   6. groupe de N élèves (lot 9.3) : voir <see cref="ComputeGroup"/> ; T
+///      devient SoloTotalXaf et TotalXaf le prix du groupe entier.
 /// </summary>
 public static class TutorPricing
 {
@@ -48,11 +50,43 @@ public static class TutorPricing
         IReadOnlyList<TutorRateModifier> Modifiers,
         IReadOnlyList<TutorDurationDiscount> DurationDiscounts)
     {
+        /// <summary>Réglages de groupe (lot 9.3) ; par défaut : séances individuelles seulement.</summary>
+        public GroupPricing Group { get; init; } = GroupPricing.None;
+
         public static Grid FromProfile(TutorProfile p) => new(
             p.HourlyRateXaf,
             p.Rates.ToList(),
             p.RateModifiers.ToList(),
-            p.DurationDiscounts.ToList());
+            p.DurationDiscounts.ToList())
+        {
+            Group = GroupPricing.FromProfile(p),
+        };
+    }
+
+    // ── Séances de groupe (lot 9.3, suivi 17.3) ──────────────────────────
+
+    public const string GroupPerStudent = "per_student";
+    public const string GroupFlat = "flat";
+    public const int MaxGroupSizeCap = 20;
+    public const int MaxGroupDiscountPercent = 70;
+    public const int MaxGroupDiscounts = 5;
+    public const int MinGroupFlatPercent = 100;
+    public const int MaxGroupFlatPercent = 1000;
+
+    /// <summary>
+    /// Méthode de prix de groupe choisie par le tuteur. <see cref="Method"/>
+    /// null = pas de groupe (<see cref="MaxGroupSize"/> vaut alors 1).
+    /// </summary>
+    public sealed record GroupPricing(string? Method, int MaxGroupSize, int? FlatPercent, IReadOnlyList<TutorGroupDiscount> Discounts)
+    {
+        public static readonly GroupPricing None = new(null, 1, null, Array.Empty<TutorGroupDiscount>());
+
+        public bool Enabled => Method is GroupPerStudent or GroupFlat && MaxGroupSize >= 2;
+
+        public static GroupPricing FromProfile(TutorProfile p) =>
+            p.GroupPricingMethod is GroupPerStudent or GroupFlat && p.MaxGroupSize >= 2
+                ? new GroupPricing(p.GroupPricingMethod, Math.Min(p.MaxGroupSize, MaxGroupSizeCap), p.GroupFlatPricePercent, p.GroupDiscounts.ToList())
+                : None;
     }
 
     /// <summary>
@@ -115,10 +149,20 @@ public static class TutorPricing
     /// un multiple positif de 30 min ou si aucun tarif n'est défini.
     /// <paramref name="mode"/> est le mode de réservation (online, student_home…).
     /// </summary>
-    public static TutorPriceQuoteDto Compute(Grid grid, DateOnly date, TimeSpan start, int durationMinutes, string mode, string? subject)
+    public static TutorPriceQuoteDto Compute(Grid grid, DateOnly date, TimeSpan start, int durationMinutes, string mode, string? subject, int participantCount = 1)
     {
         if (durationMinutes < SliceMinutes || durationMinutes % SliceMinutes != 0)
             throw new InvalidOperationException("La durée d'une séance doit être un multiple de 30 minutes (30 minutes minimum).");
+        if (participantCount < 1)
+            throw new InvalidOperationException("Une séance compte au moins un élève.");
+        if (participantCount > 1)
+        {
+            // Contrôlé avant tout calcul : un groupe refusé n'a pas de prix.
+            if (!grid.Group.Enabled)
+                throw new InvalidOperationException("Ce répétiteur ne propose pas de séances de groupe.");
+            if (participantCount > grid.Group.MaxGroupSize)
+                throw new InvalidOperationException($"Ce répétiteur accepte au plus {grid.Group.MaxGroupSize} élèves par séance.");
+        }
 
         var category = ModeCategory(mode);
         var resolved = ResolveBaseHourlyRate(grid, subject, category)
@@ -159,6 +203,7 @@ public static class TutorPricing
         var total = RevenueSplit.Xaf(subtotal * (100 - discountPercent) / 100m);
         var subtotalXaf = RevenueSplit.Xaf(subtotal);
         var end = start + TimeSpan.FromMinutes(durationMinutes);
+        var group = ComputeGroup(grid.Group, total, participantCount);
 
         return new TutorPriceQuoteDto
         {
@@ -184,8 +229,90 @@ public static class TutorPricing
             SubtotalXaf = subtotalXaf,
             DurationDiscountPercent = discountPercent,
             DurationDiscountXaf = subtotalXaf - total,
-            TotalXaf = total,
+            ParticipantCount = participantCount,
+            SoloTotalXaf = total,
+            GroupPricingMethod = group.Method,
+            GroupDiscountPercent = group.DiscountPercent,
+            GroupFlatPercent = group.FlatPercent,
+            PerStudentXaf = group.PerStudent,
+            TotalXaf = group.Total,
         };
+    }
+
+    /// <summary>
+    /// Prix de groupe (lot 9.3), appliqué au prix individuel T déjà calculé
+    /// (créneaux, dégressivité de durée, prorata 30 min) :
+    /// <list type="bullet">
+    ///   <item>1 élève : T, quelle que soit la méthode ;</item>
+    ///   <item>per_student : remise d % du palier le plus élevé atteint
+    ///   (MinGroupSize ≤ N) ; prix par élève P = arrondi XAF(T × (1 - d/100)),
+    ///   total = P × N (le total est toujours un multiple exact du prix par
+    ///   élève affiché) ;</item>
+    ///   <item>flat : total = arrondi XAF(T × f/100), f = pourcentage fixé par
+    ///   le tuteur (100 à 1000), indépendant de N ; prix par élève indicatif =
+    ///   arrondi(total / N).</item>
+    /// </list>
+    /// </summary>
+    public static (string? Method, int DiscountPercent, int? FlatPercent, decimal PerStudent, decimal Total) ComputeGroup(GroupPricing group, decimal soloTotal, int participantCount)
+    {
+        if (participantCount <= 1)
+            return (null, 0, null, soloTotal, soloTotal);
+
+        if (group.Method == GroupFlat)
+        {
+            var percent = Math.Clamp(group.FlatPercent ?? MinGroupFlatPercent, MinGroupFlatPercent, MaxGroupFlatPercent);
+            var flatTotal = RevenueSplit.Xaf(soloTotal * percent / 100m);
+            return (GroupFlat, 0, percent, RevenueSplit.Xaf(flatTotal / participantCount), flatTotal);
+        }
+
+        var discount = group.Discounts
+            .Where(d => d.MinGroupSize <= participantCount && d.PercentDiscount > 0)
+            .OrderByDescending(d => d.MinGroupSize)
+            .Select(d => Math.Clamp(d.PercentDiscount, 0, MaxGroupDiscountPercent))
+            .FirstOrDefault();
+        var perStudent = RevenueSplit.Xaf(soloTotal * (100 - discount) / 100m);
+        return (GroupPerStudent, discount, null, perStudent, perStudent * participantCount);
+    }
+
+    /// <summary>
+    /// Valide les réglages de groupe saisis par le tuteur ; renvoie (méthode,
+    /// taille max, pourcentage fixe, paliers). Méthode vide = groupes désactivés.
+    /// </summary>
+    public static (string? Method, int MaxGroupSize, int? FlatPercent, List<TutorGroupDiscount> Discounts) ValidateGroupPricing(
+        string? method, int? maxGroupSize, int? flatPercent, IEnumerable<TutorGroupDiscountDto>? discounts, int tutorProfileId)
+    {
+        var m = string.IsNullOrWhiteSpace(method) ? null : method.Trim();
+        if (m == null || m == "none")
+            return (null, 1, null, new List<TutorGroupDiscount>());
+        if (m != GroupPerStudent && m != GroupFlat)
+            throw new InvalidOperationException("Méthode de prix de groupe invalide (prix par élève dégressif ou prix fixe).");
+
+        var max = maxGroupSize ?? 0;
+        if (max < 2 || max > MaxGroupSizeCap)
+            throw new InvalidOperationException($"La taille maximale d'un groupe est comprise entre 2 et {MaxGroupSizeCap} élèves.");
+
+        if (m == GroupFlat)
+        {
+            if (flatPercent is not int f || f < MinGroupFlatPercent || f > MaxGroupFlatPercent)
+                throw new InvalidOperationException($"Le prix fixe du groupe se règle entre {MinGroupFlatPercent} % et {MaxGroupFlatPercent} % du prix individuel.");
+            return (m, max, f, new List<TutorGroupDiscount>());
+        }
+
+        var list = (discounts ?? Enumerable.Empty<TutorGroupDiscountDto>()).ToList();
+        if (list.Count > MaxGroupDiscounts)
+            throw new InvalidOperationException($"Le prix de groupe ne peut pas dépasser {MaxGroupDiscounts} paliers.");
+        var result = new List<TutorGroupDiscount>();
+        foreach (var d in list)
+        {
+            if (d.MinGroupSize < 2 || d.MinGroupSize > max)
+                throw new InvalidOperationException($"Un palier de groupe commence entre 2 élèves et la taille maximale ({max}).");
+            if (d.PercentDiscount < 1 || d.PercentDiscount > MaxGroupDiscountPercent)
+                throw new InvalidOperationException($"La remise par élève d'un palier est comprise entre 1 % et {MaxGroupDiscountPercent} %.");
+            if (result.Any(x => x.MinGroupSize == d.MinGroupSize))
+                throw new InvalidOperationException("Deux paliers de groupe ne peuvent pas commencer à la même taille.");
+            result.Add(new TutorGroupDiscount { TutorProfileId = tutorProfileId, MinGroupSize = d.MinGroupSize, PercentDiscount = d.PercentDiscount });
+        }
+        return (m, max, null, result.OrderBy(x => x.MinGroupSize).ToList());
     }
 
     // ── Validation de la grille saisie par le répétiteur ─────────────────

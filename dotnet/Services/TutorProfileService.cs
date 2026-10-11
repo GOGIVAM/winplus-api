@@ -35,6 +35,7 @@ public class TutorProfileService : ITutorProfileService
             .Include(p => p.Rates)
             .Include(p => p.RateModifiers)
             .Include(p => p.DurationDiscounts)
+            .Include(p => p.GroupDiscounts)
             .Include(p => p.User)
             .FirstOrDefaultAsync(p => p.UserId == userId);
 
@@ -75,6 +76,7 @@ public class TutorProfileService : ITutorProfileService
         profile.Rates = new List<TutorRate>();
         profile.RateModifiers = new List<TutorRateModifier>();
         profile.DurationDiscounts = new List<TutorDurationDiscount>();
+        profile.GroupDiscounts = new List<TutorGroupDiscount>();
         return profile;
     }
 
@@ -200,6 +202,20 @@ public class TutorProfileService : ITutorProfileService
             profile.DurationDiscounts = discounts;
         }
 
+        // Séances de groupe (lot 9.3, 17.3) : méthode, taille max, paliers ou
+        // prix fixe, validés ensemble. N'affecte jamais le prix des
+        // réservations existantes (figé à la création).
+        if (request.UpdateGroupPricing == true)
+        {
+            var group = TutorPricing.ValidateGroupPricing(request.GroupPricingMethod, request.MaxGroupSize,
+                request.GroupFlatPricePercent, request.GroupDiscounts, profile.Id);
+            profile.GroupPricingMethod = group.Method;
+            profile.MaxGroupSize = group.MaxGroupSize;
+            profile.GroupFlatPricePercent = group.FlatPercent;
+            _context.TutorGroupDiscounts.RemoveRange(profile.GroupDiscounts);
+            profile.GroupDiscounts = group.Discounts;
+        }
+
         profile.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
         return await MapToDtoAsync(profile);
@@ -314,7 +330,7 @@ public class TutorProfileService : ITutorProfileService
         var profile = await _context.TutorProfiles
             .Include(p => p.Subjects).Include(p => p.Levels).Include(p => p.Specialties)
             .Include(p => p.InterventionZones).Include(p => p.Packages).Include(p => p.AvailabilitySlots)
-            .Include(p => p.Rates).Include(p => p.RateModifiers).Include(p => p.DurationDiscounts)
+            .Include(p => p.Rates).Include(p => p.RateModifiers).Include(p => p.DurationDiscounts).Include(p => p.GroupDiscounts)
             .FirstOrDefaultAsync(p => p.UserId == userId && p.IsActive);
         return profile == null ? null : await MapToDtoAsync(profile, isPublicView: true);
     }
@@ -630,6 +646,11 @@ public class TutorProfileService : ITutorProfileService
             DurationDiscounts = profile.DurationDiscounts.OrderBy(d => d.MinDurationMinutes)
                 .Select(d => new TutorDurationDiscountDto { Id = d.Id, MinDurationMinutes = d.MinDurationMinutes, PercentDiscount = d.PercentDiscount }).ToList(),
             FromHourlyRateXaf = TutorPricing.FromHourlyRate(TutorPricing.Grid.FromProfile(profile)),
+            GroupPricingMethod = TutorPricing.GroupPricing.FromProfile(profile).Method,
+            MaxGroupSize = TutorPricing.GroupPricing.FromProfile(profile).MaxGroupSize,
+            GroupFlatPricePercent = profile.GroupPricingMethod == TutorPricing.GroupFlat ? profile.GroupFlatPricePercent : null,
+            GroupDiscounts = profile.GroupDiscounts.OrderBy(d => d.MinGroupSize)
+                .Select(d => new TutorGroupDiscountDto { Id = d.Id, MinGroupSize = d.MinGroupSize, PercentDiscount = d.PercentDiscount }).ToList(),
             PendingOrLatestDocument = latestDoc == null ? null : new TutorVerificationDocumentDto
             {
                 Id = latestDoc.Id,

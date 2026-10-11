@@ -39,6 +39,11 @@ public class TutorBookingController : ControllerBase
         {
             return Ok(await _service.CreateBookingAsync(User.GetUserId(), request));
         }
+        catch (TutorBookingForbiddenException ex)
+        {
+            // Lot 9.3 : élève sans lien vérifié avec le payeur, rôle incompatible.
+            return StatusCode(403, new { message = ex.Message });
+        }
         catch (InvalidOperationException ex)
         {
             return BadRequest(new { message = ex.Message });
@@ -78,7 +83,7 @@ public class TutorBookingController : ControllerBase
         }
     }
 
-    /// <summary>Mes réservations en tant qu'élève.</summary>
+    /// <summary>Mes réservations côté élève ou payeur : participant, payeur, réservant, ou institution payeuse (lot 9.3).</summary>
     [HttpGet("mine")]
     public async Task<ActionResult<List<TutorBookingDto>>> GetMine()
         => Ok(await _service.GetMyBookingsAsStudentAsync(User.GetUserId()));

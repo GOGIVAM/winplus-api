@@ -17,10 +17,9 @@ namespace Backend.Models.Entities;
 /// <see cref="TutorRate"/>, <see cref="TutorProfile.HourlyRateXaf"/> sert de
 /// tarif de base pour toutes les matières et tous les modes.
 ///
-/// Point d'extension 9.3 (séances de groupe) : la méthode de prix de groupe
-/// (prix par élève dégressif selon la taille, ou prix fixe pour le groupe)
-/// viendra s'ajouter ici comme une règle supplémentaire du même profil ; rien
-/// n'est modélisé avant d'en connaître la forme exacte.
+/// Séances de groupe (lot 9.3) : méthode et taille maximale sur
+/// <see cref="TutorProfile"/> (GroupPricingMethod, MaxGroupSize,
+/// GroupFlatPricePercent), paliers par taille dans <see cref="TutorGroupDiscount"/>.
 /// </summary>
 public class TutorRate
 {
@@ -82,6 +81,27 @@ public class TutorDurationDiscount
     public int MinDurationMinutes { get; set; }
 
     /// <summary>De 1 à 50 (%).</summary>
+    public int PercentDiscount { get; set; }
+
+    [ForeignKey(nameof(TutorProfileId))]
+    public TutorProfile? TutorProfile { get; set; }
+}
+
+/// <summary>
+/// Palier de prix de groupe (lot 9.3, suivi 17.3), méthode « prix par élève
+/// dégressif » : à partir de MinGroupSize participants, chaque élève paie le
+/// prix individuel de la séance moins PercentDiscount %. Seul le palier le plus
+/// élevé atteint s'applique.
+/// </summary>
+public class TutorGroupDiscount
+{
+    public int Id { get; set; }
+    public int TutorProfileId { get; set; }
+
+    /// <summary>De 2 à la taille maximale du groupe.</summary>
+    public int MinGroupSize { get; set; }
+
+    /// <summary>De 1 à 70 (%).</summary>
     public int PercentDiscount { get; set; }
 
     [ForeignKey(nameof(TutorProfileId))]

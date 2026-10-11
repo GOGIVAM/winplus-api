@@ -69,14 +69,52 @@ public class TutorBooking
     public string? PaymentMethod { get; set; }
 
     /// <summary>
-    /// Compte qui a payé et qui reçoit les remboursements ; null = l'élève
-    /// (réservations antérieures au 9.2). Au 9.2 c'est toujours l'élève ; le
-    /// 9.3 y mettra le parent ou l'institution payeur.
+    /// Portefeuille qui a payé et qui reçoit les remboursements ; null = l'élève
+    /// (réservations antérieures au 9.2). Depuis le 9.3 : l'élève, le parent,
+    /// le titulaire du portefeuille institution (<see cref="Institution.WalletOwnerUserId"/>)
+    /// ou le membre du groupe d'étude qui a réservé.
     /// </summary>
     public int? PayerUserId { get; set; }
 
     /// <summary>Frais NotchPay figés à la confirmation du paiement (0 si portefeuille).</summary>
     public decimal? PaymentFeeXaf { get; set; }
+
+    // ── Payeur, participants, objet (lot 9.3, suivi 17.4) ────────────────
+    //
+    // Le payeur (PayerUserId + PayerType) est le portefeuille débité et
+    // crédité des remboursements ; les participants (TutorBookingParticipants)
+    // sont les élèves qui suivent la séance ; StudentUserId reste le premier
+    // participant (élève « principal »), pour les avis, l'historique élève et
+    // les anciens clients. Une séance de groupe reste UNE réservation : elle
+    // occupe le créneau du tuteur une seule fois.
+
+    /// <summary>student | parent | institution | study_group (voir <see cref="TutorPayerTypes"/>) ; null = élève (réservations antérieures au 9.3).</summary>
+    [MaxLength(20)]
+    public string? PayerType { get; set; }
+
+    /// <summary>Compte qui a effectivement réservé (peut différer du titulaire du portefeuille institution).</summary>
+    public int? BookedByUserId { get; set; }
+
+    /// <summary>Institution payeuse (PayerType = institution) : tout compte de cette institution suit la réservation.</summary>
+    public int? PayerInstitutionId { get; set; }
+
+    /// <summary>Groupe d'étude au nom duquel la séance est réservée (PayerType = study_group).</summary>
+    public int? StudyGroupId { get; set; }
+
+    /// <summary>Nombre de participants figé à la création (base du prix de groupe).</summary>
+    public int ParticipantCount { get; set; } = 1;
+
+    /// <summary>Attribution de tuteur (parent ou institution) à l'origine de la réservation, le cas échéant.</summary>
+    public int? TutorAssignmentId { get; set; }
+
+    /// <summary>
+    /// Objet de la réservation : single_session (seul objet au 9.3). Point
+    /// d'extension 9.4 : un engagement mensuel produira des séances
+    /// « monthly_session » rattachées à leur engagement (colonne à ajouter
+    /// avec la table d'engagement), chacune gardant son propre cycle (17.8).
+    /// </summary>
+    [MaxLength(20)]
+    public string ObjectType { get; set; } = TutorBookingObjectTypes.SingleSession;
 
     /// <summary>Remboursement décidé (null tant qu'aucun) : instant de la décision.</summary>
     public DateTime? RefundedAt { get; set; }
@@ -152,4 +190,45 @@ public class TutorBooking
 
     /// <summary>Sujets à travailler saisis à la réservation (lot 9.1, suivi 17.5).</summary>
     public ICollection<TutorBookingTopic> Topics { get; set; } = new List<TutorBookingTopic>();
+
+    /// <summary>Élèves qui suivent la séance (lot 9.3) ; au moins un, l'élève principal compris.</summary>
+    public ICollection<TutorBookingParticipant> Participants { get; set; } = new List<TutorBookingParticipant>();
+
+    [ForeignKey(nameof(PayerUserId))]
+    public User? Payer { get; set; }
+
+    [ForeignKey(nameof(StudyGroupId))]
+    public StudyGroup? StudyGroup { get; set; }
+}
+
+/// <summary>Élève participant à une séance (lot 9.3, suivi 17.4).</summary>
+public class TutorBookingParticipant
+{
+    public int Id { get; set; }
+    public int TutorBookingId { get; set; }
+    public int StudentUserId { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    [ForeignKey(nameof(TutorBookingId))]
+    public TutorBooking? TutorBooking { get; set; }
+
+    [ForeignKey(nameof(StudentUserId))]
+    public User? Student { get; set; }
+}
+
+/// <summary>Types de payeur d'une séance (17.4).</summary>
+public static class TutorPayerTypes
+{
+    public const string Student = "student";
+    public const string Parent = "parent";
+    public const string Institution = "institution";
+    public const string StudyGroup = "study_group";
+
+    public static readonly string[] All = { Student, Parent, Institution, StudyGroup };
+}
+
+/// <summary>Objet d'une réservation (17.4) ; le 9.4 ajoutera l'engagement mensuel.</summary>
+public static class TutorBookingObjectTypes
+{
+    public const string SingleSession = "single_session";
 }
