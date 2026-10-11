@@ -408,16 +408,25 @@ public class AssignmentService : IAssignmentService
     {
         var submissionCount = await _context.Submissions.CountAsync(s => s.AssignmentId == a.Id);
         var pendingCount = await _context.Submissions.CountAsync(s => s.AssignmentId == a.Id && (s.Status == "pending" || s.Status == "draft"));
-        var alreadySubmitted = studentId.HasValue && await _context.Submissions.AnyAsync(s => s.AssignmentId == a.Id && s.StudentId == studentId.Value);
+        var mine = studentId.HasValue
+            ? await _context.Submissions.AsNoTracking()
+                .Where(s => s.AssignmentId == a.Id && s.StudentId == studentId.Value)
+                .OrderByDescending(s => s.SubmittedAt)
+                .FirstOrDefaultAsync()
+            : null;
+        // Vue élève : sa note et le commentaire seulement une fois la correction validée,
+        // et jamais le corrigé ni le barème du professeur.
+        var corrected = mine?.Status == "corrected";
+        var forStudent = studentId.HasValue;
 
         return new AssignmentDto
         {
             Id = a.Id,
             Title = a.Title,
             StatementText = a.StatementText,
-            RubricJson = a.RubricJson,
-            ReferenceAnswerText = a.ReferenceAnswerText,
-            ReferenceAnswerFileUrl = a.ReferenceAnswerFileUrl,
+            RubricJson = forStudent ? null : a.RubricJson,
+            ReferenceAnswerText = forStudent ? null : a.ReferenceAnswerText,
+            ReferenceAnswerFileUrl = forStudent ? null : a.ReferenceAnswerFileUrl,
             QuizId = a.QuizId,
             MaxScore = a.MaxScore,
             DueDate = a.DueDate,
@@ -425,7 +434,10 @@ public class AssignmentService : IAssignmentService
             TeacherClassName = a.TeacherClass?.Name,
             SubmissionCount = submissionCount,
             PendingCount = pendingCount,
-            AlreadySubmitted = alreadySubmitted,
+            AlreadySubmitted = mine != null,
+            MyScore = corrected ? mine!.Score : null,
+            MyComment = corrected ? mine!.Comment : null,
+            GradedAt = corrected ? mine!.GradedAt : null,
             CreatedAt = a.CreatedAt,
         };
     }

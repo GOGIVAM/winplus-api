@@ -37,6 +37,11 @@ public class AssignmentDto
     public int SubmissionCount { get; set; }
     public int PendingCount { get; set; }
     public bool AlreadySubmitted { get; set; }
+    /// <summary>Vue élève : note de sa copie, renseignée une fois la correction validée.</summary>
+    public decimal? MyScore { get; set; }
+    /// <summary>Vue élève : commentaire du professeur sur sa copie.</summary>
+    public string? MyComment { get; set; }
+    public DateTime? GradedAt { get; set; }
     public DateTime CreatedAt { get; set; }
 }
 
