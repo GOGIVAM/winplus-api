@@ -424,7 +424,9 @@ public class TeacherCourseController : ControllerBase
                 Description     = req.Description,
                 LessonType      = req.LessonType ?? "video",
                 VideoUrl        = req.VideoUrl,
-                VideoDurationSec = req.VideoDurationSec,
+                // Colonne NOT NULL DEFAULT 0 en base : une leçon sans vidéo (article,
+                // fichier, quiz) envoyait null et l'ajout échouait en 500 (23502).
+                VideoDurationSec = req.VideoDurationSec ?? 0,
                 ArticleContent  = req.ArticleContent,
                 FileUrl         = req.FileUrl,
                 FileName        = req.FileName,
