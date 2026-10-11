@@ -162,6 +162,24 @@ public static class WalletEntryTypes
     /// d'origine.
     /// </summary>
     public const string ContentRemovalRefund = "ContentRemovalRefund";
+
+    // ── Tutorat (lot 9.2, suivi 17.6 et 17.9) ─────────────────────────────
+
+    /// <summary>Débit du payeur réglant une séance avec son solde (atomique avec la création de la réservation).</summary>
+    public const string TutoringPayment = "TutoringPayment";
+
+    /// <summary>Remboursement d'une séance, crédité au portefeuille du payeur quel que soit le moyen de paiement d'origine.</summary>
+    public const string TutoringRefund = "TutoringRefund";
+
+    /// <summary>Frais NotchPay retenus sur le tuteur responsable de l'annulation (annulation, refus, non-réponse).</summary>
+    public const string TutoringFeeCharge = "TutoringFeeCharge";
+
+    /// <summary>
+    /// Trésorerie plateforme : frais NotchPay d'une séance remboursée récupérés
+    /// sur le payeur ou le tuteur (ils compensent les frais réellement payés à
+    /// NotchPay, que le remboursement au portefeuille ne rend pas).
+    /// </summary>
+    public const string PaymentFeeRecovered = "PaymentFeeRecovered";
 }
 
 public static class WalletEntryStatus

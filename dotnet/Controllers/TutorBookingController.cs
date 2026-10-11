@@ -27,7 +27,11 @@ public class TutorBookingController : ControllerBase
         _httpClientFactory = httpClientFactory;
     }
 
-    /// <summary>Réserve une séance et initie le paiement NotchPay (US-ELV-01).</summary>
+    /// <summary>
+    /// Réserve une séance et la paie : Mobile Money (paiement NotchPay initié)
+    /// ou solde du portefeuille (lot 9.2, débit atomique avec la réservation,
+    /// 400 si solde insuffisant).
+    /// </summary>
     [HttpPost]
     public async Task<ActionResult<TutorBookingCreatedResponseDto>> Create([FromBody] CreateTutorBookingRequestDto request)
     {
@@ -127,7 +131,7 @@ public class TutorBookingController : ControllerBase
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
     }
 
-    /// <summary>L'élève conteste une séance marquée effectuée, dans les 2h suivant le marquage.</summary>
+    /// <summary>L'élève conteste une séance marquée effectuée, dans la fenêtre de contestation (24 h par défaut, TutorBooking:DisputeWindowHours).</summary>
     [HttpPut("{id:int}/dispute")]
     public async Task<ActionResult<TutorBookingDto>> Dispute(int id, [FromBody] DisputeTutorBookingRequestDto request)
     {

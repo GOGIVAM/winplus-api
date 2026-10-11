@@ -16,8 +16,13 @@ public class CreateTutorBookingRequestDto
     public int? DurationMinutes { get; set; }
     /// <summary>online | student_home | tutor_home | neutral_place.</summary>
     public string Mode { get; set; } = "online";
-    /// <summary>Numéro Mobile Money pour le paiement NotchPay.</summary>
-    public string Phone { get; set; } = null!;
+    /// <summary>Numéro Mobile Money pour le paiement NotchPay (inutile si <see cref="PaymentMethod"/> = wallet).</summary>
+    public string? Phone { get; set; }
+    /// <summary>
+    /// Lot 9.2 (17.6) : "mobile_money" (défaut, flux NotchPay) ou "wallet"
+    /// (solde du portefeuille de l'élève, débité atomiquement avec la création).
+    /// </summary>
+    public string? PaymentMethod { get; set; }
     /// <summary>Matière de la séance : détermine le tarif de base (grille 17.3) et la ventilation des revenus (US-REP-10).</summary>
     public string? Subject { get; set; }
     /// <summary>Sujets à travailler (17.5), textes courts, 5 au plus.</summary>
@@ -119,9 +124,60 @@ public class TutorBookingDto
     public string? SummaryText { get; set; }
     /// <summary>true si l'heure de fin de la séance est passée  active "Marquer effectuée" côté répétiteur.</summary>
     public bool CanMarkCompleted { get; set; }
-    /// <summary>true si encore dans la fenêtre de contestation de 2h côté élève.</summary>
+    /// <summary>true si encore dans la fenêtre de contestation (24 h par défaut) côté élève.</summary>
     public bool CanDispute { get; set; }
+    /// <summary>Fin de la fenêtre de contestation (séance effectuée, fonds pas encore libérés), sinon null.</summary>
+    public DateTime? DisputeDeadline { get; set; }
+    /// <summary>Durée de la fenêtre de contestation configurée côté serveur (17.8).</summary>
+    public int DisputeWindowHours { get; set; }
+
+    // ── Paiement et remboursement (lot 9.2) ──
+    /// <summary>mobile_money | wallet (null pour une réservation ancienne jamais payée).</summary>
+    public string? PaymentMethod { get; set; }
+    public DateTime? RefundedAt { get; set; }
+    /// <summary>payer_cancelled | tutor_cancelled | tutor_declined | tutor_no_response | dispute_full | dispute_partial.</summary>
+    public string? RefundCause { get; set; }
+    public int? RefundPercent { get; set; }
+    /// <summary>Montant crédité au portefeuille du payeur.</summary>
+    public decimal? RefundAmountXaf { get; set; }
+    /// <summary>Frais Mobile Money retenus (déduits du remboursement si RefundFeeBorneBy = payer).</summary>
+    public decimal? RefundFeeXaf { get; set; }
+    /// <summary>none | payer | tutor | platform.</summary>
+    public string? RefundFeeBorneBy { get; set; }
+    public decimal? TutorFeeChargedXaf { get; set; }
+    public decimal? TutorRetainedXaf { get; set; }
     public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>Politique de tutorat publique (lot 9.2, suivi 17.10) : source unique pour le web et le mobile.</summary>
+public class TutorPolicyDto
+{
+    public string Version { get; set; } = null!;
+    public int DisputeWindowHours { get; set; }
+    public decimal NotchPayFeePercent { get; set; }
+    public TutorPolicyBoundsDto Bounds { get; set; } = new();
+    public List<TutorPolicySectionDto> Sections { get; set; } = new();
+}
+
+/// <summary>Limites plateforme des réglages d'annulation du tuteur, et valeurs par défaut.</summary>
+public class TutorPolicyBoundsDto
+{
+    public int FullRefundHoursMin { get; set; }
+    public int FullRefundHoursMax { get; set; }
+    public int PartialRefundPercentMin { get; set; }
+    public int PartialRefundPercentMax { get; set; }
+    public int NoRefundHoursMin { get; set; }
+    public int NoRefundHoursMax { get; set; }
+    public int DefaultFullRefundHours { get; set; }
+    public int DefaultPartialRefundPercent { get; set; }
+    public int DefaultNoRefundHours { get; set; }
+}
+
+public class TutorPolicySectionDto
+{
+    public string Id { get; set; } = null!;
+    public string Title { get; set; } = null!;
+    public List<string> Paragraphs { get; set; } = new();
 }
 
 /// <summary>Génération WinAI du compte-rendu de séance (US-REP-07).</summary>

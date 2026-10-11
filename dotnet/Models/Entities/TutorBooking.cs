@@ -44,7 +44,8 @@ public class TutorBooking
     /// <summary>
     /// pending_payment (paiement en cours) → pending_tutor_approval (payé, en
     /// attente d'acceptation du répétiteur) → confirmed → completed (marquée
-    /// effectuée) → disputed (contestée &lt;2h après). Sorties : rejected
+    /// effectuée) → disputed (contestée dans les 24 h, réglable :
+    /// TutorBooking:DisputeWindowHours). Sorties : rejected
     /// (refusée par le répétiteur), expired (pas de réponse dans le délai de
     /// préavis), cancelled (paiement échoué / annulation).
     /// </summary>
@@ -61,6 +62,45 @@ public class TutorBooking
     [MaxLength(30)]
     public string? PhoneNumber { get; set; }
 
+    // ── Paiement et remboursement (lot 9.2, suivi 17.6 et 17.9) ───────────
+
+    /// <summary>mobile_money | wallet ; null = réservation antérieure au 9.2 (Mobile Money).</summary>
+    [MaxLength(20)]
+    public string? PaymentMethod { get; set; }
+
+    /// <summary>
+    /// Compte qui a payé et qui reçoit les remboursements ; null = l'élève
+    /// (réservations antérieures au 9.2). Au 9.2 c'est toujours l'élève ; le
+    /// 9.3 y mettra le parent ou l'institution payeur.
+    /// </summary>
+    public int? PayerUserId { get; set; }
+
+    /// <summary>Frais NotchPay figés à la confirmation du paiement (0 si portefeuille).</summary>
+    public decimal? PaymentFeeXaf { get; set; }
+
+    /// <summary>Remboursement décidé (null tant qu'aucun) : instant de la décision.</summary>
+    public DateTime? RefundedAt { get; set; }
+
+    /// <summary>Voir <c>TutorRefundCause</c> : payer_cancelled, tutor_cancelled, tutor_declined, tutor_no_response, dispute_full, dispute_partial.</summary>
+    [MaxLength(30)]
+    public string? RefundCause { get; set; }
+
+    /// <summary>Montant crédité au portefeuille du payeur.</summary>
+    public decimal? RefundAmountXaf { get; set; }
+
+    /// <summary>Frais NotchPay retenus (sur le payeur ou à retenir sur le tuteur) ; 0 si absorbés ou sans frais.</summary>
+    public decimal? RefundFeeXaf { get; set; }
+
+    /// <summary>none | payer | tutor | platform.</summary>
+    [MaxLength(20)]
+    public string? RefundFeeBorneBy { get; set; }
+
+    /// <summary>Frais effectivement débités au tuteur (borné par son solde disponible au moment du remboursement).</summary>
+    public decimal? TutorFeeChargedXaf { get; set; }
+
+    /// <summary>Montant brut conservé pour le tuteur (annulation tardive, litige partiel), commission déduite au registre.</summary>
+    public decimal? TutorRetainedXaf { get; set; }
+
     [MaxLength(300)]
     public string? CancellationReason { get; set; }
     public int? CancelledByUserId { get; set; }
@@ -75,7 +115,7 @@ public class TutorBooking
     public int? RefundPercent { get; set; }
     public DateTime? ConfirmedAt { get; set; }
 
-    /// <summary>Séance marquée "Effectuée" par le répétiteur (déclenche la fenêtre de contestation de 2h).</summary>
+    /// <summary>Séance marquée "Effectuée" par le répétiteur (déclenche la fenêtre de contestation, 24 h par défaut).</summary>
     public DateTime? CompletedAt { get; set; }
 
     /// <summary>

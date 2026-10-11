@@ -326,6 +326,12 @@ public partial class ApplicationDbContext : DbContext
         modelBuilder.Entity<TutorBooking>(entity =>
         {
             entity.Property(e => e.PriceXaf).HasColumnType("numeric(10,2)");
+            // Lot 9.2 : paiement par portefeuille et remboursements automatiques.
+            entity.Property(e => e.PaymentFeeXaf).HasColumnType("numeric(10,2)");
+            entity.Property(e => e.RefundAmountXaf).HasColumnType("numeric(10,2)");
+            entity.Property(e => e.RefundFeeXaf).HasColumnType("numeric(10,2)");
+            entity.Property(e => e.TutorFeeChargedXaf).HasColumnType("numeric(10,2)");
+            entity.Property(e => e.TutorRetainedXaf).HasColumnType("numeric(10,2)");
             entity.HasIndex(e => e.NotchpayReference).IsUnique();
             entity.HasIndex(e => new { e.TutorProfileId, e.SessionDate });
             entity.HasOne(e => e.TutorProfile)

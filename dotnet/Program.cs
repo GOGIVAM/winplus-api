@@ -432,6 +432,7 @@ builder.Services.AddScoped<IQuizService, QuizService>();
 builder.Services.AddScoped<ITutorProfileService, TutorProfileService>();
 builder.Services.AddScoped<IAssignmentService, AssignmentService>();
 builder.Services.AddScoped<ITeachingSessionService, TeachingSessionService>();
+builder.Services.AddScoped<ITutorRefundService, TutorRefundService>();
 builder.Services.AddScoped<ITutorBookingService, TutorBookingService>();
 builder.Services.AddScoped<ITutorReviewService, TutorReviewService>();
 builder.Services.AddScoped<ITutorInsightsService, TutorInsightsService>();

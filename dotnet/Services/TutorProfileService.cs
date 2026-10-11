@@ -131,9 +131,21 @@ public class TutorProfileService : ITutorProfileService
         if (request.NoticeHours.HasValue) profile.NoticeHours = request.NoticeHours.Value is 12 or 24 or 48 ? request.NoticeHours.Value : 24;
         if (request.MaxSessionsPerWeek.HasValue) profile.MaxSessionsPerWeek = request.MaxSessionsPerWeek.Value;
 
-        if (request.FullRefundHours.HasValue) profile.FullRefundHours = Math.Clamp(request.FullRefundHours.Value, 0, 168);
-        if (request.PartialRefundPercent.HasValue) profile.PartialRefundPercent = Math.Clamp(request.PartialRefundPercent.Value, 0, 100);
-        if (request.NoRefundHours.HasValue) profile.NoRefundHours = Math.Clamp(request.NoRefundHours.Value, 0, profile.FullRefundHours);
+        // Lot 9.2 (17.10) : réglages d'annulation validés dans les limites
+        // plateforme (TutorPolicy), refusés avec un message clair au lieu
+        // d'être ramenés silencieusement. Validés seulement quand l'un d'eux
+        // est envoyé : enregistrer une autre étape du profil ne bloque jamais.
+        if (request.FullRefundHours.HasValue || request.PartialRefundPercent.HasValue || request.NoRefundHours.HasValue)
+        {
+            var current = TutorPolicy.Effective(profile);
+            var full = request.FullRefundHours ?? current.FullRefundHours;
+            var partial = request.PartialRefundPercent ?? current.PartialRefundPercent;
+            var none = request.NoRefundHours ?? current.NoRefundHours;
+            TutorPolicy.Validate(full, partial, none);
+            profile.FullRefundHours = full;
+            profile.PartialRefundPercent = partial;
+            profile.NoRefundHours = none;
+        }
 
         if (request.OnboardingStep.HasValue) profile.OnboardingStep = Math.Clamp(request.OnboardingStep.Value, 0, 5);
 
@@ -574,9 +586,11 @@ public class TutorProfileService : ITutorProfileService
             NoticeHours = profile.NoticeHours,
             MaxSessionsPerWeek = profile.MaxSessionsPerWeek,
             IsOnVacation = profile.IsOnVacation,
-            FullRefundHours = profile.FullRefundHours,
-            PartialRefundPercent = profile.PartialRefundPercent,
-            NoRefundHours = profile.NoRefundHours,
+            // Réglages effectifs (bornés par la politique plateforme, lot 9.2) :
+            // ceux qui s'appliquent réellement au remboursement.
+            FullRefundHours = TutorPolicy.Effective(profile).FullRefundHours,
+            PartialRefundPercent = TutorPolicy.Effective(profile).PartialRefundPercent,
+            NoRefundHours = TutorPolicy.Effective(profile).NoRefundHours,
             IsDiplomaVerified = profile.IsDiplomaVerified,
             IsExperienced = reputation.IsExperienced,
             IsHighlyResponsive = reputation.IsHighlyResponsive,

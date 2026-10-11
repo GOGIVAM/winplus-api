@@ -6,28 +6,32 @@ namespace Backend.Services;
 /// <summary>
 /// Fait avancer automatiquement le cycle de vie des réservations de cours
 /// particulier (Module 6, US-REP-05/06) : expire les demandes non traitées
-/// dans le délai de préavis du répétiteur, et libère l'escrow simulé 2h après
-/// qu'une séance a été marquée "Effectuée" sans contestation. Même pattern
-/// que <see cref="PaymentExpirationService"/>, avec un intervalle plus court
-/// car les demandes de réservation sont sensibles au délai.
+/// dans le délai de préavis du répétiteur (remboursement intégral automatique
+/// au portefeuille du payeur, frais retenus sur le tuteur, lot 9.2), et libère
+/// l'argent du tuteur une fois la fenêtre de contestation écoulée après la
+/// séance marquée "Effectuée" sans contestation (17.8 : 24 h par défaut,
+/// réglable par <c>TutorBooking:DisputeWindowHours</c>). Même pattern que
+/// <see cref="PaymentExpirationService"/>, avec un intervalle plus court car
+/// les demandes de réservation sont sensibles au délai.
 /// </summary>
 public class TutorBookingLifecycleService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TutorBookingLifecycleService> _logger;
+    private readonly TutorPolicySettings _policy;
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(15);
-    private static readonly TimeSpan DisputeWindow = TimeSpan.FromHours(2);
     private static readonly string[] RespondedStatuses = { "pending_tutor_approval" };
 
-    public TutorBookingLifecycleService(IServiceScopeFactory scopeFactory, ILogger<TutorBookingLifecycleService> logger)
+    public TutorBookingLifecycleService(IServiceScopeFactory scopeFactory, ILogger<TutorBookingLifecycleService> logger, IConfiguration configuration)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _policy = TutorPolicySettings.From(configuration);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("TutorBookingLifecycleService démarré (intervalle: 15 minutes)");
+        _logger.LogInformation("TutorBookingLifecycleService démarré (intervalle: 15 minutes, contestation: {Hours} h)", _policy.DisputeWindowHours);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -54,6 +58,7 @@ public class TutorBookingLifecycleService : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var ntfy = scope.ServiceProvider.GetRequiredService<INtfyService>();
+        var refunds = scope.ServiceProvider.GetRequiredService<ITutorRefundService>();
 
         var pending = await db.TutorBookings
             .Include(b => b.TutorProfile)
@@ -66,25 +71,40 @@ public class TutorBookingLifecycleService : BackgroundService
 
         foreach (var booking in expired)
         {
+            // Une réservation à la fois : la décision de remboursement, la
+            // retenue de frais du tuteur et le nouveau statut sont validés
+            // ensemble (TutorRefundService). Une tâche qui repasse ne retrouve
+            // plus cette réservation (statut "expired"), et une décision déjà
+            // figée n'est jamais recalculée.
             booking.Status = "expired";
-            booking.PaymentStatus = "refunded";
             booking.UpdatedAt = now;
+            TutorRefundDecision? decision;
+            try
+            {
+                decision = await refunds.RefundAsync(booking, TutorRefundCause.TutorNoResponse);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Expiration de la réservation {BookingId} non enregistrée", booking.Id);
+                db.ChangeTracker.Clear();
+                continue;
+            }
 
-            await ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Demande expirée  remboursement en cours",
-                $"Le répétiteur n'a pas répondu à temps pour ta séance du {booking.SessionDate:dd/MM/yyyy}. Tu seras remboursé.",
-                userId: booking.StudentUserId, type: "TutorBooking");
+            var payerId = booking.PayerUserId ?? booking.StudentUserId;
+            await ntfy.PublishAsync($"winplus-user-{payerId}", "Demande expirée — remboursement effectué",
+                decision is { RefundXaf: > 0 }
+                    ? $"Le répétiteur n'a pas répondu à temps pour ta séance du {booking.SessionDate:dd/MM/yyyy}. {decision.RefundXaf:0} XAF ont été crédités sur ton portefeuille WinPlus (remboursement intégral)."
+                    : $"Le répétiteur n'a pas répondu à temps pour ta séance du {booking.SessionDate:dd/MM/yyyy}. La demande est annulée.",
+                userId: payerId, type: "TutorBooking");
             var tutorUserId = booking.TutorProfile?.UserId;
             if (tutorUserId.HasValue)
                 await ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Demande expirée",
-                    $"Tu n'as pas répondu à temps à la demande du {booking.SessionDate:dd/MM/yyyy}  elle a été annulée.",
+                    booking.TutorFeeChargedXaf is > 0
+                        ? $"Tu n'as pas répondu à temps à la demande du {booking.SessionDate:dd/MM/yyyy} : elle a été annulée et les frais Mobile Money ({booking.TutorFeeChargedXaf:0} XAF) ont été retenus sur ton solde."
+                        : $"Tu n'as pas répondu à temps à la demande du {booking.SessionDate:dd/MM/yyyy} : elle a été annulée.",
                     userId: tutorUserId.Value, type: "TutorBooking");
-            await ntfy.PublishAdminAsync("Remboursement manuel requis  demande expirée",
-                $"Réservation #{booking.Id} ({booking.PriceXaf} XAF, réf. {booking.NotchpayReference}) : rembourser l'élève #{booking.StudentUserId} via NotchPay/MoMo.",
-                tags: new[] { "moneybag" });
         }
 
-        await db.SaveChangesAsync(ct);
-        await SyncWalletAsync(scope, expired.Select(b => b.Id));
         _logger.LogInformation("{Count} demande(s) de réservation expirée(s)", expired.Count);
     }
 
@@ -95,7 +115,7 @@ public class TutorBookingLifecycleService : BackgroundService
         var ntfy = scope.ServiceProvider.GetRequiredService<INtfyService>();
 
         var now = DateTime.UtcNow;
-        var releaseThreshold = now.Subtract(DisputeWindow);
+        var releaseThreshold = now.Subtract(_policy.DisputeWindow);
         var toRelease = await db.TutorBookings
             .Include(b => b.TutorProfile)
             .Where(b => b.Status == "completed" && b.EscrowReleasedAt == null && b.CompletedAt != null && b.CompletedAt <= releaseThreshold)
@@ -111,7 +131,7 @@ public class TutorBookingLifecycleService : BackgroundService
             var tutorUserId = booking.TutorProfile?.UserId;
             if (tutorUserId.HasValue)
                 await ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Fonds libérés",
-                    $"Ta part de la séance du {booking.SessionDate:dd/MM/yyyy} ({booking.PriceXaf} XAF payés par l'élève, commission déduite) est maintenant disponible dans ton solde WinPlus.",
+                    $"Ta part de la séance du {booking.SessionDate:dd/MM/yyyy} ({booking.PriceXaf:0} XAF payés, commission déduite) est maintenant disponible dans ton solde WinPlus.",
                     userId: tutorUserId.Value, type: "TutorBooking");
             await ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Comment s'est passée ta séance ?",
                 "Laisse un avis pour aider les autres élèves.", userId: booking.StudentUserId, type: "TutorBooking");
@@ -125,8 +145,8 @@ public class TutorBookingLifecycleService : BackgroundService
     /// <summary>
     /// Lot 2, Module 1 : la libération de l'escrow confirme l'écriture en
     /// attente du journal (seul moment où le revenu entre dans le solde
-    /// disponible) ; l'expiration l'annule. Idempotent : une libération rejouée
-    /// ne confirme pas deux fois le même revenu.
+    /// disponible). Idempotent : une libération rejouée ne confirme pas deux
+    /// fois le même revenu.
     /// </summary>
     private async Task SyncWalletAsync(IServiceScope scope, IEnumerable<int> bookingIds)
     {

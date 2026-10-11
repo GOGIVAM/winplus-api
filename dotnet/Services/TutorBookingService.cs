@@ -18,7 +18,6 @@ namespace Backend.Services;
 public class TutorBookingService : ITutorBookingService
 {
     private static readonly string[] ActiveStatuses = { "pending_payment", "pending_tutor_approval", "confirmed" };
-    private static readonly TimeSpan DisputeWindow = TimeSpan.FromHours(2);
     private static readonly string[] AllowedModes = { "online", "student_home", "tutor_home", "neutral_place" };
     private const string ReferencePrefix = "TBK";
     private static readonly JsonSerializerOptions QuoteJson = new(JsonSerializerDefaults.Web);
@@ -28,6 +27,13 @@ public class TutorBookingService : ITutorBookingService
     private readonly INtfyService _ntfy;
     private readonly ILogger<TutorBookingService> _logger;
     private readonly IWalletService _wallet;
+    private readonly ITutorRefundService _refunds;
+
+    /// <summary>
+    /// Délai de contestation (17.8, défaut 24 h) et taux de frais NotchPay
+    /// (17.9) : voir <see cref="TutorPolicySettings"/>.
+    /// </summary>
+    private readonly TutorPolicySettings _policy;
 
     /// <summary>
     /// Borne haute d'une séance unique (lot 9.1). Le suivi 17.2 limite déjà la
@@ -39,9 +45,11 @@ public class TutorBookingService : ITutorBookingService
     private readonly int _maxSessionMinutes;
     public const int DefaultMaxSessionMinutes = 360;
 
-    public TutorBookingService(ApplicationDbContext context, INotchPayService notchPay, INtfyService ntfy, ILogger<TutorBookingService> logger, IWalletService wallet, IConfiguration configuration)
+    public TutorBookingService(ApplicationDbContext context, INotchPayService notchPay, INtfyService ntfy, ILogger<TutorBookingService> logger, IWalletService wallet, IConfiguration configuration, ITutorRefundService refunds)
     {
         _wallet = wallet;
+        _refunds = refunds;
+        _policy = TutorPolicySettings.From(configuration);
         _context = context;
         _notchPay = notchPay;
         _ntfy = ntfy;
@@ -163,6 +171,28 @@ public class TutorBookingService : ITutorBookingService
         var price = quote.TotalXaf;
         var topics = TutorPricing.SanitizeTopics(request.Topics);
 
+        // Lot 9.2 (17.6) : Mobile Money (flux NotchPay inchangé) ou solde du
+        // portefeuille. Au 9.2 le payeur est toujours l'élève qui réserve ;
+        // le 9.3 ajoutera le parent ou l'institution comme payeur (débit par
+        // IWalletService.DebitParentWalletAsync ou portefeuille institution),
+        // en passant par le même point de débit ci-dessous.
+        var payByWallet = TutorPaymentMethods.IsWallet(request.PaymentMethod);
+        var payerUserId = studentUserId;
+        if (payByWallet)
+        {
+            if (price <= 0)
+                throw new InvalidOperationException("Montant de séance invalide.");
+            // Contrôle anticipé pour un message clair ; le contrôle qui fait foi
+            // est le débit sous verrou, dans la transaction ci-dessous.
+            var available = await _wallet.GetAvailableAsync(payerUserId);
+            if (available < price)
+                throw new InsufficientWalletBalanceException(Math.Max(0, available), price);
+        }
+        else if (string.IsNullOrWhiteSpace(request.Phone))
+        {
+            throw new InvalidOperationException("Indique ton numéro Mobile Money.");
+        }
+
         var booking = new TutorBooking
         {
             TutorProfileId = tutorProfile.Id,
@@ -174,8 +204,14 @@ public class TutorBookingService : ITutorBookingService
             Mode = mode,
             PriceXaf = price,
             PriceBreakdownJson = JsonSerializer.Serialize(quote, QuoteJson),
-            Status = "pending_payment",
-            PhoneNumber = request.Phone,
+            // Payé par solde : directement en attente du tuteur, comme un
+            // paiement NotchPay confirmé (aucun frais d'encaissement).
+            Status = payByWallet ? "pending_tutor_approval" : "pending_payment",
+            PaymentStatus = payByWallet ? "completed" : "pending",
+            PaymentMethod = payByWallet ? TutorPaymentMethods.Wallet : TutorPaymentMethods.MobileMoney,
+            PaymentFeeXaf = payByWallet ? 0m : null,
+            PayerUserId = payerUserId,
+            PhoneNumber = payByWallet ? null : request.Phone,
             Topics = topics.Select(t => new TutorBookingTopic { Label = t }).ToList(),
         };
 
@@ -208,6 +244,20 @@ public class TutorBookingService : ITutorBookingService
 
             _context.TutorBookings.Add(booking);
             await _context.SaveChangesAsync();
+
+            // Paiement par solde atomique avec la réservation : le débit est
+            // posé dans la même transaction Serializable, sous le verrou du
+            // portefeuille du payeur (RunLockedAsync réutilise la transaction
+            // en cours). Solde insuffisant → exception → rollback : ni débit
+            // sans réservation, ni réservation sans débit.
+            if (payByWallet)
+            {
+                await _wallet.RunLockedAsync(payerUserId, () => _wallet.DebitAsync(new WalletEntry(
+                    payerUserId, WalletEntryTypes.TutoringPayment, price, WalletService.TutoringPaymentKey(booking.Id),
+                    $"Cours particulier du {booking.SessionDate:dd/MM/yyyy} ({booking.StartTime:hh\\:mm}-{booking.EndTime:hh\\:mm})",
+                    "TutorBooking", booking.Id)));
+            }
+
             await tx.CommitAsync();
         }
         catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "40001" })
@@ -217,6 +267,13 @@ public class TutorBookingService : ITutorBookingService
         catch (PostgresException ex) when (ex.SqlState == "40001")
         {
             throw new InvalidOperationException("Ce créneau vient d'être réservé par un autre élève.");
+        }
+
+        if (payByWallet)
+        {
+            await SyncWalletAsync(booking.Id);
+            await NotifyPaymentConfirmedAsync(booking);
+            return new TutorBookingCreatedResponseDto { Booking = await MapToDtoAsync(booking) };
         }
 
         var student = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == studentUserId);
@@ -229,7 +286,7 @@ public class TutorBookingService : ITutorBookingService
             // Le web et le mobile n'envoient pas le numéro dans le même format
             // (avec ou sans indicatif 237)  on normalise ici plutôt que
             // d'imposer une convention aux deux front-ends.
-            var e164Phone = NormalizePhoneToE164(request.Phone);
+            var e164Phone = NormalizePhoneToE164(request.Phone!);
             var channel = DetectChannelFromPhone(e164Phone);
             var tutorName = $"{tutorProfile.User?.FirstName} {tutorProfile.User?.LastName}".Trim();
             var result = await _notchPay.InitiatePaymentAsync(
@@ -328,29 +385,21 @@ public class TutorBookingService : ITutorBookingService
                 ? "Cette réservation est en litige : elle doit être tranchée par le support avant toute annulation."
                 : "Cette réservation ne peut plus être annulée.");
 
-        var hadCompletedPayment = booking.PaymentStatus == "completed";
-
         booking.Status = "cancelled";
         booking.CancelledByUserId = userId;
         booking.CancelledAt = DateTime.UtcNow;
         booking.CancellationReason = string.IsNullOrWhiteSpace(reason) ? null : reason;
         booking.UpdatedAt = DateTime.UtcNow;
 
-        // Politique d'annulation (référentiel §I.C) : ne s'applique que si
-        // c'est l'élève qui annule un paiement déjà encaissé  une annulation
-        // à l'initiative du répétiteur reste toujours remboursée à 100%,
-        // l'élève ne doit jamais être pénalisé pour une décision qui ne vient
-        // pas de lui.
-        if (hadCompletedPayment)
-        {
-            var refundPercent = isTutor ? 100 : ComputeRefundPercent(booking);
-            await SimulateRefundAsync(booking, "annulée", refundPercent);
-        }
-        else
-        {
-            await _context.SaveChangesAsync();
-        }
+        // Politique d'annulation (17.9) : appliquée seulement quand le payeur
+        // annule un paiement encaissé (frais NotchPay déduits) ; une
+        // annulation du tuteur est toujours remboursée intégralement, frais
+        // retenus sur le tuteur. Remboursement crédité tout de suite au
+        // portefeuille du payeur (TutorRefundService).
+        var decision = await _refunds.RefundAsync(booking, isTutor ? TutorRefundCause.TutorCancelled : TutorRefundCause.PayerCancelled);
         await SyncWalletAsync(booking.Id);
+        if (decision != null)
+            await NotifyRefundAsync(booking, decision, "annulée");
 
         var notifiedUserId = isStudent ? booking.TutorProfile?.UserId : booking.StudentUserId;
         if (notifiedUserId.HasValue)
@@ -387,7 +436,9 @@ public class TutorBookingService : ITutorBookingService
         booking.Status = "rejected";
         booking.CancellationReason = string.IsNullOrWhiteSpace(reason) ? "Refusée par le répétiteur." : reason;
         booking.UpdatedAt = DateTime.UtcNow;
-        await SimulateRefundAsync(booking, "refusée par le répétiteur");
+        var decision = await _refunds.RefundAsync(booking, TutorRefundCause.TutorDeclined);
+        if (decision != null)
+            await NotifyRefundAsync(booking, decision, "refusée par le répétiteur");
         return MapToDto(booking);
     }
 
@@ -407,7 +458,7 @@ public class TutorBookingService : ITutorBookingService
         await _context.SaveChangesAsync();
 
         await _ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Comment s'est passée ta séance ?",
-            "Laisse un avis pour ce répétiteur  tes fonds seront libérés sous 2h si tu ne contestes pas.",
+            $"Laisse un avis pour ce répétiteur. Tu as {_policy.DisputeWindowHours} h pour contester la séance si elle ne s'est pas bien passée ; ensuite le paiement est versé au répétiteur.",
             userId: booking.StudentUserId, type: "TutorBooking");
         return MapToDto(booking);
     }
@@ -423,8 +474,8 @@ public class TutorBookingService : ITutorBookingService
             throw new InvalidOperationException("Cette réservation ne t'appartient pas.");
         if (booking.Status != "completed" || booking.CompletedAt == null)
             throw new InvalidOperationException("Cette séance ne peut pas être contestée.");
-        if (DateTime.UtcNow > booking.CompletedAt.Value.Add(DisputeWindow))
-            throw new InvalidOperationException("La fenêtre de contestation de 2h est dépassée.");
+        if (DateTime.UtcNow > booking.CompletedAt.Value.Add(_policy.DisputeWindow))
+            throw new InvalidOperationException($"La fenêtre de contestation de {_policy.DisputeWindowHours} h est dépassée.");
 
         booking.Status = "disputed";
         booking.DisputedAt = DateTime.UtcNow;
@@ -488,35 +539,37 @@ public class TutorBookingService : ITutorBookingService
     }
 
     /// <summary>
-    /// Marque la réservation remboursée et prévient élève + admin. Aucun appel
-    /// de remboursement NotchPay réel n'existe dans ce projet  voir la note
-    /// sur PaymentService.RefundPaymentAsync (flip de statut uniquement)  donc
-    /// le virement Mobile Money réel reste un geste manuel à faire côté admin.
+    /// Prévient le payeur (et le tuteur s'il supporte des frais) d'un
+    /// remboursement déjà crédité au portefeuille (lot 9.2). Plus d'alerte
+    /// admin « remboursement manuel requis » : seul un échec technique du
+    /// crédit alerte l'admin (TutorRefundService).
     /// </summary>
-    private async Task SimulateRefundAsync(TutorBooking booking, string reasonLabel, int refundPercent = 100)
+    private async Task NotifyRefundAsync(TutorBooking booking, TutorRefundDecision decision, string reasonLabel)
     {
-        booking.PaymentStatus = refundPercent > 0 ? "refunded" : "forfeited";
-        booking.RefundPercent = refundPercent;
-        await _context.SaveChangesAsync();
-        await SyncWalletAsync(booking.Id);
+        var payerId = booking.PayerUserId ?? booking.StudentUserId;
+        var date = $"{booking.SessionDate:dd/MM/yyyy}";
+        string message;
+        if (decision.RefundXaf <= 0)
+            message = decision.RefundPercent == 0
+                ? $"Ta séance du {date} a été {reasonLabel}. Politique d'annulation du répétiteur : aucun remboursement pour une annulation aussi tardive."
+                : $"Ta séance du {date} a été {reasonLabel}. Après déduction des frais Mobile Money ({decision.FeeRetainedXaf:0} XAF), il ne reste rien à rembourser.";
+        else if (decision.FeeBorneBy == TutorFeeBearer.Payer)
+            message = $"Ta séance du {date} a été {reasonLabel}. {decision.RefundXaf:0} XAF ont été crédités sur ton portefeuille WinPlus " +
+                      $"({decision.RefundPercent} % selon la politique du répétiteur, moins {decision.FeeRetainedXaf:0} XAF de frais Mobile Money).";
+        else if (decision.Cause == TutorRefundCause.PayerCancelled && decision.RefundPercent < 100)
+            message = $"Ta séance du {date} a été {reasonLabel}. {decision.RefundXaf:0} XAF ont été crédités sur ton portefeuille WinPlus ({decision.RefundPercent} % selon la politique du répétiteur).";
+        else
+            message = $"Ta séance du {date} a été {reasonLabel}. {decision.RefundXaf:0} XAF ont été crédités sur ton portefeuille WinPlus (remboursement intégral).";
 
-        var refundAmount = Math.Round(booking.PriceXaf * refundPercent / 100m, 0);
-        var studentMessage = refundPercent switch
-        {
-            100 => $"Ta séance du {booking.SessionDate:dd/MM/yyyy} a été {reasonLabel}. Remboursement total en cours.",
-            0 => $"Ta séance du {booking.SessionDate:dd/MM/yyyy} a été {reasonLabel}. Politique d'annulation du répétiteur : aucun remboursement pour une annulation aussi tardive.",
-            _ => $"Ta séance du {booking.SessionDate:dd/MM/yyyy} a été {reasonLabel}. Politique d'annulation du répétiteur : {refundPercent}% remboursés ({refundAmount:0} XAF).",
-        };
-        await _ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Réservation " + reasonLabel,
-            studentMessage, userId: booking.StudentUserId, type: "TutorBooking");
+        await _ntfy.PublishAsync($"winplus-user-{payerId}", "Réservation " + reasonLabel,
+            message, userId: payerId, type: "TutorBooking");
 
-        if (refundPercent > 0)
-        {
-            await _ntfy.PublishAdminAsync("Remboursement manuel requis  cours particulier",
-                $"Réservation #{booking.Id} ({refundAmount:0}/{booking.PriceXaf} XAF, réf. {booking.NotchpayReference}) : " +
-                $"rembourser l'élève #{booking.StudentUserId} via NotchPay/MoMo ({refundPercent}% selon la politique d'annulation).",
-                tags: new[] { "moneybag" });
-        }
+        var tutorUserId = booking.TutorProfile?.UserId;
+        if (tutorUserId.HasValue && booking.TutorFeeChargedXaf is > 0)
+            await _ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Frais Mobile Money retenus",
+                $"La séance du {date} a été {reasonLabel} de ton fait : l'élève est remboursé intégralement et les frais Mobile Money " +
+                $"({booking.TutorFeeChargedXaf:0} XAF) ont été retenus sur ton solde, comme le prévoit la politique de tutorat.",
+                userId: tutorUserId.Value, type: "TutorBooking");
     }
 
     /// <summary>Pas entre deux points de départ réservables, et unité de durée (17.2 : tranches de 30 min).</summary>
@@ -607,22 +660,29 @@ public class TutorBookingService : ITutorBookingService
 
         if (!wasAlreadyFinal && booking.PaymentStatus == "completed")
         {
+            // Frais NotchPay figés au moment de l'encaissement (17.9) : un
+            // changement ultérieur du taux configuré ne modifie pas le
+            // remboursement d'une séance déjà payée.
+            booking.PaymentMethod ??= TutorPaymentMethods.MobileMoney;
+            booking.PaymentFeeXaf ??= TutorRefundRules.NotchPayFee(booking.PriceXaf, _policy.NotchPayFeePercent);
+
+            if (booking.Status == "cancelled")
+            {
+                // Paiement confirmé après une annulation par l'élève (ou après
+                // l'abandon de l'écran de paiement) : la séance ne reprend pas
+                // vie, le montant payé est rendu au portefeuille, frais
+                // Mobile Money déduits comme pour toute annulation du payeur.
+                await _refunds.RefundAsync(booking, TutorRefundCause.PayerCancelled, overridePercent: 100);
+                await SyncWalletAsync(booking.Id);
+                return true;
+            }
+
             // Le paiement réussi ne confirme pas la séance : le répétiteur doit
-            // encore accepter (US-REP-05). Les fonds restent "en attente"
-            // (aucun mouvement réel  voir la note sur l'escrow simulé) jusqu'à
-            // l'acceptation, l'expiration ou le refus.
+            // encore accepter (US-REP-05). Le revenu du tuteur reste « en
+            // attente » au registre jusqu'à la fin de la fenêtre de contestation.
             booking.Status = "pending_tutor_approval";
             await _context.SaveChangesAsync();
-
-            var tutorUserId = booking.TutorProfile?.UserId;
-            var topicsText = booking.Topics.Count > 0 ? $" Sujets : {string.Join(", ", booking.Topics.Select(t => t.Label))}." : "";
-            if (tutorUserId.HasValue)
-                await _ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Nouvelle demande de réservation",
-                    $"Séance du {booking.SessionDate:dd/MM/yyyy} de {booking.StartTime:hh\\:mm} à {booking.EndTime:hh\\:mm}{(booking.Subject != null ? $" ({booking.Subject})" : "")}.{topicsText} Réponds avant expiration du délai.",
-                    priority: "high", userId: tutorUserId.Value, type: "TutorBooking");
-            await _ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Paiement reçu  en attente du répétiteur",
-                $"Ta demande du {booking.SessionDate:dd/MM/yyyy} est payée et en attente d'acceptation par le répétiteur.",
-                userId: booking.StudentUserId, type: "TutorBooking");
+            await NotifyPaymentConfirmedAsync(booking);
         }
         else if (!wasAlreadyFinal && booking.PaymentStatus == "failed")
         {
@@ -637,6 +697,23 @@ public class TutorBookingService : ITutorBookingService
 
         await SyncWalletAsync(booking.Id);
         return true;
+    }
+
+    /// <summary>Paiement encaissé (NotchPay ou solde) : la demande part au tuteur.</summary>
+    private async Task NotifyPaymentConfirmedAsync(TutorBooking booking)
+    {
+        if (booking.TutorProfile == null)
+            await _context.Entry(booking).Reference(b => b.TutorProfile).LoadAsync();
+        var tutorUserId = booking.TutorProfile?.UserId;
+        var topicsText = booking.Topics.Count > 0 ? $" Sujets : {string.Join(", ", booking.Topics.Select(t => t.Label))}." : "";
+        if (tutorUserId.HasValue)
+            await _ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Nouvelle demande de réservation",
+                $"Séance du {booking.SessionDate:dd/MM/yyyy} de {booking.StartTime:hh\\:mm} à {booking.EndTime:hh\\:mm}{(booking.Subject != null ? $" ({booking.Subject})" : "")}.{topicsText} Réponds avant expiration du délai.",
+                priority: "high", userId: tutorUserId.Value, type: "TutorBooking");
+        var payerId = booking.PayerUserId ?? booking.StudentUserId;
+        await _ntfy.PublishAsync($"winplus-user-{payerId}", "Paiement reçu — en attente du répétiteur",
+            $"Ta demande du {booking.SessionDate:dd/MM/yyyy} est payée et en attente d'acceptation par le répétiteur.",
+            userId: payerId, type: "TutorBooking");
     }
 
     /// <summary>
@@ -661,25 +738,6 @@ public class TutorBookingService : ITutorBookingService
     }
 
     private static DateOnly GetWeekStart(DateOnly date) => date.AddDays(-(((int)date.DayOfWeek + 6) % 7));
-
-    /// <summary>
-    /// Politique d'annulation configurable par le répétiteur (référentiel §I.C,
-    /// TutorProfile.FullRefundHours/PartialRefundPercent/NoRefundHours) :
-    /// remboursement total au-delà de FullRefundHours, partiel entre
-    /// NoRefundHours et FullRefundHours, aucun en-deçà de NoRefundHours.
-    /// </summary>
-    private static int ComputeRefundPercent(TutorBooking booking)
-    {
-        var profile = booking.TutorProfile;
-        if (profile == null) return 100;
-
-        var sessionStartUtc = booking.SessionDate.ToDateTime(TimeOnly.FromTimeSpan(booking.StartTime), DateTimeKind.Utc);
-        var hoursUntilSession = (sessionStartUtc - DateTime.UtcNow).TotalHours;
-
-        if (hoursUntilSession >= profile.FullRefundHours) return 100;
-        if (hoursUntilSession < profile.NoRefundHours) return 0;
-        return Math.Clamp(profile.PartialRefundPercent, 0, 100);
-    }
 
     /// <summary>9 chiffres locaux → préfixe "237" ajouté ; déjà préfixé (237… ou +237…) → inchangé.</summary>
     private static string NormalizePhoneToE164(string phone)
@@ -709,10 +767,11 @@ public class TutorBookingService : ITutorBookingService
         _ => null
     };
 
-    private static TutorBookingDto MapToDto(TutorBooking b)
+    private TutorBookingDto MapToDto(TutorBooking b)
     {
         var now = DateTime.UtcNow;
         var sessionEndUtc = b.SessionDate.ToDateTime(TimeOnly.FromTimeSpan(b.EndTime), DateTimeKind.Utc);
+        var disputeDeadline = b.CompletedAt?.Add(_policy.DisputeWindow);
         return new TutorBookingDto
         {
             Id = b.Id,
@@ -743,7 +802,18 @@ public class TutorBookingService : ITutorBookingService
             PriceBreakdown = ParseBreakdown(b.PriceBreakdownJson),
             SummaryText = b.SummaryText,
             CanMarkCompleted = b.Status == "confirmed" && now >= sessionEndUtc,
-            CanDispute = b.Status == "completed" && b.CompletedAt.HasValue && now <= b.CompletedAt.Value.Add(DisputeWindow),
+            CanDispute = b.Status == "completed" && disputeDeadline.HasValue && b.EscrowReleasedAt == null && now <= disputeDeadline.Value,
+            DisputeDeadline = b.Status == "completed" && b.EscrowReleasedAt == null ? disputeDeadline : null,
+            DisputeWindowHours = _policy.DisputeWindowHours,
+            PaymentMethod = b.PaymentMethod ?? (b.NotchpayReference != null ? TutorPaymentMethods.MobileMoney : null),
+            RefundedAt = b.RefundedAt,
+            RefundCause = b.RefundCause,
+            RefundPercent = b.RefundPercent,
+            RefundAmountXaf = b.RefundAmountXaf,
+            RefundFeeXaf = b.RefundFeeXaf,
+            RefundFeeBorneBy = b.RefundFeeBorneBy,
+            TutorFeeChargedXaf = b.TutorFeeChargedXaf,
+            TutorRetainedXaf = b.TutorRetainedXaf,
             CreatedAt = b.CreatedAt,
         };
     }
@@ -811,59 +881,34 @@ public class TutorBookingService : ITutorBookingService
         if (resolution == "released_to_tutor")
         {
             booking.EscrowReleasedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
         }
         else
         {
-            booking.PaymentStatus = "refunded";
-            var retainedByTeacher = resolution == "refunded_partial" ? booking.PriceXaf - refundAmount!.Value : 0m;
-            await _ntfy.PublishAdminAsync("Remboursement manuel requis  litige cours particulier",
-                $"Réservation #{booking.Id} ({booking.PriceXaf} XAF, réf. {booking.NotchpayReference}) : " +
-                (resolution == "refunded_full"
-                    ? "remboursement total"
-                    : $"remboursement partiel de {refundAmount:0} XAF (le répétiteur garde {retainedByTeacher:0} XAF)") +
-                $" décidé par le support  effectuer le virement NotchPay/MoMo de {(resolution == "refunded_full" ? booking.PriceXaf : refundAmount):0} XAF à l'élève.",
-                tags: new[] { "moneybag" });
+            // Lot 9.2 (17.9) : le payeur qui gagne le litige est crédité tout
+            // de suite sur son portefeuille ; les frais NotchPay sont absorbés
+            // par la plateforme. En remboursement partiel, la part conservée
+            // par le tuteur (prix moins remboursement) est posée au registre
+            // par SyncTutorBookingAsync, à la commission habituelle, avec les
+            // clés d'avant le 9.2 (aucun doublon possible).
+            await _refunds.RefundAsync(booking,
+                resolution == "refunded_full" ? TutorRefundCause.DisputeRefundFull : TutorRefundCause.DisputeRefundPartial,
+                refundAmount);
         }
-        await _context.SaveChangesAsync();
-        // Contre-passe l'écriture d'origine (en attente ou confirmée) dans
-        // tous les cas : le statut "cancelled"/"refunded" la fait sortir de la
-        // branche "payé et actif" du patron générique.
+        // Contre-passe l'écriture d'origine (en attente) ou la confirme selon
+        // l'issue, et pose les écritures du remboursement : idempotent.
         await SyncWalletAsync(booking.Id);
-
-        if (resolution == "refunded_partial")
-        {
-            // Part conservée par le répétiteur sur le reliquat (prix moins le
-            // remboursement), à la même commission que d'habitude — écriture
-            // dédiée, distincte de celle (contre-passée ci-dessus) que le
-            // patron générique aurait posée pour le prix plein.
-            var teacherId = booking.TutorProfile?.UserId;
-            var retained = booking.PriceXaf - refundAmount!.Value;
-            if (teacherId.HasValue && retained > 0)
-            {
-                var share = await RevenueSplit.GetTeacherShareAsync(_context, teacherId.Value);
-                var net = RevenueSplit.NetXaf(retained, share);
-                var commission = retained - net;
-                var key = $"tutoring_dispute_partial:{booking.Id}";
-                var commissionKey = $"tutoring_dispute_partial_commission:{booking.Id}";
-                if (net > 0)
-                    await _wallet.PostAsync(new WalletEntry(teacherId.Value, WalletEntryTypes.TutoringRevenue, net, key,
-                        $"Litige résolu  séance du {booking.SessionDate:dd/MM/yyyy} (remboursement partiel)",
-                        "TutorBooking", booking.Id));
-                if (commission > 0)
-                    await _wallet.PostAsync(new WalletEntry(null, WalletEntryTypes.PlatformCommission, commission, commissionKey,
-                        $"Commission tutorat, litige réservation #{booking.Id}", "TutorBooking", booking.Id));
-            }
-        }
 
         var decisionLabel = resolution switch
         {
-            "refunded_full" => "un remboursement total à l'élève",
-            "refunded_partial" => "un remboursement partiel à l'élève",
+            "refunded_full" => $"un remboursement total ({booking.RefundAmountXaf ?? booking.PriceXaf:0} XAF crédités sur le portefeuille WinPlus du payeur)",
+            "refunded_partial" => $"un remboursement partiel ({booking.RefundAmountXaf ?? refundAmount:0} XAF crédités sur le portefeuille WinPlus du payeur)",
             _ => "la libération des fonds au répétiteur",
         };
-        await _ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Décision sur ton litige",
+        var payerId = booking.PayerUserId ?? booking.StudentUserId;
+        await _ntfy.PublishAsync($"winplus-user-{payerId}", "Décision sur ton litige",
             $"Le support WinPlus a tranché : {decisionLabel} pour la séance du {booking.SessionDate:dd/MM/yyyy}.",
-            userId: booking.StudentUserId, type: "TutorBooking");
+            userId: payerId, type: "TutorBooking");
         var tutorUserId = booking.TutorProfile?.UserId;
         if (tutorUserId.HasValue)
             await _ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Décision sur le litige",

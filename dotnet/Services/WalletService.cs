@@ -169,7 +169,7 @@ public static class WalletSources
     public static readonly IReadOnlyDictionary<string, string[]> EntryTypesBySource = new Dictionary<string, string[]>
     {
         [Catalogue] = new[] { WalletEntryTypes.CatalogSale },
-        [Tutoring] = new[] { WalletEntryTypes.TutoringRevenue },
+        [Tutoring] = new[] { WalletEntryTypes.TutoringRevenue, WalletEntryTypes.TutoringPayment, WalletEntryTypes.TutoringRefund, WalletEntryTypes.TutoringFeeCharge },
         [Affiliate] = new[] { WalletEntryTypes.AffiliateCommission },
         [Recharge] = new[] { WalletEntryTypes.Recharge },
         [AdminCredit] = new[] { WalletEntryTypes.AdminCredit },
@@ -285,7 +285,14 @@ public class WalletService : IWalletService
             ? new Dictionary<long, string>()
             : await all.Where(o => reversedIds.Contains(o.Id)).ToDictionaryAsync(o => o.Id, o => o.EntryType);
 
-        var bookingIds = rows.Where(r => r.EntryType == WalletEntryTypes.TutoringRevenue && r.SourceId != null)
+        // Seule l'écriture de revenu d'une séance menée à son terme porte le
+        // prix plein ; une part conservée après annulation ou litige partiel
+        // (lot 9.2) affiche son propre montant.
+        bool IsFullSessionRevenue(WalletTransaction r) =>
+            r.EntryType == WalletEntryTypes.TutoringRevenue && r.SourceId != null
+            && r.SourceType == "TutorBooking" && r.IdempotencyKey == TutoringKey(r.SourceId.Value);
+
+        var bookingIds = rows.Where(IsFullSessionRevenue)
             .Select(r => r.SourceId!.Value).Distinct().ToList();
         var bookingPrices = bookingIds.Count == 0
             ? new Dictionary<int, decimal>()
@@ -298,8 +305,7 @@ public class WalletService : IWalletService
                 && reversedTypes.TryGetValue(r.ReversesEntryId.Value, out var t) ? t : r.EntryType;
             var gross = Math.Abs(r.Amount);
             var commission = 0m;
-            if (r.EntryType == WalletEntryTypes.TutoringRevenue && r.SourceId != null
-                && bookingPrices.TryGetValue(r.SourceId.Value, out var price))
+            if (IsFullSessionRevenue(r) && bookingPrices.TryGetValue(r.SourceId!.Value, out var price))
             {
                 gross = price;
                 commission = price - r.Amount;
@@ -651,6 +657,9 @@ public class WalletService : IWalletService
             {
                 b.Id, b.PriceXaf, b.PaymentStatus, b.Status, b.EscrowReleasedAt, b.Subject, b.SessionDate, b.CreatedAt,
                 TeacherId = b.TutorProfile != null ? (int?)b.TutorProfile.UserId : null,
+                PayerId = b.PayerUserId ?? b.StudentUserId,
+                b.RefundedAt, b.RefundAmountXaf, b.RefundFeeXaf, b.RefundFeeBorneBy, b.TutorFeeChargedXaf,
+                b.TutorRetainedXaf, b.DisputeResolution,
             })
             .FirstOrDefaultAsync();
         if (booking?.TeacherId == null) return;
@@ -694,7 +703,76 @@ public class WalletService : IWalletService
         // Ni libéré ni payé et actif : le revenu en attente ne sera jamais acquis.
         await SettlePendingAsync(key, WalletEntryStatus.Reversed);
         await SettlePendingAsync(commissionKey, WalletEntryStatus.Reversed);
+
+        // Lot 9.2 (suivi 17.9) : remboursement automatique décidé par
+        // TutorRefundService et figé sur la réservation. Rejoué sans risque
+        // (webhook rejoué, double clic, réconciliation) : chaque écriture a sa
+        // clé d'idempotence. Les réservations remboursées avant le 9.2 n'ont
+        // pas de RefundedAt et ne sont jamais créditées ici (remboursement
+        // manuel déjà fait hors plateforme).
+        if (booking.RefundedAt == null) return;
+        var when = booking.RefundedAt.Value;
+        var sessionLabel = $"séance du {booking.SessionDate:dd/MM/yyyy}";
+
+        if (booking.RefundAmountXaf is > 0)
+            await PostAsync(new WalletEntry(booking.PayerId, WalletEntryTypes.TutoringRefund, booking.RefundAmountXaf.Value,
+                TutoringRefundKey(booking.Id), $"Remboursement cours particulier ({sessionLabel})",
+                "TutorBooking", booking.Id, OccurredAt: when));
+
+        // Part conservée par le tuteur (annulation tardive par le payeur,
+        // litige partiel) : revenu confirmé, à la commission habituelle. Le
+        // litige partiel garde les clés posées avant le 9.2.
+        if (booking.TutorRetainedXaf is > 0)
+        {
+            var isDispute = booking.DisputeResolution == "refunded_partial";
+            var retainedKey = isDispute ? $"tutoring_dispute_partial:{booking.Id}" : TutoringRetainedKey(booking.Id);
+            var retainedCommissionKey = isDispute ? $"tutoring_dispute_partial_commission:{booking.Id}" : TutoringRetainedCommissionKey(booking.Id);
+            {
+                var retained = booking.TutorRetainedXaf.Value;
+                var share = await RevenueSplit.GetTeacherShareAsync(_db, teacherId);
+                var net = RevenueSplit.NetXaf(retained, share);
+                var commission = retained - net;
+                var label = isDispute
+                    ? $"Litige résolu — {sessionLabel} (remboursement partiel)"
+                    : $"Annulation tardive par l'élève — {sessionLabel} (part conservée)";
+                if (net > 0)
+                    await PostAsync(new WalletEntry(teacherId, WalletEntryTypes.TutoringRevenue, net, retainedKey, label,
+                        "TutorBooking", booking.Id, OccurredAt: when));
+                if (commission > 0)
+                    await PostAsync(new WalletEntry(null, WalletEntryTypes.PlatformCommission, commission, retainedCommissionKey,
+                        $"Commission tutorat, part conservée réservation #{booking.Id}", "TutorBooking", booking.Id, OccurredAt: when));
+            }
+        }
+
+        // Frais NotchPay retenus sur le tuteur (montant figé sous verrou par
+        // TutorRefundService, jamais au-delà de son solde disponible).
+        if (booking.TutorFeeChargedXaf is > 0)
+            await PostAsync(new WalletEntry(teacherId, WalletEntryTypes.TutoringFeeCharge, -booking.TutorFeeChargedXaf.Value,
+                TutoringFeeChargeKey(booking.Id), $"Frais Mobile Money retenus — {sessionLabel} annulée de ton fait",
+                "TutorBooking", booking.Id, OccurredAt: when));
+
+        // Trésorerie : frais récupérés sur le payeur ou le tuteur. Avec ces
+        // écritures, la somme des écritures d'une séance remboursée payée en
+        // Mobile Money vaut toujours le prix encaissé (et 0 si payée par solde,
+        // débit compris).
+        var recovered = booking.RefundFeeBorneBy switch
+        {
+            "payer" => booking.RefundFeeXaf ?? 0m,
+            "tutor" => booking.TutorFeeChargedXaf ?? 0m,
+            _ => 0m,
+        };
+        if (recovered > 0)
+            await PostAsync(new WalletEntry(null, WalletEntryTypes.PaymentFeeRecovered, recovered,
+                TutoringFeeRecoveredKey(booking.Id), $"Frais Mobile Money récupérés, réservation #{booking.Id}",
+                "TutorBooking", booking.Id, OccurredAt: when));
     }
+
+    public static string TutoringPaymentKey(int bookingId) => $"tutoring_payment:booking:{bookingId}";
+    public static string TutoringRefundKey(int bookingId) => $"tutoring_refund:booking:{bookingId}";
+    public static string TutoringRetainedKey(int bookingId) => $"tutoring_retained:booking:{bookingId}";
+    public static string TutoringRetainedCommissionKey(int bookingId) => $"tutoring_retained_commission:booking:{bookingId}";
+    public static string TutoringFeeChargeKey(int bookingId) => $"tutoring_fee_charge:booking:{bookingId}";
+    public static string TutoringFeeRecoveredKey(int bookingId) => $"tutoring_fee_recovered:booking:{bookingId}";
 
     /// <summary>
     /// Commission d'affiliation : en attente à sa naissance, confirmée après
