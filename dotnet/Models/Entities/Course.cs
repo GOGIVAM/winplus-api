@@ -27,7 +27,9 @@ public class Course
     public int TotalDurationMin { get; set; }
     public int LessonsCount { get; set; }
     public int EnrolledCount { get; set; }
-    public decimal? AvgRating { get; set; }
+    // 0 par défaut, comme la colonne en base (NOT NULL DEFAULT 0) : un null explicite
+    // écrasait ce défaut et faisait échouer toute création de formation (erreur 23502).
+    public decimal? AvgRating { get; set; } = 0;
     public int ReviewsCount { get; set; }
     public List<string> Requirements { get; set; } = new();
     public List<string> Objectives { get; set; } = new();
