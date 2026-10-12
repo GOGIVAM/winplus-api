@@ -342,3 +342,7 @@ dotnet/publish/zh-Hant/Microsoft.TestPlatform.CrossPlatEngine.resources.dll
 dotnet/publish/zh-Hant/Microsoft.VisualStudio.TestPlatform.Common.resources.dll
 dotnet/publish/zh-Hant/Microsoft.VisualStudio.TestPlatform.ObjectModel.resources.dll
 dotnet/publish/zh-Hant/Microsoft.VisualStudio.TraceDataCollector.resources.dll
+
+# Lot 9.5 : pieces d'identite des tuteurs en stockage prive local (jamais versionnees)
+private_uploads/
+**/private_uploads/

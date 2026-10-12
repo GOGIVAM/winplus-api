@@ -30,7 +30,23 @@ public class TutorProfileDto
     public int PartialRefundPercent { get; set; }
     public int NoRefundHours { get; set; }
 
+    /// <summary>Badge facultatif (diplôme validé, module 28) ; sans effet sur le présentiel depuis le 9.5.</summary>
     public bool IsDiplomaVerified { get; set; }
+
+    // ── Présentiel (lot 9.5, 17.11 / 17.12) ──
+    /// <summary>Vérifié pour le présentiel (au moins une voie valide).</summary>
+    public bool IsInPersonVerified { get; set; }
+    /// <summary>Présentiel suspendu (seuil de signalements) jusqu'à l'examen d'un admin.</summary>
+    public bool InPersonSuspended { get; set; }
+    /// <summary>Présentiel possible maintenant (vérifié et non suspendu).</summary>
+    public bool InPersonAllowed { get; set; }
+    /// <summary>Propriétaire seulement : pourquoi le présentiel est indisponible.</summary>
+    public string? InPersonBlockedReason { get; set; }
+    /// <summary>Propriétaire seulement : voies valides (identity, interview, institution).</summary>
+    public List<string> InPersonVerificationRoutes { get; set; } = new();
+    /// <summary>Institutions qui cautionnent le tuteur (badge « Caution : … »).</summary>
+    public List<string> EndorsedByInstitutions { get; set; } = new();
+
     /// <summary>≥10 séances marquées "Effectuée".</summary>
     public bool IsExperienced { get; set; }
     /// <summary>≥80% des demandes reçues acceptées/refusées avant expiration (sur au moins 5 demandes).</summary>
@@ -265,6 +281,13 @@ public class TutorSearchResultDto
     /// <summary>Plus bas tarif de base de la grille (lot 9.1), « à partir de ».</summary>
     public decimal? FromHourlyRateXaf { get; set; }
     public bool IsDiplomaVerified { get; set; }
+    /// <summary>Lot 9.5 : vérifié pour le présentiel et non suspendu.</summary>
+    public bool IsInPersonVerified { get; set; }
+    /// <summary>Lot 9.5 : propose réellement au moins un mode présentiel (vérifié, non suspendu).</summary>
+    public bool OffersInPerson { get; set; }
+    public bool OffersOnline { get; set; }
+    /// <summary>Lot 9.5 : institutions qui cautionnent le tuteur.</summary>
+    public List<string> EndorsedByInstitutions { get; set; } = new();
     public double? AverageRating { get; set; }
     public int ReviewCount { get; set; }
     public List<string> Subjects { get; set; } = new();

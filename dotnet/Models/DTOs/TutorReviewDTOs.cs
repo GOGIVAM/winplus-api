@@ -23,6 +23,8 @@ public class TutorReviewDto
     public int TutorBookingId { get; set; }
     public string? StudentName { get; set; }
     public string? StudentAvatarUrl { get; set; }
+    /// <summary>Lot 9.5 : participant (élève) | payer (parent, institution).</summary>
+    public string ReviewerRole { get; set; } = "participant";
     public int Rating { get; set; }
     public string? Comment { get; set; }
     public string? TutorReply { get; set; }

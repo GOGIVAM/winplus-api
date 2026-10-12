@@ -120,6 +120,15 @@ public class TutorProfileService : ITutorProfileService
         if (request.VideoUrl != null) profile.VideoUrl = Truncate(request.VideoUrl, 500);
         if (request.TeachingStyle != null) profile.TeachingStyle = Truncate(request.TeachingStyle, 30);
 
+        // Lot 9.5 (17.11) : un tuteur non vérifié (ou au présentiel suspendu)
+        // ne peut pas activer un mode présentiel. Désactiver reste toujours possible.
+        if ((request.OffersAtStudentHome == true || request.OffersAtTutorHome == true || request.OffersNeutralPlace == true)
+            && TutorInPersonPolicy.BlockReason(profile) is string blocked)
+        {
+            throw new InvalidOperationException(TutorInPersonPolicy.IsSuspended(profile)
+                ? "Ton présentiel est suspendu en attendant l'examen d'un signalement par l'équipe WinPlus : tu peux continuer en ligne."
+                : "Le présentiel est réservé aux répétiteurs vérifiés. Fais vérifier ton profil (pièce d'identité et selfie, entretien, ou caution de ton institution) : en attendant, propose tes séances en ligne.");
+        }
         if (request.OffersAtStudentHome.HasValue) profile.OffersAtStudentHome = request.OffersAtStudentHome.Value;
         if (request.OffersAtTutorHome.HasValue) profile.OffersAtTutorHome = request.OffersAtTutorHome.Value;
         if (request.OffersOnline.HasValue) profile.OffersOnline = request.OffersOnline.Value;
@@ -353,7 +362,7 @@ public class TutorProfileService : ITutorProfileService
         return profile == null ? null : await MapToDtoAsync(profile, isPublicView: true);
     }
 
-    public async Task<List<TutorSearchResultDto>> SearchAsync(string? subject, string? level, decimal? maxHourlyRateXaf, bool verifiedOnly, int page, int pageSize, string? mode = null, string? city = null, bool availableSoon = false, double? minRating = null, string? sort = null, string? topics = null)
+    public async Task<List<TutorSearchResultDto>> SearchAsync(string? subject, string? level, decimal? maxHourlyRateXaf, bool verifiedOnly, int page, int pageSize, string? mode = null, string? city = null, bool availableSoon = false, double? minRating = null, string? sort = null, string? topics = null, bool inPersonVerifiedOnly = false)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 50);
@@ -373,14 +382,21 @@ public class TutorProfileService : ITutorProfileService
             query = query.Where(p => p.Levels.Any(l => l.Level.ToLower() == level.ToLower()));
         if (verifiedOnly)
             query = query.Where(p => p.IsDiplomaVerified);
+        // Lot 9.5 (17.11) : un filtre présentiel ne renvoie que des tuteurs
+        // vérifiés dont le présentiel n'est pas suspendu (cohérent avec le
+        // refus serveur à la réservation). « in_person » = l'un des trois modes.
         query = mode switch
         {
             "online" => query.Where(p => p.OffersOnline),
-            "student_home" => query.Where(p => p.OffersAtStudentHome),
-            "tutor_home" => query.Where(p => p.OffersAtTutorHome),
-            "neutral_place" => query.Where(p => p.OffersNeutralPlace),
+            "student_home" => query.Where(p => p.OffersAtStudentHome && p.InPersonVerifiedAt != null && p.InPersonSuspendedAt == null),
+            "tutor_home" => query.Where(p => p.OffersAtTutorHome && p.InPersonVerifiedAt != null && p.InPersonSuspendedAt == null),
+            "neutral_place" => query.Where(p => p.OffersNeutralPlace && p.InPersonVerifiedAt != null && p.InPersonSuspendedAt == null),
+            "in_person" => query.Where(p => (p.OffersAtStudentHome || p.OffersAtTutorHome || p.OffersNeutralPlace)
+                                            && p.InPersonVerifiedAt != null && p.InPersonSuspendedAt == null),
             _ => query,
         };
+        if (inPersonVerifiedOnly)
+            query = query.Where(p => p.InPersonVerifiedAt != null && p.InPersonSuspendedAt == null);
         if (!string.IsNullOrWhiteSpace(city))
             query = query.Where(p => p.InterventionZones.Any(z => z.City.ToLower() == city.ToLower()));
 
@@ -518,9 +534,15 @@ public class TutorProfileService : ITutorProfileService
         };
 
         var results = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        // Lot 9.5 : badge « Caution : nom de l'institution » (cautions valides seulement).
+        var endorsements = await TutorVerificationService.EndorsingInstitutionNamesAsync(_context, results.Select(p => p.Id).ToList());
 
         return results.Select(p => new TutorSearchResultDto
         {
+            IsInPersonVerified = TutorInPersonPolicy.IsEligible(p),
+            OffersInPerson = TutorInPersonPolicy.OffersInPerson(p),
+            OffersOnline = p.OffersOnline,
+            EndorsedByInstitutions = endorsements.GetValueOrDefault(p.Id) ?? new List<string>(),
             UserId = p.UserId,
             FullName = p.User != null ? $"{p.User.FirstName} {p.User.LastName}".Trim() : null,
             AvatarUrl = p.User?.AvatarUrl,
@@ -598,9 +620,25 @@ public class TutorProfileService : ITutorProfileService
             .OrderByDescending(d => d.SubmittedAt)
             .FirstOrDefault();
         var reputation = await ComputeReputationAsync(profile.Id);
+        var endorsedBy = (await TutorVerificationService.EndorsingInstitutionNamesAsync(_context, new List<int> { profile.Id }))
+            .GetValueOrDefault(profile.Id) ?? new List<string>();
+        // Lot 9.5 (17.11) : modes présentiels EFFECTIFS, publics comme pour le
+        // propriétaire (un tuteur non vérifié ou suspendu voit ses modes
+        // présentiels à « non », comme le public ; les réglages enregistrés
+        // restent en base et reviennent dès qu'il est vérifié ou que la
+        // suspension est levée, s'il ne les a pas décochés entre-temps).
+        var eligible = TutorInPersonPolicy.IsEligible(profile);
 
         return new TutorProfileDto
         {
+            IsInPersonVerified = TutorInPersonPolicy.IsVerified(profile),
+            InPersonSuspended = TutorInPersonPolicy.IsSuspended(profile),
+            InPersonAllowed = eligible,
+            InPersonBlockedReason = isPublicView ? null : TutorInPersonPolicy.BlockReason(profile),
+            InPersonVerificationRoutes = isPublicView || string.IsNullOrEmpty(profile.InPersonVerificationRoutes)
+                ? new List<string>()
+                : profile.InPersonVerificationRoutes.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList(),
+            EndorsedByInstitutions = endorsedBy,
             Id = profile.Id,
             UserId = profile.UserId,
             FullName = user != null ? $"{user.FirstName} {user.LastName}".Trim() : null,
@@ -612,11 +650,11 @@ public class TutorProfileService : ITutorProfileService
             HourlyRateXaf = profile.HourlyRateXaf,
             TrialSessionEnabled = profile.TrialSessionEnabled,
             TrialSessionPriceXaf = profile.TrialSessionPriceXaf,
-            OffersAtStudentHome = profile.OffersAtStudentHome,
-            OffersAtTutorHome = profile.OffersAtTutorHome,
+            OffersAtStudentHome = TutorInPersonPolicy.OffersAtStudentHome(profile),
+            OffersAtTutorHome = TutorInPersonPolicy.OffersAtTutorHome(profile),
             OffersOnline = profile.OffersOnline,
-            OffersNeutralPlace = profile.OffersNeutralPlace,
-            TutorHomeAddressHint = profile.TutorHomeAddressHint,
+            OffersNeutralPlace = TutorInPersonPolicy.OffersNeutralPlace(profile),
+            TutorHomeAddressHint = eligible ? profile.TutorHomeAddressHint : (isPublicView ? null : profile.TutorHomeAddressHint),
             NoticeHours = profile.NoticeHours,
             MaxSessionsPerWeek = profile.MaxSessionsPerWeek,
             IsOnVacation = profile.IsOnVacation,

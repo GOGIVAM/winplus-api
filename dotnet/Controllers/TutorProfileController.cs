@@ -250,6 +250,7 @@ public class TutorProfileController : ControllerBase
         [FromQuery] bool availableSoon = false,
         [FromQuery] double? minRating = null,
         [FromQuery] string? sort = null,
-        [FromQuery] string? topics = null)
-        => Ok(await _service.SearchAsync(subject, level, maxHourlyRateXaf, verifiedOnly, page, pageSize, mode, city, availableSoon, minRating, sort, topics));
+        [FromQuery] string? topics = null,
+        [FromQuery] bool inPersonVerifiedOnly = false)
+        => Ok(await _service.SearchAsync(subject, level, maxHourlyRateXaf, verifiedOnly, page, pageSize, mode, city, availableSoon, minRating, sort, topics, inPersonVerifiedOnly));
 }

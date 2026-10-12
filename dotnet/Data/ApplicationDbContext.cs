@@ -132,6 +132,12 @@ public partial class ApplicationDbContext : DbContext
     // Suivi 17.14 : changements de titulaire du portefeuille institution.
     public DbSet<InstitutionWalletHolderChange> InstitutionWalletHolderChanges => Set<InstitutionWalletHolderChange>();
     public DbSet<TutorReview> TutorReviews => Set<TutorReview>();
+    // Lot 9.5 (suivi 17.11, 17.12, 17.16) : vérification pour le présentiel et signalements.
+    public DbSet<TutorIdentityCheck> TutorIdentityChecks => Set<TutorIdentityCheck>();
+    public DbSet<TutorVerificationInterview> TutorVerificationInterviews => Set<TutorVerificationInterview>();
+    public DbSet<TutorInstitutionEndorsement> TutorInstitutionEndorsements => Set<TutorInstitutionEndorsement>();
+    public DbSet<TutorVerificationEvent> TutorVerificationEvents => Set<TutorVerificationEvent>();
+    public DbSet<TutorReport> TutorReports => Set<TutorReport>();
     public DbSet<TutorRevisionSheet> TutorRevisionSheets => Set<TutorRevisionSheet>();
     public DbSet<TutorCoachingReport> TutorCoachingReports => Set<TutorCoachingReport>();
     public DbSet<MessageTemplate> MessageTemplates => Set<MessageTemplate>();
@@ -471,7 +477,10 @@ public partial class ApplicationDbContext : DbContext
 
         modelBuilder.Entity<TutorReview>(entity =>
         {
-            entity.HasIndex(e => e.TutorBookingId).IsUnique();
+            // Lot 9.5 (17.16) : un seul avis par séance ET par personne
+            // (participants et payeur peuvent chacun noter la même séance).
+            entity.HasIndex(e => new { e.TutorBookingId, e.StudentUserId }, "UX_TutorReviews_Booking_Author").IsUnique();
+            entity.HasIndex(e => e.TutorBookingId);
             entity.HasIndex(e => e.TutorProfileId);
             entity.HasOne(e => e.TutorBooking)
                   .WithMany()
@@ -484,6 +493,74 @@ public partial class ApplicationDbContext : DbContext
             entity.HasOne(e => e.Student)
                   .WithMany()
                   .HasForeignKey(e => e.StudentUserId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ── Lot 9.5 : vérification pour le présentiel, signalements ─────────
+        modelBuilder.Entity<TutorIdentityCheck>(entity =>
+        {
+            entity.ToTable("TutorIdentityChecks");
+            entity.HasIndex(e => new { e.TutorProfileId, e.Status });
+            entity.HasIndex(e => new { e.Status, e.SubmittedAt });
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany()
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorVerificationInterview>(entity =>
+        {
+            entity.ToTable("TutorVerificationInterviews");
+            entity.HasIndex(e => new { e.TutorProfileId, e.Status });
+            entity.HasIndex(e => new { e.Status, e.RequestedAt });
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany()
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorInstitutionEndorsement>(entity =>
+        {
+            entity.ToTable("TutorInstitutionEndorsements");
+            entity.HasIndex(e => new { e.TutorProfileId, e.Status });
+            entity.HasIndex(e => e.InstitutionId);
+            // Une seule caution active par tuteur et par institution.
+            entity.HasIndex(e => new { e.TutorProfileId, e.InstitutionId }, "UX_TutorInstitutionEndorsements_Active")
+                  .IsUnique().HasFilter("\"Status\" = 'active'");
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany()
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Institution)
+                  .WithMany()
+                  .HasForeignKey(e => e.InstitutionId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorVerificationEvent>(entity =>
+        {
+            entity.ToTable("TutorVerificationEvents");
+            entity.HasIndex(e => new { e.TutorProfileId, e.CreatedAt });
+        });
+
+        modelBuilder.Entity<TutorReport>(entity =>
+        {
+            entity.ToTable("TutorReports");
+            entity.HasIndex(e => new { e.TutorProfileId, e.CreatedAt });
+            entity.HasIndex(e => e.Status);
+            // Un seul signalement par séance et par personne (17.16).
+            entity.HasIndex(e => new { e.TutorBookingId, e.ReporterUserId }, "UX_TutorReports_Booking_Reporter").IsUnique();
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany()
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.TutorBooking)
+                  .WithMany()
+                  .HasForeignKey(e => e.TutorBookingId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Reporter)
+                  .WithMany()
+                  .HasForeignKey(e => e.ReporterUserId)
                   .OnDelete(DeleteBehavior.Restrict);
         });
 

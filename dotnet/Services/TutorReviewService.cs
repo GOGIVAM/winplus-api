@@ -21,22 +21,32 @@ public class TutorReviewService : ITutorReviewService
         _ntfy = ntfy;
     }
 
-    public async Task<TutorReviewDto> SubmitAsync(int studentUserId, SubmitTutorReviewRequestDto request)
+    /// <summary>
+    /// Lot 9.5 (17.12, 17.16) : notent les élèves participants d'une séance
+    /// effectuée et son payeur (parent, compte de l'institution payeuse, compte
+    /// qui a réservé) ; un seul avis par séance et par personne. La note
+    /// moyenne et le nombre d'avis du profil sont recalculés à chaque lecture
+    /// (ComputeReputationAsync, recherche), donc à jour dès l'enregistrement.
+    /// </summary>
+    public async Task<TutorReviewDto> SubmitAsync(int authorUserId, SubmitTutorReviewRequestDto request)
     {
         if (request.Rating is < 1 or > 5)
             throw new InvalidOperationException("La note doit être comprise entre 1 et 5.");
 
         var booking = await _context.TutorBookings
             .Include(b => b.TutorProfile).ThenInclude(p => p!.User)
+            .Include(b => b.Participants)
             .FirstOrDefaultAsync(b => b.Id == request.TutorBookingId)
             ?? throw new InvalidOperationException("Réservation introuvable.");
 
-        if (booking.StudentUserId != studentUserId)
-            throw new InvalidOperationException("Cette réservation ne t'appartient pas.");
-        if (booking.Status is not ("completed" or "disputed"))
+        var viewerInstitution = await _context.Users.AsNoTracking()
+            .Where(u => u.Id == authorUserId && u.Role == "institution").Select(u => u.InstitutionId).FirstOrDefaultAsync();
+        var role = TutorFeedbackRules.RoleOf(booking, authorUserId, viewerInstitution)
+            ?? throw new InvalidOperationException("Seuls les participants et le payeur de cette séance peuvent la noter.");
+        if (!TutorFeedbackRules.ReviewableStatuses.Contains(booking.Status))
             throw new InvalidOperationException("Tu ne peux noter qu'une séance effectuée.");
 
-        var already = await _context.TutorReviews.AnyAsync(r => r.TutorBookingId == booking.Id);
+        var already = await _context.TutorReviews.AnyAsync(r => r.TutorBookingId == booking.Id && r.StudentUserId == authorUserId);
         if (already)
             throw new InvalidOperationException("Tu as déjà noté cette séance.");
 
@@ -44,7 +54,8 @@ public class TutorReviewService : ITutorReviewService
         {
             TutorBookingId = booking.Id,
             TutorProfileId = booking.TutorProfileId,
-            StudentUserId = studentUserId,
+            StudentUserId = authorUserId,
+            ReviewerRole = role,
             Rating = request.Rating,
             Comment = string.IsNullOrWhiteSpace(request.Comment) ? null : Truncate(request.Comment, 300),
         };
@@ -56,8 +67,8 @@ public class TutorReviewService : ITutorReviewService
         catch (DbUpdateException)
         {
             // Double tap sur "Envoyer mon avis" : le contrôle `already` ci-dessus
-            // n'est pas atomique avec l'insertion, mais l'index unique sur
-            // TutorBookingId l'est  on retombe sur le même message que le
+            // n'est pas atomique avec l'insertion, mais l'index unique
+            // séance + auteur l'est  on retombe sur le même message que le
             // contrôle applicatif plutôt qu'un 500 brut.
             throw new InvalidOperationException("Tu as déjà noté cette séance.");
         }
@@ -143,6 +154,7 @@ public class TutorReviewService : ITutorReviewService
         TutorBookingId = r.TutorBookingId,
         StudentName = r.Student != null ? $"{r.Student.FirstName} {r.Student.LastName}".Trim() : null,
         StudentAvatarUrl = r.Student?.AvatarUrl,
+        ReviewerRole = r.ReviewerRole ?? "participant",
         Rating = r.Rating,
         Comment = r.Comment,
         TutorReply = r.TutorReply,

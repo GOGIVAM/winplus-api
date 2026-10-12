@@ -32,6 +32,7 @@ from routes.parent_extra_routes import parent_extra_router
 from routes.teacher_extra_routes import teacher_ai_router
 from routes.institution_routes import institution_router
 from routes.admin_routes import admin_router, _init_admin_tables
+from routes.tutor_interview_routes import tutor_interview_router
 from routes.smart_ai_routes import smart_ai_router
 from routes.exam_quiz_routes import exam_quiz_router
 from routes.canal_qa_routes import canal_qa_router
@@ -130,6 +131,8 @@ app.include_router(parent_extra_router, prefix="/api", tags=["parent-extra"])
 app.include_router(teacher_ai_router, prefix="/api", tags=["teacher-ai"])
 app.include_router(institution_router, prefix="/api", tags=["institution-ai"])
 app.include_router(admin_router, prefix="/api", tags=["admin-ai"])
+# Lot 9.5 (suivi 17.16) : WinAI assiste l'agent pendant l'entretien de vérification d'un répétiteur.
+app.include_router(tutor_interview_router, prefix="/api", tags=["tutor-interview"])
 app.include_router(smart_ai_router, prefix="/api", tags=["smart-ai"])
 app.include_router(canal_qa_router, prefix="/api", tags=["canal-qa"])
 app.include_router(winai_memory_router, prefix="/api", tags=["winai-memory"])

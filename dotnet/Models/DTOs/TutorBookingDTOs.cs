@@ -284,6 +284,15 @@ public class TutorBookingDto
     public bool ViewerIsPayer { get; set; }
     /// <summary>Le compte connecté est un élève participant.</summary>
     public bool ViewerIsParticipant { get; set; }
+
+    // ── Lot 9.5 (17.12, 17.16) : noter et signaler, pour le compte connecté ──
+    /// <summary>Peut noter : participant ou payeur d'une séance effectuée, pas encore noté par lui.</summary>
+    public bool CanReview { get; set; }
+    /// <summary>Note déjà donnée par le compte connecté (null sinon).</summary>
+    public int? MyReviewRating { get; set; }
+    /// <summary>Peut signaler : participant ou payeur d'une séance confirmée, effectuée, contestée ou annulée, pas encore signalée par lui.</summary>
+    public bool CanReport { get; set; }
+    public bool HasReported { get; set; }
     public DateTime CreatedAt { get; set; }
 }
 

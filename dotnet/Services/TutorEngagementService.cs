@@ -210,6 +210,8 @@ public class TutorEngagementService : ITutorEngagementService
         var enabled = offer is { IsActive: true };
         var discount = enabled ? TutorMonthlyPlan.ClampDiscount(offer!.DiscountPercent) : 0;
         var mode = NormalizeMode(request.Mode);
+        // Lot 9.5 (17.11) : pas de devis d'engagement présentiel avec un tuteur non vérifié ou suspendu.
+        TutorInPersonPolicy.EnsureModeAllowed(profile, mode);
 
         var plan = await BuildPlanAsync(profile, request.StartDate, slots, mode, request.Subject, request.ParticipantCount, discount);
         var conflicts = plan.Conflicts;
@@ -276,6 +278,9 @@ public class TutorEngagementService : ITutorEngagementService
         var offer = MonthlyOffer(profile);
         if (offer is not { IsActive: true })
             throw new InvalidOperationException("Ce répétiteur ne propose pas l'engagement mensuel.");
+        // Lot 9.5 (17.11) : engagement présentiel refusé avec un tuteur non
+        // vérifié ou suspendu, à la création comme au renouvellement (manuel ou automatique).
+        TutorInPersonPolicy.EnsureModeAllowed(profile, mode);
         var discount = TutorMonthlyPlan.ClampDiscount(offer.DiscountPercent);
 
         // Payeur et participants : exactement les contrôles du 9.3 (rôle réel,

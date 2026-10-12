@@ -37,12 +37,15 @@ public class InstitutionNetworkController : ControllerBase
     private readonly ApplicationDbContext _db;
     private readonly ILogger<InstitutionNetworkController> _logger;
     private readonly INtfyService _ntfy;
+    private readonly ITutorVerificationService _tutorVerification;
 
-    public InstitutionNetworkController(ApplicationDbContext db, ILogger<InstitutionNetworkController> logger, INtfyService ntfy)
+    public InstitutionNetworkController(ApplicationDbContext db, ILogger<InstitutionNetworkController> logger, INtfyService ntfy,
+        ITutorVerificationService tutorVerification)
     {
         _db = db;
         _logger = logger;
         _ntfy = ntfy;
+        _tutorVerification = tutorVerification;
     }
 
     private async Task<int?> MyInstitutionIdAsync(int userId) =>
@@ -217,9 +220,13 @@ public class InstitutionNetworkController : ControllerBase
         if (link == null) return NotFound();
         if (!await CanActOnAffiliationAsync(link, me)) return Forbid();
 
+        var wasAccepted = link.Status == "accepted";
         link.Status = "rejected";
         link.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+        // Lot 9.5 (17.11) : un rattachement accepté puis refusé fait tomber la caution de l'institution.
+        if (wasAccepted)
+            await _tutorVerification.OnAffiliationEndedAsync(link.InstitutionId, link.TeacherId, me, User.GetUserRole() == "teacher" ? "tutor" : "institution");
         return Ok(new { success = true });
     }
 
@@ -263,6 +270,9 @@ public class InstitutionNetworkController : ControllerBase
 
         _db.InstitutionTeacherLinks.Remove(link);
         await _db.SaveChangesAsync();
+        // Lot 9.5 (17.11) : la révocation du rattachement retire immédiatement
+        // la vérification obtenue par la caution de cette institution (pas les autres voies).
+        await _tutorVerification.OnAffiliationEndedAsync(link.InstitutionId, link.TeacherId, me, User.GetUserRole() == "teacher" ? "tutor" : "institution");
         return Ok(new { success = true });
     }
 

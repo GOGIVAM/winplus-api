@@ -4,9 +4,11 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace Backend.Models.Entities;
 
 /// <summary>
-/// Avis élève sur une séance de cours particulier effectuée (US-REP-08).
-/// Un seul avis par réservation, uniquement pour une séance réellement tenue
-///  pas d'avis anonyme, pas d'avis sans séance confirmée.
+/// Avis sur une séance de cours particulier effectuée (US-REP-08). Lot 9.5
+/// (17.12, 17.16) : peuvent noter les élèves participants ET le payeur (parent
+/// ou institution) ; un seul avis par séance et par personne (index unique
+/// TutorBookingId + StudentUserId). Pas d'avis anonyme, pas d'avis sans séance
+/// effectuée.
 /// </summary>
 public class TutorReview
 {
@@ -14,7 +16,16 @@ public class TutorReview
 
     public int TutorBookingId { get; set; }
     public int TutorProfileId { get; set; }
+
+    /// <summary>
+    /// Auteur de l'avis. Nom historique (avant le 9.5, seul l'élève notait) :
+    /// depuis le 9.5, ce peut être un participant ou le payeur, voir <see cref="ReviewerRole"/>.
+    /// </summary>
     public int StudentUserId { get; set; }
+
+    /// <summary>participant | payer ; null = avis antérieur au 9.5 (élève participant).</summary>
+    [MaxLength(20)]
+    public string? ReviewerRole { get; set; }
 
     [Range(1, 5)]
     public int Rating { get; set; }

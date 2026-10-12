@@ -170,6 +170,10 @@ public class TutorBookingService : ITutorBookingService
             .FirstOrDefaultAsync(p => p.UserId == request.TutorUserId)
             ?? throw new InvalidOperationException("Ce répétiteur n'existe pas.");
 
+        // Lot 9.5 (17.11) : pas de devis présentiel avec un tuteur non vérifié
+        // ou dont le présentiel est suspendu ; l'en ligne reste chiffrable.
+        TutorInPersonPolicy.EnsureModeAllowed(tutorProfile, mode);
+
         // Le prix se calcule même si le créneau n'est plus libre, pour que
         // l'élève voie le tarif ; la disponibilité est signalée à part.
         var subject = string.IsNullOrWhiteSpace(request.Subject) ? tutorProfile.Subjects.FirstOrDefault()?.Subject : request.Subject;
@@ -214,6 +218,10 @@ public class TutorBookingService : ITutorBookingService
         var tutorProfile = await ProfilesWithPricing()
             .FirstOrDefaultAsync(p => p.UserId == request.TutorUserId)
             ?? throw new InvalidOperationException("Ce répétiteur n'existe pas.");
+
+        // Lot 9.5 (17.11) : réservation présentielle refusée avec un tuteur non
+        // vérifié ou suspendu (relu ici, côté serveur, quel que soit le client).
+        TutorInPersonPolicy.EnsureModeAllowed(tutorProfile, mode);
 
         var subject = ValidateRequestedSession(tutorProfile, request.SessionDate, start, durationMinutes, request.Subject)
             ?? tutorProfile.Subjects.FirstOrDefault()?.Subject;
@@ -1057,6 +1065,21 @@ public class TutorBookingService : ITutorBookingService
             ? new Dictionary<int, string>()
             : await _context.Institutions.AsNoTracking().IgnoreQueryFilters()
                 .Where(i => institutionIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id, i => i.Name);
+
+        // Lot 9.5 : avis et signalements déjà faits par le compte connecté (deux requêtes pour la liste).
+        var myRatings = new Dictionary<int, int>();
+        var myReports = new HashSet<int>();
+        if (viewerUserId is int viewer && bookings.Count > 0)
+        {
+            var ids = bookings.Select(b => b.Id).ToList();
+            myRatings = await _context.TutorReviews.AsNoTracking()
+                .Where(r => ids.Contains(r.TutorBookingId) && r.StudentUserId == viewer)
+                .ToDictionaryAsync(r => r.TutorBookingId, r => r.Rating);
+            myReports = (await _context.TutorReports.AsNoTracking()
+                .Where(r => ids.Contains(r.TutorBookingId) && r.ReporterUserId == viewer)
+                .Select(r => r.TutorBookingId).ToListAsync()).ToHashSet();
+        }
+
         return bookings.Select(b =>
         {
             var dto = MapToDto(b);
@@ -1067,6 +1090,12 @@ public class TutorBookingService : ITutorBookingService
                 dto.ViewerIsParticipant = IsParticipant(b, v);
                 // Contester : participant ou payeur ; annuler : payeur seulement (CancelBookingAsync).
                 if (!dto.ViewerIsPayer && !dto.ViewerIsParticipant) dto.CanDispute = false;
+
+                var feedbackRole = TutorFeedbackRules.RoleOf(b, v, viewerInstitutionId);
+                dto.MyReviewRating = myRatings.TryGetValue(b.Id, out var rating) ? rating : null;
+                dto.HasReported = myReports.Contains(b.Id);
+                dto.CanReview = feedbackRole != null && dto.MyReviewRating == null && TutorFeedbackRules.ReviewableStatuses.Contains(b.Status);
+                dto.CanReport = feedbackRole != null && !dto.HasReported && TutorFeedbackRules.ReportableStatuses.Contains(b.Status);
             }
             return dto;
         }).ToList();

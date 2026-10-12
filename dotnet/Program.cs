@@ -441,6 +441,10 @@ builder.Services.AddScoped<ITutorAssignmentService, TutorAssignmentService>();
 // Lot 9.4 : engagement mensuel (séances générées, paiement d'avance, renouvellement).
 builder.Services.AddScoped<ITutorEngagementService, TutorEngagementService>();
 builder.Services.AddScoped<ITutorReviewService, TutorReviewService>();
+// Lot 9.5 (suivi 17.11, 17.12, 17.16) : vérification pour le présentiel, stockage privé, signalements.
+builder.Services.AddScoped<IPrivateFileStore, PrivateFileStore>();
+builder.Services.AddScoped<ITutorVerificationService, TutorVerificationService>();
+builder.Services.AddScoped<ITutorReportService, TutorReportService>();
 builder.Services.AddScoped<ITutorInsightsService, TutorInsightsService>();
 builder.Services.AddScoped<ICourseAccessService, CourseAccessService>();
 builder.Services.AddScoped<ICourseGamificationService, CourseGamificationService>();
@@ -537,6 +541,7 @@ builder.Services.AddHostedService<PaymentReconciliationService>();
 builder.Services.AddHostedService<PaymentExpirationService>();
 builder.Services.AddHostedService<TutorBookingLifecycleService>();
 builder.Services.AddHostedService<TutorEngagementLifecycleService>();
+builder.Services.AddHostedService<TutorVerificationMaintenanceService>();
 builder.Services.AddHostedService<ScheduledMessageDeliveryService>();
 
 // Background services for subscriptions

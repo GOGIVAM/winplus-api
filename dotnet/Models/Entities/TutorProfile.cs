@@ -58,8 +58,32 @@ public class TutorProfile
     public bool IsOnVacation { get; set; } = false;
 
     // ── Vérification / crédibilité ────────────────────────────────────────
-    /// <summary>Diplôme validé par l'équipe WinPlus → badge "Vérifié Diplôme".</summary>
+    /// <summary>
+    /// Diplôme validé par l'équipe WinPlus → badge "Vérifié Diplôme".
+    /// Lot 9.5 (17.11) : badge FACULTATIF, sans effet sur le présentiel.
+    /// </summary>
     public bool IsDiplomaVerified { get; set; } = false;
+
+    // ── Présentiel (lot 9.5, suivi 17.11, 17.12) ──────────────────────────
+    // Cache du statut calculé par TutorVerificationService.RecomputeAsync à
+    // partir des voies valides (TutorVerification.cs). Jamais saisi à la main.
+    // Présentiel possible = InPersonVerifiedAt non nul ET InPersonSuspendedAt nul
+    // (voir TutorInPersonPolicy).
+
+    /// <summary>Depuis quand le tuteur est vérifié pour le présentiel ; null = non vérifié.</summary>
+    public DateTime? InPersonVerifiedAt { get; set; }
+
+    /// <summary>Voies valides, séparées par des virgules : identity, interview, institution.</summary>
+    [MaxLength(60)]
+    public string? InPersonVerificationRoutes { get; set; }
+
+    /// <summary>Présentiel suspendu (seuil de signalements atteint) jusqu'à l'examen d'un admin.</summary>
+    public DateTime? InPersonSuspendedAt { get; set; }
+    [MaxLength(300)]
+    public string? InPersonSuspensionReason { get; set; }
+
+    /// <summary>Dernière levée de suspension : les signalements antérieurs ne recomptent pas pour le seuil.</summary>
+    public DateTime? InPersonSuspensionLiftedAt { get; set; }
 
     // ── État du mode ──────────────────────────────────────────────────────
     /// <summary>Mode Répétiteur activé (profil visible dans la recherche élève).</summary>

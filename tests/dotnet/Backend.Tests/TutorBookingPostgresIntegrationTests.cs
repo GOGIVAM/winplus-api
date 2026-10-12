@@ -90,7 +90,21 @@ namespace Backend.Tests
                 DROP TABLE ""TutorEngagementSlots"";
                 DROP TABLE ""TutorEngagements"";
                 ALTER TABLE ""TutorPackages"" DROP COLUMN ""Kind"", DROP COLUMN ""DiscountPercent"", DROP COLUMN ""UpdatedAt"";");
-            foreach (var script in new[] { "SQL_TutorPayersParticipantsGroupsAndAssignments.sql", "SQL_InstitutionWalletHolderAndAttachmentConsent.sql", "SQL_TutorWeeklyMonthlyEngagements.sql" })
+            // Lot 9.5 : même principe (schéma de production d'avant le 9.5, dont
+            // l'ancien index unique « un avis par séance »), recréé par le script.
+            await db.Database.ExecuteSqlRawAsync(@"
+                DROP TABLE ""TutorReports"";
+                DROP TABLE ""TutorVerificationEvents"";
+                DROP TABLE ""TutorInstitutionEndorsements"";
+                DROP TABLE ""TutorVerificationInterviews"";
+                DROP TABLE ""TutorIdentityChecks"";
+                ALTER TABLE ""TutorProfiles"" DROP COLUMN ""InPersonVerifiedAt"", DROP COLUMN ""InPersonVerificationRoutes"",
+                    DROP COLUMN ""InPersonSuspendedAt"", DROP COLUMN ""InPersonSuspensionReason"", DROP COLUMN ""InPersonSuspensionLiftedAt"";
+                ALTER TABLE ""TutorReviews"" DROP COLUMN ""ReviewerRole"";
+                DROP INDEX ""UX_TutorReviews_Booking_Author"";
+                DROP INDEX ""IX_TutorReviews_TutorBookingId"";
+                CREATE UNIQUE INDEX ""IX_TutorReviews_TutorBookingId"" ON ""TutorReviews""(""TutorBookingId"");");
+            foreach (var script in new[] { "SQL_TutorPayersParticipantsGroupsAndAssignments.sql", "SQL_InstitutionWalletHolderAndAttachmentConsent.sql", "SQL_TutorWeeklyMonthlyEngagements.sql", "SQL_TutorInPersonVerificationAndReports.sql" })
             {
                 var sql = await File.ReadAllTextAsync(FindMigration(script));
                 await db.Database.ExecuteSqlRawAsync(sql);
