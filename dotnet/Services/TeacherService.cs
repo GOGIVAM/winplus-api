@@ -174,6 +174,43 @@ public class TeacherService : ITeacherService
                 .Distinct()
                 .ToListAsync();
 
+            // Sujets publiés par le professeur (épreuves du catalogue) : ils portent
+            // ses téléchargements, ses ventes et ses avis. Sans eux, un professeur qui
+            // publie au catalogue voyait « — » partout sur sa vue d'ensemble.
+            var authoredIds = await _context.Subjects
+                .AsNoTracking()
+                .Where(s => s.AuthorUserId == teacherId)
+                .Select(s => s.Id)
+                .ToListAsync();
+            mySubjectIds = mySubjectIds.Union(authoredIds).ToList();
+
+            var downloads = authoredIds.Count == 0 ? 0 : await _context.Subjects
+                .AsNoTracking()
+                .Where(s => s.AuthorUserId == teacherId)
+                .SumAsync(s => (int?)(s.DownloadCount ?? 0)) ?? 0;
+
+            // Revenus du mois : ventes catalogue + cours particuliers versés, mêmes
+            // règles que l'historique de l'écran Revenus (GetRevenueHistoryAsync).
+            var now = DateTime.UtcNow;
+            var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+            var monthCatalog = await _context.OrderItems
+                .AsNoTracking()
+                .Where(oi => PaidOrderStatus.All.Contains(oi.Order.Status.ToLower()) && oi.Subject != null && oi.Subject.AuthorUserId == teacherId
+                    && oi.Order.CreatedAt >= monthStart)
+                .SumAsync(oi => (decimal?)oi.PriceAtPurchase) ?? 0m;
+            var monthTutoring = await _context.TutorBookings
+                .AsNoTracking()
+                .Where(b => b.TutorProfile!.UserId == teacherId && b.EscrowReleasedAt != null && b.EscrowReleasedAt >= monthStart)
+                .SumAsync(b => (decimal?)b.PriceXaf) ?? 0m;
+
+            // Élèves actifs « toutes classes confondues » : élèves distincts de ses classes actives.
+            var classStudents = await _context.TeacherClassStudents
+                .AsNoTracking()
+                .Where(cs => _context.TeacherClasses.Any(c => c.Id == cs.TeacherClassId && c.TeacherId == teacherId && c.IsActive))
+                .Select(cs => cs.StudentId)
+                .Distinct()
+                .CountAsync();
+
             var enrollments = mySubjectIds.Count == 0 ? 0 : await _context.Enrollments
                 .AsNoTracking()
                 .Where(e => mySubjectIds.Contains(e.SubjectId) && e.EnrolledAt > DateTime.UtcNow.AddMonths(-3))
@@ -194,8 +231,11 @@ public class TeacherService : ITeacherService
             return new
             {
                 totalStudents = enrollments,
+                activeStudents = classStudents,
+                monthRevenue = monthCatalog + monthTutoring,
+                totalDownloads = downloads,
                 averageRating = Math.Round(reviews, 2),
-                contentCount = contents,
+                contentCount = contents + authoredIds.Count,
                 sessionCount = sessions.Count()
             };
         }
