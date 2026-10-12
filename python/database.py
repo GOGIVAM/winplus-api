@@ -283,7 +283,10 @@ class QuizAttempt(Base):
     Score = Column(Numeric)
     CorrectAnswers = Column(Integer)
     CompletedAt = Column(DateTime(timezone=True))
-    CreatedAt = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    # La table n'a pas de CreatedAt : la date de début est StartedAt. L'attribut
+    # garde son nom (utilisé par les routes) mais lit la vraie colonne ; sans
+    # ça, toute requête sur QuizAttempt échouait (content-impact en 500).
+    CreatedAt = Column('StartedAt', DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
 
 class RecommendationFeedbackDB(Base):

@@ -1038,7 +1038,10 @@ async def analyze_submission(
         "Réponds uniquement avec du JSON valide."
     )
 
-    raw = _deepseek_json(prompt, system, max_tokens=900)
+    # 900 tokens ne suffisaient pas (critères + commentaires + reformulations) :
+    # le JSON arrivait tronqué (finish_reason=length), échouait au parsing et
+    # l'écran de correction affichait « WinAI temporairement indisponible ».
+    raw = _deepseek_json(prompt, system, max_tokens=2200)
     if raw and isinstance(raw, dict):
         error_type = raw.get("error_type", "methodological")
         if error_type not in ("methodological", "calculation", "conceptual", "none"):
