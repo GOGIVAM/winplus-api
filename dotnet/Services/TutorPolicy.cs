@@ -67,7 +67,7 @@ public static class TutorPolicy
     public const int DefaultNoRefundHours = 2;
 
     /// <summary>Date de la version de la politique publique (décisions de la Partie 17).</summary>
-    public const string Version = "2026-10-11";
+    public const string Version = "2026-10-12";
 
     public sealed record CancellationSettings(int FullRefundHours, int PartialRefundPercent, int NoRefundHours);
 

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Backend.Models.DTOs;
+using Backend.Models.Entities;
 using Backend.Services;
 
 namespace Backend.Controllers;
@@ -78,6 +79,20 @@ public static class TutorPolicyDocument
                         "Si tu annules toi-même, la politique d'annulation du tuteur s'applique : remboursement intégral si tu annules assez tôt, partiel entre ses deux seuils, aucun remboursement en dessous de son dernier seuil. Ses réglages sont affichés sur son profil et avant le paiement.",
                         $"Quand tu annules une séance payée par Mobile Money, les frais de l'opérateur de paiement ({fee} % du montant payé) sont déduits de ton remboursement. Une séance payée avec ton solde n'a aucun frais.",
                         "Si le tuteur annule, refuse ta demande ou ne répond pas à temps, tu es remboursé intégralement, frais compris. Les frais Mobile Money sont alors retenus sur le solde du tuteur.",
+                    },
+                },
+                new()
+                {
+                    Id = "engagement-mensuel",
+                    Title = "Engagement mensuel",
+                    Paragraphs =
+                    {
+                        $"Un engagement mensuel réserve les mêmes créneaux chaque semaine pendant {TutorMonthlyPlan.Weeks} semaines. Toutes les séances sont créées d'un coup et bloquées dans l'agenda du tuteur ; si une seule n'est pas disponible, l'engagement n'est pas créé.",
+                        $"Chaque séance est chiffrée par la grille du tuteur, puis sa remise mensuelle s'applique (au plus {TutorPackageKinds.MaxMonthlyDiscountPercent} %). Le total du mois est payé d'avance, par solde ou par Mobile Money.",
+                        "Le tuteur accepte ou refuse l'engagement entier dans son délai de réponse. S'il refuse ou ne répond pas, tout est remboursé intégralement sur le portefeuille du payeur.",
+                        $"L'argent reste bloqué par WinPlus et n'est versé au tuteur que séance par séance, {h} h après chaque séance effectuée et non contestée. Une contestation ne porte que sur sa séance et ne bloque pas les autres.",
+                        "En cas d'annulation en cours de mois, les séances déjà passées restent dues. Les séances à venir sont remboursées selon la politique d'annulation du tuteur appliquée à chacune (selon son heure de début) si le payeur annule, et intégralement si le tuteur annule. Une séance peut aussi être annulée seule, selon les mêmes règles.",
+                        $"Le renouvellement est manuel par défaut : un rappel est envoyé {TutorMonthlyPlan.RenewalReminderDaysBefore} jours avant la fin. Si le mois est payé par solde, le renouvellement automatique peut être activé : il est tenté {TutorMonthlyPlan.AutoRenewDaysBefore} jours avant la fin, pour les mêmes créneaux s'ils sont encore libres et si le solde suffit ; sinon rien n'est débité et le payeur est prévenu.",
                     },
                 },
                 new()

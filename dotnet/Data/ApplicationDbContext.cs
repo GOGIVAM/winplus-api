@@ -126,6 +126,9 @@ public partial class ApplicationDbContext : DbContext
     public DbSet<TutorGroupDiscount> TutorGroupDiscounts => Set<TutorGroupDiscount>();
     public DbSet<TutorAssignment> TutorAssignments => Set<TutorAssignment>();
     public DbSet<TutorAssignmentBeneficiary> TutorAssignmentBeneficiaries => Set<TutorAssignmentBeneficiary>();
+    // Lot 9.4 (suivi 17.7) : engagement mensuel et ses créneaux hebdomadaires.
+    public DbSet<TutorEngagement> TutorEngagements => Set<TutorEngagement>();
+    public DbSet<TutorEngagementSlot> TutorEngagementSlots => Set<TutorEngagementSlot>();
     // Suivi 17.14 : changements de titulaire du portefeuille institution.
     public DbSet<InstitutionWalletHolderChange> InstitutionWalletHolderChanges => Set<InstitutionWalletHolderChange>();
     public DbSet<TutorReview> TutorReviews => Set<TutorReview>();
@@ -278,9 +281,41 @@ public partial class ApplicationDbContext : DbContext
         modelBuilder.Entity<TutorPackage>(entity =>
         {
             entity.Property(e => e.TotalPriceXaf).HasColumnType("numeric(10,2)");
+            // Lot 9.4 : une seule offre mensuelle par profil.
+            entity.HasIndex(e => e.TutorProfileId, "UX_TutorPackages_Monthly_TutorProfileId")
+                  .IsUnique().HasFilter("\"Kind\" = 'monthly'");
             entity.HasOne(e => e.TutorProfile)
                   .WithMany(t => t.Packages)
                   .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── Lot 9.4 : engagement mensuel (suivi 17.7) ──
+        modelBuilder.Entity<TutorEngagement>(entity =>
+        {
+            entity.ToTable("TutorEngagements");
+            entity.Property(e => e.SubtotalXaf).HasColumnType("numeric(14,2)");
+            entity.Property(e => e.DiscountXaf).HasColumnType("numeric(14,2)");
+            entity.Property(e => e.TotalXaf).HasColumnType("numeric(14,2)");
+            entity.Property(e => e.PaymentFeeXaf).HasColumnType("numeric(14,2)");
+            entity.HasIndex(e => new { e.TutorProfileId, e.Status });
+            entity.HasIndex(e => e.PayerUserId);
+            entity.HasIndex(e => e.BookedByUserId);
+            entity.HasIndex(e => e.PayerInstitutionId);
+            entity.HasIndex(e => e.NotchpayReference).IsUnique();
+            entity.HasOne(e => e.TutorProfile)
+                  .WithMany()
+                  .HasForeignKey(e => e.TutorProfileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorEngagementSlot>(entity =>
+        {
+            entity.ToTable("TutorEngagementSlots");
+            entity.HasIndex(e => e.TutorEngagementId);
+            entity.HasOne(e => e.TutorEngagement)
+                  .WithMany(g => g.Slots)
+                  .HasForeignKey(e => e.TutorEngagementId)
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
@@ -361,6 +396,12 @@ public partial class ApplicationDbContext : DbContext
                   .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => e.PayerUserId);
             entity.HasIndex(e => e.PayerInstitutionId);
+            // Lot 9.4 : séances générées par un engagement mensuel.
+            entity.HasIndex(e => e.TutorEngagementId);
+            entity.HasOne(e => e.TutorEngagement)
+                  .WithMany(g => g.Sessions)
+                  .HasForeignKey(e => e.TutorEngagementId)
+                  .OnDelete(DeleteBehavior.Restrict);
         });
 
         // ── Lot 9.3 : participants, prix de groupe, attribution ─────────────

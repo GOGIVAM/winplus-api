@@ -78,7 +78,16 @@ namespace Backend.Tests
                 -- Schéma de production : colonne créée en VARCHAR(20) par SQL_AddTutorBookingModule.sql,
                 -- élargie par SQL_InstitutionWalletHolderAndAttachmentConsent.sql ci-dessous.
                 ALTER TABLE ""TutorBookings"" ALTER COLUMN ""Status"" TYPE VARCHAR(20);");
-            foreach (var script in new[] { "SQL_TutorPayersParticipantsGroupsAndAssignments.sql", "SQL_InstitutionWalletHolderAndAttachmentConsent.sql" })
+            // Lot 9.4 : objets retirés pour retrouver le schéma de production
+            // d'avant le 9.4, puis recréés par le vrai script manuel ci-dessous
+            // (rejoué deux fois : idempotence). Les tests tournent donc sur le
+            // schéma produit par le script, pas sur celui d'EnsureCreated.
+            await db.Database.ExecuteSqlRawAsync(@"
+                ALTER TABLE ""TutorBookings"" DROP COLUMN ""TutorEngagementId"";
+                DROP TABLE ""TutorEngagementSlots"";
+                DROP TABLE ""TutorEngagements"";
+                ALTER TABLE ""TutorPackages"" DROP COLUMN ""Kind"", DROP COLUMN ""DiscountPercent"", DROP COLUMN ""UpdatedAt"";");
+            foreach (var script in new[] { "SQL_TutorPayersParticipantsGroupsAndAssignments.sql", "SQL_InstitutionWalletHolderAndAttachmentConsent.sql", "SQL_TutorWeeklyMonthlyEngagements.sql" })
             {
                 var sql = await File.ReadAllTextAsync(FindMigration(script));
                 await db.Database.ExecuteSqlRawAsync(sql);

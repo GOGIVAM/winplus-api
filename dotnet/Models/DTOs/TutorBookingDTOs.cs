@@ -276,8 +276,10 @@ public class TutorBookingDto
     public int ParticipantCount { get; set; } = 1;
     public List<TutorBookingParticipantDto> Participants { get; set; } = new();
     public int? TutorAssignmentId { get; set; }
-    /// <summary>single_session (9.3) ; le 9.4 ajoutera l'engagement mensuel.</summary>
+    /// <summary>single_session | monthly_session (séance générée par un engagement mensuel, lot 9.4).</summary>
     public string ObjectType { get; set; } = "single_session";
+    /// <summary>Engagement mensuel d'origine (monthly_session), sinon null.</summary>
+    public int? TutorEngagementId { get; set; }
     /// <summary>Le compte connecté est du côté du payeur (payeur, réservant, compte de l'institution payeuse).</summary>
     public bool ViewerIsPayer { get; set; }
     /// <summary>Le compte connecté est un élève participant.</summary>

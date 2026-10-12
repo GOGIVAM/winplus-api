@@ -113,13 +113,19 @@ public class TutorBooking
     public int? TutorAssignmentId { get; set; }
 
     /// <summary>
-    /// Objet de la réservation : single_session (seul objet au 9.3). Point
-    /// d'extension 9.4 : un engagement mensuel produira des séances
-    /// « monthly_session » rattachées à leur engagement (colonne à ajouter
-    /// avec la table d'engagement), chacune gardant son propre cycle (17.8).
+    /// Objet de la réservation : single_session, ou monthly_session (lot 9.4)
+    /// pour une séance générée par un engagement mensuel
+    /// (<see cref="TutorEngagementId"/>), qui garde son propre cycle (17.8) :
+    /// réalisation, contestation, libération et remboursement séance par séance.
     /// </summary>
     [MaxLength(20)]
     public string ObjectType { get; set; } = TutorBookingObjectTypes.SingleSession;
+
+    /// <summary>Engagement mensuel d'origine (ObjectType = monthly_session), sinon null.</summary>
+    public int? TutorEngagementId { get; set; }
+
+    [ForeignKey(nameof(TutorEngagementId))]
+    public TutorEngagement? TutorEngagement { get; set; }
 
     /// <summary>Remboursement décidé (null tant qu'aucun) : instant de la décision.</summary>
     public DateTime? RefundedAt { get; set; }
@@ -232,8 +238,10 @@ public static class TutorPayerTypes
     public static readonly string[] All = { Student, Parent, Institution, StudyGroup };
 }
 
-/// <summary>Objet d'une réservation (17.4) ; le 9.4 ajoutera l'engagement mensuel.</summary>
+/// <summary>Objet d'une réservation (17.4, 17.7).</summary>
 public static class TutorBookingObjectTypes
 {
     public const string SingleSession = "single_session";
+    /// <summary>Séance générée par un engagement mensuel (lot 9.4).</summary>
+    public const string MonthlySession = "monthly_session";
 }

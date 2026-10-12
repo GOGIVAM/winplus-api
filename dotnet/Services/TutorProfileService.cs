@@ -170,11 +170,29 @@ public class TutorProfileService : ITutorProfileService
 
         if (request.Packages != null)
         {
-            _context.TutorPackages.RemoveRange(profile.Packages);
-            profile.Packages = request.Packages
-                .Take(3) // "jusqu'à 3 forfaits" (US-PRO-10)
-                .Select(p => new TutorPackage { TutorProfileId = profile.Id, Name = Truncate(p.Name, 100), SessionsCount = p.SessionsCount, TotalPriceXaf = p.TotalPriceXaf, IsActive = p.IsActive })
-                .ToList();
+            // Forfaits historiques (inertes) des anciens clients : seules les
+            // lignes « bundle » sont remplacées, jamais l'offre mensuelle (lot 9.4).
+            var bundles = profile.Packages.Where(p => p.Kind != TutorPackageKinds.Monthly).ToList();
+            _context.TutorPackages.RemoveRange(bundles);
+            foreach (var b in bundles) profile.Packages.Remove(b);
+            foreach (var p in request.Packages.Take(3)) // "jusqu'à 3 forfaits" (US-PRO-10)
+                profile.Packages.Add(new TutorPackage { TutorProfileId = profile.Id, Name = Truncate(p.Name, 100), SessionsCount = p.SessionsCount, TotalPriceXaf = p.TotalPriceXaf, IsActive = p.IsActive, Kind = TutorPackageKinds.Bundle });
+        }
+
+        // Lot 9.4 (suivi 17.7) : offre d'engagement mensuel, remise bornée côté serveur.
+        if (request.MonthlyEnabled.HasValue || request.MonthlyDiscountPercent.HasValue)
+        {
+            if (request.MonthlyDiscountPercent is int pct && (pct < 0 || pct > TutorPackageKinds.MaxMonthlyDiscountPercent))
+                throw new InvalidOperationException($"La remise mensuelle est comprise entre 0 % et {TutorPackageKinds.MaxMonthlyDiscountPercent} %.");
+            var monthly = profile.Packages.FirstOrDefault(p => p.Kind == TutorPackageKinds.Monthly);
+            if (monthly == null)
+            {
+                monthly = new TutorPackage { TutorProfileId = profile.Id, Name = "Engagement mensuel", Kind = TutorPackageKinds.Monthly, IsActive = false };
+                profile.Packages.Add(monthly);
+            }
+            if (request.MonthlyEnabled.HasValue) monthly.IsActive = request.MonthlyEnabled.Value;
+            if (request.MonthlyDiscountPercent.HasValue) monthly.DiscountPercent = request.MonthlyDiscountPercent.Value;
+            monthly.UpdatedAt = DateTime.UtcNow;
         }
 
         if (request.AvailabilitySlots != null)
@@ -622,7 +640,11 @@ public class TutorProfileService : ITutorProfileService
             Levels = profile.Levels.Select(l => l.Level).ToList(),
             Specialties = profile.Specialties.Select(s => s.Label).ToList(),
             InterventionZones = profile.InterventionZones.Select(z => new TutorZoneDto { Id = z.Id, City = z.City, Quartier = z.Quartier }).ToList(),
-            Packages = profile.Packages.Select(p => new TutorPackageDto { Id = p.Id, Name = p.Name, SessionsCount = p.SessionsCount, TotalPriceXaf = p.TotalPriceXaf, IsActive = p.IsActive }).ToList(),
+            // Forfaits historiques seulement (anciens clients) ; l'offre mensuelle est exposée à part.
+            Packages = profile.Packages.Where(p => p.Kind != TutorPackageKinds.Monthly)
+                .Select(p => new TutorPackageDto { Id = p.Id, Name = p.Name, SessionsCount = p.SessionsCount, TotalPriceXaf = p.TotalPriceXaf, IsActive = p.IsActive }).ToList(),
+            MonthlyEnabled = profile.Packages.Any(p => p.Kind == TutorPackageKinds.Monthly && p.IsActive),
+            MonthlyDiscountPercent = TutorMonthlyPlan.ClampDiscount(profile.Packages.FirstOrDefault(p => p.Kind == TutorPackageKinds.Monthly)?.DiscountPercent ?? 0),
             AvailabilitySlots = profile.AvailabilitySlots.Select(s => new TutorAvailabilitySlotDto
             {
                 Id = s.Id,

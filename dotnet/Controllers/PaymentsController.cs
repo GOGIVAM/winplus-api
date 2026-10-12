@@ -21,6 +21,7 @@ public class PaymentsController : ControllerBase
     private readonly ILogger<PaymentsController> _logger;
     private readonly IMemoryCache _cache;
     private readonly IWithdrawalService _withdrawals;
+    private readonly ITutorEngagementService _tutorEngagementService;
 
     public PaymentsController(
         IPaymentService paymentService,
@@ -29,9 +30,11 @@ public class PaymentsController : ControllerBase
         INotchPayService notchPay,
         ILogger<PaymentsController> logger,
         IMemoryCache cache,
-        IWithdrawalService withdrawals)
+        IWithdrawalService withdrawals,
+        ITutorEngagementService tutorEngagementService)
     {
         _withdrawals = withdrawals;
+        _tutorEngagementService = tutorEngagementService;
         _paymentService = paymentService;
         _tutorBookingService = tutorBookingService;
         _teachingSessionService = teachingSessionService;
@@ -221,7 +224,10 @@ public class PaymentsController : ControllerBase
             // exactement comme les réservations Répétiteur ci-dessus.
             var handledAsSession = !handledAsBooking && await _teachingSessionService.TryHandleNotchPayWebhookAsync(
                 eventId, webhookData.Event ?? "unknown", webhookData.Transaction);
-            if (!handledAsBooking && !handledAsSession)
+            // Lot 9.4 : paiement unique d'un engagement mensuel (référence "TEN-").
+            var handledAsEngagement = !handledAsBooking && !handledAsSession && await _tutorEngagementService.TryHandleNotchPayWebhookAsync(
+                eventId, webhookData.Event ?? "unknown", webhookData.Transaction);
+            if (!handledAsBooking && !handledAsSession && !handledAsEngagement)
             {
                 await _paymentService.HandleNotchPayWebhookAsync(
                     eventId, webhookData.Event ?? "unknown", webhookData.Transaction);

@@ -169,7 +169,17 @@ public class TutorInterventionZone
     public TutorProfile? TutorProfile { get; set; }
 }
 
-/// <summary>Forfait multi-séances à prix dégressif (US-PRO-10).</summary>
+/// <summary>
+/// Offre du tuteur. Historiquement (US-PRO-10) un « forfait N séances à prix
+/// total fixe », jamais branché sur la réservation (Kind = bundle, conservé
+/// tel quel pour les anciens clients, sans effet). Depuis le lot 9.4 (suivi
+/// 17.7), la ligne Kind = monthly est l'offre d'engagement mensuel réelle du
+/// tuteur : activée ou non (<see cref="IsActive"/>), avec une remise mensuelle
+/// facultative (<see cref="DiscountPercent"/>, 0 à 30 %). Au plus une ligne
+/// monthly par profil (index unique partiel). Le prix d'un engagement n'est
+/// jamais lu ici : chaque séance est chiffrée par TutorPricing.Compute, puis la
+/// remise s'applique (voir TutorMonthlyPlan).
+/// </summary>
 public class TutorPackage
 {
     public int Id { get; set; }
@@ -178,12 +188,33 @@ public class TutorPackage
     [Required, MaxLength(100)]
     public required string Name { get; set; }
 
+    /// <summary>Forfait historique uniquement (inutilisé pour l'offre mensuelle).</summary>
     public int SessionsCount { get; set; }
+    /// <summary>Forfait historique uniquement (inutilisé pour l'offre mensuelle).</summary>
     public decimal TotalPriceXaf { get; set; }
     public bool IsActive { get; set; } = true;
 
+    /// <summary>bundle (forfait historique, inerte) | monthly (offre d'engagement mensuel, lot 9.4).</summary>
+    [MaxLength(20)]
+    public string Kind { get; set; } = TutorPackageKinds.Bundle;
+
+    /// <summary>Remise mensuelle en % (0 à <see cref="TutorPackageKinds.MaxMonthlyDiscountPercent"/>), offre monthly seulement.</summary>
+    public int DiscountPercent { get; set; }
+
+    public DateTime? UpdatedAt { get; set; }
+
     [ForeignKey(nameof(TutorProfileId))]
     public TutorProfile? TutorProfile { get; set; }
+}
+
+/// <summary>Nature d'une ligne <see cref="TutorPackage"/> (lot 9.4).</summary>
+public static class TutorPackageKinds
+{
+    public const string Bundle = "bundle";
+    public const string Monthly = "monthly";
+
+    /// <summary>Borne serveur de la remise mensuelle (règle produit 9.4 : 0 à 30 %).</summary>
+    public const int MaxMonthlyDiscountPercent = 30;
 }
 
 /// <summary>

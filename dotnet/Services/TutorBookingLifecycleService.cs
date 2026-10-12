@@ -62,7 +62,9 @@ public class TutorBookingLifecycleService : BackgroundService
 
         var pending = await db.TutorBookings
             .Include(b => b.TutorProfile)
-            .Where(b => RespondedStatuses.Contains(b.Status))
+            // Lot 9.4 : une séance d'engagement mensuel n'expire jamais seule ;
+            // l'engagement entier expire (TutorEngagementLifecycleService).
+            .Where(b => RespondedStatuses.Contains(b.Status) && b.TutorEngagementId == null)
             .ToListAsync(ct);
 
         var now = DateTime.UtcNow;

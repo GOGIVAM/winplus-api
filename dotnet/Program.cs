@@ -438,6 +438,8 @@ builder.Services.AddScoped<ITutorRefundService, TutorRefundService>();
 builder.Services.AddScoped<ITutorBookingService, TutorBookingService>();
 // Lot 9.3 : attribution d'un tuteur par un parent ou une institution.
 builder.Services.AddScoped<ITutorAssignmentService, TutorAssignmentService>();
+// Lot 9.4 : engagement mensuel (séances générées, paiement d'avance, renouvellement).
+builder.Services.AddScoped<ITutorEngagementService, TutorEngagementService>();
 builder.Services.AddScoped<ITutorReviewService, TutorReviewService>();
 builder.Services.AddScoped<ITutorInsightsService, TutorInsightsService>();
 builder.Services.AddScoped<ICourseAccessService, CourseAccessService>();
@@ -534,6 +536,7 @@ builder.Services.AddScoped<ISmartNotificationService, SmartNotificationService>(
 builder.Services.AddHostedService<PaymentReconciliationService>();
 builder.Services.AddHostedService<PaymentExpirationService>();
 builder.Services.AddHostedService<TutorBookingLifecycleService>();
+builder.Services.AddHostedService<TutorEngagementLifecycleService>();
 builder.Services.AddHostedService<ScheduledMessageDeliveryService>();
 
 // Background services for subscriptions

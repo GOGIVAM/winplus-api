@@ -58,8 +58,7 @@ public class TutorBookingService : ITutorBookingService
         _notchPay = notchPay;
         _ntfy = ntfy;
         _logger = logger;
-        var configured = configuration.GetValue<int?>("TutorBooking:MaxSessionMinutes") ?? DefaultMaxSessionMinutes;
-        _maxSessionMinutes = Math.Clamp(configured / TutorPricing.SliceMinutes * TutorPricing.SliceMinutes, TutorPricing.SliceMinutes, 720);
+        _maxSessionMinutes = MaxSessionMinutesFrom(configuration);
     }
 
     private IQueryable<TutorProfile> ProfilesWithPricing() => _context.TutorProfiles
@@ -109,8 +108,23 @@ public class TutorBookingService : ITutorBookingService
     /// plage de disponibilité continue, préavis respecté. Renvoie la matière
     /// retenue (canonique, telle que déclarée par le répétiteur).
     /// </summary>
-    private string? ValidateRequestedSession(TutorProfile tutorProfile, DateOnly date, TimeSpan start, int durationMinutes, string? subject)
+    private string? ValidateRequestedSession(TutorProfile tutorProfile, DateOnly date, TimeSpan start, int durationMinutes, string? subject) =>
+        ValidateSession(tutorProfile, date, start, durationMinutes, subject, _maxSessionMinutes);
+
+    /// <summary>Durée maximale d'une séance selon la configuration (TutorBooking:MaxSessionMinutes).</summary>
+    public static int MaxSessionMinutesFrom(IConfiguration configuration)
     {
+        var configured = configuration.GetValue<int?>("TutorBooking:MaxSessionMinutes") ?? DefaultMaxSessionMinutes;
+        return Math.Clamp(configured / TutorPricing.SliceMinutes * TutorPricing.SliceMinutes, TutorPricing.SliceMinutes, 720);
+    }
+
+    /// <summary>
+    /// Contrôles d'une séance hors chevauchement, partagés avec l'engagement
+    /// mensuel (lot 9.4) : une seule source pour les règles d'agenda.
+    /// </summary>
+    public static string? ValidateSession(TutorProfile tutorProfile, DateOnly date, TimeSpan start, int durationMinutes, string? subject, int maxSessionMinutes)
+    {
+        var _maxSessionMinutes = maxSessionMinutes;
         if (!tutorProfile.IsActive)
             throw new InvalidOperationException("Ce répétiteur n'est pas actif pour l'instant.");
         if (tutorProfile.IsOnVacation)
@@ -459,10 +473,19 @@ public class TutorBookingService : ITutorBookingService
         // l'administrateur (Module 29) avant tout nouveau changement de
         // statut — sans cette garde, l'élève pouvait annuler une réservation
         // en litige, la rendant irrésolvable et invisible pour l'administrateur.
-        if (booking.Status is "cancelled" or "completed" or "disputed")
+        if (booking.Status is "cancelled" or "completed" or "disputed" or "rejected" or "expired")
             throw new InvalidOperationException(booking.Status == "disputed"
                 ? "Cette réservation est en litige : elle doit être tranchée par le support avant toute annulation."
                 : "Cette réservation ne peut plus être annulée.");
+        // Lot 9.4 : une séance d'engagement mensuel s'annule seule selon les
+        // mêmes règles (politique du tuteur appliquée à son heure de début),
+        // sauf tant que le paiement unique du mois n'est pas encaissé : c'est
+        // alors l'engagement entier qui s'annule.
+        if (booking.TutorEngagementId != null && booking.Status == "pending_payment")
+            throw new InvalidOperationException("Le paiement de cet engagement mensuel est en cours : annule l'engagement entier.");
+        if (booking.TutorEngagementId != null
+            && booking.SessionDate.ToDateTime(TimeOnly.FromTimeSpan(booking.StartTime), DateTimeKind.Utc) <= DateTime.UtcNow)
+            throw new InvalidOperationException("Cette séance du mois a déjà commencé : elle reste due (conteste-la après coup si elle n'a pas eu lieu).");
 
         booking.Status = "cancelled";
         booking.CancelledByUserId = userId;
@@ -479,6 +502,8 @@ public class TutorBookingService : ITutorBookingService
         await SyncWalletAsync(booking.Id);
         if (decision != null)
             await NotifyRefundAsync(booking, decision, "annulée");
+        if (booking.TutorEngagementId is int engagementId)
+            await TutorEngagementService.RefreshStatusAsync(_context, engagementId);
 
         // Lot 9.3 : le tuteur si le payeur annule ; le payeur et tous les
         // participants si le tuteur annule (participants prévenus dans les
@@ -503,9 +528,17 @@ public class TutorBookingService : ITutorBookingService
             await _ntfy.PublishAsync($"winplus-user-{id}", title, message, userId: id, type: "TutorBooking");
     }
 
+    /// <summary>Lot 9.4 : le tuteur accepte ou refuse l'engagement mensuel entier, jamais une de ses séances isolément.</summary>
+    private static void EnsureNotMonthlyRequest(TutorBooking booking)
+    {
+        if (booking.TutorEngagementId != null)
+            throw new InvalidOperationException("Cette séance fait partie d'un engagement mensuel : accepte ou refuse l'engagement entier.");
+    }
+
     public async Task<TutorBookingDto> ConfirmBookingAsync(int tutorUserId, int bookingId)
     {
         var booking = await LoadForTutorActionAsync(tutorUserId, bookingId);
+        EnsureNotMonthlyRequest(booking);
         if (booking.Status != "pending_tutor_approval")
             throw new InvalidOperationException("Cette demande n'est plus en attente.");
 
@@ -522,6 +555,7 @@ public class TutorBookingService : ITutorBookingService
     public async Task<TutorBookingDto> DeclineBookingAsync(int tutorUserId, int bookingId, string? reason)
     {
         var booking = await LoadForTutorActionAsync(tutorUserId, bookingId);
+        EnsureNotMonthlyRequest(booking);
         if (booking.Status != "pending_tutor_approval")
             throw new InvalidOperationException("Cette demande n'est plus en attente.");
 
@@ -589,7 +623,9 @@ public class TutorBookingService : ITutorBookingService
     public async Task<List<TutorPendingBookingDto>> GetPendingRequestsAsync(int tutorUserId)
     {
         var bookings = await BookingsWithDetails()
-            .Where(b => b.TutorProfile!.UserId == tutorUserId && b.Status == "pending_tutor_approval")
+            // Lot 9.4 : les séances d'un engagement mensuel sont proposées
+            // ensemble, par les demandes d'engagement (TutorEngagementService).
+            .Where(b => b.TutorProfile!.UserId == tutorUserId && b.Status == "pending_tutor_approval" && b.TutorEngagementId == null)
             .OrderBy(b => b.CreatedAt)
             .ToListAsync();
 
@@ -617,7 +653,7 @@ public class TutorBookingService : ITutorBookingService
     /// depuis la demande  sans jamais dépasser 1h avant le début de la
     /// séance (répondre après coup n'a pas de sens).
     /// </summary>
-    private static DateTime GetResponseDeadline(TutorBooking b)
+    public static DateTime GetResponseDeadline(TutorBooking b)
     {
         var byNotice = b.CreatedAt.AddHours(b.TutorProfile?.NoticeHours ?? 24);
         var sessionStart = b.SessionDate.ToDateTime(TimeOnly.FromTimeSpan(b.StartTime), DateTimeKind.Utc);
@@ -848,7 +884,7 @@ public class TutorBookingService : ITutorBookingService
             b.TutorProfileId == tutorProfileId && b.SessionDate >= weekStart && b.SessionDate <= weekEnd && ActiveStatuses.Contains(b.Status));
     }
 
-    private static DateOnly GetWeekStart(DateOnly date) => date.AddDays(-(((int)date.DayOfWeek + 6) % 7));
+    public static DateOnly GetWeekStart(DateOnly date) => date.AddDays(-(((int)date.DayOfWeek + 6) % 7));
 
     /// <summary>9 chiffres locaux → préfixe "237" ajouté ; déjà préfixé (237… ou +237…) → inchangé.</summary>
     private static string NormalizePhoneToE164(string phone)
@@ -969,6 +1005,7 @@ public class TutorBookingService : ITutorBookingService
             Participants = participants,
             TutorAssignmentId = b.TutorAssignmentId,
             ObjectType = b.ObjectType,
+            TutorEngagementId = b.TutorEngagementId,
             CreatedAt = b.CreatedAt,
         };
     }

@@ -65,6 +65,12 @@ public class TutorProfileDto
     public int? GroupFlatPricePercent { get; set; }
     public List<TutorGroupDiscountDto> GroupDiscounts { get; set; } = new();
 
+    // ── Engagement mensuel (lot 9.4) : offre du tuteur (TutorPackage Kind = monthly) ──
+    public bool MonthlyEnabled { get; set; }
+    /// <summary>Remise mensuelle 0 à 30 %.</summary>
+    public int MonthlyDiscountPercent { get; set; }
+    public int MonthlyMaxDiscountPercent { get; set; } = Backend.Models.Entities.TutorPackageKinds.MaxMonthlyDiscountPercent;
+
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
 }
@@ -196,6 +202,11 @@ public class UpdateTutorProfileRequestDto
     public int? FullRefundHours { get; set; }
     public int? PartialRefundPercent { get; set; }
     public int? NoRefundHours { get; set; }
+
+    /// <summary>Lot 9.4 : active ou coupe l'offre d'engagement mensuel (null = inchangé).</summary>
+    public bool? MonthlyEnabled { get; set; }
+    /// <summary>Lot 9.4 : remise mensuelle, 0 à 30 % (refusée au-delà ; null = inchangée).</summary>
+    public int? MonthlyDiscountPercent { get; set; }
 
     /// <summary>Étape atteinte (1-5), pour reprendre l'onboarding où l'utilisateur s'était arrêté.</summary>
     public int? OnboardingStep { get; set; }
