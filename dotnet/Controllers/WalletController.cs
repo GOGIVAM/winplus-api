@@ -44,7 +44,9 @@ public class WalletController : ControllerBase
         // Lot 9.3 : un compte institution lit le portefeuille partagé de son
         // institution (titulaire unique), les autres comptes le leur.
         var userId = await InstitutionWallet.ResolveWalletOwnerAsync(_db, User.GetUserId());
-        var isInstitution = string.Equals(User.GetUserRole(), "institution", StringComparison.OrdinalIgnoreCase);
+        // Suivi 17.14 : retrait réservé aux portefeuilles tuteur / professeur,
+        // même règle que le serveur de retrait (WalletWithdrawalPolicy).
+        var eligibility = await WalletWithdrawalPolicy.CheckAsync(_db, userId);
         var balance = await _wallet.GetBalanceAsync(userId);
         var active = await _db.Withdrawals.AsNoTracking()
             .Where(w => w.UserId == userId && (w.Status == WithdrawalStatus.Pending || w.Status == WithdrawalStatus.Processing))
@@ -62,9 +64,11 @@ public class WalletController : ControllerBase
                 minWithdrawalXaf = WithdrawalService.MinimumXaf,
                 minRechargeXaf = WalletTopUpService.MinimumXaf,
                 activeWithdrawal = active == null ? null : WithdrawalsController.ToDto(active),
-                // Lot 9.3 : portefeuille institution, jamais retirable vers Mobile Money.
-                walletType = isInstitution ? WalletOwnerTypes.Institution : null,
-                canWithdraw = !isInstitution,
+                // teacher | student | parent | institution | user ; seul « teacher »
+                // (tuteur ou professeur) est retirable vers Mobile Money.
+                walletType = eligibility.WalletType,
+                canWithdraw = eligibility.CanWithdraw,
+                withdrawBlockedReason = eligibility.Reason,
             },
             success = true,
         });

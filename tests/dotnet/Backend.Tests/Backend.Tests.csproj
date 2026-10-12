@@ -6,6 +6,9 @@
       dotnet test tests/dotnet/Backend.Tests/Backend.Tests.csproj
     Aucune base de données ni service Python n'est requis : les appels HTTP
     sont simulés par un HttpMessageHandler, les dépendances par Moq.
+    Exception (suivi 17.14) : TutorBookingPostgresIntegrationTests ne s'execute
+    que si WINPLUS_TEST_PG donne une chaine de connexion vers un PostgreSQL
+    LOCAL (base jetable creee puis supprimee) ; sinon ces tests sont ignores.
   -->
 
   <PropertyGroup>

@@ -138,14 +138,18 @@ public class WithdrawalService : IWithdrawalService
 
         var user = await _db.Users.AsNoTracking().IgnoreQueryFilters()
             .Where(u => u.Id == userId)
-            .Select(u => new { u.IsActive, u.IsDeleted, u.Role })
+            .Select(u => new { u.IsActive, u.IsDeleted })
             .FirstOrDefaultAsync();
         if (user == null || !user.IsActive || user.IsDeleted)
             throw new WithdrawalRejectedException(403, "account_inactive", "Ce compte ne peut pas effectuer de retrait (compte suspendu ou supprimé).");
-        // Lot 9.3 (suivi 17.4) : le portefeuille institution se recharge et se
-        // dépense en séances, il ne se retire jamais vers Mobile Money.
-        if (string.Equals(user.Role, "institution", StringComparison.OrdinalIgnoreCase))
-            throw new WithdrawalRejectedException(403, "not_eligible", "Le portefeuille d'une institution ne peut pas être retiré vers Mobile Money.");
+        // Suivi 17.14 : seuls les portefeuilles tuteur et professeur se retirent
+        // vers Mobile Money. Élève, parent et institution sont des portefeuilles
+        // de dépense ; le type est déduit du portefeuille (titulaire d'une
+        // institution, écritures parent ou institution), pas du seul rôle.
+        // Ce contrôle couvre aussi le rejeu administrateur (RetryAsync).
+        var eligibility = await WalletWithdrawalPolicy.CheckAsync(_db, userId);
+        if (!eligibility.CanWithdraw)
+            throw new WithdrawalRejectedException(403, "not_eligible", eligibility.Reason!);
 
         var requestId = string.IsNullOrWhiteSpace(clientRequestId) ? null : clientRequestId.Trim();
         if (requestId != null && requestId.Length > 64) requestId = requestId[..64];

@@ -62,8 +62,10 @@ public class Institution
     /// titulaire des écritures du registre (WalletTransactions, OwnerType
     /// « institution »). Fixé une fois, au premier usage, sur le premier compte
     /// institution qui l'ouvre ; tous les comptes de l'institution voient et
-    /// utilisent ce même portefeuille. Jamais réaffecté : l'argent ne peut pas
-    /// changer de titulaire.
+    /// utilisent ce même portefeuille. Suivi 17.14 : seul un administrateur
+    /// WinPlus peut changer de titulaire (<see cref="InstitutionWalletHolderChange"/>),
+    /// le solde étant transféré par deux écritures du registre ; le compte
+    /// titulaire ne peut pas être supprimé tant qu'il porte le portefeuille.
     /// </summary>
     public int? WalletOwnerUserId { get; set; }
 

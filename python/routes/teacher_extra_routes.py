@@ -1115,6 +1115,10 @@ class SuggestTutorRateRequest(BaseModel):
     include_grid: bool = False
     subjects: List[str] = []
     modes: List[str] = []  # "online" | "in_person"
+    # Suivi 17.14 : extension facultative. Avec include_group=True, la réponse
+    # propose aussi des réglages de prix de groupe (17.3). Sans ce drapeau, la
+    # réponse est inchangée.
+    include_group: bool = False
 
 
 class SuggestedBaseRate(BaseModel):
@@ -1145,6 +1149,22 @@ class TutorRateGridSuggestion(BaseModel):
     explanation: str
 
 
+class SuggestedGroupDiscount(BaseModel):
+    min_group_size: int
+    percent_discount: int
+
+
+class TutorGroupPricingSuggestion(BaseModel):
+    """Réglages de prix de groupe proposés (17.3), dans les bornes de TutorPricing (.NET)."""
+    method: str  # "per_student" (recommandé) | "flat"
+    max_group_size: int
+    discounts: List[SuggestedGroupDiscount]  # pour per_student
+    flat_price_percent: int  # alternative "flat" : % du prix individuel payé par tout le groupe
+    based_on: str  # "market_data" | "estimation"
+    sample_size: int
+    explanation: str
+
+
 class SuggestTutorRateResponse(BaseModel):
     suggested_rate_xaf: int
     range_low_xaf: int
@@ -1153,6 +1173,7 @@ class SuggestTutorRateResponse(BaseModel):
     sample_size: int
     explanation: str
     grid: Optional[TutorRateGridSuggestion] = None
+    group: Optional[TutorGroupPricingSuggestion] = None
 
 
 MIN_SAMPLE_FOR_MARKET_DATA = 3
@@ -1233,17 +1254,108 @@ def _build_grid_suggestion(session, body: "SuggestTutorRateRequest", fallback_ra
     )
 
 
+# Bornes du prix de groupe, identiques à TutorPricing (.NET) : une suggestion
+# hors bornes serait refusée à l'enregistrement.
+GROUP_MAX_SIZE_CAP = 20
+GROUP_MAX_DISCOUNT_PERCENT = 70
+GROUP_MAX_TIERS = 5
+GROUP_FLAT_MIN_PERCENT = 100
+GROUP_FLAT_MAX_PERCENT = 1000
+# Repères de départ (lot 9.3) : petit groupe de soutien (jusqu'à 6 élèves),
+# remise par élève qui croît avec la taille, prix fixe ≈ 1,6 fois le prix
+# individuel. Présentés comme une estimation, jamais comme une donnée de marché.
+DEFAULT_GROUP_MAX_SIZE = 6
+DEFAULT_GROUP_TIERS = [(2, 15), (4, 25), (6, 35)]
+DEFAULT_GROUP_FLAT_PERCENT = 160
+
+
+def _clamp(value: float, low: int, high: int) -> int:
+    return int(max(low, min(high, round(value))))
+
+
+def _market_group_settings(session) -> List[dict]:
+    """Réglages de groupe réels des répétiteurs actifs (SQL brut : colonnes du lot 9.3)."""
+    from sqlalchemy import text
+    rows = session.execute(text(
+        'SELECT p."Id", p."GroupPricingMethod", p."MaxGroupSize", p."GroupFlatPricePercent" '
+        'FROM "TutorProfiles" p WHERE p."IsActive" = TRUE AND p."GroupPricingMethod" IS NOT NULL AND p."MaxGroupSize" >= 2'
+    )).fetchall()
+    profiles = [{"id": r[0], "method": r[1], "max": r[2], "flat": r[3], "tiers": []} for r in rows]
+    if profiles:
+        tiers = session.execute(text(
+            'SELECT "TutorProfileId", "MinGroupSize", "PercentDiscount" FROM "TutorGroupDiscounts"'
+        )).fetchall()
+        by_id = {p["id"]: p for p in profiles}
+        for profile_id, size, percent in tiers:
+            if profile_id in by_id:
+                by_id[profile_id]["tiers"].append((int(size), int(percent)))
+    return profiles
+
+
+def _build_group_suggestion(session) -> TutorGroupPricingSuggestion:
+    try:
+        profiles = _market_group_settings(session)
+    except Exception as exc:  # colonnes absentes (script SQL non joué) ou base indisponible
+        logger.warning("Réglages de groupe du marché indisponibles : %s", exc)
+        profiles = []
+
+    if len(profiles) >= MIN_SAMPLE_FOR_MARKET_DATA:
+        max_size = _clamp(_median(sorted(float(p["max"]) for p in profiles)), 2, GROUP_MAX_SIZE_CAP)
+        flats = sorted(float(p["flat"]) for p in profiles if p["method"] == "flat" and p["flat"])
+        flat = _clamp(_median(flats), GROUP_FLAT_MIN_PERCENT, GROUP_FLAT_MAX_PERCENT) if flats else DEFAULT_GROUP_FLAT_PERCENT
+        # Palier médian par taille de groupe observée, dans la taille maximale.
+        sizes: dict = {}
+        for p in profiles:
+            if p["method"] == "per_student":
+                for size, percent in p["tiers"]:
+                    sizes.setdefault(size, []).append(float(percent))
+        tiers = []
+        last_percent = 0
+        for size in sorted(s for s in sizes if 2 <= s <= max_size):
+            percent = _clamp(_median(sorted(sizes[size])), 1, GROUP_MAX_DISCOUNT_PERCENT)
+            if percent > last_percent:  # remise croissante avec la taille
+                tiers.append((size, percent))
+                last_percent = percent
+        tiers = tiers[:GROUP_MAX_TIERS] or [(s, p) for s, p in DEFAULT_GROUP_TIERS if s <= max_size]
+        based_on, sample = "market_data", len(profiles)
+        why = (f"Réglages observés chez {len(profiles)} répétiteurs WinPlus qui proposent déjà des séances de groupe "
+               "(taille maximale et remises médianes).")
+    else:
+        max_size, flat = DEFAULT_GROUP_MAX_SIZE, DEFAULT_GROUP_FLAT_PERCENT
+        tiers = [(s, p) for s, p in DEFAULT_GROUP_TIERS if s <= max_size]
+        based_on, sample = "estimation", len(profiles)
+        why = ("Pas encore assez de répétiteurs en groupe sur WinPlus pour une donnée de marché : estimation WinAI "
+               "pour un petit groupe de soutien.")
+
+    return TutorGroupPricingSuggestion(
+        method="per_student",
+        max_group_size=max_size,
+        discounts=[SuggestedGroupDiscount(min_group_size=s, percent_discount=p) for s, p in tiers],
+        flat_price_percent=flat,
+        based_on=based_on,
+        sample_size=sample,
+        explanation=(
+            f"{why} Prix par élève dégressif recommandé : chaque élève paie moins quand le groupe grandit, "
+            f"et tu gagnes plus qu'en séance individuelle. Alternative : un prix fixe de {flat} % du prix "
+            "individuel pour tout le groupe. Ce sont des points de départ : ajuste-les librement."
+        ),
+    )
+
+
 @teacher_ai_router.post("/teacher/suggest-tutor-rate", response_model=SuggestTutorRateResponse)
 async def suggest_tutor_rate(
     body: SuggestTutorRateRequest,
     current_user: UserTokenData = Depends(require_role("teacher", "admin")),
 ):
     response = _suggest_single_rate(body)
-    if body.include_grid:
+    if body.include_grid or body.include_group:
         db = Database()
         session = db.SessionLocal()
         try:
-            response.grid = _build_grid_suggestion(session, body, response.suggested_rate_xaf)
+            if body.include_grid:
+                response.grid = _build_grid_suggestion(session, body, response.suggested_rate_xaf)
+            if body.include_group:
+                response.group = _build_group_suggestion(session)
         finally:
             session.close()
     return response

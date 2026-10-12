@@ -126,6 +126,8 @@ public partial class ApplicationDbContext : DbContext
     public DbSet<TutorGroupDiscount> TutorGroupDiscounts => Set<TutorGroupDiscount>();
     public DbSet<TutorAssignment> TutorAssignments => Set<TutorAssignment>();
     public DbSet<TutorAssignmentBeneficiary> TutorAssignmentBeneficiaries => Set<TutorAssignmentBeneficiary>();
+    // Suivi 17.14 : changements de titulaire du portefeuille institution.
+    public DbSet<InstitutionWalletHolderChange> InstitutionWalletHolderChanges => Set<InstitutionWalletHolderChange>();
     public DbSet<TutorReview> TutorReviews => Set<TutorReview>();
     public DbSet<TutorRevisionSheet> TutorRevisionSheets => Set<TutorRevisionSheet>();
     public DbSet<TutorCoachingReport> TutorCoachingReports => Set<TutorCoachingReport>();
@@ -401,6 +403,14 @@ public partial class ApplicationDbContext : DbContext
                   .WithMany()
                   .HasForeignKey(e => e.AssignedByUserId)
                   .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<InstitutionWalletHolderChange>(entity =>
+        {
+            entity.ToTable("InstitutionWalletHolderChanges");
+            entity.Property(e => e.AmountXaf).HasColumnType("numeric(14,0)");
+            entity.HasIndex(e => e.InstitutionId);
+            entity.HasIndex(e => new { e.InstitutionId, e.ClientRequestId }).IsUnique();
         });
 
         modelBuilder.Entity<TutorAssignmentBeneficiary>(entity =>

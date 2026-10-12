@@ -711,6 +711,61 @@ public class StudentController : ControllerBase
         return Ok(new { success = true });
     }
 
+    // ── Rattachements à une institution (suivi 17.14) ───────────────────
+
+    /// <summary>
+    /// Mes rattachements à une institution, avec leur statut de confirmation
+    /// (pending | accepted | refused). Tant que l'élève n'a pas accepté,
+    /// l'institution ne peut ni réserver, ni payer, ni attribuer un tuteur
+    /// pour lui ; ses autres fonctions (annuaire, suivi) ne changent pas.
+    /// </summary>
+    [HttpGet("institution-attachments")]
+    public async Task<IActionResult> GetInstitutionAttachments()
+    {
+        var me = User.GetUserId();
+        var items = await _db.InstitutionStudents.AsNoTracking()
+            .Where(s => s.StudentId == me && s.IsActive && s.Institution != null && !s.Institution.IsDeleted)
+            .OrderBy(s => s.ConfirmationStatus == InstitutionAttachmentStatuses.Pending ? 0 : 1).ThenByDescending(s => s.CreatedAt)
+            .Select(s => new
+            {
+                s.Id,
+                institutionId = s.InstitutionId,
+                institutionName = s.Institution!.Name,
+                city = s.Institution.City,
+                groupName = s.GroupName,
+                level = s.Level,
+                status = s.ConfirmationStatus,
+                createdAt = s.CreatedAt,
+                respondedAt = s.RespondedAt,
+            })
+            .ToListAsync();
+        return Ok(new { data = items, pendingCount = items.Count(i => i.status == InstitutionAttachmentStatuses.Pending), success = true });
+    }
+
+    /// <summary>Accepte le rattachement : l'institution peut alors réserver, payer et attribuer un tuteur pour moi.</summary>
+    [HttpPut("institution-attachments/{id:int}/accept")]
+    public Task<IActionResult> AcceptInstitutionAttachment(int id) => RespondInstitutionAttachmentAsync(id, InstitutionAttachmentStatuses.Accepted);
+
+    /// <summary>Refuse le rattachement pour le tutorat. Réversible : l'élève peut accepter plus tard.</summary>
+    [HttpPut("institution-attachments/{id:int}/refuse")]
+    public Task<IActionResult> RefuseInstitutionAttachment(int id) => RespondInstitutionAttachmentAsync(id, InstitutionAttachmentStatuses.Refused);
+
+    private async Task<IActionResult> RespondInstitutionAttachmentAsync(int id, string status)
+    {
+        var me = User.GetUserId();
+        var link = await _db.InstitutionStudents.FirstOrDefaultAsync(s => s.Id == id && s.StudentId == me && s.IsActive);
+        if (link == null) return NotFound(new { success = false, error = "Rattachement introuvable." });
+
+        // Idempotent : répondre deux fois la même chose ne change rien.
+        if (link.ConfirmationStatus != status)
+        {
+            link.ConfirmationStatus = status;
+            link.RespondedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+        }
+        return Ok(new { success = true, data = new { link.Id, status = link.ConfirmationStatus, respondedAt = link.RespondedAt } });
+    }
+
     /// <summary>
     /// GET /api/student/peer-comparison
     /// Compare la moyenne de l'étudiant courant avec ses pairs anonymisés au même niveau.

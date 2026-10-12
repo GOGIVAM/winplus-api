@@ -622,6 +622,11 @@ public class UsersController : ControllerBase
             if (!result) return NotFound(new { error = "Compte introuvable." });
             return Ok(new { success = true, message = "Votre compte a été supprimé." });
         }
+        catch (WalletHolderDeletionBlockedException ex)
+        {
+            // Suivi 17.14 : titulaire du portefeuille d'une institution.
+            return Conflict(new { success = false, code = "wallet_holder", error = ex.Message });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error self-deleting user");
@@ -641,6 +646,11 @@ public class UsersController : ControllerBase
             if (!result) return NotFound(new { error = "User not found" });
 
             return Ok(new { success = true, message = "User deleted successfully", userId = id });
+        }
+        catch (WalletHolderDeletionBlockedException ex)
+        {
+            // Suivi 17.14 : titulaire du portefeuille d'une institution.
+            return Conflict(new { success = false, code = "wallet_holder", error = ex.Message });
         }
         catch (Exception ex)
         {
@@ -679,6 +689,11 @@ public class UsersController : ControllerBase
             if (!result) return NotFound(new { error = "User not found" });
 
             return Ok(new { success = true, message = "User permanently deleted", userId = id });
+        }
+        catch (WalletHolderDeletionBlockedException ex)
+        {
+            // Suivi 17.14 : titulaire du portefeuille d'une institution.
+            return Conflict(new { success = false, code = "wallet_holder", error = ex.Message });
         }
         catch (Exception ex)
         {

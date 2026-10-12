@@ -129,7 +129,8 @@ namespace Backend.Tests
             var wallet = await SplitOrder(db, 7312, "completed");
 
             Assert.Equal(0, await wallet.GetAvailableAsync(Prof));
-            Assert.Equal(3000, await wallet.GetAvailableAsync(Author));
+            // Module 7 (décision 6.2) : commission plancher de 10 % sur un contenu non évalué.
+            Assert.Equal(2700, await wallet.GetAvailableAsync(Author));
         }
 
         // ── Crédit manuel administrateur ─────────────────────────────────

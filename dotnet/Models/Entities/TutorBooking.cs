@@ -49,7 +49,12 @@ public class TutorBooking
     /// (refusée par le répétiteur), expired (pas de réponse dans le délai de
     /// préavis), cancelled (paiement échoué / annulation).
     /// </summary>
-    [MaxLength(20)]
+    /// <summary>
+    /// pending_payment | pending_tutor_approval | confirmed | completed | disputed | cancelled | rejected | expired.
+    /// 30 caractères (suivi 17.14) : « pending_tutor_approval » en compte 22,
+    /// l'ancienne limite de 20 faisait échouer son enregistrement en base.
+    /// </summary>
+    [MaxLength(30)]
     public string Status { get; set; } = "pending_payment";
 
     [MaxLength(100)]

@@ -39,8 +39,9 @@ public sealed record TutorBookingParties(
 ///   <item><b>parent</b> : pour ses enfants liés par un <see cref="ParentStudentLink"/>
 ///   au statut <c>accepted</c> (jamais pending ni rejected), payé par le
 ///   portefeuille parent ou Mobile Money ;</item>
-///   <item><b>institution</b> : pour ses élèves rattachés et actifs
-///   (<see cref="InstitutionStudent"/>, même InstitutionId que le compte),
+///   <item><b>institution</b> : pour ses élèves rattachés, actifs et dont
+///   l'élève a confirmé le rattachement (<see cref="InstitutionStudent"/>,
+///   même InstitutionId que le compte, statut <c>accepted</c> : suivi 17.14),
 ///   payé par le portefeuille institution ou Mobile Money ;</item>
 ///   <item><b>groupe d'étude</b> : un membre réserve pour des membres du même
 ///   groupe actif ; c'est lui qui paie (son portefeuille ou Mobile Money) et
@@ -131,7 +132,7 @@ public class TutorBookingPartyResolver
                     throw new TutorBookingForbiddenException("Choisis au moins un élève.");
                 var attached = await InstitutionStudentIdsAsync(institutionId, participants);
                 if (participants.Any(p => !attached.Contains(p)))
-                    throw new TutorBookingForbiddenException("Tu ne peux réserver que pour des élèves rattachés et actifs dans ton institution.");
+                    throw new TutorBookingForbiddenException("Tu ne peux réserver que pour des élèves rattachés, actifs et qui ont confirmé leur rattachement à ton institution." + AttachmentNotConfirmedHint);
                 var holder = await InstitutionWallet.ResolveHolderAsync(_db, institutionId, actor.Id);
                 parties = new(TutorPayerTypes.Institution, holder, actor.Id, institutionId, null, participants, null);
                 break;
@@ -193,10 +194,23 @@ public class TutorBookingPartyResolver
         return a.Id;
     }
 
-    private Task<List<int>> InstitutionStudentIdsAsync(int institutionId, List<int> studentIds) =>
+    /// <summary>
+    /// Rattachements utilisables pour le tutorat (suivi 17.14) : actifs ET
+    /// confirmés par l'élève. Un rattachement importé encore en attente, ou
+    /// refusé, ne permet ni de réserver, ni de payer, ni d'attribuer un tuteur.
+    /// Les autres fonctions de l'institution n'utilisent pas ce filtre.
+    /// </summary>
+    private IQueryable<InstitutionStudent> TutoringAttachments(int institutionId) =>
         _db.InstitutionStudents.AsNoTracking()
-            .Where(s => s.InstitutionId == institutionId && s.IsActive && studentIds.Contains(s.StudentId))
+            .Where(s => s.InstitutionId == institutionId && s.IsActive && s.ConfirmationStatus == InstitutionAttachmentStatuses.Accepted);
+
+    private Task<List<int>> InstitutionStudentIdsAsync(int institutionId, List<int> studentIds) =>
+        TutoringAttachments(institutionId)
+            .Where(s => studentIds.Contains(s.StudentId))
             .Select(s => s.StudentId).Distinct().ToListAsync();
+
+    private const string AttachmentNotConfirmedHint =
+        " Un élève importé doit d'abord confirmer son rattachement à l'institution depuis son compte.";
 
     // ── Bénéficiaires d'une attribution ─────────────────────────────────
 
@@ -227,17 +241,19 @@ public class TutorBookingPartyResolver
             if (!string.IsNullOrWhiteSpace(groupName))
             {
                 var g = groupName.Trim();
-                var classIds = await _db.InstitutionStudents.AsNoTracking()
-                    .Where(s => s.InstitutionId == institutionId && s.IsActive && s.GroupName == g)
+                // Toute la classe : seuls les élèves au rattachement confirmé
+                // sont repris (les autres le seront quand ils auront accepté).
+                var classIds = await TutoringAttachments(institutionId)
+                    .Where(s => s.GroupName == g)
                     .Select(s => s.StudentId).ToListAsync();
-                if (classIds.Count == 0) throw new TutorBookingForbiddenException("Aucun élève actif dans cette classe.");
+                if (classIds.Count == 0) throw new TutorBookingForbiddenException("Aucun élève actif au rattachement confirmé dans cette classe." + AttachmentNotConfirmedHint);
                 ids = ids.Union(classIds).ToList();
             }
             if (ids.Count == 0) throw new TutorBookingForbiddenException("Choisis des élèves ou une classe.");
             if (ids.Count > 200) throw new TutorBookingForbiddenException("Une attribution compte au plus 200 élèves.");
             var attached = await InstitutionStudentIdsAsync(institutionId, ids);
             if (ids.Any(i => !attached.Contains(i)))
-                throw new TutorBookingForbiddenException("Tu ne peux attribuer un tuteur qu'à des élèves rattachés et actifs dans ton institution.");
+                throw new TutorBookingForbiddenException("Tu ne peux attribuer un tuteur qu'à des élèves rattachés, actifs et qui ont confirmé leur rattachement à ton institution." + AttachmentNotConfirmedHint);
             return (TutorPayerTypes.Institution, institutionId, ids);
         }
 
@@ -271,8 +287,13 @@ public class TutorBookingPartyResolver
             ctx.AllowedPayerTypes.Add(TutorPayerTypes.Institution);
             ctx.InstitutionId = institutionId;
             ctx.InstitutionName = await _db.Institutions.AsNoTracking().Where(i => i.Id == institutionId).Select(i => i.Name).FirstOrDefaultAsync();
-            var rows = await _db.InstitutionStudents.AsNoTracking()
-                .Where(s => s.InstitutionId == institutionId && s.IsActive && s.Student != null && !s.Student.IsDeleted)
+            // Suivi 17.14 : seuls les élèves au rattachement confirmé sont
+            // proposés ; les autres sont comptés pour l'expliquer à l'institution.
+            ctx.InstitutionPendingConfirmationCount = await _db.InstitutionStudents.AsNoTracking()
+                .CountAsync(s => s.InstitutionId == institutionId && s.IsActive && s.ConfirmationStatus != InstitutionAttachmentStatuses.Accepted
+                              && s.Student != null && !s.Student.IsDeleted);
+            var rows = await TutoringAttachments(institutionId)
+                .Where(s => s.Student != null && !s.Student.IsDeleted)
                 .Select(s => new { s.StudentId, s.GroupName, s.Level, s.Student!.FirstName, s.Student.LastName, s.Student.Email })
                 .OrderBy(s => s.GroupName).ThenBy(s => s.LastName)
                 .Take(2000)
@@ -322,10 +343,25 @@ public static class InstitutionWallet
     /// </summary>
     public static async Task<int> ResolveHolderAsync(ApplicationDbContext db, int institutionId, int actingUserId)
     {
-        var institution = await db.Institutions.FirstOrDefaultAsync(i => i.Id == institutionId && !i.IsDeleted)
+        var existing = await db.Institutions.AsNoTracking().Where(i => i.Id == institutionId && !i.IsDeleted)
+            .Select(i => new { i.Id, i.WalletOwnerUserId }).FirstOrDefaultAsync()
             ?? throw new TutorBookingForbiddenException("Institution introuvable.");
-        if (institution.WalletOwnerUserId is int holder) return holder;
+        if (existing.WalletOwnerUserId is int holder) return holder;
 
+        if (db.Database.IsRelational())
+        {
+            // Mise à jour conditionnelle (suivi 17.14) : deux premiers usages
+            // concurrents par deux comptes ne peuvent pas s'écraser l'un
+            // l'autre ; un seul titulaire est fixé, l'autre compte le relit.
+            await db.Institutions.Where(i => i.Id == institutionId && i.WalletOwnerUserId == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(i => i.WalletOwnerUserId, actingUserId)
+                                          .SetProperty(i => i.UpdatedAt, DateTime.UtcNow));
+            var fixedHolder = await db.Institutions.AsNoTracking().Where(i => i.Id == institutionId)
+                .Select(i => i.WalletOwnerUserId).FirstOrDefaultAsync();
+            return fixedHolder ?? actingUserId;
+        }
+
+        var institution = await db.Institutions.FirstAsync(i => i.Id == institutionId);
         institution.WalletOwnerUserId = actingUserId;
         institution.UpdatedAt = DateTime.UtcNow;
         try

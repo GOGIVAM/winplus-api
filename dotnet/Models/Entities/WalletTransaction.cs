@@ -28,7 +28,7 @@ public class WalletTransaction
 {
     public long Id { get; set; }
 
-    /// <summary>teacher | parent | user | platform (voir <see cref="WalletOwnerTypes"/>).</summary>
+    /// <summary>teacher | parent | user | platform | institution (voir <see cref="WalletOwnerTypes"/>).</summary>
     [MaxLength(20)]
     public string OwnerType { get; set; } = WalletOwnerTypes.Teacher;
 
@@ -189,6 +189,14 @@ public static class WalletEntryTypes
     /// NotchPay, que le remboursement au portefeuille ne rend pas).
     /// </summary>
     public const string PaymentFeeRecovered = "PaymentFeeRecovered";
+
+    // ── Portefeuille institution (suivi 17.14) ──────────────────────────
+
+    /// <summary>Débit de l'ancien titulaire lors d'un changement de titulaire du portefeuille institution.</summary>
+    public const string InstitutionHolderTransferOut = "InstitutionHolderTransferOut";
+
+    /// <summary>Crédit du nouveau titulaire lors d'un changement de titulaire du portefeuille institution.</summary>
+    public const string InstitutionHolderTransferIn = "InstitutionHolderTransferIn";
 }
 
 public static class WalletEntryStatus

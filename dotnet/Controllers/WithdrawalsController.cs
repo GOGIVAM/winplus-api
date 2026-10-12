@@ -62,13 +62,23 @@ public class WithdrawalsController : ControllerBase
     /// <summary>Règles de retrait appliquées par le serveur (affichées par les clients, jamais décidées par eux).</summary>
     [HttpGet("rules")]
     [Authorize]
-    public IActionResult GetRules() => Ok(new
+    public async Task<IActionResult> GetRules()
     {
-        minAmountXaf = WithdrawalService.MinimumXaf,
-        maxAmountXaf = (decimal?)null,
-        feeXaf = 0,
-        operators = new[] { "mtn", "orange" },
-    });
+        // Suivi 17.14 : le client masque le retrait quand le portefeuille n'est
+        // pas retirable ; le serveur refuse de toute façon (RequestAsync).
+        var walletOwner = await InstitutionWallet.ResolveWalletOwnerAsync(_db, User.GetUserId());
+        var eligibility = await WalletWithdrawalPolicy.CheckAsync(_db, walletOwner);
+        return Ok(new
+        {
+            minAmountXaf = WithdrawalService.MinimumXaf,
+            maxAmountXaf = (decimal?)null,
+            feeXaf = 0,
+            operators = new[] { "mtn", "orange" },
+            canWithdraw = eligibility.CanWithdraw,
+            walletType = eligibility.WalletType,
+            withdrawBlockedReason = eligibility.Reason,
+        });
+    }
 
     /// <summary>Demande un retrait : réserve les fonds puis déclenche le transfert NotchPay.</summary>
     [HttpPost]

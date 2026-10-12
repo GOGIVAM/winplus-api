@@ -148,6 +148,7 @@ namespace Backend.Tests
         private const int InstitutionAccount = 9307, InstitutionAccount2 = 9308, InstitutionId = 9309, OtherInstitutionId = 9310;
         private const int Pupil = 9311, InactivePupil = 9312, OtherPupil = 9313;
         private const int GroupMember = 9314, GroupMember2 = 9315, GroupId = 9316;
+        private const int PendingPupil = 9317, RefusedPupil = 9318;
 
         public TutorBookingPartiesTests()
         {
@@ -157,7 +158,7 @@ namespace Backend.Tests
                 U(Tutor, "teacher"), U(Parent, "parent"), U(Child, "student"), U(PendingChild, "student"), U(Stranger, "student"),
                 U(InstitutionAccount, "institution", InstitutionId), U(InstitutionAccount2, "institution", InstitutionId),
                 U(Pupil, "student"), U(InactivePupil, "student"), U(OtherPupil, "student"),
-                U(GroupMember, "student"), U(GroupMember2, "student"));
+                U(GroupMember, "student"), U(GroupMember2, "student"), U(PendingPupil, "student"), U(RefusedPupil, "student"));
             db.TutorProfiles.Add(new TutorProfile { Id = TutorProfileId, UserId = Tutor, IsActive = true });
             db.ParentStudentLinks.AddRange(
                 new ParentStudentLink { ParentId = Parent, StudentId = Child, Status = "accepted", InitiatedBy = Parent },
@@ -166,9 +167,12 @@ namespace Backend.Tests
                 new Institution { Id = InstitutionId, Name = "Lycée Test", Country = "CM" },
                 new Institution { Id = OtherInstitutionId, Name = "Autre lycée", Country = "CM" });
             db.InstitutionStudents.AddRange(
-                new InstitutionStudent { InstitutionId = InstitutionId, StudentId = Pupil, GroupName = "Tle C", IsActive = true },
-                new InstitutionStudent { InstitutionId = InstitutionId, StudentId = InactivePupil, GroupName = "Tle C", IsActive = false },
-                new InstitutionStudent { InstitutionId = OtherInstitutionId, StudentId = OtherPupil, IsActive = true });
+                new InstitutionStudent { InstitutionId = InstitutionId, StudentId = Pupil, GroupName = "Tle C", IsActive = true, ConfirmationStatus = InstitutionAttachmentStatuses.Accepted },
+                // Suivi 17.14 : rattachements importés non confirmés par l'élève.
+                new InstitutionStudent { InstitutionId = InstitutionId, StudentId = PendingPupil, GroupName = "Tle C", IsActive = true, ConfirmationStatus = InstitutionAttachmentStatuses.Pending },
+                new InstitutionStudent { InstitutionId = InstitutionId, StudentId = RefusedPupil, GroupName = "Tle C", IsActive = true, ConfirmationStatus = InstitutionAttachmentStatuses.Refused },
+                new InstitutionStudent { InstitutionId = InstitutionId, StudentId = InactivePupil, GroupName = "Tle C", IsActive = false, ConfirmationStatus = InstitutionAttachmentStatuses.Accepted },
+                new InstitutionStudent { InstitutionId = OtherInstitutionId, StudentId = OtherPupil, IsActive = true, ConfirmationStatus = InstitutionAttachmentStatuses.Accepted });
             db.StudyGroups.Add(new StudyGroup
             {
                 Id = GroupId, OwnerId = GroupMember, Name = "Révisions maths", JoinCode = "ABC123", IsActive = true,
@@ -251,6 +255,8 @@ namespace Backend.Tests
         [InlineData(OtherPupil)]    // élève d'une autre institution
         [InlineData(InactivePupil)] // rattachement inactif
         [InlineData(Stranger)]      // aucun rattachement
+        [InlineData(PendingPupil)]  // 17.14 : rattachement pas encore confirmé par l'élève
+        [InlineData(RefusedPupil)]  // 17.14 : rattachement refusé par l'élève
         public async Task Institution_WithoutAttachment_Forbidden(int student) =>
             await Assert.ThrowsAsync<TutorBookingForbiddenException>(() => Resolve(InstitutionAccount, "institution", new[] { student }));
 

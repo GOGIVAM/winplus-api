@@ -1,6 +1,7 @@
 using Backend.Data;
 using Backend.Models.Entities;
 using Backend.Extensions;
+using Backend.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Repositories;
@@ -147,6 +148,9 @@ public class UserRepository : IUserRepository
 
     public async Task<bool> DeleteAsync(int id)
     {
+        // Suivi 17.14 : le compte titulaire du portefeuille d'une institution
+        // ne se supprime pas tant qu'il le porte.
+        await InstitutionWalletHolderService.EnsureNotWalletHolderAsync(_context, id);
         try
         {
             var user = await _context.Users.FindAsync(id);
@@ -203,6 +207,7 @@ public class UserRepository : IUserRepository
 
     public async Task<bool> SoftDeleteAsync(int userId, int deletedBy)
     {
+        await InstitutionWalletHolderService.EnsureNotWalletHolderAsync(_context, userId);
         try
         {
             var user = await _context.Users.FindAsync(userId);
@@ -256,6 +261,7 @@ public class UserRepository : IUserRepository
 
     public async Task<bool> HardDeleteAsync(int userId)
     {
+        await InstitutionWalletHolderService.EnsureNotWalletHolderAsync(_context, userId);
         try
         {
             // FindAsync applique le filtre de requête global : un compte déjà

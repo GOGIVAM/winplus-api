@@ -40,11 +40,42 @@ public class InstitutionStudentsController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
     private readonly ILogger<InstitutionStudentsController> _logger;
+    private readonly IServiceScopeFactory _scopes;
 
-    public InstitutionStudentsController(ApplicationDbContext db, ILogger<InstitutionStudentsController> logger)
+    public InstitutionStudentsController(ApplicationDbContext db, ILogger<InstitutionStudentsController> logger, IServiceScopeFactory scopes)
     {
         _db = db;
         _logger = logger;
+        _scopes = scopes;
+    }
+
+    /// <summary>
+    /// Suivi 17.14 : chaque élève nouvellement rattaché est prévenu (liste
+    /// in-app et ntfy) et invité à confirmer ou refuser le rattachement. Envoi
+    /// hors requête (un import compte jusqu'à 5 000 lignes), dans son propre
+    /// scope ; un échec d'envoi n'annule jamais l'import.
+    /// </summary>
+    private void NotifyNewAttachments(string institutionName, IReadOnlyList<int> studentIds)
+    {
+        if (studentIds.Count == 0) return;
+        var scopes = _scopes;
+        var logger = _logger;
+        _ = Task.Run(async () =>
+        {
+            using var scope = scopes.CreateScope();
+            var ntfy = scope.ServiceProvider.GetRequiredService<Backend.Services.INtfyService>();
+            foreach (var id in studentIds)
+            {
+                try
+                {
+                    await ntfy.PublishAsync($"winplus-user-{id}", "Rattachement à un établissement",
+                        $"L'établissement « {institutionName} » t'a ajouté(e) à ses élèves. Confirme ou refuse ce rattachement dans Mon réseau : " +
+                        "tant que tu ne l'as pas accepté, l'établissement ne peut ni réserver, ni payer, ni attribuer de cours particulier pour toi.",
+                        userId: id, type: "InstitutionAttachment", relatedEntityType: "Institution");
+                }
+                catch (Exception ex) { logger.LogWarning(ex, "Notification de rattachement non envoyée à l'élève {StudentId}", id); }
+            }
+        });
     }
 
     /// <summary>Institution rattachée au compte connecté (User.InstitutionId).</summary>
@@ -152,6 +183,8 @@ public class InstitutionStudentsController : ControllerBase
                     group     = s.GroupName,
                     matricule = s.MatriculeNumber,
                     isActive  = s.IsActive,
+                    // Suivi 17.14 : confirmation du rattachement par l'élève (tutorat).
+                    confirmationStatus = s.ConfirmationStatus,
                     lastLoginAt = s.Student.LastLoginAt,
                     avgScore  = _db.QuizAttempts
                         .Where(a => a.UserId == s.StudentId && a.IsCompleted)
@@ -204,6 +237,7 @@ public class InstitutionStudentsController : ControllerBase
             var imported = 0;
             var updated = 0;
             var errors = new List<object>();
+            var newlyAttached = new List<int>();
 
             for (var i = 0; i < request.Rows.Count; i++)
             {
@@ -227,19 +261,26 @@ public class InstitutionStudentsController : ControllerBase
                     continue;
                 }
 
-                var link = await _db.InstitutionStudents
-                    .FirstOrDefaultAsync(s => s.InstitutionId == institutionId && s.StudentId == studentId);
+                // Même e-mail deux fois dans le fichier : la ligne ajoutée plus
+                // haut (pas encore enregistrée) est reprise, jamais dupliquée.
+                var link = _db.InstitutionStudents.Local
+                    .FirstOrDefault(s => s.InstitutionId == institutionId && s.StudentId == studentId)
+                    ?? await _db.InstitutionStudents
+                        .FirstOrDefaultAsync(s => s.InstitutionId == institutionId && s.StudentId == studentId);
 
                 if (link == null)
                 {
+                    // Suivi 17.14 : rattachement en attente de la confirmation de l'élève.
                     _db.InstitutionStudents.Add(new InstitutionStudent
                     {
                         InstitutionId   = institutionId,
                         StudentId       = studentId.Value,
                         Level           = string.IsNullOrWhiteSpace(row.Level) ? null : row.Level!.Trim(),
                         GroupName       = string.IsNullOrWhiteSpace(row.Group) ? null : row.Group!.Trim(),
-                        MatriculeNumber = string.IsNullOrWhiteSpace(row.Matricule) ? null : row.Matricule!.Trim()
+                        MatriculeNumber = string.IsNullOrWhiteSpace(row.Matricule) ? null : row.Matricule!.Trim(),
+                        ConfirmationStatus = InstitutionAttachmentStatuses.Pending,
                     });
+                    if (!newlyAttached.Contains(studentId.Value)) newlyAttached.Add(studentId.Value);
                     imported++;
                 }
                 else
@@ -254,7 +295,13 @@ public class InstitutionStudentsController : ControllerBase
 
             await _db.SaveChangesAsync();
 
-            return Ok(new { data = new { imported, updated, rejected = errors.Count, errors }, success = true });
+            // Un rattachement réactivé garde la réponse déjà donnée par l'élève
+            // (accepté ou refusé) : seul un nouveau rattachement est notifié.
+            var institutionName = await _db.Institutions.AsNoTracking().Where(i => i.Id == institutionId)
+                .Select(i => i.Name).FirstOrDefaultAsync() ?? "ton établissement";
+            NotifyNewAttachments(institutionName, newlyAttached);
+
+            return Ok(new { data = new { imported, updated, rejected = errors.Count, errors, pendingConfirmation = newlyAttached.Count }, success = true });
         }
         catch (Exception ex)
         {

@@ -415,6 +415,8 @@ builder.Services.AddScoped<ICatalogCommissionService, CatalogCommissionService>(
 builder.Services.AddScoped<IWalletBackfillService, WalletBackfillService>();
 // Lot 2, Module 2 : retrait Mobile Money automatisé par l'API de transfert NotchPay.
 builder.Services.AddScoped<IWithdrawalService, WithdrawalService>();
+// Suivi 17.14 : changement de titulaire du portefeuille institution (administrateur).
+builder.Services.AddScoped<IInstitutionWalletHolderService, InstitutionWalletHolderService>();
 // Lot 2, Module 3 : recharge du portefeuille par le parcours d'encaissement existant.
 builder.Services.AddScoped<IWalletTopUpService, WalletTopUpService>();
 builder.Services.AddScoped<IAffiliateService, AffiliateService>();

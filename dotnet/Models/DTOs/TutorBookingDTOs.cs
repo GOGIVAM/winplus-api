@@ -77,7 +77,10 @@ public class TutorBookingContextDto
     public List<TutorBookingParticipantDto> Children { get; set; } = new();
     public int? InstitutionId { get; set; }
     public string? InstitutionName { get; set; }
+    /// <summary>Élèves au rattachement actif et confirmé par l'élève (suivi 17.14).</summary>
     public List<TutorBookableStudentDto> InstitutionStudents { get; set; } = new();
+    /// <summary>Élèves rattachés et actifs qui n'ont pas encore confirmé (ou ont refusé) leur rattachement : non réservables.</summary>
+    public int InstitutionPendingConfirmationCount { get; set; }
     public List<TutorBookableStudyGroupDto> StudyGroups { get; set; } = new();
     public List<TutorAssignmentDto> ActiveAssignments { get; set; } = new();
 }

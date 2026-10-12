@@ -203,8 +203,11 @@ namespace Backend.Tests
 
             await wallet.SyncOrderAsync(701);
             await wallet.SyncOrderAsync(701);
-            Assert.Equal(2000, await wallet.GetAvailableAsync(Teacher));
+            // Module 7 (décision 6.2 du suivi) : contenu jamais évalué par WinAI
+            // = commission plancher de 10 %, jamais 0 %. Auteur : 1 800 sur 2 000.
+            Assert.Equal(1800, await wallet.GetAvailableAsync(Teacher));
             Assert.Equal(1, await db.WalletTransactions.CountAsync(t => t.EntryType == WalletEntryTypes.CatalogSale));
+            Assert.Equal(200, (await db.WalletTransactions.SingleAsync(t => t.EntryType == WalletEntryTypes.PlatformCommission)).Amount);
 
             var order = await db.Orders.FirstAsync(o => o.Id == 701);
             order.Status = "refunded";
@@ -213,9 +216,9 @@ namespace Backend.Tests
             await wallet.SyncOrderAsync(701);
 
             Assert.Equal(0, await wallet.GetAvailableAsync(Teacher));
-            Assert.Equal(1, await db.WalletTransactions.CountAsync(t => t.EntryType == WalletEntryTypes.Reversal));
-            // Aucune commission plateforme sur le catalogue avant le Module 7.
-            Assert.Equal(0, await db.WalletTransactions.CountAsync(t => t.EntryType == WalletEntryTypes.PlatformCommission));
+            // Vente et commission contre-passées une seule fois chacune, malgré le rejeu.
+            Assert.Equal(2, await db.WalletTransactions.CountAsync(t => t.EntryType == WalletEntryTypes.Reversal));
+            Assert.Equal(0, await db.WalletTransactions.Where(t => t.SourceType == "OrderItem" && t.SourceId == 801).SumAsync(t => t.Amount));
         }
 
         [Fact]
@@ -381,6 +384,13 @@ namespace Backend.Tests
             await db.SaveChangesAsync();
 
             var wallet = Wallet(db);
+            // La vente catalogue a été écrite en direct au lot 2, avant le Module 7
+            // (aucune commission catalogue à l'époque) : la reprise la retrouve par
+            // sa clé et ne la réécrit pas. Sans cette écriture, la reprise
+            // l'écrirait aujourd'hui avec la commission plancher de 10 % (décision
+            // 6.2), que l'ancien calcul ignore par définition.
+            await wallet.PostAsync(new WalletEntry(Teacher, WalletEntryTypes.CatalogSale, 2000, WalletService.CatalogSaleKey(810),
+                "Vente (lot 2)", "OrderItem", 810));
             var backfill = new WalletBackfillService(db, wallet, NullLogger<WalletBackfillService>.Instance);
 
             var before = await backfill.CompareAsync();

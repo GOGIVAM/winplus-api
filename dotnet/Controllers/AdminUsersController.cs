@@ -1247,6 +1247,24 @@ public class AdminUsersController : ControllerBase
 
     // ── Suppression ─────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Suivi 17.14 : un compte qui porte le portefeuille de son institution ne
+    /// se supprime pas (ni douce ni définitive) ; changer d'abord le titulaire
+    /// (POST /api/admin/institutions/{id}/wallet/holder).
+    /// </summary>
+    private async Task<IActionResult?> WalletHolderBlockAsync(int userId)
+    {
+        try
+        {
+            await InstitutionWalletHolderService.EnsureNotWalletHolderAsync(_db, userId);
+            return null;
+        }
+        catch (WalletHolderDeletionBlockedException ex)
+        {
+            return Conflict(new { code = "wallet_holder", error = ex.Message });
+        }
+    }
+
     /// <summary>Suppression douce : le compte reste en base, restaurable.</summary>
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> SoftDelete(int id)
@@ -1255,6 +1273,7 @@ public class AdminUsersController : ControllerBase
         if (user == null) return NotFound(new { error = "Utilisateur introuvable" });
         if (user.Id == CurrentAdminId())
             return BadRequest(new { error = "Vous ne pouvez pas supprimer votre propre compte" });
+        if (await WalletHolderBlockAsync(id) is { } blocked) return blocked;
 
         user.IsDeleted = true;
         user.IsActive = false;
@@ -1285,6 +1304,7 @@ public class AdminUsersController : ControllerBase
         if (user == null) return NotFound(new { error = "Utilisateur introuvable" });
         if (user.Id == CurrentAdminId())
             return BadRequest(new { error = "Vous ne pouvez pas supprimer votre propre compte" });
+        if (await WalletHolderBlockAsync(id) is { } blocked) return blocked;
 
         await using var tx = await _db.Database.BeginTransactionAsync();
         try

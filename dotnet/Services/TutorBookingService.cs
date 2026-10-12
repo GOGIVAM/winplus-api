@@ -740,6 +740,25 @@ public class TutorBookingService : ITutorBookingService
         }
 
         var wasAlreadyFinal = booking.PaymentStatus is "completed" or "failed";
+
+        // Défense en profondeur (même règle que PaymentService, Module 17) : un
+        // paiement confirmé pour un autre montant que le prix figé de la séance
+        // ne la confirme pas ; l'administrateur est alerté.
+        if (!wasAlreadyFinal && MapNotchPayStatus(transaction.Status) == "completed" && transaction.Amount is decimal notified
+            && decimal.Round(notified, 0, MidpointRounding.AwayFromZero) != decimal.Round(booking.PriceXaf, 0, MidpointRounding.AwayFromZero))
+        {
+            _logger.LogError("Webhook NotchPay {Ref} rejeté : montant notifié {Notified} XAF ≠ prix de la séance {Price} XAF (réservation {BookingId})",
+                transaction.Reference, notified, booking.PriceXaf, booking.Id);
+            try
+            {
+                await _ntfy.PublishAdminAsync("Écart de montant sur un paiement de séance",
+                    $"Réservation #{booking.Id} : montant notifié {notified:0} XAF, prix {booking.PriceXaf:0} XAF. La séance n'a pas été confirmée, vérification manuelle requise.",
+                    tags: new[] { "rotating_light", "moneybag" });
+            }
+            catch (Exception ex) { _logger.LogError(ex, "Alerte d'écart de montant non envoyée (réservation {BookingId})", booking.Id); }
+            return true;
+        }
+
         booking.PaymentStatus = MapNotchPayStatus(transaction.Status) ?? booking.PaymentStatus;
         booking.UpdatedAt = DateTime.UtcNow;
 
