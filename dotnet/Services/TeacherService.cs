@@ -235,7 +235,8 @@ public class TeacherService : ITeacherService
                 monthRevenue = monthCatalog + monthTutoring,
                 totalDownloads = downloads,
                 averageRating = Math.Round(reviews, 2),
-                contentCount = contents + authoredIds.Count,
+                // Un contenu de cours pointe vers son sujet : on compte les sujets distincts.
+                contentCount = Math.Max(contents, mySubjectIds.Count),
                 sessionCount = sessions.Count()
             };
         }
