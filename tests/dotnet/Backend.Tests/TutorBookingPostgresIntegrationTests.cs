@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Backend.Data;
 using Backend.Models.DTOs;
@@ -9,6 +11,7 @@ using Backend.Models.Entities;
 using Backend.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Npgsql;
@@ -466,6 +469,220 @@ namespace Backend.Tests
                 await Build(db).Service.DeclineBookingAsync(w.Tutor, bookingId, null);
             Assert.Equal(12000, await AvailableAsync(second));
             Assert.Equal(0, await AvailableAsync(w.InstitutionAccount));
+        }
+
+        // ── Suivi 17.15 ──────────────────────────────────────────────────
+
+        [PostgresFact]
+        public async Task UnpaidMobileMoney_After2h_SlotFreed_ThenLatePaymentRefundedToParent()
+        {
+            var w = await SeedAsync();
+            await CreditAsync(w.StudentA, 10000);
+            var day = NextDay();
+            const string reference = "TBK-IT1715-1";
+
+            // Séance du parent restée en attente de paiement Mobile Money depuis 3 h.
+            int abandonedId;
+            await using (var db = _pg.CreateContext())
+            {
+                var profileId = await db.TutorProfiles.Where(p => p.UserId == w.Tutor).Select(p => p.Id).SingleAsync();
+                var b = new TutorBooking
+                {
+                    TutorProfileId = profileId, StudentUserId = w.Child, PayerType = TutorPayerTypes.Parent, PayerUserId = w.Parent, BookedByUserId = w.Parent,
+                    SessionDate = day, StartTime = new TimeSpan(10, 0, 0), EndTime = new TimeSpan(11, 0, 0), PriceXaf = 6000,
+                    Status = "pending_payment", PaymentStatus = "pending", PaymentMethod = TutorPaymentMethods.MobileMoney,
+                    NotchpayReference = reference, CreatedAt = DateTime.UtcNow.AddHours(-3),
+                    Participants = new List<TutorBookingParticipant> { new() { StudentUserId = w.Child } },
+                };
+                db.TutorBookings.Add(b);
+                await db.SaveChangesAsync();
+                abandonedId = b.Id;
+            }
+
+            // Tant que le paiement est en attente, le créneau est pris.
+            await using (var db = _pg.CreateContext())
+                await Assert.ThrowsAsync<InvalidOperationException>(() => Build(db).Service.CreateBookingAsync(w.StudentA, Request(w.Tutor, day)));
+
+            await using (var db = _pg.CreateContext())
+                Assert.True(await Build(db).Service.CancelAbandonedPaymentsAsync(DateTime.UtcNow) >= 1);
+            await using (var db = _pg.CreateContext())
+                Assert.Equal(0, await Build(db).Service.CancelAbandonedPaymentsAsync(DateTime.UtcNow));
+
+            // Créneau libéré : un autre élève le réserve.
+            await using (var db = _pg.CreateContext())
+                Assert.Equal("pending_tutor_approval", (await Build(db).Service.CreateBookingAsync(w.StudentA, Request(w.Tutor, day))).Booking.Status);
+
+            // L'encaissement arrive après coup (et NotchPay le renvoie) : remboursé au parent, jamais confirmé.
+            var tx = new NotchPayWebhookTransaction { Reference = reference, Status = "complete", Amount = 6000, Currency = "XAF" };
+            await using (var db = _pg.CreateContext()) Assert.True(await Build(db).Service.TryHandleNotchPayWebhookAsync(reference, "payment.complete", tx));
+            await using (var db = _pg.CreateContext()) Assert.True(await Build(db).Service.TryHandleNotchPayWebhookAsync(reference, "payment.complete", tx));
+
+            await using var check = _pg.CreateContext();
+            var abandoned = await check.TutorBookings.AsNoTracking().SingleAsync(b => b.Id == abandonedId);
+            Assert.Equal("cancelled", abandoned.Status);
+            Assert.Equal("refunded", abandoned.PaymentStatus);
+            var refund = await check.WalletTransactions.AsNoTracking().SingleAsync(t => t.SourceId == abandonedId && t.EntryType == WalletEntryTypes.TutoringRefund);
+            Assert.Equal(w.Parent, refund.OwnerId);
+            Assert.Equal(WalletOwnerTypes.Parent, refund.OwnerType);
+            Assert.Equal(6000 - abandoned.PaymentFeeXaf!.Value, await AvailableAsync(w.Parent));
+            Assert.Equal(0, await AvailableAsync(w.Child));
+            // Somme des écritures de la séance = montant encaissé (remboursement + frais récupérés).
+            var sum = await check.WalletTransactions.AsNoTracking()
+                .Where(t => t.SourceType == "TutorBooking" && t.SourceId == abandonedId && t.Status == WalletEntryStatus.Confirmed).SumAsync(t => t.Amount);
+            Assert.Equal(6000, sum);
+        }
+
+        [PostgresFact]
+        public async Task ConfirmedNeverMarked_AutoCompleted24hAfterEnd_ThenReleasedToTutor()
+        {
+            var w = await SeedAsync();
+            await CreditAsync(w.StudentA, 10000);
+
+            int bookingId;
+            await using (var db = _pg.CreateContext())
+                bookingId = (await Build(db).Service.CreateBookingAsync(w.StudentA, Request(w.Tutor, NextDay()))).Booking.Id;
+            await using (var db = _pg.CreateContext())
+                await Build(db).Service.ConfirmBookingAsync(w.Tutor, bookingId);
+
+            // La séance a eu lieu il y a trois jours ; le tuteur ne l'a jamais marquée.
+            await using (var db = _pg.CreateContext())
+            {
+                var b = await db.TutorBookings.SingleAsync(x => x.Id == bookingId);
+                b.SessionDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-3));
+                await db.SaveChangesAsync();
+            }
+
+            // Passage automatique daté d'il y a 25 h : la fenêtre de contestation est écoulée.
+            var autoAt = DateTime.UtcNow.AddHours(-25);
+            await using (var db = _pg.CreateContext())
+                Assert.Equal(1, await Build(db).Service.AutoCompleteOverdueAsync(autoAt));
+            await using (var db = _pg.CreateContext())
+                Assert.Equal(0, await Build(db).Service.AutoCompleteOverdueAsync(autoAt));
+
+            await ReleaseEscrowAsync();
+
+            await using var check = _pg.CreateContext();
+            var booking = await check.TutorBookings.AsNoTracking().SingleAsync(b => b.Id == bookingId);
+            Assert.Equal("completed", booking.Status);
+            Assert.NotNull(booking.EscrowReleasedAt);
+            var revenue = await check.WalletTransactions.AsNoTracking()
+                .SingleAsync(t => t.SourceType == "TutorBooking" && t.SourceId == bookingId && t.EntryType == WalletEntryTypes.TutoringRevenue);
+            Assert.Equal(WalletEntryStatus.Confirmed, revenue.Status);
+            Assert.Equal(revenue.Amount, await AvailableAsync(w.Tutor));
+            Assert.Equal(4000, await AvailableAsync(w.StudentA));
+        }
+
+        /// <summary>Exécute la vraie libération de TutorBookingLifecycleService.</summary>
+        private async Task ReleaseEscrowAsync()
+        {
+            var services = new ServiceCollection();
+            services.AddScoped<ApplicationDbContext>(_ => _pg.CreateContext());
+            services.AddScoped<IWalletService>(sp => new WalletService(sp.GetRequiredService<ApplicationDbContext>(), NullLogger<WalletService>.Instance));
+            services.AddSingleton(_ntfy.Object);
+            await using var provider = services.BuildServiceProvider();
+            var lifecycle = new TutorBookingLifecycleService(provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<TutorBookingLifecycleService>.Instance, Config);
+            var release = typeof(TutorBookingLifecycleService).GetMethod("ReleaseEscrowAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            await (Task)release.Invoke(lifecycle, new object[] { CancellationToken.None })!;
+        }
+    }
+
+    /// <summary>
+    /// Script manuel <c>scripts/credit-test-wallets.sql</c> (suivi 17.13 / 17.15)
+    /// rejoué deux fois sur une base PostgreSQL jetable au schéma reconstitué :
+    /// mêmes lignes qu'une vraie recharge réussie, un seul crédit par compte,
+    /// soldes calculés par WalletService exacts.
+    /// </summary>
+    public class TestWalletCreditScriptPostgresTests : IClassFixture<PostgresTestDatabase>
+    {
+        private readonly PostgresTestDatabase _pg;
+        public TestWalletCreditScriptPostgresTests(PostgresTestDatabase pg) => _pg = pg;
+
+        private static string FindScript()
+        {
+            for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null; dir = dir.Parent)
+            {
+                var candidate = Path.Combine(dir.FullName, "scripts", "credit-test-wallets.sql");
+                if (File.Exists(candidate)) return candidate;
+            }
+            throw new FileNotFoundException("credit-test-wallets.sql");
+        }
+
+        [PostgresFact]
+        public async Task CreditScript_RunTwice_CreditsOnceLikeARealTopUp_BalancesExact()
+        {
+            await using (var db = _pg.CreateContext())
+            {
+                // Identifiants explicites des comptes de test (base jetable, propre à cette classe).
+                db.Users.AddRange(
+                    new User { Id = 30, Email = "eleve30@it.local", Role = "student", IsActive = true, FirstName = "Eleve", LastName = "IT" },
+                    new User { Id = 26, Email = "parent26@it.local", Role = "parent", IsActive = true, FirstName = "Parent", LastName = "IT" },
+                    new User { Id = 50, Email = "prof50@it.local", Role = "teacher", IsActive = true, FirstName = "Prof", LastName = "IT" });
+                await db.SaveChangesAsync();
+            }
+
+            var sql = await File.ReadAllTextAsync(FindScript());
+            for (var run = 0; run < 2; run++)
+            {
+                await using var conn = new NpgsqlConnection(_pg.ConnectionString);
+                await conn.OpenAsync();
+                await using var cmd = new NpgsqlCommand(sql, conn);
+                await cmd.ExecuteNonQueryAsync();
+            }
+
+            await using var check = _pg.CreateContext();
+            var wallet = new WalletService(check, NullLogger<WalletService>.Instance);
+            Assert.Equal(35000, await wallet.GetAvailableAsync(30));
+            Assert.Equal(75000, await wallet.GetAvailableAsync(26));
+            Assert.Equal(85000, await wallet.GetAvailableAsync(50));
+            Assert.Equal(75000, (await wallet.GetParentBreakdownAsync(26)).PermanentXaf);
+
+            var expected = new Dictionary<int, (string OwnerType, decimal Amount, string Ref)>
+            {
+                [30] = (WalletOwnerTypes.User, 35000, "TEST-CREDIT-2026-10-12-U30"),
+                [26] = (WalletOwnerTypes.Parent, 75000, "TEST-CREDIT-2026-10-12-P26"),
+                [50] = (WalletOwnerTypes.Teacher, 85000, "TEST-CREDIT-2026-10-12-T50"),
+            };
+            foreach (var (userId, e) in expected)
+            {
+                var entry = Assert.Single(await check.WalletTransactions.AsNoTracking().Where(t => t.OwnerId == userId).ToListAsync());
+                var topUp = Assert.Single(await check.WalletTopUps.AsNoTracking().Where(t => t.UserId == userId).ToListAsync());
+                var order = await check.Orders.AsNoTracking().SingleAsync(o => o.Id == topUp.OrderId);
+                var payment = Assert.Single(await check.Payments.AsNoTracking().Where(p => p.OrderId == order.Id).ToListAsync());
+
+                // Mêmes valeurs que WalletService.SyncWalletTopUpAsync.
+                Assert.Equal(e.OwnerType, entry.OwnerType);
+                Assert.Equal(WalletEntryTypes.Recharge, entry.EntryType);
+                Assert.Equal(e.Amount, entry.Amount);
+                Assert.Equal(WalletEntryStatus.Confirmed, entry.Status);
+                Assert.Equal("WalletTopUp", entry.SourceType);
+                Assert.Equal(topUp.Id, entry.SourceId);
+                Assert.Equal(WalletService.TopUpKey(topUp.Id), entry.IdempotencyKey);
+                Assert.Equal("Recharge Mobile Money", entry.Description);
+                Assert.Null(entry.ExpiresAt);
+                Assert.NotNull(entry.SettledAt);
+
+                Assert.Equal("completed", topUp.Status);
+                Assert.Equal(e.Amount, topUp.AmountXaf);
+                Assert.Equal(e.Ref, topUp.ClientRequestId);
+                Assert.NotNull(topUp.CompletedAt);
+                Assert.Equal(userId, order.UserId);
+                Assert.Equal(e.Ref, order.OrderNumber);
+                Assert.Equal("completed", order.Status);
+                Assert.Equal(e.Amount, order.TotalAmount);
+                Assert.Equal("completed", payment.Status);
+                Assert.Equal("notchpay", payment.PaymentMethod);
+                Assert.Equal(e.Amount, payment.Amount);
+
+                var (items, total) = await wallet.GetHistoryAsync(userId, WalletSources.Recharge, 1, 20);
+                Assert.Equal(1, total);
+                Assert.Equal("credit", items[0].Type);
+            }
+
+            // La réconciliation (SyncOrderAsync rejoué sur la commande) ne crée aucun doublon.
+            foreach (var topUp in await check.WalletTopUps.AsNoTracking().ToListAsync())
+                await wallet.SyncOrderAsync(topUp.OrderId);
+            Assert.Equal(3, await check.WalletTransactions.CountAsync());
+            Assert.Equal(35000, await wallet.GetAvailableAsync(30));
         }
     }
 }

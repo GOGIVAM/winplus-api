@@ -775,7 +775,10 @@ public class TutorBookingService : ITutorBookingService
             return true;
         }
 
-        var wasAlreadyFinal = booking.PaymentStatus is "completed" or "failed";
+        // « refunded » / « forfeited » (lot 9.2) sont aussi finaux : un webhook
+        // rejoué après le remboursement d'un encaissement tardif (17.15) ne
+        // doit pas remettre le paiement à « completed ».
+        var wasAlreadyFinal = booking.PaymentStatus is "completed" or "failed" or "refunded" or "forfeited";
 
         // Défense en profondeur (même règle que PaymentService, Module 17) : un
         // paiement confirmé pour un autre montant que le prix figé de la séance
@@ -795,6 +798,13 @@ public class TutorBookingService : ITutorBookingService
             return true;
         }
 
+        if (wasAlreadyFinal)
+        {
+            // Rejeu NotchPay : le statut ne change plus ; les écritures sont
+            // seulement resynchronisées (idempotent), comme avant.
+            await SyncWalletAsync(booking.Id);
+            return true;
+        }
         booking.PaymentStatus = MapNotchPayStatus(transaction.Status) ?? booking.PaymentStatus;
         booking.UpdatedAt = DateTime.UtcNow;
 
@@ -808,12 +818,15 @@ public class TutorBookingService : ITutorBookingService
 
             if (booking.Status == "cancelled")
             {
-                // Paiement confirmé après une annulation par l'élève (ou après
-                // l'abandon de l'écran de paiement) : la séance ne reprend pas
-                // vie, le montant payé est rendu au portefeuille, frais
-                // Mobile Money déduits comme pour toute annulation du payeur.
-                await _refunds.RefundAsync(booking, TutorRefundCause.PayerCancelled, overridePercent: 100);
+                // Paiement confirmé après une annulation par l'élève, ou après
+                // l'expiration du paiement à 2 h (17.15, créneau déjà libéré) :
+                // la séance ne reprend jamais vie, le montant payé est rendu au
+                // portefeuille du payeur, frais Mobile Money déduits comme pour
+                // toute annulation du payeur (même règle que le mensuel).
+                var lateDecision = await _refunds.RefundAsync(booking, TutorRefundCause.PayerCancelled, overridePercent: 100);
                 await SyncWalletAsync(booking.Id);
+                if (lateDecision != null)
+                    await NotifyRefundAsync(booking, lateDecision, "annulée avant la réception du paiement");
                 return true;
             }
 
@@ -837,6 +850,122 @@ public class TutorBookingService : ITutorBookingService
 
         await SyncWalletAsync(booking.Id);
         return true;
+    }
+
+    // ── Tâches de fond (TutorBookingLifecycleService, suivi 17.15) ─────────
+
+    /// <summary>Motif posé sur une séance unique dont le paiement Mobile Money n'a pas été confirmé à temps.</summary>
+    public const string AbandonedPaymentReason = "Paiement Mobile Money non confirmé : créneau libéré.";
+
+    /// <summary>Délai après l'heure de fin au-delà duquel une séance confirmée non marquée passe en « effectuée » (17.15).</summary>
+    public static readonly TimeSpan AutoCompleteDelay = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// Même mécanisme que <see cref="TutorEngagementService.CancelAbandonedPaymentsAsync"/>
+    /// (même délai de 2 h) : la séance passe en « cancelled », ce qui libère le
+    /// créneau (seuls pending_payment, pending_tutor_approval et confirmed
+    /// l'occupent). Le webhook d'un encaissement tardif trouve alors une séance
+    /// annulée et rembourse le payeur sans la confirmer. Les séances d'un
+    /// engagement mensuel sont exclues : l'engagement entier est annulé.
+    /// </summary>
+    public async Task<int> CancelAbandonedPaymentsAsync(DateTime nowUtc)
+    {
+        var threshold = nowUtc - TutorEngagementService.AbandonedPaymentDelay;
+        var list = await _context.TutorBookings
+            .Where(b => b.Status == "pending_payment" && b.PaymentStatus == "pending" && b.TutorEngagementId == null && b.CreatedAt <= threshold)
+            .ToListAsync();
+        foreach (var b in list)
+        {
+            b.Status = "cancelled";
+            b.CancellationReason = AbandonedPaymentReason;
+            b.CancelledAt = nowUtc;
+            b.UpdatedAt = nowUtc;
+        }
+        if (list.Count == 0) return 0;
+        await _context.SaveChangesAsync();
+
+        // Course avec un webhook enregistré entre la lecture et l'écriture :
+        // seules les colonnes d'annulation sont écrites, le paiement reste
+        // « completed ». La séance ne revit pas : l'encaissement est rendu au
+        // payeur, exactement comme un paiement arrivé après coup.
+        var ids = list.Select(b => b.Id).ToList();
+        var paidMeanwhile = await _context.TutorBookings.AsNoTracking()
+            .Where(b => ids.Contains(b.Id) && b.PaymentStatus == "completed" && b.RefundedAt == null)
+            .Select(b => b.Id).ToListAsync();
+        foreach (var b in list.Where(b => paidMeanwhile.Contains(b.Id)))
+        {
+            await _context.Entry(b).ReloadAsync();
+            if (b.Status != "cancelled" || b.RefundedAt != null) continue;
+            var decision = await _refunds.RefundAsync(b, TutorRefundCause.PayerCancelled, overridePercent: 100);
+            await SyncWalletAsync(b.Id);
+            if (decision != null) await NotifyRefundAsync(b, decision, "annulée avant la réception du paiement");
+        }
+
+        foreach (var b in list.Where(b => !paidMeanwhile.Contains(b.Id)))
+        {
+            var payerId = b.BookedByUserId ?? b.PayerUserId ?? b.StudentUserId;
+            await SafePublishAsync(payerId, "Paiement non confirmé - séance annulée",
+                $"Le paiement Mobile Money de ta séance du {b.SessionDate:dd/MM/yyyy} n'a pas été confirmé dans les 2 h : la demande est annulée et le créneau libéré. " +
+                "Si ton compte Mobile Money a quand même été débité, le montant sera crédité sur ton portefeuille WinPlus.");
+        }
+        return list.Count;
+    }
+
+    /// <summary>
+    /// 17.15 : une séance confirmée que le tuteur n'a pas marquée effectuée
+    /// passe en « completed » 24 h après son heure de fin. Seul le statut
+    /// « confirmed » est concerné : une séance annulée, refusée, contestée ou
+    /// déjà effectuée n'est jamais touchée (rejouer la tâche ne change rien).
+    /// <see cref="TutorBooking.CompletedAt"/> prend l'instant du passage : la
+    /// fenêtre de contestation court à partir de là, puis la libération
+    /// habituelle (TutorBookingLifecycleService) s'applique.
+    /// </summary>
+    public async Task<int> AutoCompleteOverdueAsync(DateTime nowUtc)
+    {
+        var latestDate = DateOnly.FromDateTime(nowUtc - AutoCompleteDelay);
+        var candidates = await BookingsWithDetails()
+            .Where(b => b.Status == "confirmed" && b.CompletedAt == null && b.RefundedAt == null && b.SessionDate <= latestDate)
+            .ToListAsync();
+        var due = candidates
+            .Where(b => b.SessionDate.ToDateTime(TimeOnly.FromTimeSpan(b.EndTime), DateTimeKind.Utc) + AutoCompleteDelay <= nowUtc)
+            .ToList();
+
+        var done = 0;
+        foreach (var booking in due)
+        {
+            try
+            {
+                booking.Status = "completed";
+                booking.CompletedAt = nowUtc;
+                booking.UpdatedAt = nowUtc;
+                await _context.SaveChangesAsync();
+                done++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Passage automatique en « effectuée » de la réservation {BookingId} non enregistré", booking.Id);
+                _context.Entry(booking).State = EntityState.Detached;
+                continue;
+            }
+
+            var date = $"{booking.SessionDate:dd/MM/yyyy}";
+            if (booking.TutorProfile?.UserId is int tutorUserId)
+                await SafePublishAsync(tutorUserId, "Séance marquée effectuée automatiquement",
+                    $"Ta séance du {date} n'avait pas été marquée effectuée 24 h après sa fin : elle l'a été automatiquement. " +
+                    $"Sans contestation dans les {_policy.DisputeWindowHours} h, ta part sera versée sur ton solde WinPlus.");
+            var ids = new HashSet<int>(ParticipantIds(booking)) { booking.PayerUserId ?? booking.StudentUserId };
+            foreach (var id in ids)
+                await SafePublishAsync(id, "Séance considérée comme effectuée",
+                    $"La séance du {date} est considérée comme effectuée. Si elle n'a pas eu lieu ou s'est mal passée, tu as {_policy.DisputeWindowHours} h pour la contester ; " +
+                    "ensuite le paiement est versé au répétiteur.");
+        }
+        return done;
+    }
+
+    private async Task SafePublishAsync(int userId, string title, string message)
+    {
+        try { await _ntfy.PublishAsync($"winplus-user-{userId}", title, message, userId: userId, type: "TutorBooking"); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Notification de séance non envoyée au compte {User}", userId); }
     }
 
     /// <summary>Paiement encaissé (NotchPay ou solde) : la demande part au tuteur.</summary>

@@ -10,7 +10,11 @@ namespace Backend.Services;
 /// au portefeuille du payeur, frais retenus sur le tuteur, lot 9.2), et libère
 /// l'argent du tuteur une fois la fenêtre de contestation écoulée après la
 /// séance marquée "Effectuée" sans contestation (17.8 : 24 h par défaut,
-/// réglable par <c>TutorBooking:DisputeWindowHours</c>). Même pattern que
+/// réglable par <c>TutorBooking:DisputeWindowHours</c>). Depuis le 17.15, il
+/// libère aussi le créneau des séances uniques dont le paiement Mobile Money
+/// n'est pas confirmé après 2 h, et passe en « effectuée » les séances
+/// confirmées non marquées 24 h après leur fin (la contestation court ensuite,
+/// puis la libération ci-dessous s'applique). Même pattern que
 /// <see cref="PaymentExpirationService"/>, avec un intervalle plus court car
 /// les demandes de réservation sont sensibles au délai.
 /// </summary>
@@ -37,7 +41,12 @@ public class TutorBookingLifecycleService : BackgroundService
         {
             try
             {
+                // 17.15 : paiements Mobile Money abandonnés (2 h) et passage
+                // automatique en « effectuée » (24 h après la fin), chacun dans
+                // son propre scope : l'échec de l'un n'empêche pas les autres.
+                await RunServiceStepAsync("paiements abandonnés", s => s.CancelAbandonedPaymentsAsync(DateTime.UtcNow));
                 await ExpireStaleRequestsAsync(stoppingToken);
+                await RunServiceStepAsync("séances effectuées automatiquement", s => s.AutoCompleteOverdueAsync(DateTime.UtcNow));
                 await ReleaseEscrowAsync(stoppingToken);
             }
             catch (OperationCanceledException)
@@ -50,6 +59,20 @@ public class TutorBookingLifecycleService : BackgroundService
             }
 
             await Task.Delay(Interval, stoppingToken);
+        }
+    }
+
+    private async Task RunServiceStepAsync(string name, Func<ITutorBookingService, Task<int>> step)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var count = await step(scope.ServiceProvider.GetRequiredService<ITutorBookingService>());
+            if (count > 0) _logger.LogInformation("Réservations Répétiteur, {Step} : {Count}", name, count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Réservations Répétiteur : échec de l'étape « {Step} »", name);
         }
     }
 

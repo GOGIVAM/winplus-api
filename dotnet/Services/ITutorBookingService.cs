@@ -30,4 +30,20 @@ public interface ITutorBookingService
 
     /// <summary>Liste des réservations actuellement contestées, pour le panneau admin.</summary>
     Task<List<TutorBookingDto>> GetDisputedBookingsAsync();
+
+    // ── Tâches de fond (TutorBookingLifecycleService, suivi 17.15) ──
+
+    /// <summary>
+    /// Séances uniques restées en attente de paiement Mobile Money plus de
+    /// 2 h : annulées, créneau libéré. Un encaissement arrivé ensuite est
+    /// remboursé au portefeuille du payeur par le webhook. Idempotent.
+    /// </summary>
+    Task<int> CancelAbandonedPaymentsAsync(DateTime nowUtc);
+
+    /// <summary>
+    /// Séances confirmées (uniques ou d'engagement mensuel) non marquées
+    /// effectuées 24 h après leur heure de fin : passées en « completed »,
+    /// la fenêtre de contestation court à partir de ce passage. Idempotent.
+    /// </summary>
+    Task<int> AutoCompleteOverdueAsync(DateTime nowUtc);
 }
