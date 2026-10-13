@@ -251,7 +251,7 @@ public class TutorBookingDto
     /// <summary>mobile_money | wallet (null pour une réservation ancienne jamais payée).</summary>
     public string? PaymentMethod { get; set; }
     public DateTime? RefundedAt { get; set; }
-    /// <summary>payer_cancelled | tutor_cancelled | tutor_declined | tutor_no_response | dispute_full | dispute_partial.</summary>
+    /// <summary>payer_cancelled | tutor_cancelled | tutor_declined | tutor_no_response | dispute_full | dispute_partial | in_person_blocked.</summary>
     public string? RefundCause { get; set; }
     public int? RefundPercent { get; set; }
     /// <summary>Montant crédité au portefeuille du payeur.</summary>

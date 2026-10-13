@@ -120,15 +120,12 @@ public class TutorProfileService : ITutorProfileService
         if (request.VideoUrl != null) profile.VideoUrl = Truncate(request.VideoUrl, 500);
         if (request.TeachingStyle != null) profile.TeachingStyle = Truncate(request.TeachingStyle, 30);
 
-        // Lot 9.5 (17.11) : un tuteur non vérifié (ou au présentiel suspendu)
-        // ne peut pas activer un mode présentiel. Désactiver reste toujours possible.
-        if ((request.OffersAtStudentHome == true || request.OffersAtTutorHome == true || request.OffersNeutralPlace == true)
-            && TutorInPersonPolicy.BlockReason(profile) is string blocked)
-        {
-            throw new InvalidOperationException(TutorInPersonPolicy.IsSuspended(profile)
-                ? "Ton présentiel est suspendu en attendant l'examen d'un signalement par l'équipe WinPlus : tu peux continuer en ligne."
-                : "Le présentiel est réservé aux répétiteurs vérifiés. Fais vérifier ton profil (pièce d'identité et selfie, entretien, ou caution de ton institution) : en attendant, propose tes séances en ligne.");
-        }
+        // Lot 9.5 (17.17) : un tuteur non vérifié (ou au présentiel suspendu)
+        // ENREGISTRE ses choix présentiels, qui restent inactifs (non proposés,
+        // non réservables, non affichés publiquement : TutorInPersonPolicy)
+        // tant qu'il n'est pas vérifié, puis redeviennent actifs d'eux-mêmes à
+        // la vérification ou à la levée de la suspension. Plus de refus ici :
+        // enregistrer l'étape « Intervention » ne fait plus perdre ces choix.
         if (request.OffersAtStudentHome.HasValue) profile.OffersAtStudentHome = request.OffersAtStudentHome.Value;
         if (request.OffersAtTutorHome.HasValue) profile.OffersAtTutorHome = request.OffersAtTutorHome.Value;
         if (request.OffersOnline.HasValue) profile.OffersOnline = request.OffersOnline.Value;
@@ -627,10 +624,15 @@ public class TutorProfileService : ITutorProfileService
         // présentiels à « non », comme le public ; les réglages enregistrés
         // restent en base et reviennent dès qu'il est vérifié ou que la
         // suspension est levée, s'il ne les a pas décochés entre-temps).
+        // 17.17 : le propriétaire reçoit aussi ses choix ENREGISTRÉS
+        // (Saved…), affichés cochés mais grisés « actif après vérification ».
         var eligible = TutorInPersonPolicy.IsEligible(profile);
 
         return new TutorProfileDto
         {
+            SavedOffersAtStudentHome = isPublicView ? null : profile.OffersAtStudentHome,
+            SavedOffersAtTutorHome = isPublicView ? null : profile.OffersAtTutorHome,
+            SavedOffersNeutralPlace = isPublicView ? null : profile.OffersNeutralPlace,
             IsInPersonVerified = TutorInPersonPolicy.IsVerified(profile),
             InPersonSuspended = TutorInPersonPolicy.IsSuspended(profile),
             InPersonAllowed = eligible,

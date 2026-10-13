@@ -88,6 +88,19 @@ namespace Backend.Tests
         }
 
         [Fact]
+        public void InPersonBlocked_BySuspension_FullRefund_FeeAbsorbedByPlatform()
+        {
+            // 17.17 : demande présentielle refusée d'office à la suspension du tuteur.
+            var d = TutorRefundRules.Compute(TutorRefundCause.InPersonBlocked, 10000, 300);
+            Assert.Equal(100, d.RefundPercent);
+            Assert.Equal(10000, d.RefundXaf);
+            Assert.Equal(TutorFeeBearer.Platform, d.FeeBorneBy);
+            Assert.Equal(0, d.FeeRetainedXaf);
+            Assert.Equal(0, d.TutorRetainedXaf);
+            Assert.Equal("in_person_blocked", TutorRefundService.CauseCode(TutorRefundCause.InPersonBlocked));
+        }
+
+        [Fact]
         public void DisputePartial_AmountClampedToPrice()
         {
             var d = TutorRefundRules.Compute(TutorRefundCause.DisputeRefundPartial, 10000, 300, disputeAmountXaf: 4000);

@@ -62,6 +62,7 @@ public class TutorRefundService : ITutorRefundService
         TutorRefundCause.TutorNoResponse => "tutor_no_response",
         TutorRefundCause.DisputeRefundFull => "dispute_full",
         TutorRefundCause.DisputeRefundPartial => "dispute_partial",
+        TutorRefundCause.InPersonBlocked => "in_person_blocked",
         _ => "other",
     };
 

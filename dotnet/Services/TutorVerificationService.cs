@@ -184,7 +184,10 @@ public class TutorVerificationService : ITutorVerificationService
             await NotifyTutorAsync(profile.UserId, "Vérifié pour le présentiel",
                 TutorInPersonPolicy.IsSuspended(profile)
                     ? "Ton profil est vérifié, mais ton présentiel reste suspendu jusqu'à l'examen en cours par l'équipe WinPlus."
-                    : "Ton profil est vérifié : tu peux maintenant proposer des séances à domicile, chez toi ou en lieu neutre depuis tes réglages.");
+                    : profile.OffersAtStudentHome || profile.OffersAtTutorHome || profile.OffersNeutralPlace
+                        // 17.17 : les choix présentiels enregistrés avant la vérification redeviennent actifs d'eux-mêmes.
+                        ? "Ton profil est vérifié : les modes présentiels que tu avais choisis sont maintenant actifs et proposés aux familles."
+                        : "Ton profil est vérifié : tu peux maintenant proposer des séances à domicile, chez toi ou en lieu neutre depuis tes réglages.");
         }
         else if (!verified && wasVerified)
         {
@@ -1067,6 +1070,50 @@ public class TutorVerificationService : ITutorVerificationService
                     : $"Fichiers supprimés {_settings.IdentityRetentionDaysAfterRejection} jours après le refus.", c.Id);
         }
         if (due.Count > 0) await _db.SaveChangesAsync();
-        return due.Count;
+        return due.Count + await PurgeOrphanedIdentityFilesAsync(nowUtc, approvedBefore, rejectedBefore);
+    }
+
+    /// <summary>
+    /// 17.17 : fichiers d'identité d'un compte supprimé (lignes disparues en
+    /// cascade, références gardées par le déclencheur dans
+    /// TutorIdentityFilePurges). Même durée normale que les autres : 30 jours
+    /// après validation, 7 jours après refus ; un dépôt jamais décidé (ou déjà
+    /// remplacé) n'a plus de raison d'être gardé et part tout de suite. La
+    /// ligne n'est retirée qu'après la suppression effective du fichier, pour
+    /// que la tâche suivante réessaie en cas d'échec du stockage.
+    /// </summary>
+    private async Task<int> PurgeOrphanedIdentityFilesAsync(DateTime nowUtc, DateTime approvedBefore, DateTime rejectedBefore)
+    {
+        var due = await _db.TutorIdentityFilePurges
+            .Where(f => (f.Status == TutorIdentityStatuses.Approved && (f.ReviewedAt ?? f.QueuedAt) <= approvedBefore)
+                        || (f.Status == TutorIdentityStatuses.Rejected && (f.ReviewedAt ?? f.QueuedAt) <= rejectedBefore)
+                        || (f.Status != TutorIdentityStatuses.Approved && f.Status != TutorIdentityStatuses.Rejected && f.QueuedAt <= nowUtc))
+            .OrderBy(f => f.QueuedAt).Take(200).ToListAsync();
+        var purged = 0;
+        foreach (var f in due)
+        {
+            try
+            {
+                var known = f.FileRef.StartsWith(PrivateFileStore.S3Prefix, StringComparison.Ordinal)
+                            || f.FileRef.StartsWith(PrivateFileStore.LocalPrefix, StringComparison.Ordinal);
+                if (!await _files.DeleteAsync(f.FileRef) && known)
+                {
+                    _logger.LogWarning("Fichier d'identité d'un compte supprimé non purgé ({Ref}), nouvel essai à la prochaine tâche", f.FileRef);
+                    continue;
+                }
+                _db.TutorIdentityFilePurges.Remove(f);
+                purged++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Fichier d'identité d'un compte supprimé non purgé ({Ref}), nouvel essai à la prochaine tâche", f.FileRef);
+            }
+        }
+        if (purged > 0)
+        {
+            await _db.SaveChangesAsync();
+            _logger.LogInformation("{Count} fichier(s) d'identité de comptes supprimés purgé(s)", purged);
+        }
+        return purged;
     }
 }

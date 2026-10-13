@@ -21,6 +21,8 @@ public class TutorReviewService : ITutorReviewService
         _ntfy = ntfy;
     }
 
+    private const string InstitutionAlreadyReviewed = "Ton institution a déjà noté cette séance : un seul avis par institution.";
+
     /// <summary>
     /// Lot 9.5 (17.12, 17.16) : notent les élèves participants d'une séance
     /// effectuée et son payeur (parent, compte de l'institution payeuse, compte
@@ -50,12 +52,23 @@ public class TutorReviewService : ITutorReviewService
         if (already)
             throw new InvalidOperationException("Tu as déjà noté cette séance.");
 
+        // 17.17 : institution payeuse = un seul avis pour l'institution, quel
+        // que soit son compte qui note (contrôle ici + index unique partiel
+        // séance + institution, qui fait foi en cas d'envois simultanés).
+        int? reviewerInstitutionId = role == "payer" && viewerInstitution != null && booking.PayerInstitutionId == viewerInstitution
+            ? viewerInstitution
+            : null;
+        if (reviewerInstitutionId != null
+            && await _context.TutorReviews.AnyAsync(r => r.TutorBookingId == booking.Id && r.ReviewerInstitutionId == reviewerInstitutionId))
+            throw new InvalidOperationException(InstitutionAlreadyReviewed);
+
         var review = new TutorReview
         {
             TutorBookingId = booking.Id,
             TutorProfileId = booking.TutorProfileId,
             StudentUserId = authorUserId,
             ReviewerRole = role,
+            ReviewerInstitutionId = reviewerInstitutionId,
             Rating = request.Rating,
             Comment = string.IsNullOrWhiteSpace(request.Comment) ? null : Truncate(request.Comment, 300),
         };
@@ -70,7 +83,7 @@ public class TutorReviewService : ITutorReviewService
             // n'est pas atomique avec l'insertion, mais l'index unique
             // séance + auteur l'est  on retombe sur le même message que le
             // contrôle applicatif plutôt qu'un 500 brut.
-            throw new InvalidOperationException("Tu as déjà noté cette séance.");
+            throw new InvalidOperationException(reviewerInstitutionId != null ? InstitutionAlreadyReviewed : "Tu as déjà noté cette séance.");
         }
 
         var tutorUserId = booking.TutorProfile?.UserId;

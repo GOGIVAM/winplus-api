@@ -115,7 +115,8 @@ namespace Backend.Tests
             new(db, _files, _ntfy.Object, NullLogger<TutorVerificationService>.Instance, Config);
 
         private TutorReportService Reports(ApplicationDbContext db) =>
-            new(db, _ntfy.Object, Verification(db), NullLogger<TutorReportService>.Instance, Config);
+            new(db, _ntfy.Object, Verification(db), NullLogger<TutorReportService>.Instance, Config,
+                new TutorRefundService(db, new WalletService(db, NullLogger<WalletService>.Instance), _ntfy.Object, NullLogger<TutorRefundService>.Instance, Config));
 
         private TutorBookingService Bookings(ApplicationDbContext db)
         {
@@ -188,8 +189,10 @@ namespace Backend.Tests
             }
             await using (var db = _pg.CreateContext())
             {
-                // Réglages : activer un mode présentiel est refusé ; le désactiver reste possible.
-                await Assert.ThrowsAsync<InvalidOperationException>(() => profiles(db).UpdateAsync(w.Tutor, new UpdateTutorProfileRequestDto { OffersNeutralPlace = true }));
+                // 17.17 : enregistrer un mode présentiel est accepté (conservé, inactif).
+                var saved = await profiles(db).UpdateAsync(w.Tutor, new UpdateTutorProfileRequestDto { OffersNeutralPlace = true });
+                Assert.True(saved.SavedOffersNeutralPlace);
+                Assert.False(saved.OffersNeutralPlace);
             }
             await using (var db = _pg.CreateContext())
             {
@@ -535,6 +538,268 @@ namespace Backend.Tests
                 Assert.DoesNotContain(history, h => h.Category == "report");
                 Assert.Contains(history, h => h.Action == "suspended");
             }
+        }
+
+        // ── 17.17 : réglages présentiels conservés, puis réactivés ───────────
+
+        [PostgresFact]
+        public async Task InPersonSettings_KeptWhileUnverified_ReactivatedOnVerification()
+        {
+            var w = await SeedAsync();
+            var profiles = (ApplicationDbContext db) => new TutorProfileService(db, NullLogger<TutorProfileService>.Instance);
+
+            await using (var db = _pg.CreateContext())
+            {
+                // Étape « Intervention » enregistrée par un tuteur non vérifié : aucun refus, choix conservés.
+                var mine = await profiles(db).UpdateAsync(w.Tutor, new UpdateTutorProfileRequestDto
+                {
+                    OffersOnline = true, OffersAtStudentHome = true, OffersAtTutorHome = true, OffersNeutralPlace = false,
+                    TutorHomeAddressHint = "Bastos",
+                });
+                Assert.True(mine.SavedOffersAtStudentHome);
+                Assert.True(mine.SavedOffersAtTutorHome);
+                Assert.False(mine.SavedOffersNeutralPlace);
+                // Inactifs : modes effectifs à « non », présentiel indisponible.
+                Assert.False(mine.OffersAtStudentHome);
+                Assert.False(mine.OffersAtTutorHome);
+                Assert.False(mine.InPersonAllowed);
+            }
+            var stored = await ProfileAsync(w);
+            Assert.True(stored.OffersAtStudentHome);
+            Assert.True(stored.OffersAtTutorHome);
+
+            await using (var db = _pg.CreateContext())
+            {
+                // Ni affichés publiquement, ni proposés en recherche, ni réservables.
+                var pub = await profiles(db).GetPublicProfileAsync(w.Tutor);
+                Assert.False(pub!.OffersAtStudentHome);
+                Assert.False(pub.OffersAtTutorHome);
+                Assert.Null(pub.SavedOffersAtStudentHome);
+                Assert.Null(pub.TutorHomeAddressHint);
+                Assert.DoesNotContain(await profiles(db).SearchAsync(null, null, null, false, 1, 50, mode: "tutor_home"), r => r.UserId == w.Tutor);
+                Assert.DoesNotContain(await profiles(db).SearchAsync(null, null, null, false, 1, 50), r => r.UserId == w.Tutor && r.OffersInPerson);
+                await Assert.ThrowsAsync<InvalidOperationException>(() => Bookings(db).GetQuoteAsync(new TutorPriceQuoteRequestDto
+                { TutorUserId = w.Tutor, SessionDate = w.Day, StartTime = "10:00", DurationMinutes = 60, Mode = "tutor_home" }));
+            }
+            // Un nouvel enregistrement des réglages sans ces champs ne les efface pas.
+            await using (var db = _pg.CreateContext())
+                await profiles(db).UpdateAsync(w.Tutor, new UpdateTutorProfileRequestDto { Title = "Maths en Terminale" });
+            Assert.True((await ProfileAsync(w)).OffersAtTutorHome);
+
+            // Vérification : les choix conservés redeviennent actifs d'eux-mêmes.
+            await SubmitAndApproveIdentityAsync(w);
+            await using (var db = _pg.CreateContext())
+            {
+                var pub = await profiles(db).GetPublicProfileAsync(w.Tutor);
+                Assert.True(pub!.OffersAtStudentHome);
+                Assert.True(pub.OffersAtTutorHome);
+                Assert.False(pub.OffersNeutralPlace);
+                Assert.Equal("Bastos", pub.TutorHomeAddressHint);
+                Assert.Contains(await profiles(db).SearchAsync(null, null, null, false, 1, 50, mode: "tutor_home"), r => r.UserId == w.Tutor && r.OffersInPerson);
+                var quote = await Bookings(db).GetQuoteAsync(new TutorPriceQuoteRequestDto
+                { TutorUserId = w.Tutor, SessionDate = w.Day, StartTime = "10:00", DurationMinutes = 60, Mode = "tutor_home" });
+                Assert.True(quote.IsAvailable);
+            }
+            _ntfy.Verify(n => n.PublishAsync($"winplus-user-{w.Tutor}", "Vérifié pour le présentiel",
+                It.Is<string>(m => m.Contains("que tu avais choisis sont maintenant actifs")), It.IsAny<string>(), It.IsAny<string[]>(),
+                w.Tutor, It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int?>()), Times.Once);
+        }
+
+        // ── 17.17 : suspension, demandes présentielles en attente refusées et remboursées ──
+
+        [PostgresFact]
+        public async Task Suspension_RefusesAndRefundsPendingInPersonRequests_NotifiesStudentsAndPayer()
+        {
+            var w = await SeedAsync();
+            await SubmitAndApproveIdentityAsync(w);
+            await CreditAsync(w.Parent, 100000);
+            await CreditAsync(w.Students[4], 50000);
+
+            int inPersonId, onlineId, engagementId;
+            await using (var db = _pg.CreateContext())
+            {
+                // Le parent réserve une séance à domicile pour son enfant : payée par portefeuille, en attente du tuteur.
+                var req = Booking(w, "student_home");
+                req.ParticipantUserIds = new List<int> { w.Child };
+                req.PayerType = TutorPayerTypes.Parent;
+                var created = await Bookings(db).CreateBookingAsync(w.Parent, req);
+                Assert.Equal("pending_tutor_approval", created.Booking.Status);
+                inPersonId = created.Booking.Id;
+                // Demande en ligne : elle n'est pas touchée par la suspension.
+                onlineId = (await Bookings(db).CreateBookingAsync(w.Students[4], Booking(w, "online", "14:00"))).Booking.Id;
+            }
+            await using (var db = _pg.CreateContext())
+            {
+                var slots = new List<TutorEngagementSlotDto> { new() { DayOfWeek = 2, StartTime = "18:00", DurationMinutes = 60 } };
+                var created = await Engagements(db).CreateAsync(w.Students[4], new CreateTutorEngagementRequestDto
+                {
+                    TutorUserId = w.Tutor, StartDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(8)), Mode = "tutor_home",
+                    Slots = slots, PaymentMethod = TutorPaymentMethods.Wallet, Subject = "Maths",
+                });
+                Assert.Equal(TutorEngagementStatuses.PendingTutorApproval, created.Engagement.Status);
+                engagementId = created.Engagement.Id;
+            }
+            decimal parentAfterBooking, studentAfterBooking;
+            await using (var db = _pg.CreateContext())
+            {
+                var wallet = new WalletService(db, NullLogger<WalletService>.Instance);
+                parentAfterBooking = await wallet.GetAvailableAsync(w.Parent);
+                studentAfterBooking = await wallet.GetAvailableAsync(w.Students[4]);
+            }
+            Assert.True(parentAfterBooking < 100000);
+
+            // Quatre signalements en 30 jours : suspension automatique.
+            for (var i = 0; i < 4; i++)
+            {
+                var b = await SeedBookingAsync(w, w.Students[i], "completed");
+                await using var db = _pg.CreateContext();
+                await Reports(db).SubmitAsync(w.Students[i], new CreateTutorReportDto { TutorBookingId = b, Reason = TutorReportReasons.NoShow });
+            }
+            Assert.NotNull((await ProfileAsync(w)).InPersonSuspendedAt);
+
+            await using (var db = _pg.CreateContext())
+            {
+                var booking = await db.TutorBookings.AsNoTracking().SingleAsync(b => b.Id == inPersonId);
+                Assert.Equal("rejected", booking.Status);
+                Assert.Equal("in_person_blocked", booking.RefundCause);
+                Assert.Equal(100, booking.RefundPercent);
+                Assert.Equal(booking.PriceXaf, booking.RefundAmountXaf);
+                Assert.Equal(0m, booking.TutorFeeChargedXaf);
+                Assert.Equal("pending_tutor_approval", (await db.TutorBookings.AsNoTracking().SingleAsync(b => b.Id == onlineId)).Status);
+                var engagement = await db.TutorEngagements.AsNoTracking().Include(e => e.Sessions).SingleAsync(e => e.Id == engagementId);
+                Assert.Equal(TutorEngagementStatuses.Rejected, engagement.Status);
+                Assert.All(engagement.Sessions, s => { Assert.Equal("rejected", s.Status); Assert.Equal("in_person_blocked", s.RefundCause); });
+
+                // Remboursement intégral au portefeuille du payeur.
+                var wallet = new WalletService(db, NullLogger<WalletService>.Instance);
+                Assert.Equal(100000m, await wallet.GetAvailableAsync(w.Parent));
+                Assert.Equal(studentAfterBooking + engagement.TotalXaf, await wallet.GetAvailableAsync(w.Students[4]));
+            }
+            // Élève participant ET payeur prévenus (séance), élève payeur prévenu (engagement).
+            _ntfy.Verify(n => n.PublishAsync($"winplus-user-{w.Child}", "Demande de séance refusée", It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<string[]>(), w.Child, It.IsAny<string>(), "TutorBooking", inPersonId), Times.Once);
+            _ntfy.Verify(n => n.PublishAsync($"winplus-user-{w.Parent}", "Demande de séance refusée", It.Is<string>(m => m.Contains("remboursement intégral")),
+                It.IsAny<string>(), It.IsAny<string[]>(), w.Parent, It.IsAny<string>(), "TutorBooking", inPersonId), Times.Once);
+            _ntfy.Verify(n => n.PublishAsync($"winplus-user-{w.Students[4]}", "Engagement mensuel refusé", It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<string[]>(), w.Students[4], It.IsAny<string>(), "TutorEngagement", engagementId), Times.Once);
+        }
+
+        [PostgresFact]
+        public async Task SuspendedTutor_CannotAcceptPendingInPersonRequest_RefusedAndRefunded()
+        {
+            var w = await SeedAsync();
+            await SubmitAndApproveIdentityAsync(w);
+            await CreditAsync(w.Students[0], 50000);
+            int id;
+            await using (var db = _pg.CreateContext())
+                id = (await Bookings(db).CreateBookingAsync(w.Students[0], Booking(w, "neutral_place"))).Booking.Id;
+            // Suspension posée sans passer par le refus groupé (ex. course entre la suspension et l'acceptation).
+            await using (var db = _pg.CreateContext())
+                await db.TutorProfiles.Where(p => p.Id == w.ProfileId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(p => p.InPersonSuspendedAt, DateTime.UtcNow));
+
+            await using (var db = _pg.CreateContext())
+            {
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => Bookings(db).ConfirmBookingAsync(w.Tutor, id));
+                Assert.Contains("suspendu", ex.Message);
+            }
+            await using (var db = _pg.CreateContext())
+            {
+                var booking = await db.TutorBookings.AsNoTracking().SingleAsync(b => b.Id == id);
+                Assert.Equal("rejected", booking.Status);
+                Assert.Equal("in_person_blocked", booking.RefundCause);
+                Assert.Equal(50000m, await new WalletService(db, NullLogger<WalletService>.Instance).GetAvailableAsync(w.Students[0]));
+            }
+            _ntfy.Verify(n => n.PublishAsync($"winplus-user-{w.Students[0]}", "Demande de séance refusée", It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<string[]>(), w.Students[0], It.IsAny<string>(), "TutorBooking", id), Times.Once);
+        }
+
+        // ── 17.17 : un seul avis par institution et par séance ────────────────
+
+        [PostgresFact]
+        public async Task InstitutionPayer_OneReviewPerInstitution_WhicheverAccount()
+        {
+            var w = await SeedAsync();
+            var participant = w.Students[0];
+            var bookingId = await SeedBookingAsync(w, participant, "completed", payer: w.InstitutionAccount, payerType: TutorPayerTypes.Institution);
+            int secondAccount;
+            await using (var db = _pg.CreateContext())
+            {
+                await db.TutorBookings.Where(b => b.Id == bookingId).ExecuteUpdateAsync(s => s.SetProperty(b => b.PayerInstitutionId, w.InstitutionId));
+                var second = new User
+                {
+                    Email = $"institution2-{Guid.NewGuid():N}@it.local", Role = "institution", IsActive = true,
+                    FirstName = "Secretariat", LastName = "IT", InstitutionId = w.InstitutionId,
+                };
+                db.Users.Add(second);
+                await db.SaveChangesAsync();
+                secondAccount = second.Id;
+            }
+
+            await using (var db = _pg.CreateContext())
+            {
+                var review = await new TutorReviewService(db, _ntfy.Object).SubmitAsync(w.InstitutionAccount,
+                    new SubmitTutorReviewRequestDto { TutorBookingId = bookingId, Rating = 4 });
+                Assert.Equal("payer", review.ReviewerRole);
+            }
+            await using (var db = _pg.CreateContext())
+            {
+                // Un autre compte de la même institution : refusé (contrôle serveur).
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => new TutorReviewService(db, _ntfy.Object).SubmitAsync(secondAccount,
+                    new SubmitTutorReviewRequestDto { TutorBookingId = bookingId, Rating = 1 }));
+                Assert.Contains("institution", ex.Message);
+                // Le participant garde son propre avis.
+                await new TutorReviewService(db, _ntfy.Object).SubmitAsync(participant, new SubmitTutorReviewRequestDto { TutorBookingId = bookingId, Rating = 5 });
+                // L'autre compte voit l'avis de son institution : plus de bouton « Noter ».
+                var view = await Bookings(db).GetByIdAsync(secondAccount, bookingId);
+                Assert.False(view.CanReview);
+                Assert.Equal(4, view.MyReviewRating);
+            }
+            await using (var db = _pg.CreateContext())
+            {
+                // Index unique partiel séance + institution en base (envois simultanés).
+                db.TutorReviews.Add(new TutorReview
+                {
+                    TutorBookingId = bookingId, TutorProfileId = w.ProfileId, StudentUserId = secondAccount,
+                    ReviewerRole = "payer", ReviewerInstitutionId = w.InstitutionId, Rating = 2,
+                });
+                await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+            }
+            await using (var db = _pg.CreateContext())
+                Assert.Equal(2, await db.TutorReviews.CountAsync(r => r.TutorBookingId == bookingId));
+        }
+
+        // ── 17.17 : pièces d'identité d'un compte supprimé ───────────────────
+
+        [PostgresFact]
+        public async Task DeletedAccount_IdentityFiles_KeptUntilNormalTerm_ThenPurged()
+        {
+            var w = await SeedAsync();
+            await SubmitAndApproveIdentityAsync(w);
+            List<string> refs;
+            await using (var db = _pg.CreateContext())
+            {
+                var check = await db.TutorIdentityChecks.AsNoTracking().SingleAsync(c => c.TutorProfileId == w.ProfileId && c.Status == "approved");
+                refs = new[] { check.FrontFileRef, check.BackFileRef, check.SelfieFileRef }.Where(r => r != null).Select(r => r!).ToList();
+                Assert.Equal(2, refs.Count);
+                // Suppression du compte : cascade Users -> TutorProfiles -> TutorIdentityChecks.
+                await db.Database.ExecuteSqlRawAsync("DELETE FROM \"TutorProfiles\" WHERE \"Id\" = {0}", w.ProfileId);
+                Assert.False(await db.TutorIdentityChecks.AnyAsync(c => c.TutorProfileId == w.ProfileId));
+                // Les références sont gardées pour la purge.
+                var queued = await db.TutorIdentityFilePurges.AsNoTracking().Where(f => refs.Contains(f.FileRef)).ToListAsync();
+                Assert.Equal(2, queued.Count);
+                Assert.All(queued, f => Assert.Equal("approved", f.Status));
+            }
+            // Avant le terme normal (30 jours après la validation) : rien n'est supprimé.
+            await using (var db = _pg.CreateContext())
+                await Verification(db).PurgeExpiredIdentityFilesAsync(DateTime.UtcNow.AddDays(29));
+            Assert.All(refs, r => Assert.True(_files.Files.ContainsKey(r)));
+            // Au terme : fichiers supprimés du stockage privé, références retirées.
+            await using (var db = _pg.CreateContext())
+                Assert.True(await Verification(db).PurgeExpiredIdentityFilesAsync(DateTime.UtcNow.AddDays(31)) >= 2);
+            Assert.All(refs, r => Assert.False(_files.Files.ContainsKey(r)));
+            await using (var db = _pg.CreateContext())
+                Assert.False(await db.TutorIdentityFilePurges.AnyAsync(f => refs.Contains(f.FileRef)));
         }
     }
 }

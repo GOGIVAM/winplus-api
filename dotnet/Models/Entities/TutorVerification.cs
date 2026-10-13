@@ -82,6 +82,35 @@ public class TutorIdentityCheck
     public TutorProfile? TutorProfile { get; set; }
 }
 
+/// <summary>
+/// Lot 9.5 (17.17) : fichier d'identité dont la ligne <see cref="TutorIdentityCheck"/>
+/// a disparu (compte supprimé : suppression en cascade Users → TutorProfiles →
+/// TutorIdentityChecks). Sans cette trace, le fichier privé deviendrait
+/// orphelin et ne serait jamais purgé. Rempli par le déclencheur PostgreSQL
+/// « TRG_TutorIdentityChecks_QueueFilePurge » (posé par
+/// SQL_TutorInPersonVerificationDelivery.sql) AVANT la suppression de la
+/// ligne, quel que soit le chemin de suppression. La tâche de purge
+/// (PurgeExpiredIdentityFilesAsync) applique la durée normale : 30 jours après
+/// validation, 7 jours après refus ; immédiatement pour un dépôt jamais décidé.
+/// </summary>
+public class TutorIdentityFilePurge
+{
+    public int Id { get; set; }
+
+    /// <summary>Référence privée (« s3:private/… » ou « local:… »).</summary>
+    [MaxLength(500)]
+    public string FileRef { get; set; } = "";
+
+    public int? TutorIdentityCheckId { get; set; }
+
+    /// <summary>Statut de la vérification au moment de la suppression (pending, approved, rejected, superseded).</summary>
+    [MaxLength(20)]
+    public string Status { get; set; } = TutorIdentityStatuses.Pending;
+
+    public DateTime? ReviewedAt { get; set; }
+    public DateTime QueuedAt { get; set; } = DateTime.UtcNow;
+}
+
 public static class TutorIdentitySources
 {
     public const string Tutor = "tutor";

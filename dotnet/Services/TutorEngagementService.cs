@@ -728,6 +728,14 @@ public class TutorEngagementService : ITutorEngagementService
         if (e.ResponseDeadlineAt is DateTime deadline && now >= deadline)
             throw new InvalidOperationException("Le délai de réponse est dépassé : la demande va être annulée et le payeur remboursé.");
 
+        // Lot 9.5 (17.17) : engagement présentiel jamais accepté par un tuteur
+        // au présentiel suspendu : refusé d'office, remboursé intégralement.
+        if (TutorInPersonRequestCloser.MustClose(e.TutorProfile, e.Mode))
+        {
+            await new TutorInPersonRequestCloser(_context, _refunds, _ntfy, _logger).CloseEngagementAsync(e.Id);
+            throw new InvalidOperationException("Ton présentiel est suspendu : cet engagement présentiel ne peut pas être accepté. Il a été refusé et le payeur remboursé intégralement, sans frais pour toi.");
+        }
+
         e.Status = TutorEngagementStatuses.Active;
         e.RespondedAt = now;
         e.UpdatedAt = now;
@@ -1029,6 +1037,13 @@ public class TutorEngagementService : ITutorEngagementService
         await _context.SaveChangesAsync();
         await SyncSessionsAsync(e);
         var profile = e.TutorProfile ?? await _context.TutorProfiles.FirstAsync(p => p.Id == e.TutorProfileId);
+        // Lot 9.5 (17.17) : encaissé après la suspension du présentiel du
+        // tuteur : refusé et remboursé intégralement tout de suite.
+        if (TutorInPersonRequestCloser.MustClose(profile, e.Mode))
+        {
+            await new TutorInPersonRequestCloser(_context, _refunds, _ntfy, _logger).CloseEngagementAsync(e.Id);
+            return true;
+        }
         await NotifyPaidAsync(e, profile);
         return true;
     }

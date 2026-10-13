@@ -550,6 +550,15 @@ public class TutorBookingService : ITutorBookingService
         if (booking.Status != "pending_tutor_approval")
             throw new InvalidOperationException("Cette demande n'est plus en attente.");
 
+        // Lot 9.5 (17.17) : une demande présentielle ne peut pas être acceptée
+        // par un tuteur au présentiel suspendu : refusée d'office et
+        // remboursée intégralement, participants et payeur prévenus.
+        if (TutorInPersonRequestCloser.MustClose(booking.TutorProfile, booking.Mode))
+        {
+            await new TutorInPersonRequestCloser(_context, _refunds, _ntfy, _logger).CloseBookingAsync(booking.Id);
+            throw new InvalidOperationException("Ton présentiel est suspendu : cette demande présentielle ne peut pas être acceptée. Elle a été refusée et le payeur remboursé intégralement, sans frais pour toi.");
+        }
+
         booking.Status = "confirmed";
         booking.ConfirmedAt = DateTime.UtcNow;
         booking.UpdatedAt = DateTime.UtcNow;
@@ -843,6 +852,21 @@ public class TutorBookingService : ITutorBookingService
             // attente » au registre jusqu'à la fin de la fenêtre de contestation.
             booking.Status = "pending_tutor_approval";
             await _context.SaveChangesAsync();
+
+            // Lot 9.5 (17.17) : paiement lancé avant la suspension du présentiel
+            // du tuteur, encaissé après : la demande ne lui est pas proposée,
+            // elle est refusée et remboursée intégralement tout de suite.
+            if (TutorInPersonPolicy.IsInPerson(booking.Mode) && booking.TutorEngagementId == null)
+            {
+                if (booking.TutorProfile == null)
+                    await _context.Entry(booking).Reference(b => b.TutorProfile).LoadAsync();
+                if (TutorInPersonRequestCloser.MustClose(booking.TutorProfile, booking.Mode))
+                {
+                    await new TutorInPersonRequestCloser(_context, _refunds, _ntfy, _logger).CloseBookingAsync(booking.Id);
+                    await SyncWalletAsync(booking.Id);
+                    return true;
+                }
+            }
             await NotifyPaymentConfirmedAsync(booking);
         }
         else if (!wasAlreadyFinal && booking.PaymentStatus == "failed")
@@ -1072,9 +1096,15 @@ public class TutorBookingService : ITutorBookingService
         if (viewerUserId is int viewer && bookings.Count > 0)
         {
             var ids = bookings.Select(b => b.Id).ToList();
-            myRatings = await _context.TutorReviews.AsNoTracking()
-                .Where(r => ids.Contains(r.TutorBookingId) && r.StudentUserId == viewer)
-                .ToDictionaryAsync(r => r.TutorBookingId, r => r.Rating);
+            // 17.17 : pour un compte institution, l'avis déjà donné par un autre
+            // compte de la même institution compte comme le sien (un avis par institution).
+            myRatings = (await _context.TutorReviews.AsNoTracking()
+                .Where(r => ids.Contains(r.TutorBookingId)
+                            && (r.StudentUserId == viewer || (viewerInstitutionId != null && r.ReviewerInstitutionId == viewerInstitutionId)))
+                .Select(r => new { r.TutorBookingId, r.Rating, Mine = r.StudentUserId == viewer })
+                .ToListAsync())
+                .GroupBy(r => r.TutorBookingId)
+                .ToDictionary(g => g.Key, g => g.OrderByDescending(r => r.Mine).First().Rating);
             myReports = (await _context.TutorReports.AsNoTracking()
                 .Where(r => ids.Contains(r.TutorBookingId) && r.ReporterUserId == viewer)
                 .Select(r => r.TutorBookingId).ToListAsync()).ToHashSet();

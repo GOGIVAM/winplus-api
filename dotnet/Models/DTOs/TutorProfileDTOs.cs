@@ -47,6 +47,15 @@ public class TutorProfileDto
     /// <summary>Institutions qui cautionnent le tuteur (badge « Caution : … »).</summary>
     public List<string> EndorsedByInstitutions { get; set; } = new();
 
+    // ── Lot 9.5 (17.17) : choix présentiels ENREGISTRÉS, propriétaire seulement ──
+    // Conservés même si le tuteur n'est pas vérifié (ou est suspendu) ; inactifs
+    // tant que InPersonAllowed est faux, actifs d'eux-mêmes ensuite. Les champs
+    // OffersAtStudentHome/OffersAtTutorHome/OffersNeutralPlace restent les modes
+    // EFFECTIFS. null dans la vue publique.
+    public bool? SavedOffersAtStudentHome { get; set; }
+    public bool? SavedOffersAtTutorHome { get; set; }
+    public bool? SavedOffersNeutralPlace { get; set; }
+
     /// <summary>≥10 séances marquées "Effectuée".</summary>
     public bool IsExperienced { get; set; }
     /// <summary>≥80% des demandes reçues acceptées/refusées avant expiration (sur au moins 5 demandes).</summary>

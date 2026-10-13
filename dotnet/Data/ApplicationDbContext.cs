@@ -134,6 +134,7 @@ public partial class ApplicationDbContext : DbContext
     public DbSet<TutorReview> TutorReviews => Set<TutorReview>();
     // Lot 9.5 (suivi 17.11, 17.12, 17.16) : vérification pour le présentiel et signalements.
     public DbSet<TutorIdentityCheck> TutorIdentityChecks => Set<TutorIdentityCheck>();
+    public DbSet<TutorIdentityFilePurge> TutorIdentityFilePurges => Set<TutorIdentityFilePurge>();
     public DbSet<TutorVerificationInterview> TutorVerificationInterviews => Set<TutorVerificationInterview>();
     public DbSet<TutorInstitutionEndorsement> TutorInstitutionEndorsements => Set<TutorInstitutionEndorsement>();
     public DbSet<TutorVerificationEvent> TutorVerificationEvents => Set<TutorVerificationEvent>();
@@ -480,6 +481,9 @@ public partial class ApplicationDbContext : DbContext
             // Lot 9.5 (17.16) : un seul avis par séance ET par personne
             // (participants et payeur peuvent chacun noter la même séance).
             entity.HasIndex(e => new { e.TutorBookingId, e.StudentUserId }, "UX_TutorReviews_Booking_Author").IsUnique();
+            // 17.17 : un seul avis par séance et par institution payeuse.
+            entity.HasIndex(e => new { e.TutorBookingId, e.ReviewerInstitutionId }, "UX_TutorReviews_Booking_Institution")
+                  .IsUnique().HasFilter("\"ReviewerInstitutionId\" IS NOT NULL");
             entity.HasIndex(e => e.TutorBookingId);
             entity.HasIndex(e => e.TutorProfileId);
             entity.HasOne(e => e.TutorBooking)
@@ -506,6 +510,13 @@ public partial class ApplicationDbContext : DbContext
                   .WithMany()
                   .HasForeignKey(e => e.TutorProfileId)
                   .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TutorIdentityFilePurge>(entity =>
+        {
+            // 17.17 : fichiers d'identité d'un compte supprimé, purgés à leur échéance normale.
+            entity.ToTable("TutorIdentityFilePurges");
+            entity.HasIndex(e => e.FileRef).IsUnique();
         });
 
         modelBuilder.Entity<TutorVerificationInterview>(entity =>

@@ -27,6 +27,14 @@ public class TutorReview
     [MaxLength(20)]
     public string? ReviewerRole { get; set; }
 
+    /// <summary>
+    /// Lot 9.5 (17.17) : institution payeuse au nom de laquelle l'avis est
+    /// donné (compte institution). Un seul avis par séance et par institution,
+    /// quel que soit le compte de l'institution (index unique partiel
+    /// UX_TutorReviews_Booking_Institution). Null pour les autres auteurs.
+    /// </summary>
+    public int? ReviewerInstitutionId { get; set; }
+
     [Range(1, 5)]
     public int Rating { get; set; }
 

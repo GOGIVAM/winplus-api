@@ -117,6 +117,15 @@ public enum TutorRefundCause
     DisputeRefundFull,
     /// <summary>Litige tranché par un remboursement partiel fixé par l'admin : frais absorbés par la plateforme.</summary>
     DisputeRefundPartial,
+    /// <summary>
+    /// Lot 9.5 (17.17) : demande présentielle en attente refusée d'office parce
+    /// que le présentiel du tuteur est suspendu (seuil de signalements).
+    /// Remboursement intégral, frais absorbés par la
+    /// plateforme : mesure conservatoire automatique, sans faute établie du
+    /// tuteur avant l'examen de l'admin (règle la plus proche : litige gagné par
+    /// le payeur, et non refus du tuteur, qui lui ferait supporter les frais).
+    /// </summary>
+    InPersonBlocked,
 }
 
 /// <summary>Qui supporte les frais NotchPay d'une séance remboursée.</summary>
@@ -210,6 +219,7 @@ public static class TutorRefundRules
                 return new(cause, 100, price, fee, fee > 0 ? TutorFeeBearer.Tutor : TutorFeeBearer.None, fee, 0m);
 
             case TutorRefundCause.DisputeRefundFull:
+            case TutorRefundCause.InPersonBlocked:
                 return new(cause, 100, price, fee, fee > 0 ? TutorFeeBearer.Platform : TutorFeeBearer.None, 0m, 0m);
 
             case TutorRefundCause.DisputeRefundPartial:

@@ -130,7 +130,7 @@ public class TutorBooking
     /// <summary>Remboursement décidé (null tant qu'aucun) : instant de la décision.</summary>
     public DateTime? RefundedAt { get; set; }
 
-    /// <summary>Voir <c>TutorRefundCause</c> : payer_cancelled, tutor_cancelled, tutor_declined, tutor_no_response, dispute_full, dispute_partial.</summary>
+    /// <summary>Voir <c>TutorRefundCause</c> : payer_cancelled, tutor_cancelled, tutor_declined, tutor_no_response, dispute_full, dispute_partial, in_person_blocked (lot 9.5, 17.17).</summary>
     [MaxLength(30)]
     public string? RefundCause { get; set; }
 

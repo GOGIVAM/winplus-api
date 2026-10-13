@@ -55,7 +55,9 @@ public static class TutorFeedbackRules
 /// TutorSafety:ReportThreshold signalements (3) en TutorSafety:ReportWindowDays
 /// jours (30), le présentiel est suspendu jusqu'à l'examen d'un admin. Les
 /// séances en ligne restent possibles ; les séances présentielles futures déjà
-/// réservées ne sont PAS annulées, elles sont listées à l'admin. Seuls les
+/// réservées (confirmées) ne sont PAS annulées, elles sont listées à l'admin ;
+/// les demandes présentielles encore en attente du tuteur sont refusées et
+/// remboursées intégralement (17.17, TutorInPersonRequestCloser). Seuls les
 /// signalements postérieurs à la dernière levée comptent pour le seuil.
 /// </summary>
 public class TutorReportService : ITutorReportService
@@ -65,11 +67,13 @@ public class TutorReportService : ITutorReportService
     private readonly ITutorVerificationService _verification;
     private readonly ILogger<TutorReportService> _logger;
     private readonly TutorVerificationSettings _settings;
+    private readonly ITutorRefundService _refunds;
 
     public TutorReportService(ApplicationDbContext db, INtfyService ntfy, ITutorVerificationService verification,
-        ILogger<TutorReportService> logger, IConfiguration configuration)
+        ILogger<TutorReportService> logger, IConfiguration configuration, ITutorRefundService refunds)
     {
         _db = db;
+        _refunds = refunds;
         _ntfy = ntfy;
         _verification = verification;
         _logger = logger;
@@ -192,16 +196,32 @@ public class TutorReportService : ITutorReportService
         });
         await _db.SaveChangesAsync();
 
+        // 17.17 : les demandes présentielles encore en attente du tuteur ne
+        // peuvent plus être acceptées : refusées d'office, remboursées
+        // intégralement, élèves participants et payeur prévenus.
+        var refused = 0;
+        try
+        {
+            refused = await new TutorInPersonRequestCloser(_db, _refunds, _ntfy, _logger).CloseAllPendingAsync(tutorProfileId);
+        }
+        catch (Exception ex)
+        {
+            // La garde à l'acceptation reste en place : le tuteur ne pourra pas accepter.
+            _logger.LogError(ex, "Refus des demandes présentielles en attente non terminé (profil répétiteur {ProfileId})", tutorProfileId);
+        }
+
         var upcoming = await UpcomingInPersonAsync(tutorProfileId);
         await _ntfy.PublishAdminAsync("Présentiel suspendu automatiquement",
             $"Profil répétiteur #{tutorProfileId} : {reason} Les séances en ligne restent possibles. "
+            + (refused > 0 ? $"{refused} demande(s) présentielle(s) en attente refusée(s) d'office et remboursée(s) intégralement. " : "")
             + (upcoming.Count == 0
                 ? "Aucune séance présentielle à venir."
                 : $"{upcoming.Count} séance(s) présentielle(s) à venir déjà réservée(s), NON annulée(s) : "
                   + string.Join(", ", upcoming.Take(10).Select(b => $"#{b.BookingId} le {b.SessionDate:dd/MM}")) + (upcoming.Count > 10 ? "…" : "") + ". À examiner."),
             priority: "urgent", tags: new[] { "rotating_light" }, relatedEntityType: "TutorProfile", relatedEntityId: tutorProfileId);
         await _ntfy.PublishAsync($"winplus-user-{profile.UserId}", "Présentiel suspendu",
-            "Suite à plusieurs signalements, tes séances présentielles sont suspendues le temps qu'un membre de l'équipe WinPlus examine la situation. Tes séances en ligne restent possibles.",
+            "Suite à plusieurs signalements, tes séances présentielles sont suspendues le temps qu'un membre de l'équipe WinPlus examine la situation. Tes séances en ligne restent possibles."
+            + (refused > 0 ? $" Tes {refused} demande(s) présentielle(s) en attente ont été refusées et les payeurs remboursés intégralement, sans frais pour toi." : ""),
             userId: profile.UserId, type: "TutorVerification", relatedEntityType: "TutorProfile", relatedEntityId: tutorProfileId);
         _logger.LogWarning("Présentiel suspendu pour le profil répétiteur {ProfileId} : {Reason}", tutorProfileId, reason);
     }
