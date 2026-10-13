@@ -125,10 +125,29 @@ public class ParentReportController : ControllerBase
             .OrderByDescending(r => r.CreatedAt)
             .FirstOrDefaultAsync();
 
-        // 404 volontaire (comme la capsule) plutôt qu'un objet vide : distingue
-        // "pas encore de portefeuille calculé" (premier passage mensuel pas
-        // encore effectué) d'une vraie erreur.
-        if (report?.Content == null) return NotFound();
+        // Pas encore de portrait (le calcul mensuel ne passe que le 1er du mois) :
+        // un enfant lié en cours de mois restait sans portrait jusqu'à un mois.
+        // On calcule le premier tout de suite, enregistré comme un portrait
+        // mensuel ; les suivants restent ceux du passage mensuel.
+        if (report?.Content == null)
+        {
+            var childName = await _db.Users.AsNoTracking()
+                .Where(u => u.Id == childId)
+                .Select(u => u.FirstName)
+                .FirstOrDefaultAsync() ?? "Votre enfant";
+            var portrait = await Backend.Services.MonthlyPortfolioService.BuildPortraitAsync(
+                _db, childId, childName, DateTime.UtcNow.AddDays(-30), HttpContext.RequestAborted);
+            report = new Backend.Models.Entities.ParentReport
+            {
+                ParentId = parentId,
+                ChildId = childId,
+                ReportType = "Portefeuille",
+                Content = System.Text.Json.JsonSerializer.Serialize(portrait),
+                EmitterType = "System",
+            };
+            _db.ParentReports.Add(report);
+            await _db.SaveChangesAsync();
+        }
 
         string? regularite = null, autonomie = null, curiosite = null;
         try

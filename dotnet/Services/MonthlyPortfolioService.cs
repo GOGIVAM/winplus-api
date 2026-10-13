@@ -122,9 +122,14 @@ public sealed class MonthlyPortfolioService : BackgroundService
         _logger.LogInformation("Monthly portfolio computed for {Count}/{Total} children.", computed, childIds.Count);
     }
 
-    private sealed record Portrait(string Regularite, string Autonomie, string Curiosite);
+    internal sealed record Portrait(string Regularite, string Autonomie, string Curiosite);
 
-    private async Task<Portrait> BuildPortraitAsync(
+    /// <summary>
+    /// Calcul du portrait d'un enfant sur 30 jours. Statique : réutilisé par
+    /// ParentReportController pour produire le tout premier portrait à la
+    /// demande, sans attendre le passage mensuel.
+    /// </summary>
+    internal static async Task<Portrait> BuildPortraitAsync(
         ApplicationDbContext db, int childId, string name, DateTime cutoff30, CancellationToken ct)
     {
         // ── Régularité : jours distincts avec une activité (étude, téléchargement
