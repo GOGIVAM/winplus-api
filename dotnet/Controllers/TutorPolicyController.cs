@@ -22,9 +22,9 @@ public class TutorPolicyController : ControllerBase
 {
     private readonly TutorPolicySettings _settings;
 
-    public TutorPolicyController(IConfiguration configuration)
+    public TutorPolicyController(IConfiguration configuration, IPlatformSettings? platformSettings = null)
     {
-        _settings = TutorPolicySettings.From(configuration);
+        _settings = TutorPolicySettings.From(configuration, platformSettings);
     }
 
     [HttpGet]

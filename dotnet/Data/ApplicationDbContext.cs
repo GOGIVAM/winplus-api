@@ -1934,5 +1934,8 @@ modelBuilder.Entity<Exam>(entity =>
 
         // ── Programme d'affiliation (voir ApplicationDbContext.Affiliate.cs) ──
         OnModelCreatingAffiliate(modelBuilder);
+
+        // ── Lot 9.7a : administration (voir ApplicationDbContext.Admin.cs) ──
+        OnModelCreatingAdmin(modelBuilder);
     }
 }

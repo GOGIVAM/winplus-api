@@ -70,14 +70,14 @@ public class TutorReportService : ITutorReportService
     private readonly ITutorRefundService _refunds;
 
     public TutorReportService(ApplicationDbContext db, INtfyService ntfy, ITutorVerificationService verification,
-        ILogger<TutorReportService> logger, IConfiguration configuration, ITutorRefundService refunds)
+        ILogger<TutorReportService> logger, IConfiguration configuration, ITutorRefundService refunds, IPlatformSettings? platformSettings = null)
     {
         _db = db;
         _refunds = refunds;
         _ntfy = ntfy;
         _verification = verification;
         _logger = logger;
-        _settings = TutorVerificationSettings.From(configuration);
+        _settings = TutorVerificationSettings.From(configuration, platformSettings);
     }
 
     public List<TutorReportReasonDto> GetReasons() =>

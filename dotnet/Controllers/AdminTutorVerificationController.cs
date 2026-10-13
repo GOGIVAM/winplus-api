@@ -27,10 +27,12 @@ public class AdminTutorVerificationController : ControllerBase
     private readonly ITutorReportService _reports;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<AdminTutorVerificationController> _logger;
+    private readonly IAdminAuditService _audit;
 
     public AdminTutorVerificationController(ITutorVerificationService verification, ITutorReportService reports,
-        IHttpClientFactory httpClientFactory, ILogger<AdminTutorVerificationController> logger)
+        IHttpClientFactory httpClientFactory, ILogger<AdminTutorVerificationController> logger, IAdminAuditService audit)
     {
+        _audit = audit;
         _verification = verification;
         _reports = reports;
         _httpClientFactory = httpClientFactory;
@@ -45,6 +47,16 @@ public class AdminTutorVerificationController : ControllerBase
         try { return Ok(await action()); }
         catch (UnauthorizedAccessException ex) { return StatusCode(403, new { message = ex.Message }); }
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    /// <summary>Lot 9.7a (18.3) : même exécution, puis une ligne au journal d'audit si l'action a réussi.</summary>
+    private async Task<ActionResult> RunAudited<T>(Func<Task<T>> action, string auditAction, string targetType, int targetId,
+        object? after = null, string? reason = null)
+    {
+        var result = await Run(action);
+        if (result is OkObjectResult)
+            await this.AuditAsync(_audit, auditAction, targetType, targetId, after: after, reason: reason);
+        return result;
     }
 
     // ── Pièce d'identité + selfie ──
@@ -71,11 +83,13 @@ public class AdminTutorVerificationController : ControllerBase
     }
 
     [HttpPost("identity-checks/{id:int}/approve")]
-    public Task<ActionResult> ApproveIdentity(int id) => Run(() => _verification.ReviewIdentityAsync(User.GetUserId(), id, true, null));
+    public Task<ActionResult> ApproveIdentity(int id) => RunAudited(() => _verification.ReviewIdentityAsync(User.GetUserId(), id, true, null),
+        Backend.Models.Entities.AdminAuditActions.TutorIdentityDecided, "TutorIdentityCheck", id, new { decision = "approved" });
 
     [HttpPost("identity-checks/{id:int}/reject")]
     public Task<ActionResult> RejectIdentity(int id, [FromBody] ReasonRequestDto request) =>
-        Run(() => _verification.ReviewIdentityAsync(User.GetUserId(), id, false, request?.Reason));
+        RunAudited(() => _verification.ReviewIdentityAsync(User.GetUserId(), id, false, request?.Reason),
+            Backend.Models.Entities.AdminAuditActions.TutorIdentityDecided, "TutorIdentityCheck", id, new { decision = "rejected" }, request?.Reason);
 
     // ── Entretiens ──
 
@@ -95,7 +109,8 @@ public class AdminTutorVerificationController : ControllerBase
 
     [HttpPost("interviews/{id:int}/complete")]
     public Task<ActionResult> Complete(int id, [FromBody] CompleteInterviewDto request) =>
-        Run(() => _verification.CompleteInterviewAsync(User.GetUserId(), id, request));
+        RunAudited(() => _verification.CompleteInterviewAsync(User.GetUserId(), id, request),
+            Backend.Models.Entities.AdminAuditActions.TutorInterviewCompleted, "TutorInterview", id, request);
 
     /// <summary>L'agent joint au dossier la pièce d'identité et le selfie pris pendant l'entretien.</summary>
     [HttpPost("interviews/{id:int}/identity")]
@@ -201,7 +216,8 @@ public class AdminTutorVerificationController : ControllerBase
 
     [HttpPost("endorsements/{id:int}/revoke")]
     public Task<ActionResult> RevokeEndorsement(int id, [FromBody] ReasonRequestDto request) =>
-        Run(() => _verification.RevokeEndorsementAsync(User.GetUserId(), id, request?.Reason, asAdmin: true));
+        RunAudited(() => _verification.RevokeEndorsementAsync(User.GetUserId(), id, request?.Reason, asAdmin: true),
+            Backend.Models.Entities.AdminAuditActions.TutorEndorsementRevoked, "TutorEndorsement", id, reason: request?.Reason);
 
     // ── Signalements, suspensions, historique, contrôle ──
 
@@ -211,7 +227,8 @@ public class AdminTutorVerificationController : ControllerBase
 
     [HttpPost("reports/{id:int}/review")]
     public Task<ActionResult> ReviewReport(int id, [FromBody] ReasonRequestDto request) =>
-        Run(() => _reports.MarkReviewedAsync(User.GetUserId(), id, request?.Reason));
+        RunAudited(() => _reports.MarkReviewedAsync(User.GetUserId(), id, request?.Reason),
+            Backend.Models.Entities.AdminAuditActions.TutorReportReviewed, "TutorReport", id, reason: request?.Reason);
 
     [HttpGet("suspensions")]
     public Task<ActionResult> Suspensions() => Run(() => _reports.GetSuspendedAsync());
@@ -221,7 +238,8 @@ public class AdminTutorVerificationController : ControllerBase
 
     [HttpPost("tutors/{tutorProfileId:int}/lift-suspension")]
     public Task<ActionResult> LiftSuspension(int tutorProfileId, [FromBody] ReasonRequestDto request) =>
-        Run(() => _reports.LiftSuspensionAsync(User.GetUserId(), tutorProfileId, request?.Reason));
+        RunAudited(() => _reports.LiftSuspensionAsync(User.GetUserId(), tutorProfileId, request?.Reason),
+            Backend.Models.Entities.AdminAuditActions.TutorSuspensionLifted, "TutorProfile", tutorProfileId, reason: request?.Reason);
 
     /// <summary>Contrôle : séances présentielles à venir avec un tuteur non vérifié ou suspendu (non annulées).</summary>
     [HttpGet("in-person-control")]

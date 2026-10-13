@@ -16,10 +16,37 @@ public class TutorProfileService : ITutorProfileService
     private readonly ApplicationDbContext _context;
     private readonly ILogger<TutorProfileService> _logger;
 
-    public TutorProfileService(ApplicationDbContext context, ILogger<TutorProfileService> logger)
+    private readonly IStorageService? _storage;
+
+    public TutorProfileService(ApplicationDbContext context, ILogger<TutorProfileService> logger, IStorageService? storage = null)
     {
         _context = context;
         _logger = logger;
+        _storage = storage;
+    }
+
+    /// <summary>
+    /// Lot 9.7a (18.1) : le lien d'un diplôme est rendu cliquable dans la
+    /// console d'administration. Il n'est accepté que s'il pointe en https
+    /// vers le stockage de la plateforme (même hôte que les fichiers envoyés
+    /// par l'écran de dépôt), jamais vers une adresse saisie librement.
+    /// </summary>
+    public static bool IsAllowedDocumentUrl(string? url, string? storageHost)
+    {
+        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri)) return false;
+        if (uri.Scheme != Uri.UriSchemeHttps) return false;
+        // Stockage S3 de la plateforme, ou repli local servi par le domaine WinPlus.
+        if (uri.Host.Equals("winplus.cm", StringComparison.OrdinalIgnoreCase)
+            || uri.Host.EndsWith(".winplus.cm", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.IsNullOrWhiteSpace(storageHost)) return true;
+        return string.Equals(uri.Host, storageHost, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string? StorageHost()
+    {
+        if (_storage == null) return null;
+        try { return Uri.TryCreate(_storage.PublicUrl("probe"), UriKind.Absolute, out var u) ? u.Host : null; }
+        catch { return null; }
     }
 
     private async Task<TutorProfile> GetOrCreateEntityAsync(int userId)
@@ -323,6 +350,9 @@ public class TutorProfileService : ITutorProfileService
         // Postgres échouer sur "value too long for type character varying(500)".
         if (documentUrl.Length > 500)
             throw new InvalidOperationException("Le lien du document est invalide (trop long).");
+        if (!IsAllowedDocumentUrl(documentUrl, StorageHost()))
+            throw new InvalidOperationException("Le document doit être envoyé depuis l'écran de dépôt (lien https du stockage WinPlus).");
+        documentUrl = documentUrl.Trim();
 
         var profile = await GetOrCreateEntityAsync(userId);
         var doc = new TutorVerificationDocument
@@ -470,7 +500,7 @@ public class TutorProfileService : ITutorProfileService
             .GroupBy(b => b.TutorProfileId).Select(g => new { g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.Key, x => x.Count);
         var ratingStats = await _context.TutorReviews
-            .Where(r => candidateIds.Contains(r.TutorProfileId))
+            .Where(r => candidateIds.Contains(r.TutorProfileId) && !r.IsHiddenByModeration)
             .GroupBy(r => r.TutorProfileId)
             .Select(g => new { g.Key, Avg = g.Average(r => (double)r.Rating), Count = g.Count() })
             .ToDictionaryAsync(x => x.Key, x => (x.Avg, x.Count));
@@ -590,7 +620,7 @@ public class TutorProfileService : ITutorProfileService
         var isHighlyResponsive = sample >= MinRespondedSampleForReactivity && (double)respondedCount / sample >= HighlyResponsiveThreshold;
 
         var ratings = await _context.TutorReviews
-            .Where(r => r.TutorProfileId == tutorProfileId)
+            .Where(r => r.TutorProfileId == tutorProfileId && !r.IsHiddenByModeration)
             .Select(r => r.Rating)
             .ToListAsync();
 

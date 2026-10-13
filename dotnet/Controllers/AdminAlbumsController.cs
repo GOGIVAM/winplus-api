@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Services;
 using Backend.Extensions;
+using Backend.Models.Entities;
 
 namespace Backend.Controllers;
 
@@ -33,12 +34,24 @@ public class AdminAlbumsController : ControllerBase
     private readonly ApplicationDbContext _db;
     private readonly IYearlyAlbumService _albumService;
     private readonly ILogger<AdminAlbumsController> _logger;
+    private readonly IAdminAuditService _audit;
+    private readonly INtfyService _ntfy;
 
-    public AdminAlbumsController(ApplicationDbContext db, IYearlyAlbumService albumService, ILogger<AdminAlbumsController> logger)
+    public AdminAlbumsController(ApplicationDbContext db, IYearlyAlbumService albumService, ILogger<AdminAlbumsController> logger,
+        IAdminAuditService audit, INtfyService ntfy)
     {
         _db = db;
         _albumService = albumService;
         _logger = logger;
+        _audit = audit;
+        _ntfy = ntfy;
+    }
+
+    /// <summary>Libellé canonique « 2024-2025 » (null si mal formé).</summary>
+    private static string? Canonical(string? schoolYear)
+    {
+        var c = YearlyAlbumService.NormalizeSchoolYear(schoolYear ?? string.Empty);
+        return c == null ? null : $"{c.Value.Start}-{c.Value.End}";
     }
 
     [HttpPost("generate")]
@@ -114,6 +127,8 @@ public class AdminAlbumsController : ControllerBase
 
         _logger.LogInformation("Yearly albums generated: {Success}/{Total} parents, {EdgeCases} edge case(s).",
             successCount, eligibleParentIds.Count, edgeCases.Count);
+        await this.AuditAsync(_audit, AdminAuditActions.AlbumGenerated, "AlbumSchedule", Canonical(request.SchoolYear),
+            after: new { dryRun = false, parents = eligibleParentIds.Count, successCount });
 
         return Ok(new
         {
@@ -172,12 +187,17 @@ public class AdminAlbumsController : ControllerBase
         if (YearlyAlbumService.NormalizeSchoolYear(request.SchoolYear) == null)
             return BadRequest(new { error = $"Année scolaire mal formée : « {request.SchoolYear} ». Format attendu : 2024-2025." });
 
-        var existing = await _db.AlbumSchedules.FirstOrDefaultAsync(s => s.SchoolYear == request.SchoolYear);
+        // Lot 9.7a : l'année est enregistrée sous sa forme canonique (« 2024-2025 ») :
+        // la diffusion et l'aperçu la cherchent sous cette forme, une saisie
+        // « 24-25 » créait un paramétrage introuvable au moment de diffuser.
+        var schoolYear = Canonical(request.SchoolYear)!;
+        var existing = await _db.AlbumSchedules.FirstOrDefaultAsync(s => s.SchoolYear == schoolYear || s.SchoolYear == request.SchoolYear);
         if (existing != null)
         {
             if (existing.Status != "Pending")
                 return Conflict(new { error = $"Le paramétrage de {request.SchoolYear} est déjà « {existing.Status} » : il ne peut plus être modifié." });
 
+            existing.SchoolYear = schoolYear;
             existing.TriggerDate = request.TriggerDate;
             existing.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
@@ -186,7 +206,7 @@ public class AdminAlbumsController : ControllerBase
 
         var schedule = new Models.Entities.AlbumSchedule
         {
-            SchoolYear = request.SchoolYear,
+            SchoolYear = schoolYear,
             TriggerDate = request.TriggerDate,
             Status = "Pending",
             CreatedByUserId = User.GetUserId(),
@@ -258,7 +278,7 @@ public class AdminAlbumsController : ControllerBase
             return BadRequest(new { error = $"Année scolaire mal formée : « {request.SchoolYear} »." });
         var canonicalLabel = $"{canonical.Value.Start}-{canonical.Value.End}";
 
-        var schedule = await _db.AlbumSchedules.FirstOrDefaultAsync(s => s.SchoolYear == canonicalLabel);
+        var schedule = await _db.AlbumSchedules.FirstOrDefaultAsync(s => s.SchoolYear == canonicalLabel || s.SchoolYear == request.SchoolYear);
         if (schedule == null || schedule.Status != "PreviewGenerated")
             return Conflict(new { error = "Aucun aperçu en attente de diffusion pour cette année scolaire (déjà diffusé, ou pas encore généré)." });
 
@@ -288,7 +308,30 @@ public class AdminAlbumsController : ControllerBase
 
         _logger.LogInformation("Admin {AdminId} a confirmé la diffusion de l'album {SchoolYear} à {Count} parent(s).",
             User.GetUserId(), canonicalLabel, toDispatch.Count);
+        await this.AuditAsync(_audit, AdminAuditActions.AlbumDispatched, "AlbumSchedule", schedule.Id, canonicalLabel,
+            after: new { dispatched = toDispatch.Count });
 
         return Ok(new { schoolYear = canonicalLabel, dispatchedCount = toDispatch.Count });
+    }
+
+    /// <summary>
+    /// Lot 9.7a : « Générer l'aperçu » tout de suite, sans attendre la date
+    /// programmée (même traitement que la tâche planifiée, une seule fois par
+    /// paramétrage : un paramétrage déjà généré ou diffusé est refusé).
+    /// </summary>
+    [HttpPost("schedule/{id:int}/generate-preview")]
+    public async Task<IActionResult> GeneratePreviewNow(int id, CancellationToken ct)
+    {
+        var schedule = await _db.AlbumSchedules.FirstOrDefaultAsync(s => s.Id == id, ct);
+        if (schedule == null) return NotFound(new { error = "Paramétrage introuvable." });
+        if (schedule.Status != "Pending")
+            return Conflict(new { error = $"L'aperçu de {schedule.SchoolYear} est déjà « {schedule.Status} »." });
+
+        var result = await YearlyAlbumSchedulerService.GeneratePreviewAsync(_db, _albumService, _ntfy, _logger, schedule, ct);
+        if (result == null)
+            return Conflict(new { error = "L'aperçu a déjà été lancé par ailleurs." });
+        await this.AuditAsync(_audit, AdminAuditActions.AlbumGenerated, "AlbumSchedule", schedule.Id, schedule.SchoolYear,
+            after: new { dryRun = true, result.Value.Success, result.Value.Failures, result.Value.Total });
+        return Ok(new { schoolYear = schedule.SchoolYear, status = "PreviewGenerated", successCount = result.Value.Success, failureCount = result.Value.Failures, parents = result.Value.Total });
     }
 }

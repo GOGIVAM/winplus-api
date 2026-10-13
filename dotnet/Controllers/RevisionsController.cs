@@ -23,8 +23,16 @@ public class RevisionsController : ControllerBase
     private readonly INtfyService _ntfy;
     private readonly ILogger<RevisionsController> _logger;
 
-    public RevisionsController(IRevisionService revisionService, ApplicationDbContext context, IStorageService storage, INtfyService ntfy, ILogger<RevisionsController> logger)
+    private readonly IAdminAuditService? _audit;
+
+    /// <summary>Lot 9.7a (18.3) : publication, dépublication et suppression par l'admin journalisées.</summary>
+    private Task AuditAsync(string action, int id, object after) =>
+        _audit == null ? Task.CompletedTask : this.AuditAsync(_audit, action, "Revision", id, after: after);
+
+    public RevisionsController(IRevisionService revisionService, ApplicationDbContext context, IStorageService storage, INtfyService ntfy, ILogger<RevisionsController> logger,
+        IAdminAuditService? audit = null)
     {
+        _audit = audit;
         _revisionService = revisionService;
         _context = context;
         _storage = storage;
@@ -40,6 +48,9 @@ public class RevisionsController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<RevisionDto>), 200)]
     public async Task<ActionResult<IEnumerable<RevisionDto>>> GetAllRevisions([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
+        // Lot 9.7a (18.1) : route publique, taille de page plafonnée.
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var revisions = await _revisionService.GetAllRevisionsAsync(page, pageSize);
         return Ok(revisions);
     }
@@ -80,6 +91,9 @@ public class RevisionsController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<RevisionDto>), 200)]
     public async Task<ActionResult<IEnumerable<RevisionDto>>> GetRevisionsBySubject(string subject, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
+        // Lot 9.7a (18.1) : route publique, taille de page plafonnée.
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var revisions = await _revisionService.GetRevisionsBySubjectAsync(subject, page, pageSize);
         return Ok(revisions);
     }
@@ -91,6 +105,9 @@ public class RevisionsController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<RevisionDto>), 200)]
     public async Task<ActionResult<IEnumerable<RevisionDto>>> GetMyAssignedRevisions([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
+        // Lot 9.7a (18.1) : route publique, taille de page plafonnée.
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var userId = GetUserId();
         if (userId == 0)
             return Unauthorized(new { message = "User not authenticated" });
@@ -107,6 +124,9 @@ public class RevisionsController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<RevisionDto>), 200)]
     public async Task<ActionResult<IEnumerable<RevisionDto>>> SearchRevisions([FromQuery] string q, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
+        // Lot 9.7a (18.1) : route publique, taille de page plafonnée.
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var revisions = await _revisionService.SearchRevisionsAsync(q, page, pageSize);
         return Ok(revisions);
     }
@@ -119,6 +139,9 @@ public class RevisionsController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<RevisionDto>), 200)]
     public async Task<ActionResult<IEnumerable<RevisionDto>>> GetPublishedRevisions([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
+        // Lot 9.7a (18.1) : route publique, taille de page plafonnée.
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var revisions = await _revisionService.GetPublishedRevisionsAsync(page, pageSize);
         return Ok(revisions);
     }
@@ -245,6 +268,7 @@ public class RevisionsController : ControllerBase
         try
         {
             var revision = await _revisionService.PublishRevisionAsync(id);
+            await AuditAsync(Backend.Models.Entities.AdminAuditActions.LearningPublished, id, new { isPublished = true });
             return Ok(revision);
         }
         catch (KeyNotFoundException)
@@ -265,6 +289,7 @@ public class RevisionsController : ControllerBase
         try
         {
             var revision = await _revisionService.UnpublishRevisionAsync(id);
+            await AuditAsync(Backend.Models.Entities.AdminAuditActions.LearningPublished, id, new { isPublished = false });
             return Ok(revision);
         }
         catch (KeyNotFoundException)
@@ -285,6 +310,7 @@ public class RevisionsController : ControllerBase
         var result = await _revisionService.DeleteRevisionAsync(id);
         if (!result)
             return NotFound(new { message = "Revision not found" });
+        await AuditAsync(Backend.Models.Entities.AdminAuditActions.CatalogItemDeleted, id, new { deleted = true });
 
         return NoContent();
     }
@@ -423,6 +449,9 @@ public class RevisionsController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<RevisionDto>), 200)]
     public async Task<ActionResult<IEnumerable<RevisionDto>>> GetMyGeneratedRevisions([FromQuery] bool includeHidden = false, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
+        // Lot 9.7a (18.1) : route publique, taille de page plafonnée.
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var userId = GetUserId();
         if (userId == 0)
             return Unauthorized(new { message = "User not authenticated" });

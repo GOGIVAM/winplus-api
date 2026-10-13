@@ -23,10 +23,21 @@ public class PromoCodeService : IPromoCodeService
     private readonly ApplicationDbContext _context;
     private readonly ILogger<PromoCodeService> _logger;
 
-    public PromoCodeService(ApplicationDbContext context, ILogger<PromoCodeService> logger)
+    private readonly IPlatformSettings? _platformSettings;
+
+    public PromoCodeService(ApplicationDbContext context, ILogger<PromoCodeService> logger, IPlatformSettings? platformSettings = null)
     {
         _context = context;
         _logger = logger;
+        _platformSettings = platformSettings;
+    }
+
+    private static string NormalizeScope(string? scope)
+    {
+        var s = (scope ?? PromoCodeScopes.Catalog).Trim().ToLowerInvariant();
+        if (!PromoCodeScopes.IsValid(s))
+            throw new InvalidOperationException("Périmètre invalide : catalog, subscription ou all.");
+        return s;
     }
 
     public async Task<PromoCodeDto> CreatePromoCodeAsync(int adminUserId, CreatePromoCodeRequest request)
@@ -57,6 +68,7 @@ public class PromoCodeService : IPromoCodeService
                 ApplicableSubjectIds = request.ApplicableSubjectIds != null 
                     ? JsonSerializer.Serialize(request.ApplicableSubjectIds) 
                     : null,
+                AppliesTo = NormalizeScope(request.AppliesTo),
                 CreatedBy = adminUserId,
                 CreatedAt = DateTime.UtcNow
             };
@@ -90,10 +102,25 @@ public class PromoCodeService : IPromoCodeService
                 FinalAmount = request.CartTotal
             };
 
+            // Lot 9.7a (18.2) : « Codes promo » désactivables dans l'admin.
+            if (_platformSettings != null && !_platformSettings.GetBool(PlatformSettingDefinitions.PromoCodesEnabled))
+            {
+                result.ErrorMessage = "Les codes promo sont momentanément désactivés.";
+                return result;
+            }
+
             // Validations
             if (promoCode == null)
             {
                 result.ErrorMessage = "Invalid promo code";
+                return result;
+            }
+
+            // Lot 9.7a (18.7) : un code réservé aux abonnements ne réduit pas
+            // une commande du catalogue (seul appelant de cette validation).
+            if (!PromoCodeScopes.AppliesToCatalog(promoCode.AppliesTo))
+            {
+                result.ErrorMessage = "Ce code s'applique uniquement aux abonnements.";
                 return result;
             }
 
@@ -381,6 +408,7 @@ public class PromoCodeService : IPromoCodeService
             promoCode.ApplicableSubjectIds = request.ApplicableSubjectIds != null
                 ? JsonSerializer.Serialize(request.ApplicableSubjectIds)
                 : null;
+            if (request.AppliesTo != null) promoCode.AppliesTo = NormalizeScope(request.AppliesTo);
             promoCode.UpdatedAt = DateTime.UtcNow;
 
             _context.PromoCodes.Update(promoCode);
@@ -430,6 +458,7 @@ public class PromoCodeService : IPromoCodeService
             ValidUntil = promoCode.ValidUntil,
             IsActive = promoCode.IsActive,
             ApplicableSubjectIds = applicableIds,
+            AppliesTo = string.IsNullOrWhiteSpace(promoCode.AppliesTo) ? PromoCodeScopes.Catalog : promoCode.AppliesTo,
             CreatedAt = promoCode.CreatedAt
         };
     }

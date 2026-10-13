@@ -83,7 +83,7 @@ public class TutorInsightsService : ITutorInsightsService
 
         var reviews = await _context.TutorReviews
             .AsNoTracking()
-            .Where(r => r.TutorProfile!.UserId == tutorUserId && r.CreatedAt >= monthStart && r.CreatedAt < monthEnd)
+            .Where(r => r.TutorProfile!.UserId == tutorUserId && !r.IsHiddenByModeration && r.CreatedAt >= monthStart && r.CreatedAt < monthEnd)
             .ToListAsync();
 
         var bookings = await _context.TutorBookings

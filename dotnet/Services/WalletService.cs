@@ -173,7 +173,7 @@ public static class WalletSources
         [Affiliate] = new[] { WalletEntryTypes.AffiliateCommission },
         [Recharge] = new[] { WalletEntryTypes.Recharge },
         [AdminCredit] = new[] { WalletEntryTypes.AdminCredit },
-        [Purchase] = new[] { WalletEntryTypes.BalancePurchase, WalletEntryTypes.ClassAssignment, WalletEntryTypes.AllocationConsumption, WalletEntryTypes.ParentWalletPurchase, WalletEntryTypes.ContentRemovalRefund },
+        [Purchase] = new[] { WalletEntryTypes.BalancePurchase, WalletEntryTypes.ClassAssignment, WalletEntryTypes.AllocationConsumption, WalletEntryTypes.ParentWalletPurchase, WalletEntryTypes.ContentRemovalRefund, WalletEntryTypes.CatalogRefund },
         [Withdrawal] = new[] { WalletEntryTypes.WithdrawalRequested, WalletEntryTypes.WithdrawalProcessed },
         [MonthlyAllocation] = new[] { WalletEntryTypes.MonthlyAllocation, WalletEntryTypes.AllocationExpired },
     };
@@ -481,6 +481,8 @@ public class WalletService : IWalletService
     public static string CatalogSaleKey(int orderItemId) => $"catalog_sale:orderitem:{orderItemId}";
     public static string CatalogCommissionKey(int orderItemId) => $"catalog_commission:orderitem:{orderItemId}";
     public static string BalancePurchaseKey(int orderId) => $"balance_purchase:order:{orderId}";
+    public static string CatalogRefundKey(int orderId) => $"catalog_refund:order:{orderId}";
+    public static string CatalogRefundFeeKey(int orderId) => $"catalog_refund_fee:order:{orderId}";
     public static string TutoringKey(int bookingId) => $"tutoring:booking:{bookingId}";
     public static string TutoringCommissionKey(int bookingId) => $"tutoring_commission:booking:{bookingId}";
     public static string AffiliateKey(int commissionId) => $"affiliate:commission:{commissionId}";
@@ -562,6 +564,27 @@ public class WalletService : IWalletService
             var debit = await FindByKeyAsync(BalancePurchaseKey(order.Id));
             if (debit != null)
                 await ReverseAsync(debit.Id, $"Part payée par le solde restituée (commande {order.OrderNumber}, {order.Status})");
+        }
+
+        // Lot 9.7a (suivi 18.5) : remboursement approuvé par l'administration,
+        // décision figée par CatalogRefundService. Sans décision (commande
+        // remboursée avant le 9.7a, remboursée hors plateforme), rien n'est
+        // crédité. Les frais retenus vont à la trésorerie (ils compensent ceux
+        // déjà payés à NotchPay), comme pour le tutorat (9.2).
+        if (string.Equals(order.Status, "refunded", StringComparison.OrdinalIgnoreCase))
+        {
+            var decision = await _db.CatalogRefundDecisions.AsNoTracking().FirstOrDefaultAsync(d => d.OrderId == order.Id);
+            if (decision != null)
+            {
+                if (decision.RefundXaf > 0)
+                    await PostAsync(new WalletEntry(decision.BuyerUserId, WalletEntryTypes.CatalogRefund, decision.RefundXaf,
+                        CatalogRefundKey(order.Id), $"Remboursement de la commande {order.OrderNumber}",
+                        "Order", order.Id, OccurredAt: decision.DecidedAt, CreatedByUserId: decision.DecidedByUserId));
+                if (decision.FeeXaf > 0)
+                    await PostAsync(new WalletEntry(null, WalletEntryTypes.PaymentFeeRecovered, decision.FeeXaf,
+                        CatalogRefundFeeKey(order.Id), $"Frais Mobile Money retenus, remboursement de la commande {order.OrderNumber}",
+                        "Order", order.Id, OccurredAt: decision.DecidedAt));
+            }
         }
 
         await SyncWalletTopUpAsync(orderId);

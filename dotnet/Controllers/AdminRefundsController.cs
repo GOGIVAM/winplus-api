@@ -57,14 +57,20 @@ public class AdminRefundsController : ControllerBase
     private readonly IContentAccessService _contentAccess;
     private readonly ILogger<AdminRefundsController> _logger;
     private readonly IWalletService _wallet;
+    private readonly ICatalogRefundService _catalogRefunds;
+    private readonly IAdminAuditService _audit;
 
     public AdminRefundsController(
         ApplicationDbContext db,
         INtfyService ntfy,
         IContentAccessService contentAccess,
         ILogger<AdminRefundsController> logger,
-        IWalletService wallet)
+        IWalletService wallet,
+        ICatalogRefundService catalogRefunds,
+        IAdminAuditService audit)
     {
+        _catalogRefunds = catalogRefunds;
+        _audit = audit;
         _wallet = wallet;
         _db = db;
         _ntfy = ntfy;
@@ -149,16 +155,77 @@ public class AdminRefundsController : ControllerBase
     /// Aucun argent n'est renvoyé vers Mobile Money.
     /// </summary>
     [HttpPost("{orderId:int}/approve")]
-    public Task<IActionResult> Approve(int orderId) => DecideAsync(orderId, approve: true);
+    public Task<IActionResult> Approve(int orderId, [FromBody] AdminRefundDecisionRequest? request = null) =>
+        DecideAsync(orderId, approve: true, request?.Reason);
 
     /// <summary>
     /// Rejette : la commande revient en <c>completed</c>, accès et revenu
     /// restent acquis comme avant la demande.
     /// </summary>
     [HttpPost("{orderId:int}/reject")]
-    public Task<IActionResult> Reject(int orderId) => DecideAsync(orderId, approve: false);
+    public Task<IActionResult> Reject(int orderId, [FromBody] AdminRefundDecisionRequest? request = null) =>
+        DecideAsync(orderId, approve: false, request?.Reason);
 
-    private async Task<IActionResult> DecideAsync(int orderId, bool approve)
+    /// <summary>
+    /// Lot 9.7a (18.5) : montant qui sera crédité au portefeuille de
+    /// l'acheteur si la demande est approuvée (affiché avant de décider).
+    /// </summary>
+    [HttpGet("{orderId:int}/preview")]
+    public async Task<IActionResult> Preview(int orderId)
+    {
+        var decision = await _catalogRefunds.PreviewAsync(orderId);
+        return Ok(new
+        {
+            success = true,
+            data = decision == null ? null : new
+            {
+                refundXaf = decision.RefundXaf,
+                feeXaf = decision.FeeXaf,
+                balancePartXaf = decision.BalancePartXaf,
+                paymentKind = decision.PaymentKind,
+            },
+        });
+    }
+
+    /// <summary>
+    /// Lot 9.7a : historique des demandes traitées (journal d'audit), avec le
+    /// crédit réellement décidé. Paginé, plus récentes d'abord.
+    /// </summary>
+    [HttpGet("history")]
+    public async Task<IActionResult> History([FromQuery] int page = 1, [FromQuery] int pageSize = 25)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var query = _db.AdminAuditLogs.AsNoTracking()
+            .Where(a => a.Action == Backend.Models.Entities.AdminAuditActions.RefundApproved
+                     || a.Action == Backend.Models.Entities.AdminAuditActions.RefundRejected);
+        var total = await query.CountAsync();
+        var rows = await query.OrderByDescending(a => a.CreatedAt).ThenByDescending(a => a.Id)
+            .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+        var orderIds = rows.Select(r => int.TryParse(r.TargetId, out var id) ? id : 0).Where(id => id > 0).Distinct().ToList();
+        var decisions = await _db.CatalogRefundDecisions.AsNoTracking()
+            .Where(d => orderIds.Contains(d.OrderId)).ToDictionaryAsync(d => d.OrderId);
+        var items = rows.Select(r =>
+        {
+            int.TryParse(r.TargetId, out var oid);
+            decisions.TryGetValue(oid, out var d);
+            return new
+            {
+                id = r.Id,
+                orderId = oid,
+                orderNumber = r.TargetLabel,
+                decision = r.Action == Backend.Models.Entities.AdminAuditActions.RefundApproved ? "approved" : "rejected",
+                reason = r.Reason,
+                decidedBy = r.ActorEmail,
+                decidedAt = r.CreatedAt,
+                creditedXaf = d?.RefundXaf,
+                feeXaf = d?.FeeXaf,
+            };
+        }).ToList();
+        return Ok(new { success = true, data = new { items, total, page, pageSize } });
+    }
+
+    private async Task<IActionResult> DecideAsync(int orderId, bool approve, string? reason)
     {
         var targetStatus = approve ? RefundedStatus : CompletedStatus;
         try
@@ -166,6 +233,7 @@ public class AdminRefundsController : ControllerBase
             var now = DateTime.UtcNow;
             int reversedCommissions = 0;
             var revocation = RevocationResult.None();
+            Backend.Models.Entities.CatalogRefundDecision? credit = null;
 
             await using (var tx = await _db.Database.BeginTransactionAsync())
             {
@@ -208,6 +276,10 @@ public class AdminRefundsController : ControllerBase
                     // Même transaction : la décision et le retrait d'accès
                     // s'appliquent ensemble ou pas du tout.
                     revocation = await RevokeLinkedAccessAsync(orderId, now);
+
+                    // Lot 9.7a (18.5) : crédit au portefeuille de l'acheteur,
+                    // figé dans la même transaction que la décision.
+                    credit = await _catalogRefunds.DecideAsync(orderId, User.GetUserId());
                 }
 
                 await tx.CommitAsync();
@@ -247,7 +319,14 @@ public class AdminRefundsController : ControllerBase
                 revocation.Subscriptions, revocation.SubscriptionCourseEnrollments,
                 revocation.PurchasedCourseEnrollments, revocation.ClassAssignments);
 
-            await NotifyBuyerAsync(orderId, order.UserId, order.OrderNumber, order.TotalAmount, order.PaymentMethod, approve);
+            await this.AuditAsync(_audit,
+                approve ? Backend.Models.Entities.AdminAuditActions.RefundApproved : Backend.Models.Entities.AdminAuditActions.RefundRejected,
+                "Order", orderId, order.OrderNumber,
+                new { status = RefundRequestedStatus },
+                new { status = targetStatus, creditedXaf = credit?.RefundXaf, feeXaf = credit?.FeeXaf, reversedCommissions },
+                reason);
+
+            await NotifyBuyerAsync(orderId, order.UserId, order.OrderNumber, order.TotalAmount, order.PaymentMethod, approve, credit, reason);
 
             return Ok(new
             {
@@ -263,6 +342,8 @@ public class AdminRefundsController : ControllerBase
                         classAssignments = revocation.ClassAssignments,
                     },
                     warnings = revocation.Warnings,
+                    creditedXaf = credit?.RefundXaf,
+                    feeXaf = credit?.FeeXaf,
                 },
                 success = true,
             });
@@ -458,13 +539,27 @@ public class AdminRefundsController : ControllerBase
     /// Notification in-app + ntfy à l'acheteur. Un échec d'envoi ne remet pas
     /// en cause la décision déjà enregistrée.
     /// </summary>
-    private async Task NotifyBuyerAsync(int orderId, int? buyerId, string orderNumber, decimal amount, string? paymentMethod, bool approved)
+    private async Task NotifyBuyerAsync(int orderId, int? buyerId, string orderNumber, decimal amount, string? paymentMethod, bool approved,
+        Backend.Models.Entities.CatalogRefundDecision? credit = null, string? reason = null)
     {
         if (buyerId == null) return;
         try
         {
             string title, message;
-            if (approved)
+            if (approved && credit != null)
+            {
+                title = "Remboursement accepté";
+                var parts = new List<string>();
+                if (credit.RefundXaf > 0)
+                    parts.Add($"{credit.RefundXaf:0} XAF ont été crédités sur ton portefeuille WinPlus"
+                        + (credit.FeeXaf > 0 ? $" (frais Mobile Money de {credit.FeeXaf:0} XAF déduits)" : ""));
+                if (credit.BalancePartXaf > 0)
+                    parts.Add($"{credit.BalancePartXaf:0} XAF payés avec ton solde y ont été restitués");
+                message = $"Ta demande de remboursement pour la commande {orderNumber} a été acceptée. "
+                    + (parts.Count > 0 ? string.Join(" ; ", parts) + ". " : "")
+                    + "L'accès au contenu de cette commande est retiré.";
+            }
+            else if (approved)
             {
                 title = "Remboursement accepté";
                 // Commande payée sur le solde WinPlus (professeur) : le débit
@@ -477,7 +572,9 @@ public class AdminRefundsController : ControllerBase
             else
             {
                 title = "Remboursement refusé";
-                message = $"Ta demande de remboursement pour la commande {orderNumber} n'a pas été acceptée. Tu conserves l'accès au contenu acheté.";
+                message = $"Ta demande de remboursement pour la commande {orderNumber} n'a pas été acceptée"
+                    + (string.IsNullOrWhiteSpace(reason) ? "" : $" : {reason.Trim()}")
+                    + ". Tu conserves l'accès au contenu acheté.";
             }
 
             await _ntfy.PublishAsync($"winplus-user-{buyerId}", title, message,
@@ -489,3 +586,6 @@ public class AdminRefundsController : ControllerBase
         }
     }
 }
+
+/// <summary>Lot 9.7a : motif facultatif de la décision (communiqué à l'acheteur en cas de refus).</summary>
+public record AdminRefundDecisionRequest(string? Reason);

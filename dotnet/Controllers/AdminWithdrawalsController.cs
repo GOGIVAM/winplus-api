@@ -29,9 +29,12 @@ public class AdminWithdrawalsController : ControllerBase
     private readonly ApplicationDbContext _db;
     private readonly IWithdrawalService _withdrawals;
     private readonly ILogger<AdminWithdrawalsController> _logger;
+    private readonly IAdminAuditService? _audit;
 
-    public AdminWithdrawalsController(ApplicationDbContext db, IWithdrawalService withdrawals, ILogger<AdminWithdrawalsController> logger)
+    public AdminWithdrawalsController(ApplicationDbContext db, IWithdrawalService withdrawals, ILogger<AdminWithdrawalsController> logger,
+        IAdminAuditService? audit = null)
     {
+        _audit = audit;
         _db = db;
         _withdrawals = withdrawals;
         _logger = logger;
@@ -125,6 +128,9 @@ public class AdminWithdrawalsController : ControllerBase
                 : await _withdrawals.CloseAsync(id, adminId, request?.Reason ?? string.Empty);
             _logger.LogInformation("Action de secours {Action} sur le retrait {Id} par l'administrateur {AdminId}",
                 retry ? "rejeu" : "clôture", id, adminId);
+            if (_audit != null)
+                await this.AuditAsync(_audit, retry ? Backend.Models.Entities.AdminAuditActions.WithdrawalRetried : Backend.Models.Entities.AdminAuditActions.WithdrawalClosed,
+                    "Withdrawal", id, after: new { result.Status, result.AmountXaf, result.UserId }, reason: request?.Reason);
             return Ok(new { success = true, data = AdminWalletController.AdminWithdrawalDto(result) });
         }
         catch (WithdrawalRejectedException ex)

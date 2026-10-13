@@ -76,61 +76,71 @@ public sealed class YearlyAlbumSchedulerService : BackgroundService
         foreach (var schedule in due)
         {
             if (ct.IsCancellationRequested) break;
-
-            // Reconfirme l'état juste avant d'écrire : deux exécutions qui se
-            // recouperaient (plusieurs instances, ou double appel après un
-            // redémarrage rapide) ne doivent générer qu'un seul aperçu.
-            var fresh = await db.AlbumSchedules.FirstOrDefaultAsync(s => s.Id == schedule.Id && s.Status == "Pending", ct);
-            if (fresh == null) continue;
-
-            _logger.LogInformation("Génération automatique de l'aperçu d'album pour l'année scolaire {SchoolYear}.", fresh.SchoolYear);
-
-            var eligibleParentIds = await db.ParentStudentLinks.AsNoTracking()
-                .Where(l => l.Status == "accepted")
-                .Select(l => l.ParentId)
-                .Distinct()
-                .OrderBy(id => id)
-                .ToListAsync(ct);
-
-            var successCount = 0;
-            var failureCount = 0;
-
-            foreach (var parentId in eligibleParentIds)
-            {
-                if (ct.IsCancellationRequested) break;
-                try
-                {
-                    var result = await albumService.GenerateAlbumForParentAsync(
-                        parentId, fresh.SchoolYear, persist: true, ct, markPreviewPending: true);
-                    if (result.Children.Any(c => c.Success)) successCount++;
-                }
-                catch (Exception ex)
-                {
-                    failureCount++;
-                    _logger.LogWarning(ex, "Échec de génération de l'aperçu d'album pour le parent {ParentId}.", parentId);
-                }
-            }
-
-            fresh.Status = "PreviewGenerated";
-            fresh.GeneratedAt = DateTime.UtcNow;
-            fresh.UpdatedAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
-
-            // Notification admin persistée (Module 22, via le canal existant
-            // PublishAdminAsync) : sans cela, l'alerte se perdrait si aucun
-            // administrateur n'était connecté au moment de la génération
-            // ce qui ramènerait au problème de départ.
-            await _ntfy.PublishAdminAsync(
-                "Album de fin d'année : aperçu prêt",
-                $"L'aperçu de l'album {fresh.SchoolYear} a été généré pour {successCount} parent(s)" +
-                    (failureCount > 0 ? $" ({failureCount} échec(s))" : "") +
-                    ". Ouvrez l'écran Album pour le consulter et confirmer la diffusion.",
-                relatedEntityType: "AlbumSchedule",
-                relatedEntityId: fresh.Id);
-
-            _logger.LogInformation(
-                "Aperçu d'album {SchoolYear} généré : {Success}/{Total} parent(s), {Failures} échec(s).",
-                fresh.SchoolYear, successCount, eligibleParentIds.Count, failureCount);
+            await GeneratePreviewAsync(db, albumService, _ntfy, _logger, schedule, ct);
         }
+    }
+
+    /// <summary>
+    /// Génère l'aperçu d'un paramétrage (tous les parents éligibles), passe le
+    /// paramétrage en « PreviewGenerated » et prévient l'administration.
+    /// Partagé par la tâche planifiée et le bouton « Générer l'aperçu » de
+    /// l'admin (lot 9.7a). Renvoie null si le paramétrage n'est plus « Pending »
+    /// (déjà lancé par ailleurs).
+    /// </summary>
+    public static async Task<(int Success, int Failures, int Total)?> GeneratePreviewAsync(
+        ApplicationDbContext db, IYearlyAlbumService albumService, INtfyService ntfy, ILogger logger,
+        AlbumSchedule schedule, CancellationToken ct)
+    {
+        // Reconfirme l'état juste avant d'écrire : deux exécutions qui se
+        // recouperaient ne doivent générer qu'un seul aperçu.
+        var fresh = await db.AlbumSchedules.FirstOrDefaultAsync(s => s.Id == schedule.Id && s.Status == "Pending", ct);
+        if (fresh == null) return null;
+
+        logger.LogInformation("Génération de l'aperçu d'album pour l'année scolaire {SchoolYear}.", fresh.SchoolYear);
+
+        var eligibleParentIds = await db.ParentStudentLinks.AsNoTracking()
+            .Where(l => l.Status == "accepted")
+            .Select(l => l.ParentId)
+            .Distinct()
+            .OrderBy(id => id)
+            .ToListAsync(ct);
+
+        var successCount = 0;
+        var failureCount = 0;
+
+        foreach (var parentId in eligibleParentIds)
+        {
+            if (ct.IsCancellationRequested) break;
+            try
+            {
+                var result = await albumService.GenerateAlbumForParentAsync(
+                    parentId, fresh.SchoolYear, persist: true, ct, markPreviewPending: true);
+                if (result.Children.Any(c => c.Success)) successCount++;
+            }
+            catch (Exception ex)
+            {
+                failureCount++;
+                logger.LogWarning(ex, "Échec de génération de l'aperçu d'album pour le parent {ParentId}.", parentId);
+            }
+        }
+
+        fresh.Status = "PreviewGenerated";
+        fresh.GeneratedAt = DateTime.UtcNow;
+        fresh.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        // Notification admin persistée (Module 22, via PublishAdminAsync).
+        await ntfy.PublishAdminAsync(
+            "Album de fin d'année : aperçu prêt",
+            $"L'aperçu de l'album {fresh.SchoolYear} a été généré pour {successCount} parent(s)" +
+                (failureCount > 0 ? $" ({failureCount} échec(s))" : "") +
+                ". Ouvrez l'écran Album pour le consulter et confirmer la diffusion.",
+            relatedEntityType: "AlbumSchedule",
+            relatedEntityId: fresh.Id);
+
+        logger.LogInformation(
+            "Aperçu d'album {SchoolYear} généré : {Success}/{Total} parent(s), {Failures} échec(s).",
+            fresh.SchoolYear, successCount, eligibleParentIds.Count, failureCount);
+        return (successCount, failureCount, eligibleParentIds.Count);
     }
 }

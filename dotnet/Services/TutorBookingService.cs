@@ -48,12 +48,12 @@ public class TutorBookingService : ITutorBookingService
     /// <summary>Contrôles payeur / participants (lot 9.3).</summary>
     private readonly TutorBookingPartyResolver _parties;
 
-    public TutorBookingService(ApplicationDbContext context, INotchPayService notchPay, INtfyService ntfy, ILogger<TutorBookingService> logger, IWalletService wallet, IConfiguration configuration, ITutorRefundService refunds)
+    public TutorBookingService(ApplicationDbContext context, INotchPayService notchPay, INtfyService ntfy, ILogger<TutorBookingService> logger, IWalletService wallet, IConfiguration configuration, ITutorRefundService refunds, IPlatformSettings? platformSettings = null)
     {
         _wallet = wallet;
         _refunds = refunds;
         _parties = new TutorBookingPartyResolver(context);
-        _policy = TutorPolicySettings.From(configuration);
+        _policy = TutorPolicySettings.From(configuration, platformSettings);
         _context = context;
         _notchPay = notchPay;
         _ntfy = ntfy;

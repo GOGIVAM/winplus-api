@@ -83,7 +83,7 @@ public class TutorEngagementService : ITutorEngagementService
     private readonly int _maxSessionMinutes;
 
     public TutorEngagementService(ApplicationDbContext context, INotchPayService notchPay, INtfyService ntfy, ILogger<TutorEngagementService> logger,
-        IWalletService wallet, IConfiguration configuration, ITutorRefundService refunds)
+        IWalletService wallet, IConfiguration configuration, ITutorRefundService refunds, IPlatformSettings? platformSettings = null)
     {
         _context = context;
         _notchPay = notchPay;
@@ -91,7 +91,7 @@ public class TutorEngagementService : ITutorEngagementService
         _logger = logger;
         _wallet = wallet;
         _refunds = refunds;
-        _policy = TutorPolicySettings.From(configuration);
+        _policy = TutorPolicySettings.From(configuration, platformSettings);
         _parties = new TutorBookingPartyResolver(context);
         _maxSessionMinutes = TutorBookingService.MaxSessionMinutesFrom(configuration);
     }

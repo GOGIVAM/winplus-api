@@ -13,11 +13,45 @@ public class AnnouncementController : ControllerBase
 {
     private readonly IAnnouncementService _announcementService;
     private readonly ILogger<AnnouncementController> _logger;
+    private readonly IAdminAuditService _audit;
 
-    public AnnouncementController(IAnnouncementService announcementService, ILogger<AnnouncementController> logger)
+    /// <summary>Types d'affichage acceptés (lot 9.7a, 18.7).</summary>
+    private static readonly string[] AllowedTypes = { "info", "success", "warn", "critical" };
+
+    /// <summary>Rôles ciblables (lot 9.7a, 18.7).</summary>
+    private static readonly string[] AllowedRoles = { "student", "teacher", "parent", "institution" };
+
+    public AnnouncementController(IAnnouncementService announcementService, ILogger<AnnouncementController> logger, IAdminAuditService audit)
     {
         _announcementService = announcementService ?? throw new ArgumentNullException(nameof(announcementService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _audit = audit;
+    }
+
+    /// <summary>Rôles visés normalisés (« student,parent ») ; null = tout le monde.</summary>
+    private static string? NormalizeTargets(IEnumerable<string>? roles)
+    {
+        var list = (roles ?? Enumerable.Empty<string>())
+            .Select(r => (r ?? "").Trim().ToLowerInvariant())
+            .Where(r => AllowedRoles.Contains(r))
+            .Distinct()
+            .ToList();
+        return list.Count == 0 || list.Count == AllowedRoles.Length ? null : string.Join(",", list);
+    }
+
+    /// <summary>
+    /// Lot 9.7a (18.7) : une annonce ciblée n'est servie qu'aux rôles visés
+    /// (le rôle est lu dans le jeton, jamais fourni par le client) ; un
+    /// visiteur anonyme ne voit que les annonces destinées à tout le monde.
+    /// Un administrateur voit tout.
+    /// </summary>
+    public static bool IsVisibleTo(Announcement a, string? role)
+    {
+        if (string.IsNullOrWhiteSpace(a.TargetRoles)) return true;
+        if (string.Equals(role, "admin", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.IsNullOrWhiteSpace(role)) return false;
+        return a.TargetRoles.Split(",", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Contains(role.Trim().ToLowerInvariant());
     }
 
     [HttpGet]
@@ -25,7 +59,14 @@ public class AnnouncementController : ControllerBase
     {
         try
         {
-            var announcements = await _announcementService.GetPublishedAnnouncementsAsync(limit);
+            limit = Math.Clamp(limit, 1, 50);
+            var role = User?.Identity?.IsAuthenticated == true ? User.GetUserRole() : null;
+            // On lit plus large que la limite : les annonces ciblées sur d'autres
+            // rôles sont filtrées ensuite, sans réduire le nombre affiché.
+            var announcements = (await _announcementService.GetPublishedAnnouncementsAsync(200))
+                .Where(a => IsVisibleTo(a, role))
+                .Take(limit)
+                .ToList();
             return Ok(new { data = announcements, success = true });
         }
         catch (Exception ex)
@@ -87,9 +128,13 @@ public class AnnouncementController : ControllerBase
                 ExpiresAt = request.ExpiresAt.HasValue ? DateTime.SpecifyKind(request.ExpiresAt.Value, DateTimeKind.Utc) : null,
                 IsPublished = false,
                 CreatedBy = adminId,
+                Type = AllowedTypes.Contains(request.Type ?? "") ? request.Type! : "info",
+                TargetRoles = NormalizeTargets(request.TargetRoles),
             };
 
             var created = await _announcementService.CreateAnnouncementAsync(entity);
+            await this.AuditAsync(_audit, AdminAuditActions.AnnouncementCreated, "Announcement", created.Id, created.Title,
+                after: new { created.Type, created.TargetRoles, created.Priority, created.ExpiresAt });
             return CreatedAtAction(nameof(GetById), new { id = created.Id }, new { data = created, success = true });
         }
         catch (Exception ex)
@@ -109,12 +154,17 @@ public class AnnouncementController : ControllerBase
             if (existing == null)
                 return NotFound(new { success = false, error = "Announcement not found" });
 
+            var before = new { existing.Title, existing.Type, existing.TargetRoles, existing.Priority, existing.ExpiresAt };
             existing.Title = request.Title;
             existing.Content = request.Content;
             existing.Priority = request.Priority;
             existing.ExpiresAt = request.ExpiresAt.HasValue ? DateTime.SpecifyKind(request.ExpiresAt.Value, DateTimeKind.Utc) : null;
+            if (request.Type != null) existing.Type = AllowedTypes.Contains(request.Type) ? request.Type : "info";
+            if (request.TargetRoles != null) existing.TargetRoles = NormalizeTargets(request.TargetRoles);
 
             var updated = await _announcementService.UpdateAnnouncementAsync(existing);
+            await this.AuditAsync(_audit, AdminAuditActions.AnnouncementUpdated, "Announcement", id, existing.Title,
+                before, new { existing.Title, existing.Type, existing.TargetRoles, existing.Priority, existing.ExpiresAt });
             return Ok(new { data = updated, success = true });
         }
         catch (Exception ex)
@@ -133,6 +183,7 @@ public class AnnouncementController : ControllerBase
             var result = await _announcementService.DeleteAnnouncementAsync(id);
             if (!result)
                 return NotFound(new { success = false, error = "Announcement not found" });
+            await this.AuditAsync(_audit, AdminAuditActions.AnnouncementDeleted, "Announcement", id);
 
             return Ok(new { success = true, message = "Announcement deleted" });
         }
@@ -152,6 +203,7 @@ public class AnnouncementController : ControllerBase
             var result = await _announcementService.PublishAnnouncementAsync(id);
             if (!result)
                 return NotFound(new { success = false, error = "Announcement not found" });
+            await this.AuditAsync(_audit, AdminAuditActions.AnnouncementPublished, "Announcement", id);
 
             return Ok(new { success = true, message = "Announcement published" });
         }
@@ -163,9 +215,12 @@ public class AnnouncementController : ControllerBase
     }
 }
 
+/// <summary>Lot 9.7a (18.7) : <c>Type</c> et <c>TargetRoles</c> enregistrés et appliqués.</summary>
 public record AnnouncementRequest(
     string Title,
     string? Content,
     int Priority,
-    DateTime? ExpiresAt
+    DateTime? ExpiresAt,
+    string? Type = null,
+    List<string>? TargetRoles = null
 );

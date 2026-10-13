@@ -21,11 +21,14 @@ public class AdminCatalogCommissionController : ControllerBase
 {
     private readonly ICatalogCommissionService _commission;
     private readonly ILogger<AdminCatalogCommissionController> _logger;
+    private readonly IAdminAuditService _audit;
 
-    public AdminCatalogCommissionController(ICatalogCommissionService commission, ILogger<AdminCatalogCommissionController> logger)
+    public AdminCatalogCommissionController(ICatalogCommissionService commission, ILogger<AdminCatalogCommissionController> logger,
+        IAdminAuditService audit)
     {
         _commission = commission;
         _logger = logger;
+        _audit = audit;
     }
 
     public record UpdateCommissionRequest(decimal MinRatePercent, decimal MaxRatePercent);
@@ -51,7 +54,12 @@ public class AdminCatalogCommissionController : ControllerBase
         try
         {
             var userId = User.GetUserId();
+            var current = await _commission.GetSettingsAsync();
+            var before = new { current.MinRatePercent, current.MaxRatePercent };
             var s = await _commission.UpdateSettingsAsync(request.MinRatePercent, request.MaxRatePercent, userId);
+            // Lot 9.7a (18.3, 18.6) : la commission du catalogue est un réglage sensible, journalisé.
+            await this.AuditAsync(_audit, Backend.Models.Entities.AdminAuditActions.CatalogCommissionChanged, "CatalogCommission", 1,
+                "Commission du catalogue", before, new { s.MinRatePercent, s.MaxRatePercent });
             return Ok(new { s.MinRatePercent, s.MaxRatePercent, s.UpdatedAt });
         }
         catch (Exception ex)

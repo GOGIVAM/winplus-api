@@ -18,9 +18,20 @@ public class ForumController : ControllerBase
     private readonly ILogger<ForumController> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IPlatformSettings? _platformSettings;
 
-    public ForumController(IForumService forumService, INtfyService ntfyService, ILogger<ForumController> logger, IHttpClientFactory httpClientFactory, IServiceScopeFactory scopeFactory)
+    /// <summary>
+    /// Lot 9.7a (18.2) : « Publication sur le forum » réglable dans l'admin.
+    /// Désactivée, le forum reste lisible mais refuse sujets et réponses (503).
+    /// </summary>
+    private IActionResult? PostingDisabled() =>
+        _platformSettings != null && !_platformSettings.GetBool(PlatformSettingDefinitions.ForumPostingEnabled)
+            ? StatusCode(503, new { error = "La publication sur le forum est momentanément désactivée.", code = "forum_posting_disabled" })
+            : null;
+
+    public ForumController(IForumService forumService, INtfyService ntfyService, ILogger<ForumController> logger, IHttpClientFactory httpClientFactory, IServiceScopeFactory scopeFactory, IPlatformSettings? platformSettings = null)
     {
+        _platformSettings = platformSettings;
         _forumService = forumService;
         _ntfyService = ntfyService;
         _logger = logger;
@@ -136,6 +147,7 @@ public class ForumController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> CreateThread([FromBody] CreateThreadRequest request)
     {
+        if (PostingDisabled() is { } disabled) return disabled;
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
@@ -186,6 +198,7 @@ public class ForumController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> CreatePost(int id, [FromBody] CreatePostRequest request)
     {
+        if (PostingDisabled() is { } disabled) return disabled;
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 

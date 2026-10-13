@@ -87,13 +87,13 @@ public class TutorVerificationService : ITutorVerificationService
     private readonly TutorVerificationSettings _settings;
 
     public TutorVerificationService(ApplicationDbContext db, IPrivateFileStore files, INtfyService ntfy,
-        ILogger<TutorVerificationService> logger, IConfiguration configuration)
+        ILogger<TutorVerificationService> logger, IConfiguration configuration, IPlatformSettings? platformSettings = null)
     {
         _db = db;
         _files = files;
         _ntfy = ntfy;
         _logger = logger;
-        _settings = TutorVerificationSettings.From(configuration);
+        _settings = TutorVerificationSettings.From(configuration, platformSettings);
     }
 
     // ═════════════════════════════════════════════════════════════════════

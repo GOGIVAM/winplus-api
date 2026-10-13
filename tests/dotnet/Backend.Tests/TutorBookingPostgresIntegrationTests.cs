@@ -106,7 +106,7 @@ namespace Backend.Tests
                 DROP INDEX ""UX_TutorReviews_Booking_Author"";
                 DROP INDEX ""IX_TutorReviews_TutorBookingId"";
                 CREATE UNIQUE INDEX ""IX_TutorReviews_TutorBookingId"" ON ""TutorReviews""(""TutorBookingId"");");
-            foreach (var script in new[] { "SQL_TutorPayersParticipantsGroupsAndAssignments.sql", "SQL_InstitutionWalletHolderAndAttachmentConsent.sql", "SQL_TutorWeeklyMonthlyEngagements.sql", "SQL_TutorInPersonVerificationAndReports.sql", "SQL_TutorInPersonVerificationDelivery.sql" })
+            foreach (var script in new[] { "SQL_TutorPayersParticipantsGroupsAndAssignments.sql", "SQL_InstitutionWalletHolderAndAttachmentConsent.sql", "SQL_TutorWeeklyMonthlyEngagements.sql", "SQL_TutorInPersonVerificationAndReports.sql", "SQL_TutorInPersonVerificationDelivery.sql", "SQL_Admin97a.sql" })
             {
                 var sql = await File.ReadAllTextAsync(FindMigration(script));
                 await db.Database.ExecuteSqlRawAsync(sql);
@@ -117,6 +117,9 @@ namespace Backend.Tests
         public ApplicationDbContext CreateContext() =>
             new(new DbContextOptionsBuilder<ApplicationDbContext>()
                 .UseNpgsql(ConnectionString, o => o.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery))
+                // Un fournisseur interne par base jetable : au-delà de 20 classes de
+                // tests, l'avertissement EF deviendrait une erreur sans rapport avec le test.
+                .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options);
 
         private static string FindMigration(string file)

@@ -141,7 +141,7 @@ public class TutorReviewService : ITutorReviewService
 
         var reviews = await _context.TutorReviews
             .Include(r => r.Student)
-            .Where(r => r.TutorProfile!.UserId == tutorUserId)
+            .Where(r => r.TutorProfile!.UserId == tutorUserId && !r.IsHiddenByModeration)
             .OrderByDescending(r => r.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
@@ -153,7 +153,7 @@ public class TutorReviewService : ITutorReviewService
     public async Task<(double? AverageRating, int ReviewCount)> GetAggregateAsync(int tutorProfileId)
     {
         var ratings = await _context.TutorReviews
-            .Where(r => r.TutorProfileId == tutorProfileId)
+            .Where(r => r.TutorProfileId == tutorProfileId && !r.IsHiddenByModeration)
             .Select(r => r.Rating)
             .ToListAsync();
         return ratings.Count == 0 ? (null, 0) : (ratings.Average(), ratings.Count);

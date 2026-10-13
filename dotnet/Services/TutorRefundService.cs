@@ -45,13 +45,13 @@ public class TutorRefundService : ITutorRefundService
     private readonly ILogger<TutorRefundService> _logger;
     private readonly TutorPolicySettings _settings;
 
-    public TutorRefundService(ApplicationDbContext db, IWalletService wallet, INtfyService ntfy, ILogger<TutorRefundService> logger, IConfiguration configuration)
+    public TutorRefundService(ApplicationDbContext db, IWalletService wallet, INtfyService ntfy, ILogger<TutorRefundService> logger, IConfiguration configuration, IPlatformSettings? platformSettings = null)
     {
         _db = db;
         _wallet = wallet;
         _ntfy = ntfy;
         _logger = logger;
-        _settings = TutorPolicySettings.From(configuration);
+        _settings = TutorPolicySettings.From(configuration, platformSettings);
     }
 
     public static string CauseCode(TutorRefundCause cause) => cause switch

@@ -35,8 +35,12 @@ public class WithdrawalsController : ControllerBase
     private readonly IWithdrawalService _withdrawals;
     private readonly ILogger<WithdrawalsController> _logger;
 
-    public WithdrawalsController(ApplicationDbContext db, IWithdrawalService withdrawals, ILogger<WithdrawalsController> logger)
+    private readonly IAdminAuditService? _audit;
+
+    public WithdrawalsController(ApplicationDbContext db, IWithdrawalService withdrawals, ILogger<WithdrawalsController> logger,
+        IAdminAuditService? audit = null)
     {
+        _audit = audit;
         _db = db;
         _withdrawals = withdrawals;
         _logger = logger;
@@ -160,6 +164,10 @@ public class WithdrawalsController : ControllerBase
         try
         {
             var done = await _withdrawals.SettleLegacyManualAsync(id, User.GetUserId(), req.Success, req.Note);
+            // Lot 9.7a : règlement manuel d'un ancien retrait, inscrit au journal d'audit.
+            if (_audit != null)
+                await this.AuditAsync(_audit, Backend.Models.Entities.AdminAuditActions.WithdrawalClosed,
+                    "Withdrawal", id, after: new { manual = true, success = req.Success, done.Status, done.AmountXaf }, reason: req.Note);
             return Ok(new { success = true, data = ToDto(done) });
         }
         catch (WithdrawalRejectedException ex)

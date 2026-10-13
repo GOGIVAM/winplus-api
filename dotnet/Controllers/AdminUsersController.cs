@@ -130,9 +130,19 @@ public class AdminUpdateUserRequest
 public class AdminSetRoleRequest
 {
     public string Role { get; set; } = "student";
+
+    /// <summary>Lot 9.7a (18.1) : motif obligatoire, inscrit au journal d'audit.</summary>
+    public string? Reason { get; set; }
 }
 
 public class AdminSuspendRequest
+{
+    /// <summary>Lot 9.7a (18.1) : motif obligatoire, inscrit au journal d'audit.</summary>
+    public string? Reason { get; set; }
+}
+
+/// <summary>Motif d'une action sensible (réactivation, suppression).</summary>
+public class AdminReasonRequest
 {
     public string? Reason { get; set; }
 }
@@ -185,18 +195,47 @@ public class AdminUsersController : ControllerBase
     private readonly IEmailService _email;
     private readonly Microsoft.Extensions.Caching.Memory.IMemoryCache _cache;
     private readonly ILogger<AdminUsersController> _logger;
+    private readonly IAdminAuditService _audit;
+
+    /// <summary>Longueur minimale d'un motif saisi (lot 9.7a, 18.1).</summary>
+    public const int MinReasonLength = 5;
 
     public AdminUsersController(
         ApplicationDbContext db,
         IEmailService email,
         Microsoft.Extensions.Caching.Memory.IMemoryCache cache,
-        ILogger<AdminUsersController> logger)
+        ILogger<AdminUsersController> logger,
+        IAdminAuditService audit)
     {
         _db = db;
         _email = email;
         _cache = cache;
         _logger = logger;
+        _audit = audit;
     }
+
+    private static bool HasReason(string? reason) => !string.IsNullOrWhiteSpace(reason) && reason.Trim().Length >= MinReasonLength;
+
+    private IActionResult ReasonRequired() =>
+        BadRequest(new { code = "reason_required", error = $"Un motif d'au moins {MinReasonLength} caractères est obligatoire pour cette action." });
+
+    private static string Label(User u)
+    {
+        var name = $"{u.FirstName} {u.LastName}".Trim();
+        return string.IsNullOrWhiteSpace(name) ? u.Email : $"{name} ({u.Email})";
+    }
+
+    /// <summary>
+    /// Garde-fou : la plateforme garde toujours au moins un administrateur
+    /// actif. Retirer le rôle, suspendre ou supprimer le dernier est refusé.
+    /// </summary>
+    private async Task<bool> IsLastActiveAdminAsync(User user) =>
+        string.Equals(user.Role, "admin", StringComparison.OrdinalIgnoreCase)
+        && user.IsActive && !user.IsDeleted
+        && !await _db.Users.AnyAsync(u => u.Id != user.Id && u.Role == "admin" && u.IsActive && !u.IsDeleted);
+
+    private IActionResult LastAdminRefused() =>
+        Conflict(new { code = "last_admin", error = "Action refusée : ce compte est le dernier administrateur actif de la plateforme." });
 
     /// <summary>
     /// Fait prendre effet immédiatement un changement d'état de compte
@@ -592,6 +631,34 @@ public class AdminUsersController : ControllerBase
                 .ToListAsync())
             .ToDictionary(x => x.UserId, x => x.Sum);
 
+    /// <summary>
+    /// Lot 9.7a (18.8) : gains réels d'un professeur, lus dans le registre
+    /// du portefeuille (ventes catalogue, cours particuliers, affiliation,
+    /// écritures confirmées) moins leurs contre-passations. La colonne
+    /// « Revenus » affichait jusqu'ici ce que le professeur avait PAYÉ.
+    /// </summary>
+    private async Task<Dictionary<int, decimal>> EarningsMapAsync(List<int> ids)
+    {
+        var revenueTypes = new[] { WalletEntryTypes.CatalogSale, WalletEntryTypes.TutoringRevenue, WalletEntryTypes.AffiliateCommission };
+        var gross = await _db.WalletTransactions.AsNoTracking()
+            .Where(t => t.OwnerId != null && ids.Contains(t.OwnerId.Value) && t.OwnerType != WalletOwnerTypes.Platform
+                     && t.Status == WalletEntryStatus.Confirmed && revenueTypes.Contains(t.EntryType))
+            .GroupBy(t => t.OwnerId!.Value)
+            .Select(g => new { UserId = g.Key, Sum = g.Sum(t => t.Amount) })
+            .ToListAsync();
+        var reversals = await _db.WalletTransactions.AsNoTracking()
+            .Where(r => r.OwnerId != null && ids.Contains(r.OwnerId.Value) && r.EntryType == WalletEntryTypes.Reversal
+                     && r.Status == WalletEntryStatus.Confirmed
+                     && _db.WalletTransactions.Any(o => o.Id == r.ReversesEntryId && revenueTypes.Contains(o.EntryType)))
+            .GroupBy(r => r.OwnerId!.Value)
+            .Select(g => new { UserId = g.Key, Sum = g.Sum(r => r.Amount) })
+            .ToListAsync();
+        var result = gross.ToDictionary(x => x.UserId, x => x.Sum);
+        foreach (var r in reversals)
+            result[r.UserId] = result.GetValueOrDefault(r.UserId) + r.Sum;
+        return result;
+    }
+
     private async Task<Dictionary<int, int>> OrdersMapAsync(List<int> ids)
         => (await _db.Orders
                 .Where(o => o.UserId != null && ids.Contains(o.UserId!.Value) && !o.IsDeleted)
@@ -629,7 +696,8 @@ public class AdminUsersController : ControllerBase
     {
         try
         {
-            pageSize = Math.Clamp(pageSize, 1, 500);
+            if (page < 1) page = 1;
+            pageSize = Math.Clamp(pageSize, 1, 100);
             var query   = RoleQuery("teacher", status, q);
             var total   = await query.CountAsync();
             var users   = await query.OrderByDescending(u => u.CreatedAt)
@@ -640,7 +708,7 @@ public class AdminUsersController : ControllerBase
 
             var onlineMap  = await OnlineMapAsync(ids, onlineSince);
             var lastSeenMap = await LastSeenMapAsync(ids);
-            var paidMap    = await PaidMapAsync(ids);
+            var earningsMap = await EarningsMapAsync(ids);
             var ordersMap  = await OrdersMapAsync(ids);
 
             var linkedMap = await _db.TeacherStudentLinks
@@ -697,7 +765,7 @@ public class AdminUsersController : ControllerBase
                     lastLoginAt      = u.LastLoginAt,
                     status           = u.IsDeleted ? "deleted" : u.IsActive ? "active" : "suspended",
                     createdAt        = u.CreatedAt,
-                    totalRevenue     = paidMap.GetValueOrDefault(u.Id, 0m),
+                    totalRevenue     = earningsMap.GetValueOrDefault(u.Id, 0m),
                     ordersCount      = ordersMap.GetValueOrDefault(u.Id, 0),
                     linkedStudents   = linkedMap.GetValueOrDefault(u.Id, 0),
                     pendingStudents  = pendingMap.GetValueOrDefault(u.Id, 0),
@@ -728,7 +796,8 @@ public class AdminUsersController : ControllerBase
     {
         try
         {
-            pageSize = Math.Clamp(pageSize, 1, 500);
+            if (page < 1) page = 1;
+            pageSize = Math.Clamp(pageSize, 1, 100);
             var query = RoleQuery("student", status, q);
             var total = await query.CountAsync();
             var users = await query.OrderByDescending(u => u.CreatedAt)
@@ -843,7 +912,8 @@ public class AdminUsersController : ControllerBase
     {
         try
         {
-            pageSize = Math.Clamp(pageSize, 1, 500);
+            if (page < 1) page = 1;
+            pageSize = Math.Clamp(pageSize, 1, 100);
             var query = RoleQuery("parent", status, q);
             var total = await query.CountAsync();
             var users = await query.OrderByDescending(u => u.CreatedAt)
@@ -943,7 +1013,8 @@ public class AdminUsersController : ControllerBase
     {
         try
         {
-            pageSize = Math.Clamp(pageSize, 1, 500);
+            if (page < 1) page = 1;
+            pageSize = Math.Clamp(pageSize, 1, 100);
             var query = RoleQuery("institution", status, q);
             var total = await query.CountAsync();
             var users = await query.OrderByDescending(u => u.CreatedAt)
@@ -1127,6 +1198,8 @@ public class AdminUsersController : ControllerBase
         }
 
         _logger.LogInformation("Admin {AdminId} created user {UserId}", CurrentAdminId(), user.Id);
+        await this.AuditAsync(_audit, AdminAuditActions.UserCreated, "User", user.Id, Label(user),
+            after: new { user.Email, user.Role, invite = req.SendInvite });
 
         var now = DateTime.UtcNow;
         var agg = (await AggregateAsync(new List<User> { user }, now)).First();
@@ -1141,6 +1214,19 @@ public class AdminUsersController : ControllerBase
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound(new { error = "Utilisateur introuvable" });
 
+        // Lot 9.7a (18.1) : cette route ne change plus ni le rôle ni le
+        // statut. Elle le faisait sans motif, sans garde-fou, sans révoquer
+        // les sessions ni invalider le cache d'état du compte : un compte
+        // « suspendu » par ce biais gardait jusqu'à 30 s d'accès et son
+        // jeton, un rôle retiré restait dans le jeton jusqu'à son expiration.
+        // Rôle et statut passent par PUT {id}/role, POST {id}/suspend et
+        // POST {id}/reactivate, qui portent ces garde-fous et le journal.
+        if (!string.IsNullOrWhiteSpace(req.Role) && !string.Equals(req.Role, user.Role, StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { code = "use_role_endpoint", error = "Le rôle se change par l'action « Changer le rôle », avec un motif." });
+        if (!string.IsNullOrWhiteSpace(req.Status) && req.Status != ResolveStatus(user))
+            return BadRequest(new { code = "use_status_endpoint", error = "Le statut se change par les actions « Suspendre » ou « Réactiver », avec un motif." });
+
+        var before = new { user.FirstName, user.LastName, user.Email, user.Phone };
         if (req.FirstName != null) user.FirstName = req.FirstName.Trim();
         if (req.LastName != null) user.LastName = req.LastName.Trim();
         if (req.Phone != null) user.Phone = string.IsNullOrWhiteSpace(req.Phone) ? null : req.Phone.Trim();
@@ -1154,21 +1240,9 @@ public class AdminUsersController : ControllerBase
             user.Email = email;
         }
 
-        if (!string.IsNullOrWhiteSpace(req.Role))
-        {
-            var role = req.Role.ToLowerInvariant();
-            if (!AllowedRoles.Contains(role)) return BadRequest(new { error = "Rôle invalide" });
-            user.Role = role;
-        }
-
-        if (!string.IsNullOrWhiteSpace(req.Status))
-        {
-            if (req.Status == "active") user.IsActive = true;
-            else if (req.Status == "suspended") user.IsActive = false;
-            else return BadRequest(new { error = "Statut invalide" });
-        }
-
         user.UpdatedAt = DateTime.UtcNow;
+        this.AuditAdd(_audit, AdminAuditActions.UserUpdated, "User", user.Id, Label(user),
+            before, new { user.FirstName, user.LastName, user.Email, user.Phone });
         await _db.SaveChangesAsync();
 
         var now = DateTime.UtcNow;
@@ -1186,17 +1260,32 @@ public class AdminUsersController : ControllerBase
 
         var role = (req.Role ?? "").ToLowerInvariant();
         if (!AllowedRoles.Contains(role)) return BadRequest(new { error = "Rôle invalide" });
+        if (!HasReason(req.Reason)) return ReasonRequired();
+
+        var previousRole = (user.Role ?? "").ToLowerInvariant();
+        if (previousRole == role)
+            return BadRequest(new { code = "same_role", error = "Ce compte a déjà ce rôle." });
 
         // Garde-fou : ne pas se retirer soi-même les droits admin.
         if (user.Id == CurrentAdminId() && role != "admin")
             return BadRequest(new { error = "Vous ne pouvez pas retirer votre propre rôle admin" });
+        if (role != "admin" && await IsLastActiveAdminAsync(user)) return LastAdminRefused();
 
         user.Role = role;
         user.UpdatedAt = DateTime.UtcNow;
+
+        // Lot 9.7a (18.1) : le rôle est porté par le jeton. Les sessions sont
+        // révoquées et le cache d'état invalidé : la requête suivante du
+        // compte est refusée (rôle du jeton différent de la base, voir
+        // AccountStatusMiddleware) et il se reconnecte avec son nouveau rôle.
+        var revoked = await RevokeAllSessionsAsync(id);
+        this.AuditAdd(_audit, AdminAuditActions.UserRoleChanged, "User", user.Id, Label(user),
+            new { role = previousRole }, new { role, revokedSessions = revoked }, req.Reason);
         await _db.SaveChangesAsync();
+        InvalidateAccountStatus(id);
 
         _logger.LogInformation("Admin {AdminId} set role of {UserId} to {Role}", CurrentAdminId(), id, role);
-        return Ok(new { message = "Rôle mis à jour", role });
+        return Ok(new { message = "Rôle mis à jour", role, revokedSessions = revoked });
     }
 
     // ── Suspension / réactivation ───────────────────────────────────────────
@@ -1208,12 +1297,18 @@ public class AdminUsersController : ControllerBase
         if (user == null) return NotFound(new { error = "Utilisateur introuvable" });
         if (user.Id == CurrentAdminId())
             return BadRequest(new { error = "Vous ne pouvez pas suspendre votre propre compte" });
+        if (!HasReason(req?.Reason)) return ReasonRequired();
+        if (!user.IsActive)
+            return Conflict(new { code = "already_suspended", error = "Ce compte est déjà suspendu." });
+        if (await IsLastActiveAdminAsync(user)) return LastAdminRefused();
 
         user.IsActive = false;
         user.UpdatedAt = DateTime.UtcNow;
 
         // Un compte suspendu ne doit plus avoir de session ouverte.
-        await RevokeAllSessionsAsync(id);
+        var revoked = await RevokeAllSessionsAsync(id);
+        this.AuditAdd(_audit, AdminAuditActions.UserSuspended, "User", user.Id, Label(user),
+            new { status = "active" }, new { status = "suspended", revokedSessions = revoked }, req!.Reason);
         await _db.SaveChangesAsync();
 
         InvalidateAccountStatus(id);
@@ -1224,7 +1319,7 @@ public class AdminUsersController : ControllerBase
     }
 
     [HttpPost("{id:int}/reactivate")]
-    public async Task<IActionResult> Reactivate(int id)
+    public async Task<IActionResult> Reactivate(int id, [FromBody] AdminReasonRequest? req = null)
     {
         // Module 19 : un filtre de requête global exclut les comptes
         // soft-deleted de toute requête EF. Sans IgnoreQueryFilters, cette
@@ -1232,18 +1327,19 @@ public class AdminUsersController : ControllerBase
         // restaurer, et la réactivation renvoyait 404 à vie.
         var user = await _db.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound(new { error = "Utilisateur introuvable" });
+        if (user.IsActive && !user.IsDeleted)
+            return Conflict(new { code = "already_active", error = "Ce compte est déjà actif." });
 
+        var before = ResolveStatus(user);
         user.IsActive = true;
         user.IsDeleted = false;
         user.UpdatedAt = DateTime.UtcNow;
+        this.AuditAdd(_audit, AdminAuditActions.UserReactivated, "User", user.Id, Label(user),
+            new { status = before }, new { status = "active" }, req?.Reason);
         await _db.SaveChangesAsync();
         InvalidateAccountStatus(id);
         return Ok(new { message = "Compte réactivé" });
     }
-
-    /// <summary>Alias historique conservé pour compatibilité front.</summary>
-    [HttpPost("{id:int}/restore")]
-    public Task<IActionResult> Restore(int id) => Reactivate(id);
 
     // ── Suppression ─────────────────────────────────────────────────────────
 
@@ -1267,20 +1363,25 @@ public class AdminUsersController : ControllerBase
 
     /// <summary>Suppression douce : le compte reste en base, restaurable.</summary>
     [HttpDelete("{id:int}")]
-    public async Task<IActionResult> SoftDelete(int id)
+    public async Task<IActionResult> SoftDelete(int id, [FromQuery] string? reason = null)
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound(new { error = "Utilisateur introuvable" });
         if (user.Id == CurrentAdminId())
             return BadRequest(new { error = "Vous ne pouvez pas supprimer votre propre compte" });
+        if (!HasReason(reason)) return ReasonRequired();
+        if (await IsLastActiveAdminAsync(user)) return LastAdminRefused();
         if (await WalletHolderBlockAsync(id) is { } blocked) return blocked;
 
+        var before = ResolveStatus(user);
         user.IsDeleted = true;
         user.IsActive = false;
         user.DeletedByUserId = CurrentAdminId();
         user.UpdatedAt = DateTime.UtcNow;
 
         await RevokeAllSessionsAsync(id);
+        this.AuditAdd(_audit, AdminAuditActions.UserSoftDeleted, "User", user.Id, Label(user),
+            new { status = before }, new { status = "deleted" }, reason);
         await _db.SaveChangesAsync();
 
         InvalidateAccountStatus(id);
@@ -1289,13 +1390,9 @@ public class AdminUsersController : ControllerBase
         return Ok(new { message = "Compte supprimé" });
     }
 
-    /// <summary>Alias historique : POST users/{id}/delete.</summary>
-    [HttpPost("{id:int}/delete")]
-    public Task<IActionResult> SoftDeletePost(int id) => SoftDelete(id);
-
     /// <summary>Suppression définitive : purge les données liées puis le compte.</summary>
     [HttpDelete("{id:int}/hard")]
-    public async Task<IActionResult> HardDelete(int id)
+    public async Task<IActionResult> HardDelete(int id, [FromQuery] string? reason = null)
     {
         // Même cause que Reactivate (Module 19) : un compte déjà soft-deleted
         // était invisible ici, donc impossible à supprimer définitivement, y
@@ -1304,8 +1401,12 @@ public class AdminUsersController : ControllerBase
         if (user == null) return NotFound(new { error = "Utilisateur introuvable" });
         if (user.Id == CurrentAdminId())
             return BadRequest(new { error = "Vous ne pouvez pas supprimer votre propre compte" });
+        if (!HasReason(reason)) return ReasonRequired();
+        if (await IsLastActiveAdminAsync(user)) return LastAdminRefused();
         if (await WalletHolderBlockAsync(id) is { } blocked) return blocked;
 
+        var label = Label(user);
+        var snapshot = new { user.Email, user.Role, status = ResolveStatus(user), user.CreatedAt };
         await using var tx = await _db.Database.BeginTransactionAsync();
         try
         {
@@ -1319,6 +1420,8 @@ public class AdminUsersController : ControllerBase
             foreach (var o in _db.Orders.Where(o => o.UserId == id)) o.UserId = null;
 
             _db.Users.Remove(user);
+            // Même transaction : la ligne du journal survit au compte supprimé.
+            this.AuditAdd(_audit, AdminAuditActions.UserHardDeleted, "User", id, label, snapshot, null, reason);
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
 
@@ -1422,6 +1525,7 @@ public class AdminUsersController : ControllerBase
             return NotFound(new { error = "Utilisateur introuvable" });
 
         var count = await RevokeAllSessionsAsync(id);
+        this.AuditAdd(_audit, AdminAuditActions.UserSessionsRevoked, "User", id, after: new { revoked = count });
         await _db.SaveChangesAsync();
 
         _logger.LogInformation("Admin {AdminId} revoked {Count} session(s) of user {UserId}",
@@ -1619,6 +1723,8 @@ public class AdminUsersController : ControllerBase
             });
         }
 
+        this.AuditAdd(_audit, AdminAuditActions.UserSubscriptionGranted, "User", id, Label(user),
+            after: new { plan = plan.Name, months }, reason: req.Note);
         await _db.SaveChangesAsync();
 
         _logger.LogInformation(

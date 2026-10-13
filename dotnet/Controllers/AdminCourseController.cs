@@ -3,60 +3,70 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Extensions;
+using Backend.Models.Entities;
+using Backend.Services;
 
 namespace Backend.Controllers;
 
 /// <summary>
 /// Administration des formations (modération, stats).
-/// GET    /api/admin/courses           → toutes les formations (tous statuts)
+/// GET    /api/admin/courses           → formations filtrées (statut, catégorie, recherche), paginées (≤ 100)
 /// GET    /api/admin/courses/pending   → en attente de validation
 /// PUT    /api/admin/courses/{id}/approve
-/// PUT    /api/admin/courses/{id}/reject
-/// DELETE /api/admin/courses/{id}
+/// PUT    /api/admin/courses/{id}/reject   (motif obligatoire, stocké et notifié au formateur)
+/// DELETE /api/admin/courses/{id}?reason=  (archivage si la formation a des inscrits ou des achats)
 /// GET    /api/admin/courses/stats
+///
+/// Lot 9.7a (18.1) : la vérification de rôle « faite main » (lecture du claim
+/// et Forbid) est remplacée par la politique AdminOnly, comme les autres
+/// contrôleurs d'administration ; un pageSize supérieur à 100 est ramené à
+/// 100 (il retombait à 20, d'où des listes tronquées sans le dire).
 /// </summary>
 [ApiController]
-[Authorize]
+[Authorize(Policy = "AdminOnly")]
 [Route("api/admin/courses")]
 public class AdminCourseController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
     private readonly ILogger<AdminCourseController> _logger;
+    private readonly INtfyService _ntfy;
+    private readonly IAdminAuditService _audit;
 
-    public AdminCourseController(ApplicationDbContext db, ILogger<AdminCourseController> logger)
+    public AdminCourseController(ApplicationDbContext db, ILogger<AdminCourseController> logger, INtfyService ntfy, IAdminAuditService audit)
     {
         _db = db;
         _logger = logger;
+        _ntfy = ntfy;
+        _audit = audit;
     }
 
-    private IActionResult ForbidIfNotAdmin()
-    {
-        var role = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value
-                ?? User.FindFirst("role")?.Value;
-        return role == "admin" ? null! : Forbid();
-    }
+    private static (int Page, int PageSize) Paging(int page, int pageSize) =>
+        (Math.Max(1, page), Math.Clamp(pageSize, 1, 100));
 
     [HttpGet]
     public async Task<IActionResult> List(
         [FromQuery] string? status,
         [FromQuery] string? category,
+        [FromQuery] string? q,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20)
     {
-        var guard = ForbidIfNotAdmin();
-        if (guard != null) return guard;
-
         try
         {
-            if (page < 1) page = 1;
-            if (pageSize < 1 || pageSize > 100) pageSize = 20;
+            (page, pageSize) = Paging(page, pageSize);
 
-            var query = _db.Courses.AsNoTracking().Include(c => c.Instructor).AsQueryable();
+            var query = _db.Courses.AsNoTracking().AsQueryable();
 
-            if (!string.IsNullOrWhiteSpace(status))
+            if (!string.IsNullOrWhiteSpace(status) && status != "all")
                 query = query.Where(c => c.Status == status);
             if (!string.IsNullOrWhiteSpace(category))
                 query = query.Where(c => c.Category == category);
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                var term = q.Trim().ToLower();
+                query = query.Where(c => c.Title.ToLower().Contains(term)
+                    || (c.Instructor.FirstName + " " + c.Instructor.LastName).ToLower().Contains(term));
+            }
 
             var total = await query.CountAsync();
             var items = await query
@@ -68,7 +78,7 @@ public class AdminCourseController : ControllerBase
                     c.Id, c.Title, c.Slug, c.Status, c.Category, c.Level,
                     c.Price, c.IsFree, c.IsIncludedInSub,
                     c.EnrolledCount, c.AvgRating, c.ReviewsCount, c.LessonsCount,
-                    c.CreatedAt, c.PublishedAt,
+                    c.CreatedAt, c.PublishedAt, c.RejectionReason, c.ReviewedAt,
                     instructor = new
                     {
                         c.Instructor.Id,
@@ -87,70 +97,34 @@ public class AdminCourseController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error listing courses (admin)");
-            return StatusCode(500, new { error = "Internal server error" });
+            return StatusCode(500, new { error = "Erreur serveur" });
         }
     }
 
     [HttpGet("pending")]
-    public async Task<IActionResult> Pending([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
-    {
-        var guard = ForbidIfNotAdmin();
-        if (guard != null) return guard;
-
-        try
-        {
-            if (page < 1) page = 1;
-            if (pageSize < 1 || pageSize > 100) pageSize = 20;
-
-            var query = _db.Courses.AsNoTracking()
-                .Where(c => c.Status == "pending_review")
-                .Include(c => c.Instructor);
-
-            var total = await query.CountAsync();
-            var items = await query
-                .OrderBy(c => c.CreatedAt)
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .Select(c => new
-                {
-                    c.Id, c.Title, c.Slug, c.Category, c.Level,
-                    c.Price, c.IsFree, c.LessonsCount, c.CreatedAt,
-                    instructor = new
-                    {
-                        c.Instructor.Id,
-                        name = c.Instructor.FirstName + " " + c.Instructor.LastName,
-                        c.Instructor.Email,
-                    },
-                })
-                .ToListAsync();
-
-            return Ok(new
-            {
-                data = items, total, page, pageSize,
-                totalPages = (int)Math.Ceiling(total / (double)pageSize),
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error listing pending courses");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
+    public Task<IActionResult> Pending([FromQuery] int page = 1, [FromQuery] int pageSize = 20) =>
+        List("pending_review", null, null, page, pageSize);
 
     [HttpPut("{id}/approve")]
     public async Task<IActionResult> Approve(int id)
     {
-        var guard = ForbidIfNotAdmin();
-        if (guard != null) return guard;
-
         try
         {
             var course = await _db.Courses.FirstOrDefaultAsync(c => c.Id == id);
             if (course == null) return NotFound(new { error = "Formation introuvable" });
 
+            var before = course.Status;
             course.Status      = "published";
             course.PublishedAt = DateTime.UtcNow;
+            course.ReviewedAt  = DateTime.UtcNow;
+            course.ReviewedBy  = User.GetUserId();
+            course.RejectionReason = null;
+            this.AuditAdd(_audit, AdminAuditActions.CourseApproved, "Course", id, course.Title,
+                new { status = before }, new { status = course.Status });
             await _db.SaveChangesAsync();
+
+            await NotifyInstructorAsync(course, "Formation publiée",
+                $"Ta formation « {course.Title} » a été validée et est maintenant publiée.");
 
             _logger.LogInformation("Admin {AdminId} approved course {CourseId}", User.GetUserId(), id);
             return Ok(new { message = "Formation publiée", courseId = id });
@@ -158,66 +132,95 @@ public class AdminCourseController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error approving course {Id}", id);
-            return StatusCode(500, new { error = "Internal server error" });
+            return StatusCode(500, new { error = "Erreur serveur" });
         }
     }
 
     [HttpPut("{id}/reject")]
     public async Task<IActionResult> Reject(int id, [FromBody] RejectCourseRequest req)
     {
-        var guard = ForbidIfNotAdmin();
-        if (guard != null) return guard;
+        var reason = (req?.Reason ?? string.Empty).Trim();
+        if (reason.Length < AdminUsersController.MinReasonLength)
+            return BadRequest(new { code = "reason_required", error = $"Le motif du rejet est obligatoire ({AdminUsersController.MinReasonLength} caractères au moins) : il est envoyé au formateur." });
+        if (reason.Length > 1000) reason = reason[..1000];
 
         try
         {
             var course = await _db.Courses.FirstOrDefaultAsync(c => c.Id == id);
             if (course == null) return NotFound(new { error = "Formation introuvable" });
 
+            var before = course.Status;
             course.Status = "draft";
+            course.RejectionReason = reason;
+            course.ReviewedAt = DateTime.UtcNow;
+            course.ReviewedBy = User.GetUserId();
+            this.AuditAdd(_audit, AdminAuditActions.CourseRejected, "Course", id, course.Title,
+                new { status = before }, new { status = course.Status }, reason);
             await _db.SaveChangesAsync();
 
-            _logger.LogInformation("Admin {AdminId} rejected course {CourseId}: {Reason}",
-                User.GetUserId(), id, req.Reason);
+            await NotifyInstructorAsync(course, "Formation à revoir",
+                $"Ta formation « {course.Title} » n'a pas été validée. Motif : {reason}. Corrige-la puis soumets-la à nouveau.");
 
-            return Ok(new { message = "Formation rejetée", courseId = id, reason = req.Reason });
+            _logger.LogInformation("Admin {AdminId} rejected course {CourseId}: {Reason}", User.GetUserId(), id, reason);
+            return Ok(new { message = "Formation rejetée", courseId = id, reason });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error rejecting course {Id}", id);
-            return StatusCode(500, new { error = "Internal server error" });
+            return StatusCode(500, new { error = "Erreur serveur" });
         }
     }
 
+    /// <summary>
+    /// Supprime une formation sans inscrit ni achat ; une formation suivie ou
+    /// achetée est archivée (retirée du catalogue, accès des inscrits
+    /// conservé) plutôt que détruite avec les inscriptions et les commandes.
+    /// </summary>
     [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(int id)
+    public async Task<IActionResult> Delete(int id, [FromQuery] string? reason = null)
     {
-        var guard = ForbidIfNotAdmin();
-        if (guard != null) return guard;
-
+        if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length < AdminUsersController.MinReasonLength)
+            return BadRequest(new { code = "reason_required", error = $"Un motif d'au moins {AdminUsersController.MinReasonLength} caractères est obligatoire." });
         try
         {
             var course = await _db.Courses.FirstOrDefaultAsync(c => c.Id == id);
             if (course == null) return NotFound(new { error = "Formation introuvable" });
 
-            _db.Courses.Remove(course);
+            var used = await _db.CourseEnrollments.AnyAsync(e => e.CourseId == id)
+                    || await _db.OrderItems.AnyAsync(oi => oi.CourseId == id);
+            var before = course.Status;
+            if (used)
+            {
+                course.Status = "archived";
+                course.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                _db.Courses.Remove(course);
+            }
+            this.AuditAdd(_audit, AdminAuditActions.CourseDeleted, "Course", id, course.Title,
+                new { status = before }, new { status = used ? "archived" : "deleted" }, reason);
             await _db.SaveChangesAsync();
 
-            _logger.LogInformation("Admin {AdminId} deleted course {CourseId}", User.GetUserId(), id);
-            return Ok(new { message = "Formation supprimée" });
+            _logger.LogInformation("Admin {AdminId} {Action} course {CourseId}", User.GetUserId(), used ? "archived" : "deleted", id);
+            return Ok(new
+            {
+                archived = used,
+                message = used
+                    ? "Formation archivée : elle a des inscrits ou des achats, leur accès est conservé."
+                    : "Formation supprimée",
+            });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error deleting course {Id}", id);
-            return StatusCode(500, new { error = "Internal server error" });
+            return StatusCode(500, new { error = "Erreur serveur" });
         }
     }
 
     [HttpGet("stats")]
     public async Task<IActionResult> Stats()
     {
-        var guard = ForbidIfNotAdmin();
-        if (guard != null) return guard;
-
         try
         {
             var total         = await _db.Courses.CountAsync();
@@ -257,7 +260,20 @@ public class AdminCourseController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting course stats");
-            return StatusCode(500, new { error = "Internal server error" });
+            return StatusCode(500, new { error = "Erreur serveur" });
+        }
+    }
+
+    private async Task NotifyInstructorAsync(Course course, string title, string message)
+    {
+        try
+        {
+            await _ntfy.PublishAsync($"winplus-user-{course.InstructorId}", title, message,
+                userId: course.InstructorId, type: "Course", relatedEntityType: "Course", relatedEntityId: course.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Notification au formateur non envoyée (formation {CourseId})", course.Id);
         }
     }
 }

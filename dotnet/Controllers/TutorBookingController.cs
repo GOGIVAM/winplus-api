@@ -20,11 +20,16 @@ public class TutorBookingController : ControllerBase
 {
     private readonly ITutorBookingService _service;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IAdminAuditService? _audit;
+    private readonly Backend.Data.ApplicationDbContext? _db;
 
-    public TutorBookingController(ITutorBookingService service, IHttpClientFactory httpClientFactory)
+    public TutorBookingController(ITutorBookingService service, IHttpClientFactory httpClientFactory,
+        IAdminAuditService? audit = null, Backend.Data.ApplicationDbContext? db = null)
     {
         _service = service;
         _httpClientFactory = httpClientFactory;
+        _audit = audit;
+        _db = db;
     }
 
     /// <summary>
@@ -193,7 +198,49 @@ public class TutorBookingController : ControllerBase
     [Authorize(Roles = "admin")]
     public async Task<ActionResult<TutorBookingDto>> ResolveDispute(int id, [FromBody] ResolveTutorBookingDisputeRequestDto request)
     {
-        try { return Ok(await _service.ResolveDisputeAsync(User.GetUserId(), id, request.Resolution, request.Note, request.AmountXaf)); }
+        try
+        {
+            var result = await _service.ResolveDisputeAsync(User.GetUserId(), id, request.Resolution, request.Note, request.AmountXaf);
+            // Lot 9.7a (18.3) : la résolution d'un litige est inscrite au journal d'audit.
+            if (_audit != null)
+                await this.AuditAsync(_audit, Backend.Models.Entities.AdminAuditActions.TutorDisputeResolved, "TutorBooking", id,
+                    after: new { request.Resolution, request.AmountXaf }, reason: request.Note);
+            return Ok(result);
+        }
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    /// <summary>
+    /// Lot 9.7a : historique des litiges tranchés (plus récents d'abord, paginé),
+    /// pour que la décision, son auteur et son motif restent consultables.
+    /// </summary>
+    [HttpGet("disputes/history")]
+    [Authorize(Roles = "admin")]
+    public async Task<IActionResult> GetDisputeHistory([FromQuery] int page = 1, [FromQuery] int pageSize = 25)
+    {
+        if (_db == null) return StatusCode(500);
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var query = Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(_db.TutorBookings)
+            .Where(b => b.DisputeResolvedAt != null);
+        var total = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.CountAsync(query);
+        var rows = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync(
+            query.OrderByDescending(b => b.DisputeResolvedAt).Skip((page - 1) * pageSize).Take(pageSize)
+                .Select(b => new
+                {
+                    id = b.Id,
+                    subject = b.Subject,
+                    sessionDate = b.SessionDate,
+                    priceXaf = b.PriceXaf,
+                    disputeReason = b.DisputeReason,
+                    resolution = b.DisputeResolution,
+                    note = b.DisputeResolutionNote,
+                    refundAmountXaf = b.RefundAmountXaf,
+                    resolvedAt = b.DisputeResolvedAt,
+                    resolvedBy = _db.Users.Where(u => u.Id == b.DisputeResolvedByUserId).Select(u => u.Email).FirstOrDefault(),
+                    tutorName = b.TutorProfile != null && b.TutorProfile.User != null
+                        ? (b.TutorProfile.User.FirstName + " " + b.TutorProfile.User.LastName).Trim() : null,
+                }));
+        return Ok(new { items = rows, total, page, pageSize });
     }
 }

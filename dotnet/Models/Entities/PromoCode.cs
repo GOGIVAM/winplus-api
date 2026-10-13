@@ -44,7 +44,16 @@ public class PromoCode
     public bool IsActive { get; set; } = true;
     
     public string? ApplicableSubjectIds { get; set; } // JSON: [1,2,3]
-    
+
+    /// <summary>
+    /// Lot 9.7a (suivi 18.7) : périmètre du code, « catalog » (catalogue et
+    /// formations, appliqué dès ce lot), « subscription » (abonnements :
+    /// enregistré, appliqué au lot 9.7b) ou « all ». Un code « subscription »
+    /// est refusé sur une commande du catalogue.
+    /// </summary>
+    [MaxLength(20)]
+    public string AppliesTo { get; set; } = PromoCodeScopes.Catalog;
+
     public int CreatedBy { get; set; }
     
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -56,6 +65,19 @@ public class PromoCode
     public User? Creator { get; set; }
     
     public ICollection<PromoCodeUsage> Usages { get; set; } = new List<PromoCodeUsage>();
+}
+
+/// <summary>Périmètres d'un code promo (lot 9.7a, suivi 18.7).</summary>
+public static class PromoCodeScopes
+{
+    public const string Catalog = "catalog";
+    public const string Subscription = "subscription";
+    public const string All = "all";
+
+    public static bool IsValid(string? scope) => scope is Catalog or Subscription or All;
+
+    /// <summary>Le code peut-il réduire une commande du catalogue (contenus, formations) ?</summary>
+    public static bool AppliesToCatalog(string? scope) => string.IsNullOrWhiteSpace(scope) || scope == Catalog || scope == All;
 }
 
 /// <summary>

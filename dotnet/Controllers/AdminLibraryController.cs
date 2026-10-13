@@ -32,12 +32,56 @@ public class AdminLibraryController : ControllerBase
     private readonly ApplicationDbContext _db;
     private readonly ILogger<AdminLibraryController> _logger;
     private readonly IFastApiClient _fastApi;
+    private readonly ICatalogRemovalService _removal;
+    private readonly IAdminAuditService _audit;
 
-    public AdminLibraryController(ApplicationDbContext db, ILogger<AdminLibraryController> logger, IFastApiClient fastApi)
+    public AdminLibraryController(ApplicationDbContext db, ILogger<AdminLibraryController> logger, IFastApiClient fastApi,
+        ICatalogRemovalService removal, IAdminAuditService audit)
     {
         _db = db;
         _logger = logger;
         _fastApi = fastApi;
+        _removal = removal;
+        _audit = audit;
+    }
+
+    /// <summary>
+    /// Lot 9.7a : livres et vidéos mis en ligne par l'administration, pour
+    /// l'édition et la suppression depuis l'écran Upload (paginé).
+    /// </summary>
+    [HttpGet]
+    public async Task<IActionResult> List([FromQuery] string? q, [FromQuery] int page = 1, [FromQuery] int pageSize = 25)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var query = _db.Subjects.AsNoTracking()
+            .Where(s => !s.IsDeleted && s.AuthorUserId == null
+                     && !_db.Exams.Any(e => e.SubjectId == s.Id)
+                     && _db.Set<CourseContent>().Any(c => c.SubjectId == s.Id && (c.VideoUrl != null || c.DocumentUrl != null)));
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var term = q.Trim().ToLower();
+            query = query.Where(s => s.Title.ToLower().Contains(term) || (s.Category != null && s.Category.ToLower().Contains(term)));
+        }
+        var total = await query.CountAsync();
+        var items = await query.OrderByDescending(s => s.CreatedAt).Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(s => new
+            {
+                id = s.Id,
+                title = s.Title,
+                description = s.Description,
+                category = s.Category,
+                price = s.Price,
+                isPublished = s.IsPublished,
+                thumbnailUrl = s.ThumbnailUrl,
+                createdAt = s.CreatedAt,
+                contentType = _db.Set<CourseContent>().Where(c => c.SubjectId == s.Id).OrderBy(c => c.OrderIndex)
+                    .Select(c => c.VideoUrl != null ? "video" : "livre").FirstOrDefault(),
+                durationMinutes = _db.Set<CourseContent>().Where(c => c.SubjectId == s.Id).OrderBy(c => c.OrderIndex)
+                    .Select(c => (int?)c.DurationMinutes).FirstOrDefault(),
+            })
+            .ToListAsync();
+        return Ok(new { success = true, data = new { items, total, page, pageSize } });
     }
 
     public class LibraryWriteDto
@@ -139,6 +183,8 @@ public class AdminLibraryController : ControllerBase
         if (dto.ThumbnailUrl != null) subject.ThumbnailUrl = dto.ThumbnailUrl.Trim();
         if (dto.IsPublished  != null) subject.IsPublished  = dto.IsPublished.Value;
         subject.UpdatedAt = DateTime.UtcNow;
+        this.AuditAdd(_audit, AdminAuditActions.CatalogItemUpdated, "Subject", subject.Id, subject.Title,
+            after: new { dto.Title, dto.Category, dto.Price, dto.IsPublished });
 
         var content = await _db.Set<CourseContent>()
             .Where(c => c.SubjectId == id)
@@ -179,16 +225,18 @@ public class AdminLibraryController : ControllerBase
         return Ok(new { success = true, data = new { subjectId = subject.Id } });
     }
 
+    /// <summary>
+    /// Retire un livre ou une vidéo : ses acheteurs sont remboursés au
+    /// portefeuille (lot 9.7a, même règle que toute suppression de contenu).
+    /// </summary>
     [HttpDelete("{id:int}")]
-    public async Task<IActionResult> Delete(int id)
+    public async Task<IActionResult> Delete(int id, [FromQuery] string? reason = null)
     {
-        var subject = await _db.Subjects.FirstOrDefaultAsync(s => s.Id == id);
-        if (subject == null) return NotFound(new { error = "Fiche introuvable" });
-
-        subject.IsDeleted   = true;
-        subject.IsPublished = false;
-        subject.UpdatedAt   = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
-        return Ok(new { success = true });
+        var title = await _db.Subjects.AsNoTracking().Where(s => s.Id == id).Select(s => s.Title).FirstOrDefaultAsync();
+        var result = await _removal.RemoveAsync(id);
+        if (result == null) return NotFound(new { error = "Fiche introuvable" });
+        await this.AuditAsync(_audit, AdminAuditActions.CatalogItemDeleted, "Subject", id, title,
+            after: new { result.RefundedBuyers, result.RefundedXaf, result.Failures }, reason: reason);
+        return Ok(new { success = true, data = result });
     }
 }

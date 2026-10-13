@@ -24,8 +24,20 @@ public sealed record TutorPolicySettings(int DisputeWindowHours, decimal NotchPa
 
     public TimeSpan DisputeWindow => TimeSpan.FromHours(DisputeWindowHours);
 
-    public static TutorPolicySettings From(IConfiguration? configuration)
+    public static TutorPolicySettings From(IConfiguration? configuration) => From(configuration, null);
+
+    /// <summary>
+    /// Lot 9.7a (suivi 18.2) : les deux valeurs sont réglables dans l'admin
+    /// (Paramètres) ; la valeur choisie l'emporte sur la configuration, qui
+    /// reste le repli (voir <see cref="PlatformSettingDefinitions"/>).
+    /// </summary>
+    public static TutorPolicySettings From(IConfiguration? configuration, IPlatformSettings? settings)
     {
+        if (settings != null)
+            return new TutorPolicySettings(
+                Math.Clamp(settings.GetInt(PlatformSettingDefinitions.TutorDisputeWindowHours), 1, 168),
+                Math.Clamp(settings.GetDecimal(PlatformSettingDefinitions.NotchPayFeePercent), 0m, 10m));
+
         var hours = configuration?.GetValue<int?>("TutorBooking:DisputeWindowHours") ?? DefaultDisputeWindowHours;
         var fee = configuration?.GetValue<decimal?>("TutorBooking:NotchPayFeePercent") ?? DefaultNotchPayFeePercent;
         // Bornes de sécurité : une faute de frappe ne doit ni supprimer la

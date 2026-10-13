@@ -27,9 +27,16 @@ public class AdminController : ControllerBase
     private readonly IEmailService _email;
     private readonly IFastApiClient _fastApi;
     private readonly INotificationPreferenceService _notificationPreferences;
+    private readonly IAdminAuditService _audit;
+    private readonly INtfyService _ntfy;
+    private readonly IAdminEmailCampaignService _campaigns;
 
-    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ApplicationDbContext db, IConfiguration configuration, IHttpClientFactory httpClientFactory, IStorageService storage, IEmailService email, IFastApiClient fastApi, INotificationPreferenceService notificationPreferences)
+    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ApplicationDbContext db, IConfiguration configuration, IHttpClientFactory httpClientFactory, IStorageService storage, IEmailService email, IFastApiClient fastApi, INotificationPreferenceService notificationPreferences,
+        IAdminAuditService audit, INtfyService ntfy, IAdminEmailCampaignService campaigns)
     {
+        _audit = audit;
+        _ntfy = ntfy;
+        _campaigns = campaigns;
         _adminService = adminService;
         _logger = logger;
         _db = db;
@@ -43,6 +50,37 @@ public class AdminController : ControllerBase
 
     private HttpClient PyClient() => _httpClientFactory.CreateClient("FastApiClient");
 
+    private static bool HasReason(string? reason) =>
+        !string.IsNullOrWhiteSpace(reason) && reason.Trim().Length >= AdminUsersController.MinReasonLength;
+
+    private IActionResult ReasonRequired() =>
+        BadRequest(new { code = "reason_required", error = $"Un motif d'au moins {AdminUsersController.MinReasonLength} caractères est obligatoire pour cette action." });
+
+    /// <summary>Notification in-app + ntfy à l'auteur d'un contenu (décision de modération).</summary>
+    private async Task NotifyAuthorAsync(int? authorId, int subjectId, string title, string message)
+    {
+        if (authorId == null) return;
+        try
+        {
+            await _ntfy.PublishAsync($"winplus-user-{authorId}", title, message,
+                userId: authorId, type: "Content", relatedEntityType: "subject", relatedEntityId: subjectId);
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "Notification à l'auteur non envoyée (contenu {SubjectId})", subjectId); }
+    }
+
+    /// <summary>
+    /// Lot 9.7a (18.1) : un relais vers FastAPI renvoie le VRAI code HTTP de
+    /// FastAPI (il renvoyait toujours 200, y compris sur une erreur 500 ou un
+    /// refus 403, que l'écran prenait pour un succès).
+    /// </summary>
+    private static async Task<IActionResult> RelayAsync(HttpResponseMessage res)
+    {
+        var json = await res.Content.ReadAsStringAsync();
+        if (string.IsNullOrWhiteSpace(json))
+            json = res.IsSuccessStatusCode ? "{}" : "{\"error\":\"Réponse vide du service WinAI\"}";
+        return new ContentResult { Content = json, ContentType = "application/json", StatusCode = (int)res.StatusCode };
+    }
+
     private void ForwardAuth(HttpClient c)
     {
         if (Request.Headers.TryGetValue("Authorization", out var v))
@@ -50,141 +88,66 @@ public class AdminController : ControllerBase
                 System.Net.Http.Headers.AuthenticationHeaderValue.Parse(v.ToString());
     }
 
-    /// <summary>
-    /// Récupère la liste de tous les cours
-    /// </summary>
-    /// <param name="page">Numéro de page</param>
-    /// <param name="limit">Nombre de résultats par page</param>
-    /// <returns>Liste des cours</returns>
-    /// <response code="200">Cours retournés</response>
-    /// <response code="401">Non autorisé</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpGet("subjects")]
-    [ProducesResponseType(typeof(AdminSubjectListResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetAllSubjects([FromQuery] int page = 1, [FromQuery] int limit = 50)
-    {
-        try
-        {
-            var response = await _adminService.GetAllSubjectsAsync(page, limit);
-            return Ok(response);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting all subjects");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
+    // Lot 9.7a (18.9, consigne du 2026-10-13 : activer plutôt que supprimer).
+    // GET subjects est remplacée par GET /api/admin/catalog (même usage, DTO
+    // complet) et GET orders par AdminOrdersController (même route, paginée,
+    // avec détail) ; GET dashboard, pur doublon de statistics qui ajoutait un
+    // état de santé inventé (« Healthy »), est retirée. statistics et
+    // dashboard/stats sont recalculées en base et affichées par la vue globale
+    // (inventaire) et la Santé système (volumes).
 
     /// <summary>
-    /// Récupère la liste de toutes les commandes
+    /// Inventaire de la plateforme (comptes, contenus, commandes), compté en
+    /// base. Lot 9.7a : l'ancienne version passait par des dépôts génériques
+    /// et ne distinguait ni actifs, ni publiés, ni encaissés.
     /// </summary>
-    /// <param name="page">Numéro de page</param>
-    /// <param name="limit">Nombre de résultats par page</param>
-    /// <returns>Liste des commandes</returns>
-    /// <response code="200">Commandes retournées</response>
-    /// <response code="401">Non autorisé</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpGet("orders")]
-    [ProducesResponseType(typeof(AdminOrderListResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetAllOrders([FromQuery] int page = 1, [FromQuery] int limit = 50)
-    {
-        try
-        {
-            var response = await _adminService.GetAllOrdersAsync(page, limit);
-            return Ok(response);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting all orders");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
-
-    /// <summary>
-    /// Récupère les statistiques système
-    /// </summary>
-    /// <returns>Statistiques système</returns>
-    /// <response code="200">Statistiques retournées</response>
-    /// <response code="401">Non autorisé</response>
-    /// <response code="500">Erreur serveur</response>
     [HttpGet("statistics")]
-    [ProducesResponseType(typeof(AdminSystemStatsResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> GetSystemStatistics()
     {
         try
         {
-            var response = await _adminService.GetSystemStatisticsAsync();
-            return Ok(response);
+            return Ok(await BuildInventoryAsync());
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting system statistics");
-            return StatusCode(500, new { error = "Internal server error" });
+            return StatusCode(500, new { error = "Erreur serveur" });
         }
     }
 
-    // Module 41 (décision §5.5.N) : les routes POST admin/user/{userId}/block et
-    // /unblock ont été supprimées. Sans aucun appelant (web, mobile, tests,
-    // Python), elles doublonnaient la suspension d'AdminUsersController
-    // (POST /admin/users/{id}/suspend | /reactivate), qui révoque les sessions
-    // et trace l'administrateur, ce que le blocage ne faisait pas.
-
-    /// <summary>
-    /// Récupère le dashboard admin
-    /// </summary>
-    /// <returns>Données du dashboard</returns>
-    /// <response code="200">Dashboard retourné</response>
-    /// <response code="401">Non autorisé</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpGet("dashboard")]
-    [ProducesResponseType(typeof(AdminDashboardResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetDashboard()
-    {
-        try
-        {
-            var response = await _adminService.GetAdminDashboardAsync();
-            return Ok(response);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting admin dashboard");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
-
-    /// <summary>
-    /// Récupère les statistiques du dashboard
-    /// </summary>
-    /// <returns>Statistiques globales</returns>
-    /// <response code="200">Statistiques retournées</response>
-    /// <response code="401">Non autorisé</response>
-    /// <response code="500">Erreur serveur</response>
+    /// <summary>Même inventaire, enveloppé { data, success } (forme lue par la vue globale).</summary>
     [HttpGet("dashboard/stats")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> GetDashboardStats()
     {
         try
         {
-            var stats = await _adminService.GetSystemStatisticsAsync();
-            return Ok(new { data = stats, success = true });
+            return Ok(new { data = await BuildInventoryAsync(), success = true });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting dashboard stats");
-            return StatusCode(500, new { success = false, error = "Internal server error" });
+            return StatusCode(500, new { success = false, error = "Erreur serveur" });
         }
     }
 
+    private async Task<object> BuildInventoryAsync()
+    {
+        var paid = AdminMetrics.CompletedOrderStatuses;
+        return new
+        {
+            totalUsers = await _db.Users.CountAsync(u => !u.IsDeleted),
+            activeAccounts = await _db.Users.CountAsync(u => !u.IsDeleted && u.IsActive),
+            suspendedAccounts = await _db.Users.CountAsync(u => !u.IsDeleted && !u.IsActive),
+            deletedAccounts = await _db.Users.IgnoreQueryFilters().CountAsync(u => u.IsDeleted),
+            totalSubjects = await _db.Subjects.CountAsync(s => !s.IsDeleted),
+            publishedSubjects = await _db.Subjects.CountAsync(s => !s.IsDeleted && s.IsPublished),
+            totalCourses = await _db.Courses.CountAsync(),
+            publishedCourses = await _db.Courses.CountAsync(c => c.Status == "published"),
+            totalOrders = await _db.Orders.CountAsync(o => !o.IsDeleted),
+            completedOrders = await _db.Orders.CountAsync(o => !o.IsDeleted && paid.Contains(o.Status.ToLower())),
+            lastUpdated = DateTime.UtcNow,
+        };
+    }
     /// <summary>
     /// Récupère les activités récentes
     /// </summary>
@@ -292,87 +255,139 @@ public class AdminController : ControllerBase
     }
 
     /// <summary>
-    /// Récupère la santé du système
+    /// Santé système (lot 9.7a, suivi 18.2) : uniquement des mesures réelles.
+    /// Chaque service est sondé par une vraie requête chronométrée (base :
+    /// SELECT 1 ; WinAI : /health ; e-mails : API Resend authentifiée ;
+    /// stockage : liste d'un objet du bucket S3). Mémoire et processeur sont
+    /// ceux du processus de l'API, la charge celle de la machine (Linux,
+    /// /proc/loadavg). Une mesure impossible est renvoyée à null et l'écran
+    /// ne l'affiche pas ; plus aucune valeur n'est inventée (l'ancienne
+    /// version renvoyait une charge de 20 %, 95 ms de réponse, un S3 toujours
+    /// « up » et des disponibilités calculées).
     /// </summary>
-    /// <returns>État de santé</returns>
-    /// <response code="200">État retourné</response>
-    /// <response code="401">Non autorisé</response>
-    /// <response code="500">Erreur serveur</response>
     [HttpGet("system/health")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetSystemHealth()
+    public async Task<IActionResult> GetSystemHealth(CancellationToken ct)
     {
         try
         {
-            var proc      = System.Diagnostics.Process.GetCurrentProcess();
-            var memMb     = Math.Round(proc.WorkingSet64 / 1024.0 / 1024.0, 0);
-            var startTime = proc.StartTime.ToUniversalTime();
-            var upHours   = (DateTime.UtcNow - startTime).TotalHours;
-            var uptimePct = Math.Min(100, Math.Round(99.5 + Math.Min(upHours, 1) * 0.4, 2));
+            var proc = System.Diagnostics.Process.GetCurrentProcess();
 
-            // ── Vérifie PostgreSQL ──────────────────────────────────────────
-            bool dbOk = false;
-            long dbMs = 0;
+            // Processeur du processus : temps CPU consommé sur 500 ms, rapporté
+            // au nombre de cœurs.
+            var cpuBefore = proc.TotalProcessorTime;
+            var wall = System.Diagnostics.Stopwatch.StartNew();
+            await Task.Delay(500, ct);
+            proc.Refresh();
+            var cpuPercent = Math.Round((proc.TotalProcessorTime - cpuBefore).TotalMilliseconds
+                / (wall.Elapsed.TotalMilliseconds * Environment.ProcessorCount) * 100, 1);
+
+            var gcInfo = GC.GetGCMemoryInfo();
+            var processMemoryMb = Math.Round(proc.WorkingSet64 / 1024.0 / 1024.0, 0);
+            double? machineMemoryMb = gcInfo.TotalAvailableMemoryBytes > 0
+                ? Math.Round(gcInfo.TotalAvailableMemoryBytes / 1024.0 / 1024.0, 0)
+                : null;
+
+            double[]? loadAverage = null;
             try
+            {
+                if (System.IO.File.Exists("/proc/loadavg"))
+                {
+                    var parts = (await System.IO.File.ReadAllTextAsync("/proc/loadavg", ct)).Split(' ');
+                    loadAverage = parts.Take(3).Select(p => double.Parse(p, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+                }
+            }
+            catch { loadAverage = null; }
+
+            async Task<object> Probe(string key, string name, Func<Task<(string Status, string? Detail)>> probe)
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                await _db.Database.CanConnectAsync();
-                sw.Stop();
-                dbMs = sw.ElapsedMilliseconds;
-                dbOk = true;
+                try
+                {
+                    var (status, detail) = await probe();
+                    sw.Stop();
+                    return new { key, name, status, responseMs = status == "not_configured" ? (long?)null : sw.ElapsedMilliseconds, detail };
+                }
+                catch (Exception ex)
+                {
+                    sw.Stop();
+                    return new { key, name, status = "down", responseMs = (long?)sw.ElapsedMilliseconds, detail = (string?)ex.GetType().Name };
+                }
             }
-            catch { }
 
-            // ── Vérifie FastAPI (Python) ────────────────────────────────────
-            bool fastApiOk = false;
-            long fastApiMs = 0;
-            try
+            var timeout = TimeSpan.FromSeconds(5);
+            var services = new List<object>
             {
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                var pyClient = _httpClientFactory.CreateClient("FastApiClient");
-                pyClient.Timeout = TimeSpan.FromSeconds(3);
-                var r = await pyClient.GetAsync("/health");
-                sw.Stop();
-                fastApiMs = sw.ElapsedMilliseconds;
-                fastApiOk = r.IsSuccessStatusCode;
-            }
-            catch { }
-
-            // ── Vérifie Resend (email) ──────────────────────────────────────
-            bool resendOk = false;
-            try
-            {
-                var resendClient = _httpClientFactory.CreateClient();
-                resendClient.Timeout = TimeSpan.FromSeconds(3);
-                var r = await resendClient.GetAsync("https://api.resend.com/");
-                resendOk = (int)r.StatusCode < 500;
-            }
-            catch { }
-
-            var services = new object[]
-            {
-                new { name = "API .NET",    status = "up",                          responseMs = 2,       uptime = uptimePct },
-                new { name = "PostgreSQL",  status = dbOk      ? "up" : "down",    responseMs = dbMs,    uptime = dbOk ? uptimePct : 0.0 },
-                new { name = "WinAI (Python)", status = fastApiOk ? "up" : "down", responseMs = fastApiMs, uptime = fastApiOk ? uptimePct : 0.0 },
-                new { name = "Resend (Email)", status = resendOk  ? "up" : "degraded", responseMs = 0L,  uptime = resendOk ? 99.5 : 95.0 },
-                new { name = "Stockage (S3)", status = "up",                        responseMs = 0L,      uptime = 99.9 },
+                await Probe("database", "PostgreSQL", async () =>
+                {
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    cts.CancelAfter(timeout);
+                    await _db.Database.ExecuteSqlRawAsync("SELECT 1", cts.Token);
+                    return ("up", null);
+                }),
+                await Probe("winai", "WinAI (FastAPI)", async () =>
+                {
+                    var client = _httpClientFactory.CreateClient("FastApiClient");
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    cts.CancelAfter(timeout);
+                    var r = await client.GetAsync("/health", cts.Token);
+                    return (r.IsSuccessStatusCode ? "up" : "down", $"HTTP {(int)r.StatusCode}");
+                }),
+                await Probe("email", "E-mails (Resend)", async () =>
+                {
+                    var apiKey = _configuration["Resend:ApiKey"];
+                    if (string.IsNullOrWhiteSpace(apiKey)) return ("not_configured", "Clé Resend absente");
+                    var client = _httpClientFactory.CreateClient("ResendClient");
+                    using var req = new HttpRequestMessage(HttpMethod.Get, "/domains");
+                    req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    cts.CancelAfter(timeout);
+                    var r = await client.SendAsync(req, cts.Token);
+                    return ((int)r.StatusCode switch
+                    {
+                        >= 200 and < 300 => "up",
+                        401 or 403 => "degraded",
+                        _ => "down",
+                    }, $"HTTP {(int)r.StatusCode}");
+                }),
+                await Probe("storage", "Stockage (S3)", async () =>
+                {
+                    if (string.IsNullOrWhiteSpace(_storage.Bucket)) return ("not_configured", "Aucun bucket configuré");
+                    using var s3 = _storage.CreateS3Client();
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    cts.CancelAfter(timeout);
+                    await s3.ListObjectsV2Async(new Amazon.S3.Model.ListObjectsV2Request { BucketName = _storage.Bucket, MaxKeys = 1 }, cts.Token);
+                    return ("up", _storage.Bucket);
+                }),
             };
 
-            var overallStatus = !dbOk ? "critical" : !fastApiOk ? "warning" : "healthy";
+            static string StatusOf(object o) => (string)o.GetType().GetProperty("status")!.GetValue(o)!;
+            var dbUp = StatusOf(services[0]) == "up";
+            var anyDown = services.Any(s => StatusOf(s) == "down");
+            var anyDegraded = services.Any(s => StatusOf(s) == "degraded");
+            var overall = !dbUp ? "critical" : anyDown || anyDegraded ? "warning" : "healthy";
 
             return Ok(new
             {
                 success = true,
-                data    = new
+                data = new
                 {
-                    status          = overallStatus,
-                    uptime          = uptimePct,
-                    serverLoad      = 20,
-                    memoryUsage     = (int)memMb,
-                    apiResponseTime = 95,
-                    dbHealth        = dbOk ? "healthy" : "warning",
+                    status = overall,
+                    measuredAt = DateTime.UtcNow,
+                    process = new
+                    {
+                        startedAt = proc.StartTime.ToUniversalTime(),
+                        uptimeHours = Math.Round((DateTime.UtcNow - proc.StartTime.ToUniversalTime()).TotalHours, 1),
+                        memoryMb = processMemoryMb,
+                        managedHeapMb = Math.Round(GC.GetTotalMemory(false) / 1024.0 / 1024.0, 0),
+                        cpuPercent,
+                        threads = proc.Threads.Count,
+                    },
+                    machine = new
+                    {
+                        processorCount = Environment.ProcessorCount,
+                        memoryAvailableMb = machineMemoryMb,
+                        loadAverage,
+                    },
                     services,
                 }
             });
@@ -380,131 +395,48 @@ public class AdminController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting system health");
-            return StatusCode(500, new { success = false, error = "Internal server error" });
+            return StatusCode(500, new { success = false, error = "Erreur serveur" });
         }
     }
-
     /// <summary>
-    /// Récupère les revenus
+    /// Comptes actifs, nouveaux et attrition sur une fenêtre glissante
+    /// (lot 9.7a : calcul SQL ; l'ancienne version chargeait au plus 100
+    /// comptes). Actifs : connectés dans les N derniers jours ; attrition :
+    /// part des comptes actifs sur la fenêtre précédente qui ne se sont pas
+    /// reconnectés sur la fenêtre courante.
     /// </summary>
-    /// <param name="period">Période (6months, 1year, etc.)</param>
-    /// <returns>Données des revenus</returns>
-    /// <response code="200">Revenus retournés</response>
-    /// <response code="401">Non autorisé</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpGet("analytics/revenues")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetRevenues([FromQuery] string period = "6months")
-    {
-        try
-        {
-            var orders = await _adminService.GetAllOrdersAsync(1, int.MaxValue);
-            
-            // Filter orders by period
-            DateTime periodStart = period switch
-            {
-                "1year" => DateTime.UtcNow.AddYears(-1),
-                "3months" => DateTime.UtcNow.AddMonths(-3),
-                _ => DateTime.UtcNow.AddMonths(-6)
-            };
-            
-            var totalRevenue = orders.Orders
-                .Where(o => o.OrderDate >= periodStart)
-                .Sum(o => o.TotalAmount);
-
-            var revenueByPeriod = orders.Orders
-                .Where(o => o.OrderDate >= periodStart)
-                .GroupBy(o => o.OrderDate.Date)
-                .Select(g => new { date = g.Key.ToString("yyyy-MM-dd"), revenue = g.Sum(o => o.TotalAmount) })
-                .ToList();
-
-            return Ok(new { data = new { totalRevenue, revenueByPeriod }, success = true });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting revenues");
-            return StatusCode(500, new { success = false, error = "Internal server error" });
-        }
-    }
-
-    /// <summary>
-    /// Récupère les utilisateurs actifs
-    /// </summary>
-    /// <returns>Données des utilisateurs actifs</returns>
-    /// <response code="200">Données retournées</response>
-    /// <response code="401">Non autorisé</response>
-    /// <response code="500">Erreur serveur</response>
     [HttpGet("analytics/active-users")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetActiveUsers()
+    public async Task<IActionResult> GetActiveUsers([FromQuery] int days = 30)
     {
         try
         {
-            var allUsers = await _adminService.GetAllUsersAsync(1, int.MaxValue);
-            
-            var last30Days = DateTime.UtcNow.AddDays(-30);
-            var last90Days = DateTime.UtcNow.AddDays(-90);
-            
-            var activeUserCount = allUsers.Users
-                .Where(u => u.LastLoginAt >= last30Days)
-                .Count();
-            
-            var newUserCount = allUsers.Users
-                .Where(u => u.CreatedAt >= last30Days)
-                .Count();
-            
-            var previousActiveCount = allUsers.Users
-                .Where(u => u.LastLoginAt >= last90Days && u.LastLoginAt < last30Days)
-                .Count();
-            
-            var churnRate = previousActiveCount > 0 ? 
-                ((double)(previousActiveCount - activeUserCount) / previousActiveCount * 100) : 0;
+            days = Math.Clamp(days, 1, 365);
+            var now = DateTime.UtcNow;
+            var from = now.AddDays(-days);
+            var prevFrom = from.AddDays(-days);
+            var users = _db.Users.AsNoTracking().Where(u => !u.IsDeleted && u.Role != "admin");
 
-            var activeUsersData = new
+            var activeUserCount = await users.CountAsync(u => u.LastLoginAt >= from);
+            var newUserCount = await users.CountAsync(u => u.CreatedAt >= from);
+            // Comptes vus sur la fenêtre précédente (dernière connexion ou session).
+            var previousActive = users.Where(u => _db.UserSessions.Any(s => s.UserId == u.Id && s.LastActivityAt >= prevFrom && s.LastActivityAt < from));
+            var previousActiveCount = await previousActive.CountAsync();
+            var churned = await previousActive.CountAsync(u => !(u.LastLoginAt >= from)
+                && !_db.UserSessions.Any(s => s.UserId == u.Id && s.LastActivityAt >= from));
+            double? churnRate = previousActiveCount > 0 ? Math.Round(churned * 100.0 / previousActiveCount, 2) : null;
+
+            return Ok(new
             {
-                activeUserCount,
-                newUserCount,
-                churnRate = Math.Round(churnRate, 2)
-            };
-            return Ok(new { data = activeUsersData, success = true });
+                data = new { days, activeUserCount, newUserCount, previousActiveCount, churnedCount = churned, churnRate },
+                success = true,
+            });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting active users");
-            return StatusCode(500, new { success = false, error = "Internal server error" });
+            return StatusCode(500, new { success = false, error = "Erreur serveur" });
         }
     }
-
-    /// <summary>
-    /// Récupère les sujets populaires
-    /// </summary>
-    /// <param name="limit">Limite de résultats</param>
-    /// <returns>Sujets populaires</returns>
-    /// <response code="200">Sujets retournés</response>
-    /// <response code="401">Non autorisé</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpGet("analytics/popular-subjects")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetPopularSubjects([FromQuery] int limit = 3)
-    {
-        try
-        {
-            var subjects = await _adminService.GetAllSubjectsAsync(1, limit);
-            return Ok(new { data = subjects, success = true });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting popular subjects");
-            return StatusCode(500, new { success = false, error = "Internal server error" });
-        }
-    }
-
     /// <summary>
     /// Métriques analytiques clés pour le tableau de bord admin
     /// </summary>
@@ -556,13 +488,17 @@ public class AdminController : ControllerBase
             catch (Exception exPay) { _logger.LogWarning("Analytics: Payments query failed  {Msg}", exPay.Message); }
 
             int subscribedUsers = 0;
-            double conversionRate = 0.0;
             try
             {
                 subscribedUsers = await _db.Subscriptions.Where(s => s.Status == "active" && !s.IsDeleted).Select(s => s.UserId).Distinct().CountAsync();
-                conversionRate  = totalUsers > 0 ? Math.Round((double)subscribedUsers / totalUsers * 100, 2) : 0.0;
             }
             catch (Exception exSub) { _logger.LogWarning("Analytics: Subscriptions query failed  {Msg}", exSub.Message); }
+
+            // Lot 9.7a (18.1) : même définition que partout ailleurs (AdminMetrics),
+            // sur les 30 derniers jours. L'ancienne valeur était la part
+            // d'abonnés actifs, affichée sous le nom « taux de conversion ».
+            var (_, _, conversion30) = await AdminMetrics.ConversionAsync(_db, thirtyDaysAgo, now);
+            var conversionRate = conversion30 ?? 0.0;
 
             return Ok(new
             {
@@ -581,99 +517,11 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>GET /admin/analytics/geo  Distribution géographique des utilisateurs (villes)</summary>
-    [HttpGet("analytics/geo")]
-    public async Task<IActionResult> GetGeoDistribution()
-    {
-        try
-        {
-            var cityCounts = await _db.Users
-                .Where(u => !u.IsDeleted && u.City != null)
-                .GroupBy(u => u.City!)
-                .Select(g => new { city = g.Key, count = g.Count() })
-                .ToListAsync();
-
-            var totalUsers = await _db.Users.CountAsync(u => !u.IsDeleted);
-
-            // Known Cameroon cities with coordinates; supplement with data from DB
-            var known = new[]
-            {
-                new { name="Douala",      lat=4.05,  lon=9.70,  defaultPct=0.32 },
-                new { name="Yaoundé",     lat=3.87,  lon=11.52, defaultPct=0.28 },
-                new { name="Bafoussam",   lat=5.47,  lon=10.42, defaultPct=0.09 },
-                new { name="Bamenda",     lat=5.96,  lon=10.15, defaultPct=0.07 },
-                new { name="Ngaoundéré",  lat=7.33,  lon=13.58, defaultPct=0.06 },
-                new { name="Garoua",      lat=9.30,  lon=13.40, defaultPct=0.05 },
-                new { name="Bertoua",     lat=4.58,  lon=13.68, defaultPct=0.04 },
-                new { name="Maroua",      lat=10.60, lon=14.33, defaultPct=0.04 },
-                new { name="Ebolowa",     lat=2.90,  lon=11.15, defaultPct=0.03 },
-                new { name="Kribi",       lat=2.95,  lon=9.91,  defaultPct=0.02 },
-            };
-
-            var result = known.Select(k =>
-            {
-                var dbEntry = cityCounts.FirstOrDefault(c => c.city.ToLower().Contains(k.name.ToLower().Split('é')[0]));
-                var count   = dbEntry?.count ?? (int)Math.Max(1, Math.Round(totalUsers * k.defaultPct));
-                return new { k.name, k.lat, k.lon, count, pct = Math.Round(k.defaultPct * 100, 1) };
-            });
-
-            return Ok(new { success = true, data = result, totalUsers });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting geo distribution");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
-
-    /// <summary>
-    /// Récupère le taux de conversion
-    /// </summary>
-    /// <returns>Taux de conversion</returns>
-    /// <response code="200">Taux retourné</response>
-    /// <response code="401">Non autorisé</response>
-    /// <response code="500">Erreur serveur</response>
-    [HttpGet("analytics/conversion-rate")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetConversionRate()
-    {
-        try
-        {
-            var allUsers = await _adminService.GetAllUsersAsync(1, int.MaxValue);
-            var allOrders = await _adminService.GetAllOrdersAsync(1, int.MaxValue);
-
-            var totalUsers = allUsers.Users.Count();
-            var purchasingUsers = allOrders.Orders
-                .Select(o => o.UserId)
-                .Distinct()
-                .Count();
-
-            var conversionRate = totalUsers > 0 ?
-                ((double)purchasingUsers / totalUsers * 100) : 0;
-
-            var ordersPerUser = totalUsers > 0 ? (double)allOrders.Orders.Count / totalUsers : 0;
-            var cartAbandonmentRate = ordersPerUser > 0 ?
-                ((ordersPerUser - 1) / ordersPerUser * 100) : 0;
-
-            var avgOrderValue = allOrders.Orders.Any() ?
-                allOrders.Orders.Average(o => o.TotalAmount) : 0;
-
-            var conversionData = new
-            {
-                conversionRate = Math.Round(conversionRate, 2),
-                cartAbandonmentRate = Math.Round(cartAbandonmentRate, 2),
-                avgOrderValue = Math.Round(avgOrderValue, 2)
-            };
-            return Ok(new { data = conversionData, success = true });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting conversion rate");
-            return StatusCode(500, new { success = false, error = "Internal server error" });
-        }
-    }
+    // Lot 9.7a : analytics/geo, doublon de la Carte qui inventait des chiffres,
+    // est fusionnée avec GET analytics/geographic (comptes par User.City
+    // réelle, AdminOverviewAnalyticsController). analytics/revenues,
+    // analytics/popular-subjects et analytics/conversion-rate y sont
+    // recalculées en base sur la période demandée.
 
     /// <summary>GET /admin/subjects/pending  Sujets non publiés en attente de validation</summary>
     [HttpGet("subjects/pending")]
@@ -753,7 +601,11 @@ public class AdminController : ControllerBase
             // à vie même après publication.
             await _db.CourseContents.Where(cc => cc.SubjectId == id)
                 .ExecuteUpdateAsync(s => s.SetProperty(cc => cc.Status, "published").SetProperty(cc => cc.UpdatedAt, DateTime.UtcNow));
+            this.AuditAdd(_audit, Backend.Models.Entities.AdminAuditActions.ContentApproved, "Subject", id, subject.Title,
+                new { isPublished = false }, new { isPublished = true });
             await _db.SaveChangesAsync();
+            await NotifyAuthorAsync(subject.AuthorUserId, id, "Contenu publié",
+                $"Ton contenu « {subject.Title} » a été validé et est maintenant publié.");
             _logger.LogInformation("Subject {Id} approved by admin", id);
             return Ok(new { success = true });
         }
@@ -768,16 +620,28 @@ public class AdminController : ControllerBase
     [HttpPost("subjects/{id}/reject")]
     public async Task<IActionResult> RejectSubject(int id, [FromBody] RejectSubjectRequest request)
     {
+        // Lot 9.7a (18.1) : le motif est obligatoire et envoyé à l'auteur ;
+        // il n'était ni exigé ni transmis (seulement écrit dans les journaux).
+        var reason = (request?.Reason ?? string.Empty).Trim();
+        if (reason.Length < AdminUsersController.MinReasonLength)
+            return BadRequest(new { code = "reason_required", error = $"Le motif du rejet est obligatoire ({AdminUsersController.MinReasonLength} caractères au moins) : il est envoyé à l'auteur." });
+        if (reason.Length > 1000) reason = reason[..1000];
         try
         {
             var subject = await _db.Subjects.FindAsync(id);
-            if (subject == null) return NotFound(new { error = "Subject not found" });
+            if (subject == null) return NotFound(new { error = "Contenu introuvable" });
+            if (subject.IsPublished || subject.IsDeleted)
+                return Conflict(new { error = "Ce contenu n'est plus en attente de validation." });
             subject.IsDeleted = true;
             subject.UpdatedAt = DateTime.UtcNow;
             await _db.CourseContents.Where(cc => cc.SubjectId == id)
                 .ExecuteUpdateAsync(s => s.SetProperty(cc => cc.Status, "archived").SetProperty(cc => cc.UpdatedAt, DateTime.UtcNow));
+            this.AuditAdd(_audit, Backend.Models.Entities.AdminAuditActions.ContentRejected, "Subject", id, subject.Title,
+                new { status = "pending" }, new { status = "rejected" }, reason);
             await _db.SaveChangesAsync();
-            _logger.LogInformation("Subject {Id} rejected: {Reason}", id, request.Reason);
+            await NotifyAuthorAsync(subject.AuthorUserId, id, "Contenu non validé",
+                $"Ton contenu « {subject.Title} » n'a pas été validé. Motif : {reason}");
+            _logger.LogInformation("Subject {Id} rejected: {Reason}", id, reason);
             return Ok(new { success = true });
         }
         catch (Exception ex)
@@ -816,6 +680,12 @@ public class AdminController : ControllerBase
                 .ExecuteUpdateAsync(s => s.SetProperty(cc => cc.Status, "published").SetProperty(cc => cc.UpdatedAt, now));
 
             var skipped = request.Ids.Except(stillPendingIds).ToList();
+            if (stillPendingIds.Count > 0)
+            {
+                this.AuditAdd(_audit, Backend.Models.Entities.AdminAuditActions.ContentApproved, "Subject", "lot",
+                    $"Validation groupée ({stillPendingIds.Count})", after: new { ids = stillPendingIds });
+                await _db.SaveChangesAsync();
+            }
             _logger.LogInformation("Validation groupée : {Approved} approuvés, {Skipped} déjà traités/invalides", stillPendingIds.Count, skipped.Count);
             return Ok(new { success = true, approvedIds = stillPendingIds, skippedIds = skipped });
         }
@@ -826,95 +696,85 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>POST /admin/emails/send  Envoyer un email groupé aux utilisateurs</summary>
+    /// <summary>
+    /// GET /admin/emails/recipients?target=  Nombre de destinataires d'un envoi
+    /// de masse (après désabonnements), affiché dans la confirmation.
+    /// </summary>
+    [HttpGet("emails/recipients")]
+    public async Task<IActionResult> CountEmailRecipients([FromQuery] string target = "all", [FromQuery] string? customEmail = null)
+    {
+        if (!AdminEmailTargets.All.Contains(target)) return BadRequest(new { error = "Cible inconnue." });
+        var (recipients, optedOut) = await _campaigns.CountRecipientsAsync(target, customEmail);
+        return Ok(new { success = true, data = new { recipients, optedOut } });
+    }
+
+    /// <summary>
+    /// POST /admin/emails/send  Met en file un envoi de masse (lot 9.7a, 18.1) :
+    /// l'administrateur a confirmé le nombre de destinataires (champ
+    /// <c>ExpectedRecipients</c>, comparé au compte actuel) ; l'envoi part en
+    /// tâche de fond et son rapport se lit par GET emails/campaigns.
+    /// </summary>
     [HttpPost("emails/send")]
     public async Task<IActionResult> SendAdminEmail([FromBody] AdminEmailRequest request)
     {
+        if (!AdminEmailTargets.All.Contains(request.Target ?? ""))
+            return BadRequest(new { error = "Cible inconnue." });
+        if (string.IsNullOrWhiteSpace(request.Subject) || request.Subject.Length > 300)
+            return BadRequest(new { error = "Objet requis (300 caractères au maximum)." });
+        if (string.IsNullOrWhiteSpace(request.Body))
+            return BadRequest(new { error = "Message requis." });
+        if (request.Target == "custom" && string.IsNullOrWhiteSpace(request.CustomEmail))
+            return BadRequest(new { error = "Adresse e-mail requise pour la cible « adresse précise »." });
+
         try
         {
-            List<string> emails;
-            var optedOut = 0;
-            if (request.Target == "custom")
-            {
-                if (string.IsNullOrWhiteSpace(request.CustomEmail))
-                    return BadRequest(new { error = "Adresse email requise pour la cible 'custom'" });
-                emails = [request.CustomEmail.Trim()];
-            }
-            else
-            {
-                IQueryable<string> emailQuery = request.Target switch
+            var (recipients, _) = await _campaigns.CountRecipientsAsync(request.Target!, request.CustomEmail);
+            if (request.Target != "custom" && request.ExpectedRecipients != recipients)
+                return Conflict(new
                 {
-                    "students" => _db.Users.Where(u => u.IsActive && !u.IsDeleted && u.Role == "student").Select(u => u.Email),
-                    "teachers" => _db.Users.Where(u => u.IsActive && !u.IsDeleted && u.Role == "teacher").Select(u => u.Email),
-                    "parents"  => _db.Users.Where(u => u.IsActive && !u.IsDeleted && u.Role == "parent").Select(u => u.Email),
-                    _          => _db.Users.Where(u => u.IsActive && !u.IsDeleted).Select(u => u.Email),
-                };
-                emails = await emailQuery.Distinct().ToListAsync();
+                    code = "recipients_changed",
+                    error = $"Le nombre de destinataires a changé ({recipients}). Confirmez à nouveau.",
+                    recipients,
+                });
 
-                // Module 22 : une diffusion de masse relève de la préférence
-                // « Newsletter » (et « Notifications par e-mail »). La cible
-                // « custom » (adresse saisie par l'administrateur) n'est pas filtrée.
-                // HYPOTHÈSE À VALIDER : rattachement des diffusions à « Newsletter ».
-                // Partie 12.3 : la règle fait foi dans EmailService (chaque envoi
-                // ci-dessous la revérifie) ; ce pré-filtre en lot est conservé pour
-                // renvoyer le compteur « optedOut » à l'administrateur.
-                var allowed = await _notificationPreferences.FilterEmailsAsync(emails, NotificationCategory.Newsletters);
-                optedOut = emails.Count - allowed.Count;
-                emails = allowed;
-            }
-
-            var count = emails.Count;
-            if (count == 0)
-                return Ok(new { success = true, recipientCount = 0, sent = 0, failed = 0, optedOut, message = optedOut > 0 ? $"Aucun destinataire : {optedOut} utilisateur(s) ont désactivé ces e-mails." : "Aucun destinataire trouvé." });
-
-            _logger.LogInformation(
-                "Admin email broadcast: target={Target}, recipients={Count}, subject={Subject}",
-                request.Target, count, request.Subject);
-
-            // Convertir le texte brut en HTML minimal (préserve les sauts de ligne)
-            var htmlBody = $"""
-                <div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;max-width:600px;margin:auto;padding:32px 24px">
-                  {System.Net.WebUtility.HtmlEncode(request.Body).Replace("\n", "<br>")}
-                  <hr style="margin:32px 0;border:none;border-top:1px solid #e5e5e5">
-                  <p style="font-size:12px;color:#888">© {DateTime.UtcNow.Year} WinPlus · Yaoundé, Cameroun<br>
-                  <a href="https://winplus.cm/unsubscribe" style="color:#888">Se désabonner</a></p>
-                </div>
-                """;
-
-            // Envoi par lots de 10 en parallèle pour ne pas saturer Resend
-            var sent    = 0;
-            var failed  = 0;
-            const int batchSize = 10;
-            for (var i = 0; i < emails.Count; i += batchSize)
-            {
-                var batch = emails.Skip(i).Take(batchSize);
-                var tasks = batch.Select(addr => _email.SendGenericEmailAsync(addr, request.Subject, htmlBody, NotificationCategory.Newsletters));
-                var results = await Task.WhenAll(tasks);
-                sent   += results.Count(r => r);
-                failed += results.Count(r => !r);
-            }
-
-            _logger.LogInformation(
-                "Admin email broadcast terminé: sent={Sent}, failed={Failed}", sent, failed);
+            var campaign = await _campaigns.QueueAsync(request.Target!, request.CustomEmail, request.Subject, request.Body, User.GetUserId());
+            await this.AuditAsync(_audit, Backend.Models.Entities.AdminAuditActions.MassEmailQueued, "EmailCampaign", campaign.Id,
+                campaign.Subject, after: new { campaign.Target, campaign.RecipientCount, campaign.OptedOutCount });
 
             return Ok(new
             {
-                success        = true,
-                recipientCount = count,
-                sent,
-                failed,
-                optedOut,
-                message        = $"Email envoyé à {sent} destinataire(s)." + (failed > 0 ? $" ({failed} échec(s))" : "")
-                                 + (optedOut > 0 ? $" {optedOut} utilisateur(s) exclu(s) selon leurs préférences." : ""),
+                success = true,
+                data = CampaignDto(campaign),
+                message = campaign.RecipientCount == 0
+                    ? "Aucun destinataire : rien à envoyer."
+                    : $"Envoi programmé à {campaign.RecipientCount} destinataire(s) : il se poursuit en arrière-plan.",
             });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error sending admin email");
-            return StatusCode(500, new { error = "Internal server error" });
+            _logger.LogError(ex, "Error queueing admin email");
+            return StatusCode(500, new { error = "Erreur serveur" });
         }
     }
 
+    /// <summary>GET /admin/emails/campaigns  Envois de masse et leur rapport (paginé).</summary>
+    [HttpGet("emails/campaigns")]
+    public async Task<IActionResult> GetEmailCampaigns([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var total = await _db.AdminEmailCampaigns.CountAsync();
+        var rows = await _db.AdminEmailCampaigns.AsNoTracking()
+            .OrderByDescending(c => c.CreatedAt).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+        return Ok(new { success = true, data = new { items = rows.Select(CampaignDto).ToList(), total, page, pageSize } });
+    }
+
+    private static object CampaignDto(Backend.Models.Entities.AdminEmailCampaign c) => new
+    {
+        id = c.Id, target = c.Target, subject = c.Subject, status = c.Status,
+        recipients = c.RecipientCount, sent = c.SentCount, failed = c.FailedCount, optedOut = c.OptedOutCount,
+        error = c.Error, createdAt = c.CreatedAt, startedAt = c.StartedAt, finishedAt = c.FinishedAt,
+    };
     // ─── WinAI Admin ────────────────────────────────────────────────────────────
 
     /// <summary>GET /admin/winai/stats  Statistiques WinAI agrégées depuis les tables de chat</summary>
@@ -1067,14 +927,25 @@ public class AdminController : ControllerBase
         }
     }
 
-    /// <summary>GET /admin/chat/sessions/{id}/messages  Messages d'une session spécifique</summary>
+    /// <summary>
+    /// GET /admin/chat/sessions/{id}/messages?reason=  Messages d'une
+    /// conversation WinAI d'un utilisateur. Lot 9.7a (suivi 18.4) : la
+    /// consultation exige un motif saisi par l'administrateur, inscrit au
+    /// journal d'audit avec la conversation et son propriétaire.
+    /// </summary>
     [HttpGet("chat/sessions/{id}/messages")]
-    public async Task<IActionResult> GetSessionMessages(int id)
+    public async Task<IActionResult> GetSessionMessages(int id, [FromQuery] string? reason = null)
     {
+        if (!HasReason(reason)) return ReasonRequired();
         try
         {
-            var exists = await _db.Conversations.AnyAsync(c => c.Id == id && !c.IsDeleted);
-            if (!exists) return NotFound(new { error = "Session not found" });
+            var conv = await _db.Conversations.AsNoTracking()
+                .Where(c => c.Id == id && !c.IsDeleted)
+                .Select(c => new { c.Id, c.UserId, c.Title, OwnerEmail = c.User.Email })
+                .FirstOrDefaultAsync();
+            if (conv == null) return NotFound(new { error = "Conversation introuvable" });
+            await this.AuditAsync(_audit, Backend.Models.Entities.AdminAuditActions.WinAiConversationViewed, "Conversation", id,
+                $"{conv.Title} ({conv.OwnerEmail})", after: new { ownerUserId = conv.UserId }, reason: reason);
 
             var messages = await _db.Messages
                 .Where(m => m.ConversationId == id && !m.IsDeleted)
@@ -1123,13 +994,16 @@ public class AdminController : ControllerBase
 
     /// <summary>DELETE /admin/chat/messages/{id}  Supprime (soft-delete) un message</summary>
     [HttpDelete("chat/messages/{id}")]
-    public async Task<IActionResult> DeleteChatMessage(int id)
+    public async Task<IActionResult> DeleteChatMessage(int id, [FromQuery] string? reason = null)
     {
+        if (!HasReason(reason)) return ReasonRequired();
         try
         {
             var msg = await _db.Messages.FirstOrDefaultAsync(m => m.Id == id && !m.IsDeleted);
-            if (msg == null) return NotFound(new { error = "Message not found" });
+            if (msg == null) return NotFound(new { error = "Message introuvable" });
             msg.IsDeleted = true;
+            this.AuditAdd(_audit, Backend.Models.Entities.AdminAuditActions.WinAiMessageDeleted, "Message", id,
+                after: new { conversationId = msg.ConversationId }, reason: reason);
             await _db.SaveChangesAsync();
             return Ok(new { success = true });
         }
@@ -1227,7 +1101,7 @@ public class AdminController : ControllerBase
 
     /// <summary>GET /admin/certificates  Liste des certificats avec infos utilisateur et cours</summary>
     [HttpGet("certificates")]
-    public async Task<IActionResult> GetCertificates([FromQuery] int page = 1, [FromQuery] int limit = 50)
+    public async Task<IActionResult> GetCertificates([FromQuery] int page = 1, [FromQuery] int limit = 50, [FromQuery] string? q = null)
     {
         try
         {
@@ -1235,8 +1109,20 @@ public class AdminController : ControllerBase
             if (limit < 1) limit = 50;
             if (limit > 100) limit = 100;
 
-            var total = await _db.Certificates.CountAsync();
-            var certs = await _db.Certificates
+            // Lot 9.7a : recherche serveur (élève, e-mail, numéro, contenu) ;
+            // la pagination existait côté serveur mais l'écran n'en lisait que la page 1.
+            var query = _db.Certificates.AsQueryable();
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                var term = q.Trim().ToLower();
+                query = query.Where(c => c.CertificateNumber.ToLower().Contains(term)
+                    || c.User.Email.ToLower().Contains(term)
+                    || (c.User.FirstName + " " + c.User.LastName).ToLower().Contains(term)
+                    || c.Subject.Title.ToLower().Contains(term));
+            }
+
+            var total = await query.CountAsync();
+            var certs = await query
                 .OrderByDescending(c => c.IssuedAt)
                 .Skip((page - 1) * limit)
                 .Take(limit)
@@ -1267,7 +1153,8 @@ public class AdminController : ControllerBase
 
     /// <summary>GET /admin/logs  Logs d'erreurs applicatifs paginés</summary>
     [HttpGet("logs")]
-    public async Task<IActionResult> GetLogs([FromQuery] int page = 1, [FromQuery] int limit = 50, [FromQuery] string? level = null)
+    public async Task<IActionResult> GetLogs([FromQuery] int page = 1, [FromQuery] int limit = 50, [FromQuery] string? level = null,
+        [FromQuery] string? q = null, [FromQuery] bool? resolved = null)
     {
         try
         {
@@ -1275,9 +1162,24 @@ public class AdminController : ControllerBase
             if (limit < 1) limit = 50;
             if (limit > 200) limit = 200;
 
+            // Lot 9.7a : filtres appliqués en base (niveau sans tenir compte de
+            // la casse, texte, état résolu) au lieu de filtrer 200 lignes à l'écran.
             var query = _db.ApplicationLogs.AsQueryable();
-            if (!string.IsNullOrWhiteSpace(level))
-                query = query.Where(l => l.Level == level);
+            if (!string.IsNullOrWhiteSpace(level) && level != "all")
+            {
+                var lv = level.Trim().ToLower();
+                query = lv == "warn" || lv == "warning"
+                    ? query.Where(l => l.Level.ToLower() == "warning" || l.Level.ToLower() == "warn")
+                    : query.Where(l => l.Level.ToLower() == lv);
+            }
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                var term = q.Trim().ToLower();
+                query = query.Where(l => l.Message.ToLower().Contains(term) || l.Category.ToLower().Contains(term)
+                    || (l.RequestPath != null && l.RequestPath.ToLower().Contains(term)));
+            }
+            if (resolved.HasValue)
+                query = query.Where(l => l.IsResolved == resolved.Value);
 
             var total = await query.CountAsync();
             var logs  = await query
@@ -1423,6 +1325,8 @@ public class AdminController : ControllerBase
                 subjectId: exam.SubjectId);
 
             _logger.LogInformation("PDF uploaded for subject {SubjectId}: {Url}", id, url);
+            await this.AuditAsync(_audit, Backend.Models.Entities.AdminAuditActions.ExamPdfReplaced, "Subject", id, exam.Title,
+                after: new { examId = exam.Id });
             return Ok(new { data = new { examId = exam.Id, documentUrl = url }, success = true });
         }
         catch (Exception ex)
@@ -1441,8 +1345,7 @@ public class AdminController : ControllerBase
         {
             var c = PyClient(); ForwardAuth(c);
             var res = await c.PostAsJsonAsync("/api/admin/anomaly-detection", body ?? new { force_refresh = false });
-            var json = await res.Content.ReadAsStringAsync();
-            return Content(json, "application/json");
+            return await RelayAsync(res);
         }
         catch (Exception ex) { _logger.LogError(ex, "AnomalyDetection proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
     }
@@ -1454,8 +1357,7 @@ public class AdminController : ControllerBase
         {
             var c = PyClient(); ForwardAuth(c);
             var res = await c.GetAsync("/api/admin/anomalies/active");
-            var json = await res.Content.ReadAsStringAsync();
-            return Content(json, "application/json");
+            return await RelayAsync(res);
         }
         catch (Exception ex) { _logger.LogError(ex, "GetActiveAnomalies proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
     }
@@ -1467,8 +1369,7 @@ public class AdminController : ControllerBase
         {
             var c = PyClient(); ForwardAuth(c);
             var res = await c.PostAsync($"/api/admin/anomaly/{id}/resolve?resolution={Uri.EscapeDataString(resolution)}", null);
-            var json = await res.Content.ReadAsStringAsync();
-            return Content(json, "application/json");
+            return await RelayAsync(res);
         }
         catch (Exception ex) { _logger.LogError(ex, "ResolveAnomaly proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
     }
@@ -1480,8 +1381,7 @@ public class AdminController : ControllerBase
         {
             var c = PyClient(); ForwardAuth(c);
             var res = await c.PostAsJsonAsync("/api/admin/content-health-check", body);
-            var json = await res.Content.ReadAsStringAsync();
-            return Content(json, "application/json");
+            return await RelayAsync(res);
         }
         catch (Exception ex) { _logger.LogError(ex, "ContentHealthCheck proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
     }
@@ -1494,8 +1394,7 @@ public class AdminController : ControllerBase
             var c = PyClient(); ForwardAuth(c);
             c.Timeout = TimeSpan.FromSeconds(60);
             var res = await c.PostAsJsonAsync("/api/admin/growth-insights", body ?? new { period_days = 7 });
-            var json = await res.Content.ReadAsStringAsync();
-            return Content(json, "application/json");
+            return await RelayAsync(res);
         }
         catch (TaskCanceledException)
         {
@@ -1513,8 +1412,7 @@ public class AdminController : ControllerBase
             var c = PyClient(); ForwardAuth(c);
             c.Timeout = TimeSpan.FromSeconds(60);
             var res = await c.PostAsJsonAsync("/api/admin/revenue-forecast", body ?? new { currency = "XAF" });
-            var json = await res.Content.ReadAsStringAsync();
-            return Content(json, "application/json");
+            return await RelayAsync(res);
         }
         catch (Exception ex) { _logger.LogError(ex, "RevenueForecast proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
     }
@@ -1526,26 +1424,55 @@ public class AdminController : ControllerBase
         {
             var c = PyClient(); ForwardAuth(c);
             var res = await c.GetAsync("/api/admin/moderation/pending");
-            var json = await res.Content.ReadAsStringAsync();
-            return Content(json, "application/json");
+            return await RelayAsync(res);
         }
         catch (Exception ex) { _logger.LogError(ex, "GetPendingModeration proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
     }
 
+    /// <summary>
+    /// Décision sur un message du forum retenu par la modération WinAI.
+    /// Lot 9.7a (18.1) : la décision s'applique au forum (elle ne faisait que
+    /// changer le statut de la file Python) : « approve » rend le message
+    /// visible, « reject » le masque (ForumPost.IsHidden). Journalisée.
+    /// </summary>
     [HttpPost("winai/moderation/{id}/resolve")]
     public async Task<IActionResult> ResolveModeration(int id, [FromQuery] string action, [FromQuery] string? note = null)
     {
+        if (action is not ("approve" or "reject"))
+            return BadRequest(new { error = "Action attendue : approve ou reject." });
         try
         {
             var c = PyClient(); ForwardAuth(c);
             var qs = $"action={Uri.EscapeDataString(action)}{(note != null ? $"&note={Uri.EscapeDataString(note)}" : "")}";
             var res = await c.PostAsync($"/api/admin/moderation/{id}/resolve?{qs}", null);
-            var json = await res.Content.ReadAsStringAsync();
-            return Content(json, "application/json");
-        }
-        catch (Exception ex) { _logger.LogError(ex, "ResolveModeration proxy error"); return StatusCode(502, new { error = "IA unavailable" }); }
-    }
+            if (!res.IsSuccessStatusCode) return await RelayAsync(res);
 
+            var json = await res.Content.ReadAsStringAsync();
+            int? postId = null;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("post_id", out var p) && p.TryGetInt32(out var pid)) postId = pid;
+            }
+            catch (System.Text.Json.JsonException) { }
+
+            var hidden = action == "reject";
+            if (postId.HasValue)
+            {
+                var post = await _db.ForumPosts.IgnoreQueryFilters().FirstOrDefaultAsync(fp => fp.Id == postId.Value);
+                if (post != null)
+                {
+                    post.IsHidden = hidden;
+                    await _db.SaveChangesAsync();
+                }
+            }
+
+            await this.AuditAsync(_audit, Backend.Models.Entities.AdminAuditActions.ForumModerationResolved, "ForumPost", postId ?? id,
+                after: new { action, isHidden = hidden, moderationId = id }, reason: note);
+            return Ok(new { success = true, post_id = postId, action, isHidden = hidden });
+        }
+        catch (Exception ex) { _logger.LogError(ex, "ResolveModeration proxy error"); return StatusCode(502, new { error = "WinAI indisponible" }); }
+    }
     // ── Support & messages ───────────────────────────────────────────────────
 
     /// <summary>GET /admin/support/threads  Fils de discussion support (messages DirectMessage vers/depuis les admins)</summary>
@@ -1688,42 +1615,45 @@ public class AdminController : ControllerBase
     }
 
     // ── Teachers ────────────────────────────────────────────────────────────
-
-    [HttpPatch("teachers/{id:int}/verify")]
-    public async Task<IActionResult> VerifyTeacher(int id)
-    {
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id && u.Role == "teacher" && !u.IsDeleted);
-        if (user == null) return NotFound(new { error = "Professeur introuvable" });
-
-        user.IsEmailVerified = true;
-        user.VerifiedAt = DateTime.UtcNow;
-        user.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
-
-        _logger.LogInformation("Admin verified teacher {TeacherId}", id);
-        return Ok(new { message = "Professeur vérifié", verified = true });
-    }
+    // Lot 9.7a (18.8) : PATCH teachers/{id}/verify est retirée avec le bouton
+    // « Vérifier » de la liste des professeurs : elle ne faisait que marquer
+    // l'e-mail vérifié (pur doublon de POST users/{id}/verify-email, toujours
+    // utilisée par la fiche du compte). La vraie vérification est celle du 9.5.
 
     // ── Vérification diplôme Répétiteur (Module 1, US-PRO-03, Workflow 1 étape 5) ──
 
-    /// <summary>File de vérification des diplômes déposés pour le badge "Vérifié Diplôme".</summary>
+    /// <summary>
+    /// File de vérification des diplômes (status=pending, défaut) ou
+    /// historique des diplômes traités (status=processed), paginé.
+    /// </summary>
     [HttpGet("tutor-verification-documents")]
-    public async Task<IActionResult> GetPendingTutorVerificationDocuments()
+    public async Task<IActionResult> GetPendingTutorVerificationDocuments([FromQuery] string status = "pending",
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
-        var docs = await _db.TutorVerificationDocuments
-            .Include(d => d.TutorProfile!).ThenInclude(p => p!.User)
-            .Where(d => d.Status == "pending")
-            .OrderBy(d => d.SubmittedAt)
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var query = _db.TutorVerificationDocuments.AsNoTracking().AsQueryable();
+        query = status == "processed" ? query.Where(d => d.Status != "pending") : query.Where(d => d.Status == "pending");
+        var ordered = status == "processed" ? query.OrderByDescending(d => d.ReviewedAt) : query.OrderBy(d => d.SubmittedAt);
+        var docs = await ordered
+            .Skip((page - 1) * pageSize).Take(pageSize)
             .Select(d => new
             {
                 d.Id,
                 d.DocumentUrl,
                 d.SubmittedAt,
+                d.Status,
+                d.RejectionReason,
+                d.ReviewedAt,
+                reviewedBy = _db.Users.Where(u => u.Id == d.ReviewedByUserId).Select(u => u.Email).FirstOrDefault(),
                 userId = d.TutorProfile!.UserId,
                 userName = (d.TutorProfile.User!.FirstName + " " + d.TutorProfile.User.LastName).Trim(),
                 userEmail = d.TutorProfile.User.Email,
             })
             .ToListAsync();
+        // La file reste un tableau (forme lue par le badge de la console) ;
+        // le total est donné en en-tête pour la pagination de l'historique.
+        Response.Headers["X-Total-Count"] = (await query.CountAsync()).ToString();
         return Ok(docs);
     }
 
@@ -1735,18 +1665,24 @@ public class AdminController : ControllerBase
             .Include(d => d.TutorProfile!).ThenInclude(p => p!.User)
             .FirstOrDefaultAsync(d => d.Id == id);
         if (doc == null) return NotFound(new { error = "Document introuvable" });
+        // Lot 9.7a : le statut est revérifié (un document déjà traité, par un
+        // autre administrateur ou un double clic, n'est jamais retraité).
+        if (doc.Status != "pending")
+            return Conflict(new { error = "Ce document a déjà été traité." });
 
         doc.Status = "approved";
         doc.ReviewedAt = DateTime.UtcNow;
         doc.ReviewedByUserId = User.GetUserId();
         if (doc.TutorProfile != null)
             doc.TutorProfile.IsDiplomaVerified = true;
+        this.AuditAdd(_audit, Backend.Models.Entities.AdminAuditActions.TutorDiplomaApproved, "TutorVerificationDocument", id,
+            doc.TutorProfile?.User?.Email, new { status = "pending" }, new { status = "approved" });
         await _db.SaveChangesAsync();
 
         var email = doc.TutorProfile?.User?.Email;
         if (!string.IsNullOrEmpty(email))
         {
-            _ = _email.SendGenericEmailAsync(email, "Diplôme vérifié  WinPlus",
+            _ = _email.SendGenericEmailAsync(email, "Diplôme vérifié · WinPlus",
                 "<p>Bonne nouvelle : ton diplôme a été validé par l'équipe WinPlus. " +
                 "Le badge « Vérifié Diplôme » est maintenant visible sur ton profil répétiteur.</p>",
                 NotificationCategory.Transactional);
@@ -1760,22 +1696,32 @@ public class AdminController : ControllerBase
     [HttpPost("tutor-verification-documents/{id:int}/reject")]
     public async Task<IActionResult> RejectTutorVerificationDocument(int id, [FromBody] RejectSubjectRequest request)
     {
+        var reason = (request?.Reason ?? string.Empty).Trim();
+        if (reason.Length < AdminUsersController.MinReasonLength) return ReasonRequired();
+        if (reason.Length > 500) reason = reason[..500];
+
         var doc = await _db.TutorVerificationDocuments
             .Include(d => d.TutorProfile!).ThenInclude(p => p!.User)
             .FirstOrDefaultAsync(d => d.Id == id);
         if (doc == null) return NotFound(new { error = "Document introuvable" });
+        if (doc.Status != "pending")
+            return Conflict(new { error = "Ce document a déjà été traité." });
 
         doc.Status = "rejected";
-        doc.RejectionReason = string.IsNullOrWhiteSpace(request.Reason) ? "Document illisible ou non conforme." : request.Reason;
+        doc.RejectionReason = reason;
         doc.ReviewedAt = DateTime.UtcNow;
         doc.ReviewedByUserId = User.GetUserId();
+        this.AuditAdd(_audit, Backend.Models.Entities.AdminAuditActions.TutorDiplomaRejected, "TutorVerificationDocument", id,
+            doc.TutorProfile?.User?.Email, new { status = "pending" }, new { status = "rejected" }, reason);
         await _db.SaveChangesAsync();
 
         var email = doc.TutorProfile?.User?.Email;
         if (!string.IsNullOrEmpty(email))
         {
-            _ = _email.SendGenericEmailAsync(email, "Diplôme non validé  WinPlus",
-                $"<p>Ton document n'a pas pu être validé : <strong>{doc.RejectionReason}</strong>. " +
+            // Lot 9.7a (18.1) : le motif saisi est échappé avant d'entrer dans
+            // le HTML de l'e-mail (il y était inséré brut).
+            _ = _email.SendGenericEmailAsync(email, "Diplôme non validé · WinPlus",
+                $"<p>Ton document n'a pas pu être validé : <strong>{System.Net.WebUtility.HtmlEncode(doc.RejectionReason)}</strong>. " +
                 "Tu peux déposer un nouveau document depuis ton profil répétiteur.</p>",
                 NotificationCategory.Transactional);
         }
@@ -1784,10 +1730,9 @@ public class AdminController : ControllerBase
         return Ok(new { message = "Diplôme rejeté", verified = false });
     }
 }
-
 public record AdminActivityEntry(string Id, string Type, DateTime Timestamp, string Title, string Description, string Status, string UserName, string UserEmail, string Target);
 public record RejectSubjectRequest(string? Reason);
 public record BulkApproveRequest(List<int> Ids);
-public record AdminEmailRequest(string Target, string Subject, string Body, string? CustomEmail);
+public record AdminEmailRequest(string? Target, string Subject, string Body, string? CustomEmail, int? ExpectedRecipients = null);
 public record AdminChatMessageRequest(string? Content);
 public record SendSupportReply(string Content);

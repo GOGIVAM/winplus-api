@@ -172,6 +172,15 @@ public static class WalletEntryTypes
     /// </summary>
     public const string ContentRemovalRefund = "ContentRemovalRefund";
 
+    /// <summary>
+    /// Lot 9.7a (suivi 18.5) : remboursement d'une commande catalogue approuvé
+    /// par l'administration, crédité au portefeuille de l'acheteur (part
+    /// Mobile Money moins les frais NotchPay d'origine, règle du 9.2 ; achat
+    /// par portefeuille parent recrédité en entier). Une seule écriture par
+    /// commande (clé catalog_refund:order:{id}).
+    /// </summary>
+    public const string CatalogRefund = "CatalogRefund";
+
     // ── Tutorat (lot 9.2, suivi 17.6 et 17.9) ─────────────────────────────
 
     /// <summary>Débit du payeur réglant une séance avec son solde (atomique avec la création de la réservation).</summary>

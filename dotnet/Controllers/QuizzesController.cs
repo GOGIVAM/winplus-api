@@ -17,11 +17,18 @@ public class QuizzesController : ControllerBase
     private readonly IQuizService _quizService;
     private readonly IDailyScoreService _dailyScore;
 
-    public QuizzesController(IQuizService quizService, IDailyScoreService dailyScore)
+    private readonly IAdminAuditService? _audit;
+
+    public QuizzesController(IQuizService quizService, IDailyScoreService dailyScore, IAdminAuditService? audit = null)
     {
         _quizService = quizService;
         _dailyScore = dailyScore;
+        _audit = audit;
     }
+
+    /// <summary>Lot 9.7a (18.3) : publication, dépublication et suppression par l'admin journalisées.</summary>
+    private Task AuditAsync(string action, int id, object after) =>
+        _audit == null ? Task.CompletedTask : this.AuditAsync(_audit, action, "Quiz", id, after: after);
 
     /// <summary>
     /// Récupère tous les quiz avec pagination
@@ -31,6 +38,9 @@ public class QuizzesController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<QuizDto>), 200)]
     public async Task<ActionResult<IEnumerable<QuizDto>>> GetAllQuizzes([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
+        // Lot 9.7a (18.1) : route publique, taille de page plafonnée.
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var quizzes = await _quizService.GetAllQuizzesAsync(page, pageSize);
         return Ok(quizzes);
     }
@@ -71,6 +81,9 @@ public class QuizzesController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<QuizDto>), 200)]
     public async Task<ActionResult<IEnumerable<QuizDto>>> GetQuizzesBySubject(string subject, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
+        // Lot 9.7a (18.1) : route publique, taille de page plafonnée.
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var quizzes = await _quizService.GetQuizzesBySubjectAsync(subject, page, pageSize);
         return Ok(quizzes);
     }
@@ -83,6 +96,9 @@ public class QuizzesController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<QuizDto>), 200)]
     public async Task<ActionResult<IEnumerable<QuizDto>>> GetQuizzesByDifficulty(string difficulty, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
+        // Lot 9.7a (18.1) : route publique, taille de page plafonnée.
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var quizzes = await _quizService.GetQuizzesByDifficultyAsync(difficulty, page, pageSize);
         return Ok(quizzes);
     }
@@ -95,6 +111,9 @@ public class QuizzesController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<QuizDto>), 200)]
     public async Task<ActionResult<IEnumerable<QuizDto>>> SearchQuizzes([FromQuery] string q, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
+        // Lot 9.7a (18.1) : route publique, taille de page plafonnée.
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var quizzes = await _quizService.SearchQuizzesAsync(q, page, pageSize);
         return Ok(quizzes);
     }
@@ -107,6 +126,9 @@ public class QuizzesController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<QuizDto>), 200)]
     public async Task<ActionResult<IEnumerable<QuizDto>>> GetPublishedQuizzes([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
+        // Lot 9.7a (18.1) : route publique, taille de page plafonnée.
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         // Route accessible anonymement : un visiteur non connecté ne doit voir
         // aucun quiz généré par IA (pas de propriétaire à qui les rattacher),
         // seulement les quiz admin, universellement partagés.
@@ -218,6 +240,9 @@ public class QuizzesController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<QuizAttemptDto>), 200)]
     public async Task<ActionResult<IEnumerable<QuizAttemptDto>>> GetMyQuizAttempts([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
+        // Lot 9.7a (18.1) : route publique, taille de page plafonnée.
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var userId = GetUserId();
         if (userId == 0)
             return Unauthorized(new { message = "User not authenticated" });
@@ -303,6 +328,7 @@ public class QuizzesController : ControllerBase
         try
         {
             var quiz = await _quizService.PublishQuizAsync(id);
+            await AuditAsync(Backend.Models.Entities.AdminAuditActions.LearningPublished, id, new { isPublished = true });
             return Ok(quiz);
         }
         catch (KeyNotFoundException)
@@ -323,6 +349,7 @@ public class QuizzesController : ControllerBase
         try
         {
             var quiz = await _quizService.UnpublishQuizAsync(id);
+            await AuditAsync(Backend.Models.Entities.AdminAuditActions.LearningPublished, id, new { isPublished = false });
             return Ok(quiz);
         }
         catch (KeyNotFoundException)
@@ -343,6 +370,7 @@ public class QuizzesController : ControllerBase
         var result = await _quizService.DeleteQuizAsync(id);
         if (!result)
             return NotFound(new { message = "Quiz not found" });
+        await AuditAsync(Backend.Models.Entities.AdminAuditActions.CatalogItemDeleted, id, new { deleted = true });
 
         return NoContent();
     }
@@ -396,6 +424,9 @@ public class QuizzesController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<QuizDto>), 200)]
     public async Task<ActionResult<IEnumerable<QuizDto>>> GetMyGeneratedQuizzes([FromQuery] bool includeHidden = false, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
+        // Lot 9.7a (18.1) : route publique, taille de page plafonnée.
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var userId = GetUserId();
         if (userId == 0)
             return Unauthorized(new { message = "User not authenticated" });

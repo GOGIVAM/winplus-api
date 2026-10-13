@@ -35,10 +35,12 @@ public partial class AdminWalletController : ControllerBase
     private readonly ILogger<AdminWalletController> _logger;
     private readonly ApplicationDbContext _db;
     private readonly INtfyService _ntfy;
+    private readonly IAdminAuditService? _audit;
 
     public AdminWalletController(IWalletBackfillService backfill, IWalletService wallet, ILogger<AdminWalletController> logger,
-        ApplicationDbContext db, INtfyService ntfy)
+        ApplicationDbContext db, INtfyService ntfy, IAdminAuditService? audit = null)
     {
+        _audit = audit;
         _db = db;
         _ntfy = ntfy;
         _backfill = backfill;
@@ -59,6 +61,8 @@ public partial class AdminWalletController : ControllerBase
         {
             var report = await _backfill.RunAsync(ct);
             _logger.LogInformation("Reprise du journal lancée par l'administrateur {AdminId} : égalité = {Equal}", User.GetUserId(), report.Equal);
+            if (_audit != null)
+                await this.AuditAsync(_audit, AdminAuditActions.WalletBackfillRun, "Wallet", "backfill", after: new { equal = report.Equal });
             return Ok(new { data = report, equal = report.Equal, success = true });
         }
         catch (Exception ex)
@@ -253,6 +257,9 @@ public partial class AdminWalletController : ControllerBase
         {
             _logger.LogInformation("Crédit manuel de {Amount} XAF vers l'utilisateur {UserId} par l'administrateur {AdminId} : {Reason}",
                 request.AmountXaf, beneficiary.Id, adminId, reason);
+            if (_audit != null)
+                await this.AuditAsync(_audit, AdminAuditActions.WalletCredit, "User", beneficiary.Id,
+                    after: new { amountXaf = request.AmountXaf, entryId = entry.Id }, reason: reason);
             try
             {
                 await _ntfy.PublishAsync($"winplus-user-{beneficiary.Id}", "Crédit sur ton portefeuille",

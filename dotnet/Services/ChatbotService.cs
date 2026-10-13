@@ -52,14 +52,18 @@ public class ChatbotService : IChatbotService
     private readonly ILogger<ChatbotService> _logger;
     private readonly IConfiguration _configuration;
     private readonly ApplicationDbContext _db;
+    /// <summary>Lot 9.7a (18.2) : température et longueur maximale réglables dans l'admin.</summary>
+    private readonly IPlatformSettings? _platformSettings;
 
     public ChatbotService(
         IChatbotRepository repository,
         IHttpClientFactory httpClientFactory,
         ILogger<ChatbotService> logger,
         IConfiguration configuration,
-        ApplicationDbContext db)
+        ApplicationDbContext db,
+        IPlatformSettings? platformSettings = null)
     {
+        _platformSettings = platformSettings;
         _repository = repository;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
@@ -374,8 +378,11 @@ public class ChatbotService : IChatbotService
                 Content = m.Content,
                 Attachments = DeserializeJsonList<AttachmentDto>(m.Attachments)
             }).ToList(),
-            MaxTokens = _configuration.GetValue<int>("Chatbot:MaxTokens", 2000),
-            Temperature = _configuration.GetValue<float>("Chatbot:Temperature", 0.7f)
+            MaxTokens = _platformSettings?.GetInt(PlatformSettingDefinitions.WinAiChatMaxTokens)
+                ?? _configuration.GetValue<int>("Chatbot:MaxTokens", 2000),
+            Temperature = _platformSettings != null
+                ? (float)_platformSettings.GetDecimal(PlatformSettingDefinitions.WinAiChatTemperature)
+                : _configuration.GetValue<float>("Chatbot:Temperature", 0.7f)
         };
 
         if (includeContext)

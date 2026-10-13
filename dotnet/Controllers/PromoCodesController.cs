@@ -12,12 +12,19 @@ public class PromoCodesController : ControllerBase
 {
     private readonly IPromoCodeService _promoCodeService;
     private readonly ILogger<PromoCodesController> _logger;
+    private readonly IAdminAuditService _audit;
 
-    public PromoCodesController(IPromoCodeService promoCodeService, ILogger<PromoCodesController> logger)
+    public PromoCodesController(IPromoCodeService promoCodeService, ILogger<PromoCodesController> logger, IAdminAuditService audit)
     {
         _promoCodeService = promoCodeService;
         _logger = logger;
+        _audit = audit;
     }
+
+    private static object Summary(PromoCodeDto p) => new
+    {
+        p.Code, p.DiscountType, p.DiscountValue, p.UsageLimit, p.ValidUntil, p.IsActive, p.AppliesTo,
+    };
 
     /// <summary>
     /// Create a new promo code (admin only)
@@ -30,6 +37,8 @@ public class PromoCodesController : ControllerBase
         {
             var adminUserId = User.GetUserId();
             var promoCode = await _promoCodeService.CreatePromoCodeAsync(adminUserId, request);
+            await this.AuditAsync(_audit, Backend.Models.Entities.AdminAuditActions.PromoCodeCreated, "PromoCode", promoCode.Id,
+                promoCode.Code, after: Summary(promoCode));
 
             return CreatedAtAction(
                 nameof(GetPromoCodeByCode),
@@ -208,10 +217,15 @@ public class PromoCodesController : ControllerBase
             if (!result)
                 return NotFound(new { error = "Promo code not found" });
 
+            // Lot 9.7a (18.7) : la route DELETE désactive (le code et son
+            // historique d'usage restent) ; l'écran l'affiche « Désactiver ».
+            await this.AuditAsync(_audit, Backend.Models.Entities.AdminAuditActions.PromoCodeDeactivated, "PromoCode", id,
+                after: new { isActive = false });
+
             return Ok(new
             {
                 success = true,
-                message = "Promo code deactivated successfully",
+                message = "Code promo désactivé",
                 timestamp = DateTime.UtcNow
             });
         }
@@ -234,6 +248,8 @@ public class PromoCodesController : ControllerBase
             var updated = await _promoCodeService.UpdatePromoCodeAsync(id, request);
             if (updated == null)
                 return NotFound(new { error = "Promo code not found" });
+            await this.AuditAsync(_audit, Backend.Models.Entities.AdminAuditActions.PromoCodeUpdated, "PromoCode", id,
+                updated.Code, after: Summary(updated));
 
             return Ok(new
             {
@@ -241,6 +257,10 @@ public class PromoCodesController : ControllerBase
                 data = updated,
                 timestamp = DateTime.UtcNow
             });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
         }
         catch (Exception ex)
         {
@@ -266,6 +286,11 @@ public class PromoCodesController : ControllerBase
 
             if (!result)
                 return NotFound(new { error = "Promo code not found" });
+
+            await this.AuditAsync(_audit, request.IsActive
+                    ? Backend.Models.Entities.AdminAuditActions.PromoCodeUpdated
+                    : Backend.Models.Entities.AdminAuditActions.PromoCodeDeactivated,
+                "PromoCode", id, after: new { isActive = request.IsActive });
 
             return Ok(new
             {

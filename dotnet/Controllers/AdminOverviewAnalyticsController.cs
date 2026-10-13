@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
+using Backend.Services;
 
 namespace Backend.Controllers;
 
@@ -67,29 +68,47 @@ public class AdminOverviewAnalyticsController : ControllerBase
             ? (double?)null
             : Math.Round((double)((current - previous) / previous * 100m), 1);
 
-    // ── Coordonnées des 10 grandes villes camerounaises ─────────────────────
-    private static readonly (string City, string Region, double Lat, double Lng, double Weight)[] _cameroonCities =
+    // ── Coordonnées des principales villes camerounaises (placement sur la carte) ──
+    private static readonly (string City, string Region, double Lat, double Lng)[] _cameroonCities =
     [
-        ("Yaoundé",     "Centre",       3.8480,  11.5021, 0.32),
-        ("Douala",      "Littoral",     4.0511,   9.7679, 0.28),
-        ("Bafoussam",   "Ouest",        5.4767,  10.4175, 0.08),
-        ("Bamenda",     "Nord-Ouest",   5.9597,  10.1456, 0.07),
-        ("Ngaoundéré",  "Adamaoua",     7.3167,  13.5833, 0.05),
-        ("Garoua",      "Nord",         9.3000,  13.4000, 0.05),
-        ("Bertoua",     "Est",          4.5786,  13.6778, 0.04),
-        ("Buea",        "Sud-Ouest",    4.1527,   9.2411, 0.05),
-        ("Ebolowa",     "Sud",          2.9000,  11.1500, 0.03),
-        ("Kribi",       "Sud",          2.9500,   9.9000, 0.03),
+        ("Yaoundé",     "Centre",       3.8480,  11.5021),
+        ("Douala",      "Littoral",     4.0511,   9.7679),
+        ("Bafoussam",   "Ouest",        5.4767,  10.4175),
+        ("Bamenda",     "Nord-Ouest",   5.9597,  10.1456),
+        ("Ngaoundéré",  "Adamaoua",     7.3167,  13.5833),
+        ("Garoua",      "Nord",         9.3000,  13.4000),
+        ("Maroua",      "Extrême-Nord", 10.5910, 14.3159),
+        ("Bertoua",     "Est",          4.5786,  13.6778),
+        ("Buea",        "Sud-Ouest",    4.1527,   9.2411),
+        ("Limbé",       "Sud-Ouest",    4.0167,   9.2167),
+        ("Kumba",       "Sud-Ouest",    4.6363,   9.4469),
+        ("Ebolowa",     "Sud",          2.9000,  11.1500),
+        ("Kribi",       "Sud",          2.9500,   9.9000),
+        ("Edéa",        "Littoral",     3.8000,  10.1333),
+        ("Nkongsamba",  "Littoral",     4.9547,   9.9404),
+        ("Dschang",     "Ouest",        5.4500,  10.0667),
+        ("Foumban",     "Ouest",        5.7167,  10.9000),
     ];
+
+    private static string Fold(string s)
+    {
+        var normalized = s.Trim().ToLowerInvariant().Normalize(System.Text.NormalizationForm.FormD);
+        var sb = new System.Text.StringBuilder();
+        foreach (var ch in normalized)
+            if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch) != System.Globalization.UnicodeCategory.NonSpacingMark)
+                sb.Append(ch);
+        return sb.ToString();
+    }
 
     /// <summary>
     /// GET /api/admin/analytics/geographic
     ///
-    /// La table Users ne stocke pas de ville  aucun champ City n'existe.
-    /// On distribue donc le total des utilisateurs actifs selon les poids
-    /// démographiques des 10 principales villes camerounaises.
-    /// C'est une estimation déclarée, pas une donnée inventée silencieusement :
-    /// le champ `estimated` = true signale au frontend que ce sont des projections.
+    /// Lot 9.7a (18.1) : répartition RÉELLE des comptes par ville déclarée
+    /// (User.City). L'ancienne version multipliait le total des comptes par
+    /// des poids démographiques fixes : elle affichait des utilisateurs dans
+    /// des villes où il n'y en avait aucun. Les villes connues sont placées
+    /// sur la carte ; les autres sont listées sans coordonnées, et les comptes
+    /// sans ville déclarée sont comptés à part.
     /// </summary>
     [HttpGet("geographic")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -97,29 +116,223 @@ public class AdminOverviewAnalyticsController : ControllerBase
     {
         try
         {
-            var totalUsers = await _db.Users.CountAsync(u => !u.IsDeleted);
-            if (totalUsers == 0)
-                return Ok(new { success = true, estimated = true, data = Array.Empty<object>() });
+            var users = _db.Users.AsNoTracking().Where(u => !u.IsDeleted && u.Role != "admin");
+            var totalUsers = await users.CountAsync();
+            var rows = await users
+                .Where(u => u.City != null && u.City.Trim() != "")
+                .GroupBy(u => u.City!.Trim())
+                .Select(g => new { City = g.Key, Count = g.Count() })
+                .ToListAsync();
 
-            var data = _cameroonCities.Select(c => new
+            var known = _cameroonCities.ToDictionary(c => Fold(c.City));
+            var merged = rows
+                .GroupBy(r => Fold(r.City))
+                .Select(g =>
+                {
+                    known.TryGetValue(g.Key, out var k);
+                    var hasCoords = k.City != null;
+                    return new
+                    {
+                        city = hasCoords ? k.City : g.OrderByDescending(x => x.Count).First().City,
+                        region = hasCoords ? k.Region : null,
+                        lat = hasCoords ? k.Lat : (double?)null,
+                        lng = hasCoords ? k.Lng : (double?)null,
+                        count = g.Sum(x => x.Count),
+                        estimated = false,
+                    };
+                })
+                .OrderByDescending(x => x.count)
+                .ToList();
+
+            var withCity = merged.Sum(m => m.count);
+            return Ok(new
             {
-                city      = c.City,
-                region    = c.Region,
-                lat       = c.Lat,
-                lng       = c.Lng,
-                count     = (int)Math.Round(totalUsers * c.Weight),
-                estimated = true,
-            }).ToArray();
-
-            return Ok(new { success = true, estimated = true, data });
+                success = true,
+                estimated = false,
+                totalUsers,
+                withoutCity = totalUsers - withCity,
+                data = merged,
+            });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erreur pendant le calcul de la carte géographique");
-            return StatusCode(500, new { success = false, error = ex.Message });
+            return StatusCode(500, new { success = false, error = "Erreur serveur" });
         }
     }
 
+    /// <summary>
+    /// GET /api/admin/analytics/conversion-rate?days=N  Conversion de la
+    /// période, calculée en SQL (voir <see cref="AdminMetrics.ConversionAsync"/>),
+    /// avec la période précédente pour l'évolution. Lot 9.7a : le « panier
+    /// abandonné » (sans définition mesurable) est retiré.
+    /// </summary>
+    [HttpGet("conversion-rate")]
+    public async Task<IActionResult> GetConversionRate([FromQuery] int days = 30)
+    {
+        days = Math.Clamp(days, 1, 365);
+        var to = DateTime.UtcNow;
+        var from = to.AddDays(-days);
+        var current = await AdminMetrics.ConversionAsync(_db, from, to);
+        var previous = await AdminMetrics.ConversionAsync(_db, from.AddDays(-days), from);
+        return Ok(new
+        {
+            success = true,
+            data = new
+            {
+                days,
+                conversionRate = current.Rate,
+                registered = current.Registered,
+                buyers = current.Buyers,
+                previousConversionRate = previous.Rate,
+            },
+        });
+    }
+
+    /// <summary>
+    /// GET /api/admin/analytics/popular-subjects?days=N&limit=K  Contenus les
+    /// plus téléchargés sur la période (lot 9.7a : calculé en base, l'ancienne
+    /// version renvoyait les K premiers contenus, sans classement).
+    /// </summary>
+    [HttpGet("popular-subjects")]
+    public async Task<IActionResult> GetPopularSubjects([FromQuery] int days = 30, [FromQuery] int limit = 10)
+    {
+        days = Math.Clamp(days, 1, 365);
+        limit = Math.Clamp(limit, 1, 50);
+        var from = DateTime.UtcNow.AddDays(-days);
+        var top = await _db.DownloadHistories.AsNoTracking()
+            .Where(d => d.CreatedAt >= from)
+            .Join(_db.Subjects.Where(s => !s.IsDeleted), d => d.SubjectId, s => s.Id, (d, s) => new { s.Id, s.Title, s.Category })
+            .GroupBy(x => new { x.Id, x.Title, x.Category })
+            .Select(g => new { id = g.Key.Id, title = g.Key.Title, category = g.Key.Category, downloads = g.Count() })
+            .OrderByDescending(x => x.downloads)
+            .Take(limit)
+            .ToListAsync();
+        return Ok(new { success = true, data = top, days });
+    }
+
+    private static (DateTime From, DateTime End, int Days) Window(int days)
+    {
+        days = Math.Clamp(days, 1, 365);
+        var to = DateTime.UtcNow.Date;
+        return (to.AddDays(-(days - 1)), to.AddDays(1), days);
+    }
+
+    /// <summary>
+    /// GET /api/admin/analytics/revenues?days=N  Écran Revenus (lot 9.7a,
+    /// 18.1) : tout est calculé sur la période demandée, à partir des
+    /// paiements réellement encaissés (Payments completed) et des commandes
+    /// encaissées. Croissance : revenus de la période contre la période
+    /// précédente de même longueur (et non plus l'évolution du nombre de
+    /// commandes) ; commandes complètes : uniquement les commandes encaissées
+    /// (et non plus toutes) ; panier moyen : montant des commandes encaissées
+    /// divisé par leur nombre ; meilleurs produits : chiffre d'affaires réel
+    /// des lignes de commande encaissées.
+    /// </summary>
+    [HttpGet("revenues")]
+    public async Task<IActionResult> GetRevenues([FromQuery] int days = 30)
+    {
+        try
+        {
+            var (from, end, n) = Window(days);
+            var prevFrom = from.AddDays(-n);
+            var paid = AdminMetrics.CompletedOrderStatuses;
+
+            var payRows = await _db.Payments.AsNoTracking()
+                .Where(p => p.Status == "completed" && (p.CompletedAt ?? p.CreatedAt) >= from && (p.CompletedAt ?? p.CreatedAt) < end)
+                .GroupBy(p => (p.CompletedAt ?? p.CreatedAt).Date)
+                .Select(g => new { Day = g.Key, Sum = g.Sum(p => p.Amount), Count = g.Count() })
+                .ToListAsync();
+            var revenue = payRows.Sum(r => r.Sum);
+            var previousRevenue = await _db.Payments.AsNoTracking()
+                .Where(p => p.Status == "completed" && (p.CompletedAt ?? p.CreatedAt) >= prevFrom && (p.CompletedAt ?? p.CreatedAt) < from)
+                .SumAsync(p => (decimal?)p.Amount) ?? 0m;
+
+            var orders = _db.Orders.AsNoTracking()
+                .Where(o => !o.IsDeleted && paid.Contains(o.Status.ToLower())
+                         && (o.CompletedDate ?? o.CreatedAt) >= from && (o.CompletedDate ?? o.CreatedAt) < end);
+            var completedOrders = await orders.CountAsync();
+            var ordersAmount = await orders.SumAsync(o => (decimal?)o.TotalAmount) ?? 0m;
+
+            var topProducts = await _db.OrderItems.AsNoTracking()
+                .Where(oi => !oi.Order.IsDeleted && paid.Contains(oi.Order.Status.ToLower())
+                          && (oi.Order.CompletedDate ?? oi.Order.CreatedAt) >= from && (oi.Order.CompletedDate ?? oi.Order.CreatedAt) < end)
+                .Select(oi => new
+                {
+                    Name = oi.Course != null ? oi.Course.Title : oi.Subject != null ? oi.Subject.Title : "Autre",
+                    oi.PriceAtPurchase,
+                })
+                .GroupBy(x => x.Name)
+                .Select(g => new { name = g.Key, revenue = g.Sum(x => x.PriceAtPurchase), orders = g.Count() })
+                .OrderByDescending(x => x.revenue)
+                .Take(10)
+                .ToListAsync();
+
+            var conversion = await AdminMetrics.ConversionAsync(_db, from, end);
+            var byDay = payRows.ToDictionary(r => r.Day, r => r.Sum);
+
+            return Ok(new
+            {
+                success = true,
+                range = new { from = from.ToString("yyyy-MM-dd"), to = end.AddDays(-1).ToString("yyyy-MM-dd"), days = n },
+                revenue,
+                previousRevenue,
+                growth = Delta(revenue, previousRevenue),
+                completedOrders,
+                avgOrderValue = completedOrders > 0 ? Math.Round(ordersAmount / completedOrders, 0) : (decimal?)null,
+                payments = payRows.Sum(r => r.Count),
+                conversionRate = conversion.Rate,
+                conversionRegistered = conversion.Registered,
+                conversionBuyers = conversion.Buyers,
+                series = Fill(from, n, byDay),
+                topProducts,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur pendant le calcul des revenus");
+            return StatusCode(500, new { success = false, error = "Erreur serveur" });
+        }
+    }
+
+    /// <summary>GET /api/admin/analytics/revenues/export?days=N  Paiements encaissés de la période, en CSV (séparateur « ; », UTF-8).</summary>
+    [HttpGet("revenues/export")]
+    public async Task<IActionResult> ExportRevenues([FromQuery] int days = 30)
+    {
+        var (from, end, n) = Window(days);
+        var rows = await _db.Payments.AsNoTracking()
+            .Where(p => p.Status == "completed" && (p.CompletedAt ?? p.CreatedAt) >= from && (p.CompletedAt ?? p.CreatedAt) < end)
+            .OrderBy(p => p.CompletedAt ?? p.CreatedAt)
+            .Select(p => new
+            {
+                Date = p.CompletedAt ?? p.CreatedAt,
+                OrderNumber = p.Order != null ? p.Order.OrderNumber : null,
+                Email = p.User != null ? p.User.Email : p.GuestEmail,
+                p.Amount, p.Currency, p.PaymentMethod, p.Operator, p.Description,
+                Reference = p.TransactionId ?? p.NotchpayReference,
+            })
+            .ToListAsync();
+
+        static string Cell(object? v)
+        {
+            var s = v switch
+            {
+                null => "",
+                DateTime d => d.ToString("yyyy-MM-dd HH:mm"),
+                decimal m => m.ToString("0", System.Globalization.CultureInfo.InvariantCulture),
+                _ => v.ToString() ?? "",
+            };
+            return s.Contains(';') || s.Contains('"') || s.Contains('\n') ? $"\"{s.Replace("\"", "\"\"")}\"" : s;
+        }
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Date;Commande;Client;Montant;Devise;Moyen de paiement;Opérateur;Libellé;Référence");
+        foreach (var r in rows)
+            sb.AppendLine(string.Join(';', new object?[] { r.Date, r.OrderNumber, r.Email, r.Amount, r.Currency, r.PaymentMethod, r.Operator, r.Description, r.Reference }.Select(Cell)));
+
+        var bytes = System.Text.Encoding.UTF8.GetPreamble().Concat(System.Text.Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
+        return File(bytes, "text/csv; charset=utf-8", $"revenus_{from:yyyy-MM-dd}_{end.AddDays(-1):yyyy-MM-dd}.csv");
+    }
     [HttpGet("overview")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -295,6 +508,7 @@ public class AdminOverviewAnalyticsController : ControllerBase
                     completedOrders,
                     uniqueBuyers,
                     revenue     = revenueAllTime,
+                    revenueInPeriod = revenue,
                     downloads,
                     avgOrderValue,
                     examsPublished,

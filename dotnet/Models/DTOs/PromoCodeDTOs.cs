@@ -40,6 +40,10 @@ public class CreatePromoCodeRequest
     public DateTime? ValidUntil { get; set; }
     
     public List<int>? ApplicableSubjectIds { get; set; }
+
+    /// <summary>Lot 9.7a (18.7) : catalog | subscription | all (défaut catalog).</summary>
+    [MaxLength(20)]
+    public string? AppliesTo { get; set; }
 }
 
 /// <summary>
@@ -89,6 +93,9 @@ public class PromoCodeDto
     public bool IsActive { get; set; }
     
     public List<int>? ApplicableSubjectIds { get; set; }
+
+    /// <summary>catalog | subscription | all.</summary>
+    public string AppliesTo { get; set; } = "catalog";
     
     public DateTime CreatedAt { get; set; }
 }
@@ -120,6 +127,10 @@ public class UpdatePromoCodeRequest
     public DateTime? ValidUntil { get; set; }
 
     public List<int>? ApplicableSubjectIds { get; set; }
+
+    /// <summary>Lot 9.7a (18.7) : catalog | subscription | all ; null = inchangé.</summary>
+    [MaxLength(20)]
+    public string? AppliesTo { get; set; }
 }
 
 /// <summary>

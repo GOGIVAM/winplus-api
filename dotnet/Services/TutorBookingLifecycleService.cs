@@ -22,15 +22,20 @@ public class TutorBookingLifecycleService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TutorBookingLifecycleService> _logger;
-    private readonly TutorPolicySettings _policy;
+    private readonly IConfiguration _configuration;
+    private readonly IPlatformSettings? _platformSettings;
+
+    /// <summary>Relu à chaque passage : le délai de contestation est réglable dans l'admin (lot 9.7a).</summary>
+    private TutorPolicySettings _policy => TutorPolicySettings.From(_configuration, _platformSettings);
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(15);
     private static readonly string[] RespondedStatuses = { "pending_tutor_approval" };
 
-    public TutorBookingLifecycleService(IServiceScopeFactory scopeFactory, ILogger<TutorBookingLifecycleService> logger, IConfiguration configuration)
+    public TutorBookingLifecycleService(IServiceScopeFactory scopeFactory, ILogger<TutorBookingLifecycleService> logger, IConfiguration configuration, IPlatformSettings? platformSettings = null)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
-        _policy = TutorPolicySettings.From(configuration);
+        _configuration = configuration;
+        _platformSettings = platformSettings;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

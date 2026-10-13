@@ -27,6 +27,7 @@ namespace Backend.Tests
         public static TestApplicationDbContext Create(string? name = null) =>
             new(new DbContextOptionsBuilder<ApplicationDbContext>()
                 .UseInMemoryDatabase(name ?? $"test-{Guid.NewGuid()}")
+                .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options);
 
         /// <summary>
@@ -37,6 +38,7 @@ namespace Backend.Tests
         public static TestApplicationDbContext Create(string name, Microsoft.EntityFrameworkCore.Storage.InMemoryDatabaseRoot root) =>
             new(new DbContextOptionsBuilder<ApplicationDbContext>()
                 .UseInMemoryDatabase(name, root)
+                .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options);
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)

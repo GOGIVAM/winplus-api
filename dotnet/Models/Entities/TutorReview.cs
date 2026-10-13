@@ -52,6 +52,18 @@ public class TutorReview
     public int? ReportedByUserId { get; set; }
     public DateTime? ReportedAt { get; set; }
 
+    /// <summary>
+    /// Lot 9.7a : décision de l'administrateur sur un avis signalé. Un avis
+    /// retiré (true) n'apparaît plus sur le profil et ne compte plus dans la
+    /// note moyenne ; la ligne reste en base (l'auteur ne peut pas renoter la séance).
+    /// </summary>
+    public bool IsHiddenByModeration { get; set; }
+    /// <summary>kept | removed ; null tant que le signalement n'est pas traité.</summary>
+    [MaxLength(20)]
+    public string? ModerationDecision { get; set; }
+    public int? ModeratedByUserId { get; set; }
+    public DateTime? ModeratedAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     [ForeignKey(nameof(TutorBookingId))]

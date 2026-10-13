@@ -27,14 +27,19 @@ public class ChatbotController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ChatbotController> _logger;
 
+    /// <summary>Lot 9.7a (18.2) : température et longueur maximale réglables dans l'admin.</summary>
+    private readonly IPlatformSettings? _platformSettings;
+
     public ChatbotController(
         IChatbotService chatbotService,
         ApplicationDbContext dbContext,
         IAiQuotaService aiQuota,
         ITokenTopUpService topUp,
         IHttpClientFactory httpClientFactory,
-        ILogger<ChatbotController> logger)
+        ILogger<ChatbotController> logger,
+        IPlatformSettings? platformSettings = null)
     {
+        _platformSettings = platformSettings;
         _chatbotService = chatbotService;
         _dbContext = dbContext;
         _aiQuota = aiQuota;
@@ -736,8 +741,8 @@ public class ChatbotController : ControllerBase
                 // 8.7/8.8 : transmis à FastAPI pour que son propre contrôle de
                 // quota reconnaisse la réserve posée ou rattachée ici.
                 client_message_id = quota.ReservationId,
-                max_tokens = 2000,
-                temperature = 0.7,
+                max_tokens = _platformSettings?.GetInt(PlatformSettingDefinitions.WinAiChatMaxTokens) ?? 2000,
+                temperature = (double)(_platformSettings?.GetDecimal(PlatformSettingDefinitions.WinAiChatTemperature) ?? 0.7m),
                 user_context = new
                 {
                     role,

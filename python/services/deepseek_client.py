@@ -66,7 +66,7 @@ class DeepSeekClient:
             "model": self.model,
             "messages": all_messages,
             "max_tokens": max_tokens or self.max_tokens,
-            "temperature": temperature or self.temperature,
+            "temperature": self.temperature if temperature is None else temperature,
             "stream": False
         }
         if json_mode:
@@ -207,7 +207,7 @@ class DeepSeekClient:
             "model": self.model,
             "messages": all_messages,
             "max_tokens": max_tokens or self.max_tokens,
-            "temperature": temperature or self.temperature,
+            "temperature": self.temperature if temperature is None else temperature,
             "stream": True,
             "stream_options": {"include_usage": True},
         }

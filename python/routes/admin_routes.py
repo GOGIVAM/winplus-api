@@ -6,7 +6,7 @@ WinAI  Endpoints IA pour le compte Administrateur.
 - POST /admin/anomaly/{id}/resolve       → Marquer une anomalie résolue
 - POST /admin/content-health-check       → Analyse qualité d'un contenu
 - POST /admin/growth-insights            → Insights de croissance hebdomadaires
-- POST /admin/revenue-forecast           → Prévision revenus 30/60/90 jours
+- POST /admin/revenue-forecast           → Prévision revenus 3/6/12 mois (paiements encaissés)
 - POST /admin/moderate-content           → Modération de post forum
 - GET  /admin/moderation/pending         → Posts forum en attente de modération
 - POST /admin/moderation/{id}/resolve    → Approuver/rejeter un post modéré
@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, Numeric, create_engine, func
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, Numeric, create_engine, func, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
@@ -493,35 +493,20 @@ async def growth_insights(
 
         insights_raw = _deepseek_json(prompt, system, max_tokens=1200)
         if not isinstance(insights_raw, list) or len(insights_raw) == 0:
-            insights_raw = [
-                {
-                    "insight": f"{stats.get('new_enrollments', 0)} nouveaux enrollments en {stats.get('period_days', 7)} jours  croissance à analyser.",
-                    "category": "acquisition",
-                    "action": "Identifier les sources d'acquisition les plus performantes.",
-                    "priority": "high",
-                },
-                {
-                    "insight": f"Score moyen plateforme : {stats.get('avg_score', 0)}%  objectif 70%.",
-                    "category": "content",
-                    "action": "Renforcer les contenus pour les matières sous-performantes.",
-                    "priority": "medium",
-                },
-                {
-                    "insight": "Taux de rétention à analyser  indicateur clé de santé plateforme.",
-                    "category": "retention",
-                    "action": "Mettre en place des emails de réengagement à J+7 et J+30.",
-                    "priority": "high",
-                },
-                {
-                    "insight": "Opportunité de croissance sur la géographie sous-exploitée.",
-                    "category": "geography",
-                    "action": "Lancer une campagne marketing ciblée sur Douala.",
-                    "priority": "medium",
-                },
-            ]
-
+            # Lot 9.7a (18.1) : plus d'insights « de repli » rédigés à l'avance
+            # et présentés comme une analyse réelle. Si WinAI ne répond pas,
+            # l'écran l'indique et n'affiche que les chiffres mesurés.
+            return {
+                "insights": [],
+                "unavailable": True,
+                "reason": "L'analyse WinAI est momentanément indisponible. Les chiffres mesurés restent affichés.",
+                "generated_at": datetime.utcnow().isoformat(),
+                "period_days": body.period_days,
+                "data_context": stats,
+            }
         return {
             "insights": insights_raw[:5],
+            "unavailable": False,
             "generated_at": datetime.utcnow().isoformat(),
             "period_days": body.period_days,
             "data_context": stats,
@@ -543,7 +528,6 @@ def session_scalar(session, agg, *filters):
 
 class RevenueForecastRequest(BaseModel):
     currency: str = "XAF"
-    avg_revenue_per_enrollment: Optional[float] = None  # Prix moyen par inscription en XAF
 
 
 @admin_router.post("/admin/revenue-forecast")
@@ -552,104 +536,113 @@ async def revenue_forecast(
     current_user: UserTokenData = Depends(require_role("admin")),
 ):
     """
-    Prévision de revenus basée sur les enrollments des 90 derniers jours.
-    Calcule le MRR actuel et applique un taux de croissance linéaire sur 3 mois glissants.
-    Retourne current_mrr, forecast_3m, forecast_6m, forecast_12m, growth_rate_pct, trend.
+    Prévision de revenus (lot 9.7a, suivi 18.1) calculée sur les paiements
+    RÉELLEMENT encaissés (table Payments, statut completed), par mois civil.
+    L'ancienne version multipliait le nombre d'inscriptions par un prix
+    inventé (2 500 XAF) ; elle n'est plus utilisée.
+
+    - current_mrr : encaissé du dernier mois civil COMPLET ;
+    - growth_rate_pct : taux de croissance mensuel composé sur les (au plus)
+      3 derniers mois complets ;
+    - forecast_3m / 6m / 12m : encaissé projeté pour le mois situé 3, 6 et
+      12 mois après le dernier mois complet (current_mrr × (1 + taux)^n) ;
+    - month_to_date : encaissé du mois en cours (information, non projeté) ;
+    - insufficient_data : moins de 2 mois complets avec des encaissements.
     """
     db_session = _db.SessionLocal()
     try:
         now = datetime.now(timezone.utc)
-        # Prix moyen par inscription (peut être fourni ou estimé)
-        avg_price = body.avg_revenue_per_enrollment or 2500.0  # 2 500 XAF par défaut
+        month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+        # 12 mois civils complets avant le mois en cours.
+        start_year, start_month = month_start.year, month_start.month - 12
+        while start_month <= 0:
+            start_month += 12
+            start_year -= 1
+        history_start = datetime(start_year, start_month, 1, tzinfo=timezone.utc)
 
-        # Récupère les enrollments des 90 derniers jours groupés par mois
-        cutoff_90d = now - timedelta(days=90)
-        rows = (
-            db_session.query(
-                func.date_trunc("month", Enrollment.EnrolledAt).label("month"),
-                func.count(Enrollment.Id).label("count"),
-            )
-            .filter(
-                Enrollment.IsDeleted == False,
-                Enrollment.EnrolledAt >= cutoff_90d,
-            )
-            .group_by(func.date_trunc("month", Enrollment.EnrolledAt))
-            .order_by(func.date_trunc("month", Enrollment.EnrolledAt))
-            .all()
-        )
+        rows = db_session.execute(
+            text(
+                'SELECT date_trunc(\'month\', COALESCE("CompletedAt", "CreatedAt")) AS month, '
+                'SUM("Amount") AS revenue, COUNT(*) AS payments '
+                'FROM "Payments" WHERE "Status" = \'completed\' '
+                'AND COALESCE("CompletedAt", "CreatedAt") >= :start '
+                'GROUP BY 1 ORDER BY 1'
+            ),
+            {"start": history_start},
+        ).fetchall()
 
-        monthly_data = [{"month": str(r.month)[:7], "enrollments": int(r.count), "revenue": round(int(r.count) * avg_price)} for r in rows]
+        by_month = {}
+        for r in rows:
+            key = str(r.month)[:7]
+            by_month[key] = {"revenue": float(r.revenue or 0), "payments": int(r.payments or 0)}
 
-        # Données insuffisantes si moins de 2 mois
-        if len(monthly_data) < 2:
+        current_key = f"{month_start.year:04d}-{month_start.month:02d}"
+        month_to_date = by_month.get(current_key, {}).get("revenue", 0.0)
+
+        # Mois complets, zéros réels compris (un mois sans encaissement vaut 0).
+        monthly_history = []
+        y, m = history_start.year, history_start.month
+        while (y, m) < (month_start.year, month_start.month):
+            key = f"{y:04d}-{m:02d}"
+            entry = by_month.get(key, {"revenue": 0.0, "payments": 0})
+            monthly_history.append({"month": key, "revenue": round(entry["revenue"]), "payments": entry["payments"]})
+            m += 1
+            if m > 12:
+                m, y = 1, y + 1
+
+        # On ne garde l'historique qu'à partir du premier mois encaissé.
+        first_paid = next((i for i, h in enumerate(monthly_history) if h["revenue"] > 0), None)
+        monthly_history = monthly_history[first_paid:] if first_paid is not None else []
+
+        base = {
+            "currency": body.currency,
+            "basis": "payments_completed",
+            "generated_at": datetime.utcnow().isoformat(),
+            "monthly_history": monthly_history,
+            "month_to_date": round(month_to_date),
+        }
+
+        if len(monthly_history) < 2:
             return {
-                "current_mrr": 0,
-                "forecast_3m": 0,
-                "forecast_6m": 0,
-                "forecast_12m": 0,
-                "growth_rate_pct": 0.0,
+                **base,
+                "current_mrr": monthly_history[-1]["revenue"] if monthly_history else 0,
+                "forecast_3m": None,
+                "forecast_6m": None,
+                "forecast_12m": None,
+                "growth_rate_pct": None,
                 "trend": "stable",
                 "insufficient_data": True,
-                "currency": body.currency,
-                "generated_at": datetime.utcnow().isoformat(),
-                "monthly_history": monthly_data,
             }
 
-        # MRR actuel = revenus du dernier mois complet
-        current_mrr = monthly_data[-1]["revenue"]
-
-        # Calcul de la tendance linéaire sur les 3 derniers mois disponibles
-        recent_months = monthly_data[-3:]
-        revenues = [m["revenue"] for m in recent_months]
-
-        if len(revenues) >= 2:
-            # Taux de croissance moyen mensuel (CMGR)
-            first_rev = revenues[0] if revenues[0] > 0 else 1
-            last_rev = revenues[-1]
-            periods = len(revenues) - 1
-            cmgr = (last_rev / first_rev) ** (1 / periods) - 1  # taux mensuel
+        current_mrr = monthly_history[-1]["revenue"]
+        recent = [h["revenue"] for h in monthly_history[-3:]]
+        if recent[0] > 0 and len(recent) >= 2:
+            cmgr = (recent[-1] / recent[0]) ** (1 / (len(recent) - 1)) - 1
         else:
             cmgr = 0.0
-
         growth_rate_pct = round(cmgr * 100, 2)
+        trend = "up" if growth_rate_pct > 2 else "down" if growth_rate_pct < -2 else "stable"
 
-        # Tendance
-        if growth_rate_pct > 2:
-            trend = "up"
-        elif growth_rate_pct < -2:
-            trend = "down"
-        else:
-            trend = "stable"
-
-        # Prévisions par projection linéaire (MRR × (1 + cmgr)^n)
-        def forecast_month(base: float, months: int, rate: float) -> float:
-            return round(base * ((1 + rate) ** months))
-
-        forecast_3m = forecast_month(current_mrr, 3, cmgr)
-        forecast_6m = forecast_month(current_mrr, 6, cmgr)
-        forecast_12m = forecast_month(current_mrr, 12, cmgr)
+        def project(months: int) -> int:
+            return round(current_mrr * ((1 + cmgr) ** months))
 
         return {
+            **base,
             "current_mrr": current_mrr,
-            "forecast_3m": forecast_3m,
-            "forecast_6m": forecast_6m,
-            "forecast_12m": forecast_12m,
+            "forecast_3m": project(3),
+            "forecast_6m": project(6),
+            "forecast_12m": project(12),
             "growth_rate_pct": growth_rate_pct,
             "trend": trend,
             "insufficient_data": False,
-            "currency": body.currency,
-            "avg_revenue_per_enrollment": avg_price,
-            "generated_at": datetime.utcnow().isoformat(),
-            "monthly_history": monthly_data,
         }
     except HTTPException:
         raise
     except Exception as exc:
         logger.error(f"[revenue-forecast] Error: {exc}")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Prévision indisponible")
     finally:
         db_session.close()
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. Modération de Forum

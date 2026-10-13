@@ -379,6 +379,15 @@ builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<IHistoryService, HistoryService>();
 builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
 builder.Services.AddScoped<IAdminService, AdminService>();
+// Lot 9.7a (suivi 18.1 à 18.9) : journal d'audit, réglages de plateforme,
+// remboursement catalogue au portefeuille, retrait de contenu, e-mails de masse.
+builder.Services.AddScoped<IAdminAuditService, AdminAuditService>();
+builder.Services.AddSingleton<IPlatformSettings, PlatformSettings>();
+builder.Services.AddScoped<IPlatformSettingsAdminService, PlatformSettingsAdminService>();
+builder.Services.AddScoped<ICatalogRefundService, CatalogRefundService>();
+builder.Services.AddScoped<ICatalogRemovalService, CatalogRemovalService>();
+builder.Services.AddScoped<IAdminEmailCampaignService, AdminEmailCampaignService>();
+builder.Services.AddHostedService<AdminEmailCampaignWorker>();
 // Stockage fichiers : bucket lu dans la configuration, vérification d'existence,
 // repli disque local. Singleton pour ne sonder le bucket qu'une seule fois.
 builder.Services.AddSingleton<IStorageService, StorageService>();
@@ -646,6 +655,10 @@ app.UseAuthentication();  // Doit être avant UseAuthorization
 // avant l'autorisation, pour qu'une suspension prenne effet dès la requête
 // suivante au lieu d'attendre l'expiration naturelle du jeton d'accès.
 app.UseAccountStatusRevalidation();
+
+// Lot 9.7a (18.2) : mode maintenance réglable dans l'admin (les
+// administrateurs, la connexion et les webhooks de paiement passent).
+app.UseMaintenanceMode();
 
 app.UseAuthorization();
 

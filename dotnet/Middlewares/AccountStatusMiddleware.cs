@@ -58,7 +58,28 @@ public class AccountStatusMiddleware
 
             if (int.TryParse(raw, out var userId))
             {
-                var usable = await IsAccountUsableAsync(db, cache, userId);
+                var state = await GetStateAsync(db, cache, userId);
+                var usable = state.Usable;
+
+                // Lot 9.7a (18.1) : le rôle est porté par le jeton. Après un
+                // changement de rôle par l'administration, un jeton émis avant
+                // garderait l'ancien rôle (et ses droits) jusqu'à son expiration :
+                // il est refusé dès que le rôle en base diffère, et le client se
+                // reconnecte avec son nouveau rôle.
+                var tokenRole = context.User.FindFirst("role")?.Value ?? context.User.FindFirst(ClaimTypes.Role)?.Value;
+                if (usable && state.Role != null && !string.IsNullOrWhiteSpace(tokenRole)
+                    && !string.Equals(tokenRole, state.Role, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning("Requête refusée : le rôle du compte {UserId} a changé ({TokenRole} -> {DbRole})", userId, tokenRole, state.Role);
+                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    await context.Response.WriteAsJsonAsync(new
+                    {
+                        error = "Votre rôle a changé. Veuillez vous reconnecter.",
+                        code = "role_changed"
+                    });
+                    return;
+                }
+
                 if (!usable)
                 {
                     _logger.LogWarning("Requête refusée : le compte {UserId} est suspendu ou supprimé", userId);
@@ -76,9 +97,12 @@ public class AccountStatusMiddleware
         await _next(context);
     }
 
-    private static async Task<bool> IsAccountUsableAsync(ApplicationDbContext db, IMemoryCache cache, int userId)
+    /// <summary>État mis en cache : compte utilisable et rôle en base (null si compte inconnu).</summary>
+    public sealed record AccountState(bool Usable, string? Role);
+
+    private static async Task<AccountState> GetStateAsync(ApplicationDbContext db, IMemoryCache cache, int userId)
     {
-        if (cache.TryGetValue<bool>(CacheKey(userId), out var cached))
+        if (cache.TryGetValue<AccountState>(CacheKey(userId), out var cached) && cached != null)
             return cached;
 
         // IgnoreQueryFilters : un compte soft-deleted est invisible des
@@ -88,16 +112,16 @@ public class AccountStatusMiddleware
             .IgnoreQueryFilters()
             .AsNoTracking()
             .Where(u => u.Id == userId)
-            .Select(u => new { u.IsActive, u.IsDeleted })
+            .Select(u => new { u.IsActive, u.IsDeleted, u.Role })
             .FirstOrDefaultAsync();
 
         // Un identifiant inconnu n'est pas traité comme une suspension : le
         // jeton reste rejeté plus loin si nécessaire, et une base momentanément
         // incohérente ne doit pas déconnecter tout le monde.
-        var usable = state == null || (state.IsActive && !state.IsDeleted);
+        var result = new AccountState(state == null || (state.IsActive && !state.IsDeleted), state?.Role);
 
-        cache.Set(CacheKey(userId), usable, CacheWindow);
-        return usable;
+        cache.Set(CacheKey(userId), result, CacheWindow);
+        return result;
     }
 }
 

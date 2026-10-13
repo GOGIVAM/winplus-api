@@ -582,27 +582,8 @@ public class UsersController : ControllerBase
         }
     }
 
-    [HttpGet]
-    [Authorize(Policy = "AdminOnly")]
-    public async Task<IActionResult> GetAll([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
-    {
-        try
-        {
-            if (page < 1) page = 1;
-            if (pageSize < 1 || pageSize > 100) pageSize = 20;
-
-            var users = await _userService.GetAllUsersAsync(page, pageSize);
-            var totalCount = await _userService.GetTotalUsersCountAsync();
-
-            var response = new PaginationResponse<User>(users, totalCount, page, pageSize);
-            return Ok(response);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting all users");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
+    // Lot 9.7a (18.9) : GET /api/users (administration) retirée : pur doublon,
+    // moins complet, de GET /api/admin/users (filtres, présence, paiement).
 
     /// <summary>
     /// Suppression de son propre compte (page Profil → Zone de danger).
@@ -634,73 +615,12 @@ public class UsersController : ControllerBase
         }
     }
 
-    [HttpDelete("{id:int}")]
-    [Authorize(Policy = "AdminOnly")]
-    public async Task<IActionResult> Delete(int id)
-    {
-        try
-        {
-            var adminUserId = User.GetUserId();
-            var result = await _userService.SoftDeleteUserAsync(id, adminUserId);
-
-            if (!result) return NotFound(new { error = "User not found" });
-
-            return Ok(new { success = true, message = "User deleted successfully", userId = id });
-        }
-        catch (WalletHolderDeletionBlockedException ex)
-        {
-            // Suivi 17.14 : titulaire du portefeuille d'une institution.
-            return Conflict(new { success = false, code = "wallet_holder", error = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error deleting user {UserId}", id);
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
-
-    [HttpPost("{id:int}/restore")]
-    [Authorize(Policy = "AdminOnly")]
-    public async Task<IActionResult> Restore(int id)
-    {
-        try
-        {
-            var result = await _userService.RestoreUserAsync(id);
-
-            if (!result) return NotFound(new { error = "User not found or already active" });
-
-            return Ok(new { success = true, message = "User restored successfully", userId = id });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error restoring user {UserId}", id);
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
-
-    [HttpDelete("{id:int}/permanent")]
-    [Authorize(Policy = "AdminOnly")]
-    public async Task<IActionResult> HardDelete(int id)
-    {
-        try
-        {
-            var result = await _userService.HardDeleteUserAsync(id);
-
-            if (!result) return NotFound(new { error = "User not found" });
-
-            return Ok(new { success = true, message = "User permanently deleted", userId = id });
-        }
-        catch (WalletHolderDeletionBlockedException ex)
-        {
-            // Suivi 17.14 : titulaire du portefeuille d'une institution.
-            return Conflict(new { success = false, code = "wallet_holder", error = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error hard deleting user {UserId}", id);
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
+    // Lot 9.7a (18.1, 18.9) : DELETE /api/users/{id}, POST {id}/restore et
+    // DELETE {id}/permanent retirées : doublons des actions de
+    // /api/admin/users (DELETE {id}, POST {id}/reactivate, DELETE {id}/hard),
+    // qui seules exigent un motif, protègent le dernier administrateur,
+    // révoquent les sessions, invalident le cache d'état et écrivent au
+    // journal d'audit. Aucun appelant (web, mobile, tests).
 
     [HttpGet("{id:int}/statistics")]
     [Authorize]

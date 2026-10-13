@@ -14,10 +14,13 @@ public class CertificatesController : ControllerBase
     private readonly ICertificateService _certificateService;
     private readonly ILogger<CertificatesController> _logger;
 
-    public CertificatesController(ICertificateService certificateService, ILogger<CertificatesController> logger)
+    private readonly IAdminAuditService? _audit;
+
+    public CertificatesController(ICertificateService certificateService, ILogger<CertificatesController> logger, IAdminAuditService? audit = null)
     {
         _certificateService = certificateService;
         _logger = logger;
+        _audit = audit;
     }
 
     /// <summary>
@@ -248,6 +251,10 @@ public class CertificatesController : ControllerBase
         try
         {
             var cert = await _certificateService.AdminIssueCertificateAsync(request);
+            // Lot 9.7a : délivrance manuelle par l'administration, journalisée.
+            if (_audit != null)
+                await this.AuditAsync(_audit, Backend.Models.Entities.AdminAuditActions.CertificateIssued, "Certificate", cert.Id,
+                    after: new { request.UserId, request.SubjectId, request.Grade });
             return CreatedAtAction(nameof(GetCertificate), new { id = cert.Id },
                 new ApiResponse<CertificateDto> { Success = true, Data = cert, Timestamp = DateTime.UtcNow });
         }

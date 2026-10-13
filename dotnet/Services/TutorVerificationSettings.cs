@@ -23,6 +23,18 @@ public sealed record TutorVerificationSettings(
     public TimeSpan ReportWindow => TimeSpan.FromDays(ReportWindowDays);
     public TimeSpan IdentityUrlTtl => TimeSpan.FromMinutes(IdentityUrlTtlMinutes);
 
+    /// <summary>
+    /// Lot 9.7a (suivi 18.2) : seuil, fenêtre et durées de conservation sont
+    /// réglables dans l'admin ; la valeur choisie l'emporte sur la configuration.
+    /// </summary>
+    public static TutorVerificationSettings From(IConfiguration configuration, IPlatformSettings? settings) =>
+        settings == null ? From(configuration) : new(
+            Math.Clamp(settings.GetInt(PlatformSettingDefinitions.TutorReportThreshold), 1, 50),
+            Math.Clamp(settings.GetInt(PlatformSettingDefinitions.TutorReportWindowDays), 1, 365),
+            Math.Clamp(settings.GetInt(PlatformSettingDefinitions.IdentityRetentionApproved), 0, 365),
+            Math.Clamp(settings.GetInt(PlatformSettingDefinitions.IdentityRetentionRejected), 0, 365),
+            Math.Clamp(configuration.GetValue<int?>("TutorVerification:IdentityUrlTtlMinutes") ?? 5, 1, 15));
+
     public static TutorVerificationSettings From(IConfiguration configuration) => new(
         Math.Clamp(configuration.GetValue<int?>("TutorSafety:ReportThreshold") ?? 3, 1, 50),
         Math.Clamp(configuration.GetValue<int?>("TutorSafety:ReportWindowDays") ?? 30, 1, 365),

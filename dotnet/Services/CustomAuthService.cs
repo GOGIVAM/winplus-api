@@ -43,6 +43,8 @@ public class CustomAuthService : ICustomAuthService
     private readonly int _emailVerificationExpirationHours;
     private readonly int _passwordResetExpirationHours;
     private readonly TimeSpan _refreshTokenLifetime;
+    /// <summary>Lot 9.7a (18.2) : « Nouvelles inscriptions » réglable dans l'admin.</summary>
+    private readonly IPlatformSettings? _platformSettings;
 
     // Après une rotation, l'ancien refresh token reste accepté ce court laps de
     // temps : plusieurs requêtes (ou onglets) qui expirent ensemble envoient le
@@ -57,8 +59,10 @@ public class CustomAuthService : ICustomAuthService
         IDeviceTrackingService deviceTrackingService,
         ISessionService sessionService,
         IConfiguration configuration,
-        ILogger<CustomAuthService> logger)
+        ILogger<CustomAuthService> logger,
+        IPlatformSettings? platformSettings = null)
     {
+        _platformSettings = platformSettings;
         _dbContext = dbContext;
         _jwtService = jwtService;
         _emailService = emailService;
@@ -114,6 +118,16 @@ public class CustomAuthService : ICustomAuthService
         {
             email = email?.Trim().ToLowerInvariant() ?? string.Empty;
             _logger.LogInformation("SignUp request for email: {Email}", email);
+
+            if (_platformSettings != null && !_platformSettings.GetBool(PlatformSettingDefinitions.SignupEnabled))
+            {
+                return new AuthResult
+                {
+                    Success = false,
+                    Message = "Les inscriptions sont momentanément fermées. Réessayez plus tard.",
+                    Errors = new() { { "signup", "signup_disabled" } }
+                };
+            }
 
             // Validation
             if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))

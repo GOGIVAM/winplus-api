@@ -29,10 +29,12 @@ public class AdminInstitutionWalletController : ControllerBase
     private readonly IWalletService _wallet;
     private readonly IInstitutionWalletHolderService _holders;
     private readonly ILogger<AdminInstitutionWalletController> _logger;
+    private readonly IAdminAuditService _audit;
 
     public AdminInstitutionWalletController(ApplicationDbContext db, IWalletService wallet, IInstitutionWalletHolderService holders,
-        ILogger<AdminInstitutionWalletController> logger)
+        ILogger<AdminInstitutionWalletController> logger, IAdminAuditService audit)
     {
+        _audit = audit;
         _db = db;
         _wallet = wallet;
         _holders = holders;
@@ -43,8 +45,11 @@ public class AdminInstitutionWalletController : ControllerBase
         $"{first} {last}".Trim() is { Length: > 0 } n ? n : email;
 
     [HttpGet("wallets")]
-    public async Task<IActionResult> List([FromQuery] string? search)
+    public async Task<IActionResult> List([FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 25)
     {
+        // Lot 9.7a (18.1) : pagination serveur (la liste était tronquée à 100).
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var query = _db.Institutions.AsNoTracking().Where(i => !i.IsDeleted);
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -52,7 +57,8 @@ public class AdminInstitutionWalletController : ControllerBase
             query = query.Where(i => i.Name.ToLower().Contains(term) || (i.Code != null && i.Code.ToLower().Contains(term)));
         }
 
-        var rows = await query.OrderBy(i => i.Name).Take(100)
+        var total = await query.CountAsync();
+        var rows = await query.OrderBy(i => i.Name).ThenBy(i => i.Id).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(i => new { i.Id, i.Name, i.City, i.WalletOwnerUserId })
             .ToListAsync();
         var holderIds = rows.Where(r => r.WalletOwnerUserId != null).Select(r => r.WalletOwnerUserId!.Value).ToList();
@@ -74,7 +80,7 @@ public class AdminInstitutionWalletController : ControllerBase
                 balanceXaf = r.WalletOwnerUserId is int id ? await _wallet.GetAvailableAsync(id) : 0m,
             });
         }
-        return Ok(new { data = items, success = true });
+        return Ok(new { data = new { items, total, page, pageSize }, success = true });
     }
 
     [HttpGet("{institutionId:int}/wallet")]
@@ -145,6 +151,11 @@ public class AdminInstitutionWalletController : ControllerBase
         try
         {
             var result = await _holders.ChangeHolderAsync(institutionId, request.NewHolderUserId, User.GetUserId(), request.Reason, request.ClientRequestId);
+            if (!result.AlreadyDone)
+                await this.AuditAsync(_audit, Backend.Models.Entities.AdminAuditActions.InstitutionWalletHolderChanged, "Institution", institutionId,
+                    before: new { holderUserId = result.Change?.OldHolderUserId },
+                    after: new { holderUserId = result.HolderUserId, transferredXaf = result.Change?.AmountXaf ?? 0m },
+                    reason: request.Reason);
             return Ok(new
             {
                 success = true,
