@@ -76,12 +76,32 @@ public class ParentController : ControllerBase
             var aiSessionsThisWeek = await _db.Conversations
                 .CountAsync(c => c.UserId == childId && !c.IsDeleted && c.LastMessageAt >= weekStart);
 
+            // Série, sessions et inactivité : mêmes règles que le tableau de bord de
+            // l'élève (UsersController) : un quiz terminé, une session d'étude ou un
+            // téléchargement font un jour actif. Sans ces champs, la vue parent
+            // affichait toujours 0 jour consécutif et 0 session.
+            var today = now.Date;
+            var since = today.AddDays(-180);
+            var activeDates = new HashSet<DateTime>();
+            foreach (var d in await _db.QuizAttempts.Where(q => q.UserId == childId && q.CompletedAt >= since).Select(q => q.CompletedAt.Date).ToListAsync()) activeDates.Add(d);
+            foreach (var d in await _db.StudySessions.Where(x => x.UserId == childId && x.CreatedAt >= since).Select(x => x.CreatedAt.Date).ToListAsync()) activeDates.Add(d);
+            foreach (var d in await _db.DownloadHistories.Where(x => x.UserId == childId && x.CreatedAt >= since).Select(x => x.CreatedAt.Date).ToListAsync()) activeDates.Add(d);
+            var currentStreak = 0;
+            var cursor = activeDates.Contains(today) ? today : today.AddDays(-1);
+            while (activeDates.Contains(cursor)) { currentStreak++; cursor = cursor.AddDays(-1); }
+            var inactivityDays = activeDates.Count == 0 ? 0 : (int)(today - activeDates.Max()).TotalDays;
+            var totalSessions = await _db.StudySessions.CountAsync(x => x.UserId == childId);
+
             return Ok(new
             {
                 downloadsThisWeek,
                 quizzesThisWeek,
+                // Pourcentage (moyenne des scores de quiz sur 30 jours), pas une note sur 20.
                 averageScore = Math.Round(avgScore, 1),
                 aiSessionsThisWeek,
+                currentStreak,
+                inactivityDays,
+                totalSessions,
             });
         }
         catch (Exception ex)
