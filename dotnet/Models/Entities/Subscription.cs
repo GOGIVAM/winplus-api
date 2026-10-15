@@ -50,6 +50,26 @@ public class Subscription
     /// <summary>Date de la dernière réinitialisation du compteur de tokens.</summary>
     public DateTime? TokensResetAt { get; set; }
 
+    // ── Lot 9.7b (étude section 1.2) ───────────────────────────────────────
+
+    /// <summary>Version du plan payée (prix et droits). Nulle pour un abonnement antérieur au 9.7b.</summary>
+    public int? PlanVersionId { get; set; }
+
+    /// <summary><see cref="BillingPeriods"/> : monthly, quarterly ou yearly.</summary>
+    public string? BillingPeriod { get; set; }
+
+    /// <summary>Public du plan (student, parent, teacher) : un seul abonnement actif par compte et par public.</summary>
+    public string? Audience { get; set; }
+
+    /// <summary>
+    /// Fin de la période de grâce (18.15 : renouvellement par le solde avec
+    /// 3 jours de grâce). Un abonnement « past_due » reste en vigueur jusqu'à
+    /// cette date.
+    /// </summary>
+    public DateTime? GraceUntil { get; set; }
+
+    public PlanVersion? PlanVersion { get; set; }
+
     // Navigation properties
     public User? User { get; set; }
 

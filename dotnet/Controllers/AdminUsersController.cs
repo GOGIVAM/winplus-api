@@ -151,6 +151,8 @@ public class AdminGrantSubscriptionRequest
 {
     public int? PlanId { get; set; }
     public int Months { get; set; } = 1;
+    /// <summary>Lot 9.7b : période de facturation de l'abonnement accordé (monthly par défaut).</summary>
+    public string? BillingPeriod { get; set; }
     public string? Note { get; set; }
 }
 
@@ -189,7 +191,8 @@ public class AdminUsersController : ControllerBase
     /// attribuable par l'administrateur uniquement ; l'inscription publique
     /// reste limitée à élève, professeur et parent.
     /// </summary>
-    private static readonly string[] AllowedRoles = { "student", "teacher", "parent", "institution", "admin" };
+    // Lot 9.7b (18.13) : rôle dédié « gestion des abonnements ».
+    private static readonly string[] AllowedRoles = { "student", "teacher", "parent", "institution", "admin", Backend.Extensions.AuthorizationPolicies.Roles.SubscriptionManager };
 
     private readonly ApplicationDbContext _db;
     private readonly IEmailService _email;
@@ -1639,98 +1642,40 @@ public class AdminUsersController : ControllerBase
     [HttpPost("{id:int}/grant-subscription")]
     public async Task<IActionResult> GrantSubscription(int id, [FromBody] AdminGrantSubscriptionRequest req)
     {
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
-        if (user == null) return NotFound(new { error = "Utilisateur introuvable" });
+        // Lot 9.7b : l'octroi passe par le service unique des plans
+        // (PlanCatalogService.GrantAsync) : plan explicite du public du compte,
+        // version publiée, un seul abonnement en vigueur. Plus de plan « le
+        // moins cher par défaut » ni de nom recopié pour résoudre un quota.
+        if (req.PlanId is not int planId)
+            return BadRequest(new { error = "Choisissez le plan à accorder." });
+        if (string.IsNullOrWhiteSpace(req.Note) || req.Note.Trim().Length < 3)
+            return BadRequest(new { error = "Motif obligatoire." });
 
-        var months = Math.Clamp(req.Months, 1, 36);
-        var now = DateTime.UtcNow;
-
-        // Plan par défaut quand l'admin n'en précise aucun.
-        //
-        // ⚠ Deux régressions corrigées ici :
-        //  1. `OrderBy(p => p.Price)` sans filtre tombait sur le plan GRATUIT.
-        //     Un octroi « X mois offerts » n'ouvrait donc plus aucun accès
-        //     payant depuis le contrôle de palier de ContentAccessService.
-        //     On retient désormais le moins cher des plans PAYANTS (Price > 0).
-        //  2. `!p.IsArchived` référençait une propriété [NotMapped] de
-        //     PricingPlan : EF Core ne pouvait pas la traduire et la requête
-        //     échouait à l'exécution. Seul `!p.IsDeleted` est réellement mappé.
-        var planId = req.PlanId ?? await _db.PricingPlans
-            .Where(p => !p.IsDeleted && p.Price > 0)
-            .OrderBy(p => p.Price)
-            .Select(p => p.Id)
-            .FirstOrDefaultAsync();
-
-        if (planId == 0)
-            return BadRequest(new { error = "Aucun plan tarifaire payant disponible" });
-
-        // Le nom du plan est recopié sur l'abonnement, comme le fait
-        // SubscriptionActivationService pour les abonnements payés : sans lui,
-        // l'abonnement offert s'affichait sans nom de plan et le quota de
-        // tokens IA (résolu à défaut par le nom) retombait sur le palier le
-        // plus bas.
-        var plan = await _db.PricingPlans
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(p => p.Id == planId);
-
-        if (plan == null)
-            return BadRequest(new { error = "Plan tarifaire introuvable" });
-
-        // Passe de clôture du lot 0 : un planId explicite n'était pas validé.
-        // Un plan archivé ou gratuit produisait un abonnement « actif » qui
-        // n'ouvrait aucun accès payant (ContentAccessService exige Price > 0).
-        if (req.PlanId.HasValue)
+        var entitlements = new Backend.Services.Entitlements.EntitlementService(_db, _cache);
+        var plans = new Backend.Services.Entitlements.PlanCatalogService(_db, entitlements);
+        try
         {
-            if (plan.IsDeleted)
-                return BadRequest(new { error = $"Le plan {plan.Name} est archivé : choisissez un plan actif." });
-            if (plan.Price <= 0)
-                return BadRequest(new { error = $"Le plan {plan.Name} est gratuit : un octroi d'abonnement doit porter sur un plan payant." });
-        }
-
-        var existing = await _db.Subscriptions
-            // Casse normalisée (§7.2) : sans ça, une ligne héritée en "Active"
-            // n'était pas vue et l'octroi créait un second abonnement actif au
-            // lieu de prolonger celui en cours.
-            .Where(s => s.UserId == id && !s.IsDeleted && s.Status.ToLower() == "active")
-            .OrderByDescending(s => s.EndDate ?? MaxSortableDate)
-            .FirstOrDefaultAsync();
-
-        if (existing != null)
-        {
-            // On prolonge à partir de la fin en cours, jamais d'écrasement.
-            var from = existing.EndDate.HasValue && existing.EndDate > now ? existing.EndDate.Value : now;
-            existing.EndDate = from.AddMonths(months);
-            existing.PricingPlanId = planId;
-            // Le plan pouvant changer à la prolongation, le nom et l'indicateur
-            // d'activité sont réalignés explicitement sur le plan retenu.
-            existing.PlanName = plan.Name;
-            existing.IsActive = true;
-            existing.RenewalCount += 1;
-            existing.UpdatedAt = now;
-        }
-        else
-        {
-            _db.Subscriptions.Add(new Subscription
+            var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == id);
+            var sub = await plans.GrantAsync(new Backend.Services.Entitlements.GrantPlanRequest
             {
                 UserId = id,
-                PricingPlanId = planId,
-                PlanName = plan.Name,
-                StartDate = now,
-                EndDate = now.AddMonths(months),
-                Status = "active",
-                IsActive = true,
-                CreatedAt = now,
+                PlanId = planId,
+                BillingPeriod = req.BillingPeriod,
+                Months = Math.Clamp(req.Months, 1, 36),
+                Reason = req.Note,
             });
+            this.AuditAdd(_audit, AdminAuditActions.UserSubscriptionGranted, "User", id, user == null ? null : Label(user),
+                after: new { plan = sub.PlanName, months = req.Months, sub.BillingPeriod, sub.EndDate }, reason: req.Note);
+            await _db.SaveChangesAsync();
+            entitlements.Invalidate();
+
+            _logger.LogInformation("Admin {AdminId} granted plan {PlanId} ({Months} month(s)) to user {UserId}",
+                CurrentAdminId(), planId, req.Months, id);
+            return Ok(new { message = $"Plan {sub.PlanName} accordé jusqu'au {sub.EndDate:dd/MM/yyyy}" });
         }
-
-        this.AuditAdd(_audit, AdminAuditActions.UserSubscriptionGranted, "User", id, Label(user),
-            after: new { plan = plan.Name, months }, reason: req.Note);
-        await _db.SaveChangesAsync();
-
-        _logger.LogInformation(
-            "Admin {AdminId} granted {Months} month(s) to user {UserId}. Note: {Note}",
-            CurrentAdminId(), months, id, req.Note ?? "");
-
-        return Ok(new { message = $"Abonnement de {months} mois accordé" });
+        catch (Backend.Services.Entitlements.PlanServiceException ex)
+        {
+            return StatusCode(ex.StatusCode, new { error = ex.Message });
+        }
     }
 }

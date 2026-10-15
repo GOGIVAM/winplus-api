@@ -1016,86 +1016,9 @@ public class AdminController : ControllerBase
 
     // ─── Subscriptions Admin ─────────────────────────────────────────────────────
 
-    /// <summary>GET /admin/subscriptions/plans  Plans de tarification avec comptage d'abonnés actifs</summary>
-    [HttpGet("subscriptions/plans")]
-    public async Task<IActionResult> GetSubscriptionPlans()
-    {
-        try
-        {
-            var plans = await _db.PricingPlans.Where(p => !p.IsDeleted).ToListAsync();
-
-            var activeCounts = await _db.Subscriptions
-                .Where(s => s.Status == "active" && !s.IsDeleted)
-                .GroupBy(s => s.PricingPlanId)
-                .Select(g => new { planId = g.Key, count = g.Count() })
-                .ToListAsync();
-
-            var countDict = activeCounts.ToDictionary(x => x.planId, x => x.count);
-
-            var result = plans.Select(p => new
-            {
-                id            = p.Id,
-                name          = p.Name,
-                category      = p.Category,
-                price         = p.Price,
-                currency      = p.Currency,
-                billingPeriod = p.BillingPeriod ?? p.Period,
-                activeCount   = countDict.GetValueOrDefault(p.Id, 0),
-                features      = p.Features,
-                isPopular     = p.IsPopular,
-                description   = p.Description,
-            });
-
-            return Ok(new { success = true, data = result });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting subscription plans");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
-
-    /// <summary>GET /admin/subscriptions/stats  Statistiques globales d'abonnements</summary>
-    [HttpGet("subscriptions/stats")]
-    public async Task<IActionResult> GetSubscriptionStats()
-    {
-        try
-        {
-            var now            = DateTime.UtcNow;
-            var thisMonthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
-
-            var total        = await _db.Subscriptions.CountAsync(s => !s.IsDeleted);
-            var active       = await _db.Subscriptions.CountAsync(s => s.Status == "active"    && !s.IsDeleted);
-            var cancelled    = await _db.Subscriptions.CountAsync(s => s.Status == "cancelled" && !s.IsDeleted);
-            var expired      = await _db.Subscriptions.CountAsync(s => s.Status == "expired"   && !s.IsDeleted);
-            var newThisMonth = await _db.Subscriptions.CountAsync(s => !s.IsDeleted && s.CreatedAt >= thisMonthStart);
-
-            var activeWithPeriod = await _db.Subscriptions
-                .Where(s => s.Status == "active" && !s.IsDeleted)
-                .Join(_db.PricingPlans, s => s.PricingPlanId, p => p.Id,
-                    (s, p) => new { period = p.BillingPeriod ?? p.Period ?? "" })
-                .ToListAsync();
-
-            var monthly = activeWithPeriod.Count(x => x.period.Contains("mois") || x.period.Contains("month"));
-            var yearly  = activeWithPeriod.Count(x => x.period.Contains("an")   || x.period.Contains("year"));
-
-            var denominator = active + cancelled + expired;
-            var churnRate   = denominator > 0
-                ? Math.Round((double)(cancelled + expired) / denominator * 100, 2)
-                : 0.0;
-
-            return Ok(new
-            {
-                success = true,
-                data    = new { total, active, cancelled, expired, newThisMonth, monthly, yearly, churnRate }
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting subscription stats");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
+    // Lot 9.7b : GET /admin/subscriptions/plans et /admin/subscriptions/stats
+    // retirés, purs doublons de /admin/plans et /admin/plans/stats
+    // (AdminPlansController, versions, prix par période, abonnés par version).
 
     // ─── Certificates Admin ──────────────────────────────────────────────────────
 

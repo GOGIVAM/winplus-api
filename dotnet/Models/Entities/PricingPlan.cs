@@ -110,4 +110,26 @@ public class PricingPlan
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
     public bool IsDeleted { get; set; } = false;
+
+    // ── Lot 9.7b : famille de plans versionnée ──────────────────────────────
+    // Depuis le 9.7b, une ligne PricingPlans est une FAMILLE stable (clé,
+    // public, nom) ; prix et droits vivent dans PlanVersion / PlanPrice /
+    // PlanEntitlement. Les colonnes historiques (Price, MaxChatMessages,
+    // TeacherRevenueShare, MaxChildren, MonthlyCredits…) ne sont plus lues
+    // pour décider d'un droit. Price reste renseignée (prix mensuel de la
+    // version publiée) pour les écrans et exports historiques.
+
+    /// <summary>Clé stable de la famille (ex. « student-premium »). Nulle pour les plans antérieurs au 9.7b.</summary>
+    public string? PlanKey { get; set; }
+
+    /// <summary><see cref="PlanAudiences"/> : student, parent ou teacher. Nul pour un plan antérieur au 9.7b.</summary>
+    public string? Audience { get; set; }
+
+    /// <summary>Plan gratuit de son public : ses droits sont la base de tout compte sans abonnement.</summary>
+    public bool IsFreeTier { get; set; }
+
+    /// <summary>Ordre d'affichage dans la page tarifs.</summary>
+    public int SortOrder { get; set; }
+
+    public ICollection<PlanVersion> Versions { get; set; } = new List<PlanVersion>();
 }

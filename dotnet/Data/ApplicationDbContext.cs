@@ -1937,5 +1937,8 @@ modelBuilder.Entity<Exam>(entity =>
 
         // ── Lot 9.7a : administration (voir ApplicationDbContext.Admin.cs) ──
         OnModelCreatingAdmin(modelBuilder);
+
+        // ── Lot 9.7b : abonnements dynamiques (voir ApplicationDbContext.Subscriptions97b.cs) ──
+        OnModelCreatingSubscriptions97b(modelBuilder);
     }
 }

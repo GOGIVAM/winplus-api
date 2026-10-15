@@ -118,4 +118,14 @@ public static class AdminAuditActions
     public const string AffiliateStatusChanged = "affiliate.status_changed";
     public const string AffiliateSettingsChanged = "affiliate.settings_changed";
     public const string CertificateIssued = "certificate.issued";
+
+    // Lot 9.7b (18.13) : plans d'abonnement, promotions, licences.
+    public const string PlanCreated = "plan.created";
+    public const string PlanUpdated = "plan.updated";
+    public const string PlanArchived = "plan.archived";
+    public const string PlanRestored = "plan.restored";
+    public const string PlanVersionDrafted = "plan.version_drafted";
+    public const string PlanVersionUpdated = "plan.version_updated";
+    public const string PlanVersionDiscarded = "plan.version_discarded";
+    public const string PlanVersionPublished = "plan.version_published";
 }

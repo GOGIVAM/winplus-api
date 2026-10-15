@@ -50,6 +50,27 @@ public class PricingController : ControllerBase
     }
 
     /// <summary>
+    /// GET /api/pricing/catalog?audience=student : plans en vente d'un public
+    /// (lot 9.7b), version publiée, prix TTC par période, multiplicateur WinAI
+    /// et droits réellement appliqués. Sans public : les trois publics.
+    /// </summary>
+    [HttpGet("catalog")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetCatalog([FromServices] Backend.Services.Entitlements.PlanCatalogService plans,
+        [FromQuery] string? audience = null)
+    {
+        var audiences = string.IsNullOrWhiteSpace(audience)
+            ? Backend.Models.Entities.PlanAudiences.All
+            : new[] { audience.Trim().ToLowerInvariant() };
+        if (audiences.Any(a => !Backend.Models.Entities.PlanAudiences.IsValid(a)))
+            return BadRequest(new { error = "Public invalide (student, parent ou teacher)." });
+        var result = new Dictionary<string, object>();
+        foreach (var a in audiences)
+            result[a] = await plans.PublicCardsAsync(a, HttpContext.RequestAborted);
+        return Ok(new { data = result, periods = Backend.Models.Entities.BillingPeriods.All });
+    }
+
+    /// <summary>
     /// Retourne les promotions actives non expirées
     /// </summary>
     [HttpGet("promotions")]

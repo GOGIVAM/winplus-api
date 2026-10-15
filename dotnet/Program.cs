@@ -282,6 +282,14 @@ builder.Services.AddAuthorization(options =>
         policy.RequireRole("admin");
     });
 
+    // Lot 9.7b (18.13) : gestion des abonnements (plans, promotions, licences),
+    // ouverte à l'administrateur et au rôle dédié « subscription_manager ».
+    options.AddPolicy(Backend.Extensions.AuthorizationPolicies.SubscriptionManagement, policy =>
+    {
+        policy.RequireAuthenticatedUser();
+        policy.RequireRole("admin", Backend.Extensions.AuthorizationPolicies.Roles.SubscriptionManager);
+    });
+
     // Politique pour les instructeurs
     options.AddPolicy("InstructorOnly", policy =>
     {
@@ -370,6 +378,9 @@ builder.Services.AddScoped<IAiQuotaService, AiQuotaService>();
 // Recharge de quota WinAI (décision 8.5) : point d'extension seulement la
 // recharge réelle dépend du wallet du Module 1/14, pas encore construit.
 builder.Services.AddScoped<ITokenTopUpService, UnavailableTokenTopUpService>();
+// Lot 9.7b : droits typés (service unique), gestion des plans.
+builder.Services.AddScoped<Backend.Services.Entitlements.IEntitlementService, Backend.Services.Entitlements.EntitlementService>();
+builder.Services.AddScoped<Backend.Services.Entitlements.PlanCatalogService>();
 
 // Création réelle de l'abonnement à la confirmation du paiement (Module 18,
 // correction §7.3) : sans elle, un client qui payait un abonnement n'obtenait
