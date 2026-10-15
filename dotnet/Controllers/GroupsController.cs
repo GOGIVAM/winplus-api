@@ -59,13 +59,75 @@ public class GroupsController : ControllerBase
             memberIds.UnionWith(classMembers);
         }
         memberIds.Remove(me);
+        // Seulement des comptes existants : un identifiant inconnu faisait
+        // échouer tout l'enregistrement (clé étrangère) après création du groupe.
+        var requested = memberIds.ToList();
+        var validIds = await _db.Users.AsNoTracking()
+            .Where(u => requested.Contains(u.Id) && !u.IsDeleted)
+            .Select(u => u.Id)
+            .ToListAsync();
 
         _db.ChatGroupMembers.Add(new ChatGroupMember { ChatGroupId = group.Id, UserId = me, Role = "admin" });
-        foreach (var uid in memberIds)
+        foreach (var uid in validIds)
             _db.ChatGroupMembers.Add(new ChatGroupMember { ChatGroupId = group.Id, UserId = uid, Role = "member" });
         await _db.SaveChangesAsync();
 
-        return Ok(new { id = group.Id, name = group.Name, memberCount = memberIds.Count + 1 });
+        return Ok(new { id = group.Id, name = group.Name, memberCount = validIds.Count + 1 });
+    }
+
+    /// <summary>
+    /// Retrouve une personne à ajouter à un groupe par son adresse e-mail, son
+    /// identifiant (nom d'utilisateur, avec ou sans « @ ») ou son numéro
+    /// d'utilisateur (avec ou sans « # »). Correspondance exacte uniquement :
+    /// on ne peut pas parcourir les comptes ni deviner des e-mails par morceaux.
+    /// </summary>
+    [HttpGet("find-user")]
+    public async Task<IActionResult> FindUser([FromQuery] string? q)
+    {
+        var me = User.GetUserId();
+        var term = (q ?? string.Empty).Trim().TrimStart('@', '#').ToLower();
+        if (term.Length == 0) return Ok(Array.Empty<object>());
+        var numericId = int.TryParse(term, out var n) && n > 0 ? n : 0;
+
+        var users = await _db.Users.AsNoTracking()
+            .Where(u => u.Id != me && !u.IsDeleted && u.IsActive &&
+                        (u.Email.ToLower() == term ||
+                         (u.Username != null && u.Username.ToLower() == term) ||
+                         (numericId > 0 && u.Id == numericId)))
+            .Select(u => new { id = u.Id, firstName = u.FirstName, lastName = u.LastName, username = u.Username, role = u.Role, avatarUrl = u.AvatarUrl })
+            .Take(5)
+            .ToListAsync();
+        return Ok(users);
+    }
+
+    public record AddGroupMembersRequest(List<int>? UserIds);
+
+    /// <summary>Ajoute des membres à un groupe existant (administrateurs du groupe).</summary>
+    [HttpPost("{id:int}/members")]
+    public async Task<IActionResult> AddMembers(int id, [FromBody] AddGroupMembersRequest req)
+    {
+        var me = User.GetUserId();
+        if (!await IsAdminAsync(id, me))
+            return StatusCode(403, new { error = "Seuls les administrateurs du groupe peuvent ajouter des membres." });
+
+        var requested = (req.UserIds ?? new List<int>()).Where(x => x != me).Distinct().ToList();
+        if (requested.Count == 0) return BadRequest(new { error = "Aucun membre à ajouter." });
+
+        var existing = await _db.ChatGroupMembers
+            .Where(m => m.ChatGroupId == id && requested.Contains(m.UserId))
+            .Select(m => m.UserId)
+            .ToListAsync();
+        var valid = await _db.Users.AsNoTracking()
+            .Where(u => requested.Contains(u.Id) && !u.IsDeleted)
+            .Select(u => u.Id)
+            .ToListAsync();
+        var toAdd = valid.Except(existing).ToList();
+
+        foreach (var uid in toAdd)
+            _db.ChatGroupMembers.Add(new ChatGroupMember { ChatGroupId = id, UserId = uid, Role = "member" });
+        await _db.SaveChangesAsync();
+
+        return Ok(new { added = toAdd.Count });
     }
 
     /// <summary>Mes groupes.</summary>
