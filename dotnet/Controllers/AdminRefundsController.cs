@@ -441,30 +441,20 @@ public class AdminRefundsController : ControllerBase
                 await _db.SaveChangesAsync();
             }
 
-            // Formations ouvertes par l'abonnement : CoursePlayerController ne
-            // vérifie que l'inscription active, pas l'abonnement. Si plus aucun
-            // abonnement payant ne couvre l'utilisateur, ces inscriptions sont
-            // désactivées, sauf celles qu'il a aussi achetées par ailleurs ou
-            // dont la formation est devenue gratuite.
-            if (subscriptions > 0 && !await _contentAccess.HasActiveSubscriptionAsync(userId))
-            {
-                subscriptionCourses = await _db.CourseEnrollments
-                    .Where(e => e.UserId == userId
-                             && e.IsActive
-                             && e.AccessType.ToLower() == "subscription"
-                             && !e.Course.IsFree
-                             && !_db.OrderItems.Any(oi => oi.CourseId == e.CourseId
-                                                       && oi.Order.UserId == userId
-                                                       && oi.OrderId != orderId
-                                                       && PaidOrderStatus.All.Contains(oi.Order.Status.ToLower())))
-                    .ExecuteUpdateAsync(s => s.SetProperty(e => e.IsActive, false));
-            }
+            // Lot 9.7b (18.16, F6/F7) : les formations ne sont plus jamais
+            // incluses dans un abonnement ; les anciennes inscriptions
+            // « subscription » sont désactivées ou converties par
+            // SQL_CourseSalesTtc97b.sql. Résilier un abonnement ne touche donc
+            // plus aux inscriptions de formation (SubscriptionCourseEnrollments
+            // reste à 0, champ conservé pour le contrat de réponse).
         }
 
         // ── 2. Formations achetées dans cette commande ───────────────────
-        // Lien : ligne de commande portant la formation, inscription du même
-        // utilisateur de type « purchase » (CourseEnrollmentController.Enroll
-        // n'accepte ce type que sur une commande payée de l'utilisateur).
+        // Lot 9.7b (F8) : l'inscription porte désormais la commande qui l'a
+        // ouverte (OrderId, posé par CourseSales à la confirmation du
+        // paiement), y compris pour un enfant (achat parent). Reste, pour les
+        // inscriptions d'avant le 9.7b sans OrderId, l'ancienne
+        // reconstitution : inscription « purchase » du bénéficiaire.
         var courseIds = await _db.OrderItems.AsNoTracking()
             .Where(oi => oi.OrderId == orderId && oi.CourseId != null)
             .Select(oi => oi.CourseId!.Value)
@@ -473,17 +463,33 @@ public class AdminRefundsController : ControllerBase
 
         if (courseIds.Count > 0)
         {
-            purchasedCourses = await _db.CourseEnrollments
-                .Where(e => e.UserId == userId
-                         && e.IsActive
+            var beneficiaryId = CourseSales.BeneficiaryOf(userId, order.Notes);
+            var candidates = await _db.CourseEnrollments
+                .Include(e => e.Course)
+                .Where(e => e.IsActive
                          && courseIds.Contains(e.CourseId)
-                         && e.AccessType.ToLower() == "purchase"
-                         && !e.Course.IsFree
-                         && !_db.OrderItems.Any(oi => oi.CourseId == e.CourseId
-                                                   && oi.Order.UserId == userId
-                                                   && oi.OrderId != orderId
-                                                   && PaidOrderStatus.All.Contains(oi.Order.Status.ToLower())))
-                .ExecuteUpdateAsync(s => s.SetProperty(e => e.IsActive, false));
+                         && (e.OrderId == orderId
+                             || (e.OrderId == null && e.UserId == beneficiaryId && e.AccessType.ToLower() == CourseSales.AccessPurchase)))
+                .ToListAsync();
+
+            foreach (var enrollment in candidates)
+            {
+                var other = await CourseSales.OtherPaidOrderIdAsync(_db, enrollment.UserId, enrollment.CourseId, orderId);
+                if (other != null)
+                {
+                    enrollment.OrderId = other; // couverte par un autre achat payé : accès conservé
+                    continue;
+                }
+                if (enrollment.Course != null && CourseSales.IsFreeCourse(enrollment.Course))
+                {
+                    enrollment.AccessType = CourseSales.AccessFree; // devenue gratuite : accès conservé
+                    enrollment.OrderId = null;
+                    continue;
+                }
+                enrollment.IsActive = false;
+                purchasedCourses++;
+            }
+            await _db.SaveChangesAsync();
         }
 
         // ── 3. Assignations de classe ────────────────────────────────────

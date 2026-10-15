@@ -173,6 +173,31 @@ public class CoursePlayerController : ControllerBase
             var prog = await _db.LessonProgress.AsNoTracking()
                 .FirstOrDefaultAsync(p => p.UserId == userId && p.LessonId == lessonId);
 
+            // Lot 9.7b (F12) : première ouverture de la leçon par un inscrit
+            // mémorisée côté serveur (LessonProgress.CreatedAt). C'est le point
+            // de départ des durées minimales vérifiées à la complétion : un
+            // appel direct à l'API ne peut plus déclarer une leçon terminée
+            // sans l'avoir ouverte.
+            if (enrollment != null && prog == null)
+            {
+                try
+                {
+                    _db.LessonProgress.Add(new LessonProgress
+                    {
+                        UserId = userId, LessonId = lessonId, CourseId = courseId,
+                        CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+                    });
+                    await _db.SaveChangesAsync();
+                }
+                catch (DbUpdateException ex)
+                {
+                    // Ouverture concurrente (deux onglets) : la ligne existe déjà.
+                    _logger.LogDebug(ex, "Progression déjà créée pour la leçon {LessonId}", lessonId);
+                    foreach (var entry in _db.ChangeTracker.Entries<LessonProgress>().Where(e => e.State == EntityState.Added).ToList())
+                        entry.State = EntityState.Detached;
+                }
+            }
+
             // Module 27 (lot 8) : jamais de lien S3 permanent vers la vidéo ou le
             // fichier d'une leçon  toujours une URL de lecture présignée à
             // durée limitée, sur le même principe que SubjectsController pour
@@ -180,7 +205,14 @@ public class CoursePlayerController : ControllerBase
             var videoUrl = string.IsNullOrWhiteSpace(lesson.VideoUrl)
                 ? null
                 : _storage.PresignGetUrl(lesson.VideoUrl, LessonMediaTtl);
-            var fileUrl = string.IsNullOrWhiteSpace(lesson.FileUrl)
+            // Lot 9.7b (F13, 18.21) : une épreuve ou un livre du catalogue
+            // ajouté à la formation (SourceSubjectId) n'est jamais
+            // téléchargeable : aucune adresse de fichier, il s'ouvre dans la
+            // visionneuse sécurisée (GET /api/subjects/{id}/view?courseId=…,
+            // filigrane nominatif). Les autres fichiers de leçon restent
+            // téléchargeables (URL présignée).
+            var viewerOnly = lesson.SourceSubjectId != null;
+            var fileUrl = viewerOnly || string.IsNullOrWhiteSpace(lesson.FileUrl)
                 ? null
                 : _storage.PresignGetUrl(lesson.FileUrl, LessonMediaTtl);
 
@@ -189,6 +221,8 @@ public class CoursePlayerController : ControllerBase
                 lesson.Id, lesson.Title, lesson.LessonType, lesson.Description,
                 videoUrl, lesson.VideoDurationSec,
                 lesson.ArticleContent, fileUrl, lesson.FileName,
+                sourceSubjectId = lesson.SourceSubjectId,
+                viewerOnly,
                 lesson.IsPreview, lesson.Position, lesson.QuizId,
                 checkpoints = string.IsNullOrEmpty(lesson.CheckpointsJson)
                     ? new List<CheckpointDto>()
@@ -223,6 +257,7 @@ public class CoursePlayerController : ControllerBase
                 .FirstOrDefaultAsync(p => p.UserId == userId && p.LessonId == lessonId);
 
             var wasAlreadyCompleted = prog?.IsCompleted ?? false;
+            var now = DateTime.UtcNow;
 
             if (prog == null)
             {
@@ -231,21 +266,57 @@ public class CoursePlayerController : ControllerBase
                     UserId    = userId,
                     LessonId  = lessonId,
                     CourseId  = courseId,
+                    CreatedAt = now,
+                    UpdatedAt = now,
                 };
                 _db.LessonProgress.Add(prog);
             }
 
-            prog.WatchTimeSec    = Math.Max(prog.WatchTimeSec, req.WatchTimeSec);
-            prog.LastPositionSec = req.LastPositionSec;
-            prog.UpdatedAt       = DateTime.UtcNow;
+            // Lot 9.7b (F12) : le temps de visionnage n'est plus pris tel que
+            // déclaré. Il ne peut progresser que du temps réellement écoulé
+            // depuis la sauvegarde précédente (lecture accélérée jusqu'à 2×,
+            // plus une marge) : sauter à la fin de la vidéo ou appeler l'API
+            // directement ne crédite pas le visionnage.
+            prog.WatchTimeSec    = LessonCompletionRules.CreditedWatchTime(prog.WatchTimeSec, req.WatchTimeSec, prog.UpdatedAt, now);
+            prog.LastPositionSec = Math.Max(0, req.LastPositionSec);
+            prog.UpdatedAt       = now;
 
+            // Lot 9.7b (F12) : la complétion est validée par le serveur
+            // (visionnage minimal d'une vidéo, quiz réussi, temps minimal de
+            // lecture), et le score de quiz transmis à la gamification est
+            // relu dans les tentatives, jamais pris du client.
+            int? serverQuizScore = null;
+            string? completionRefusal = null;
             if (req.IsCompleted && !prog.IsCompleted)
             {
-                prog.IsCompleted = true;
-                prog.CompletedAt = DateTime.UtcNow;
+                var check = await LessonCompletionRules.CheckAsync(_db, userId, lesson, prog, now);
+                completionRefusal = check.Refusal;
+                serverQuizScore = check.QuizScorePercent;
+                if (completionRefusal == null)
+                {
+                    prog.IsCompleted = true;
+                    prog.CompletedAt = now;
+                }
             }
 
             await _db.SaveChangesAsync();
+
+            if (completionRefusal != null)
+            {
+                var current = await _db.CourseEnrollments.AsNoTracking()
+                    .Where(e => e.UserId == userId && e.CourseId == courseId)
+                    .Select(e => new { e.ProgressPercent, e.CompletedAt })
+                    .FirstOrDefaultAsync();
+                return Conflict(new
+                {
+                    code = "completion_not_validated",
+                    error = completionRefusal,
+                    lessonId,
+                    isCompleted = false,
+                    progressPercent = current?.ProgressPercent ?? 0,
+                    courseCompleted = current?.CompletedAt != null,
+                });
+            }
 
             // Recalculer la progression globale via la fonction SQL
             await _db.Database.ExecuteSqlRawAsync(
@@ -259,8 +330,8 @@ public class CoursePlayerController : ControllerBase
             // uniquement au moment où la leçon passe réellement à "complétée"
             // (jamais sur un ré-appel idempotent).
             List<string> newBadges = new();
-            if (req.IsCompleted && !wasAlreadyCompleted)
-                newBadges = await _gamification.AwardForLessonCompletionAsync(userId, courseId, lessonId, req.QuizScorePercent);
+            if (prog.IsCompleted && !wasAlreadyCompleted)
+                newBadges = await _gamification.AwardForLessonCompletionAsync(userId, courseId, lessonId, serverQuizScore);
 
             return Ok(new
             {
@@ -328,4 +399,74 @@ public class CoursePlayerController : ControllerBase
     }
 }
 
+/// <remarks>Lot 9.7b (F12) : <c>QuizScorePercent</c> est accepté pour compatibilité mais ignoré (score relu côté serveur).</remarks>
 public record SaveProgressRequest(int WatchTimeSec, int LastPositionSec, bool IsCompleted, int? QuizScorePercent = null);
+
+/// <summary>
+/// Lot 9.7b (F12) : règles serveur de complétion d'une leçon de formation.
+///  * vidéo : visionnage crédité d'au moins 80 % de la durée connue (ou, sans
+///    durée connue, 30 secondes depuis l'ouverture) ;
+///  * quiz : une tentative réussie du quiz de la leçon (QuizAttempts) ;
+///  * article, fichier, ressource du catalogue : 20 secondes au moins depuis
+///    la première ouverture de la leçon (GET /play/{lessonId}).
+/// </summary>
+public static class LessonCompletionRules
+{
+    public const double MinVideoWatchRatio = 0.8;
+    public const int MinSecondsWithoutDuration = 30;
+    public const int MinReadingSeconds = 20;
+    /// <summary>Lecture accélérée tolérée (2×) et marge réseau entre deux sauvegardes.</summary>
+    public const int MaxPlaybackRate = 2;
+    public const int WatchSlackSec = 20;
+
+    public static int CreditedWatchTime(int previous, int declared, DateTime lastUpdate, DateTime now)
+    {
+        var elapsed = Math.Max(0, (now - lastUpdate).TotalSeconds);
+        var ceiling = previous + (int)Math.Ceiling(elapsed * MaxPlaybackRate) + WatchSlackSec;
+        return Math.Max(previous, Math.Min(Math.Max(0, declared), ceiling));
+    }
+
+    public static async Task<(string? Refusal, int? QuizScorePercent)> CheckAsync(
+        ApplicationDbContext db, int userId, CourseLesson lesson, LessonProgress prog, DateTime now)
+    {
+        var type = (lesson.LessonType ?? string.Empty).Trim().ToLowerInvariant();
+        var openedFor = (now - prog.CreatedAt).TotalSeconds;
+
+        if (type == "quiz" && lesson.QuizId != null)
+        {
+            var quiz = await db.Quizzes.AsNoTracking()
+                .Where(q => q.Id == lesson.QuizId.Value)
+                .Select(q => new { q.PassingScore })
+                .FirstOrDefaultAsync();
+            var passing = quiz?.PassingScore ?? 60;
+            var attempts = await db.QuizAttempts.AsNoTracking()
+                .Where(a => a.UserId == userId && a.QuizId == lesson.QuizId.Value)
+                .Select(a => new { a.Score, a.Passed })
+                .ToListAsync();
+            if (attempts.Count == 0)
+                return ("Réponds au quiz de cette leçon pour la terminer.", null);
+            var best = attempts.Max(a => a.Score);
+            if (!attempts.Any(a => a.Passed || a.Score >= passing))
+                return ($"Quiz non réussi (meilleur score {best:0} %, minimum {passing} %) : réessaie pour terminer la leçon.", (int)Math.Round(best));
+            return (null, (int)Math.Round(best));
+        }
+
+        if (type == "video")
+        {
+            if (lesson.VideoDurationSec is > 0)
+            {
+                var required = (int)Math.Ceiling(lesson.VideoDurationSec.Value * MinVideoWatchRatio);
+                if (prog.WatchTimeSec < required)
+                    return ($"Regarde au moins {MinVideoWatchRatio:P0} de la vidéo pour la terminer ({prog.WatchTimeSec / 60} min {prog.WatchTimeSec % 60:00} s sur {required / 60} min {required % 60:00} s).", null);
+                return (null, null);
+            }
+            if (openedFor < MinSecondsWithoutDuration)
+                return ("Regarde la vidéo avant de la marquer comme terminée.", null);
+            return (null, null);
+        }
+
+        if (openedFor < MinReadingSeconds)
+            return ("Prends le temps de consulter cette leçon avant de la marquer comme terminée.", null);
+        return (null, null);
+    }
+}

@@ -35,10 +35,12 @@ public class TeacherCourseController : ControllerBase
     private readonly INtfyService _ntfy;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IFastApiClient _fastApi;
+    private readonly ICatalogCommissionService _commission;
 
-    public TeacherCourseController(ApplicationDbContext db, ILogger<TeacherCourseController> logger, ICourseGamificationService gamification, INtfyService ntfy, IHttpClientFactory httpClientFactory, IFastApiClient fastApi)
+    public TeacherCourseController(ApplicationDbContext db, ILogger<TeacherCourseController> logger, ICourseGamificationService gamification, INtfyService ntfy, IHttpClientFactory httpClientFactory, IFastApiClient fastApi, ICatalogCommissionService commission)
     {
         _fastApi = fastApi;
+        _commission = commission;
         _db = db;
         _logger = logger;
         _gamification = gamification;
@@ -103,8 +105,15 @@ public class TeacherCourseController : ControllerBase
             {
                 course.Id, course.Title, course.Slug, course.Description, course.ShortDescription,
                 course.ThumbnailUrl, course.PreviewVideoUrl, course.Language, course.Level,
-                course.Category, course.Tags, course.Price, course.IsFree, course.IsIncludedInSub,
+                course.Category, course.Tags, course.Price, course.IsFree,
                 course.Status, course.RejectionReason,
+                // Lot 9.7b (F5, F11) : évaluation WinAI et part de la plateforme,
+                // affichées au professeur ; revenu estimé sur le HT déduit du TTC.
+                winAiScore = course.WinAiScore,
+                winAiJustification = course.WinAiJustification,
+                platformCommissionRate = course.PlatformCommissionRate,
+                priceExclTax = VatPolicy.ExclTaxFromInclTax(course.IsFree ? 0 : course.Price),
+                vatIncluded = VatPolicy.TaxIncludedIn(course.IsFree ? 0 : course.Price),
                 course.TotalDurationMin, course.LessonsCount, course.EnrolledCount,
                 course.AvgRating, course.ReviewsCount, course.Requirements, course.Objectives,
                 course.CertificateEnabled, course.CanalMessagerie, course.CreatedAt,
@@ -163,15 +172,18 @@ public class TeacherCourseController : ControllerBase
                 Level            = req.Level ?? "debutant",
                 Category         = req.Category,
                 Tags             = req.Tags ?? new(),
+                // Lot 9.7b (18.21) : prix TTC saisi (prix payé par l'élève).
                 Price            = req.Price ?? 0,
                 IsFree           = req.IsFree ?? false,
-                IsIncludedInSub  = req.IsIncludedInSub ?? false,
+                // Lot 9.7b (18.16, F6) : jamais incluse dans un abonnement.
+                IsIncludedInSub  = false,
                 Requirements     = req.Requirements ?? new(),
                 Objectives       = req.Objectives ?? new(),
                 CertificateEnabled = req.CertificateEnabled ?? true,
                 InstructorId     = teacherId,
                 Status           = "draft",
             };
+            CourseSales.ReconcileFreeAndPrice(course); // F10
 
             _db.Courses.Add(course);
             await _db.SaveChangesAsync();
@@ -208,7 +220,12 @@ public class TeacherCourseController : ControllerBase
             if (req.Tags             != null) course.Tags             = req.Tags;
             if (req.Price            != null) course.Price            = req.Price.Value;
             if (req.IsFree           != null) course.IsFree           = req.IsFree.Value;
-            if (req.IsIncludedInSub  != null) course.IsIncludedInSub  = req.IsIncludedInSub.Value;
+            // Lot 9.7b (F10) : un prix positif saisi sans préciser IsFree rend
+            // la formation payante ; puis IsFree et Price sont réconciliés.
+            if (req.Price is > 0 && req.IsFree == null) course.IsFree = false;
+            CourseSales.ReconcileFreeAndPrice(course);
+            // Lot 9.7b (18.16, F6) : IsIncludedInSub ignoré, toujours faux.
+            course.IsIncludedInSub = false;
             if (req.Requirements     != null) course.Requirements     = req.Requirements;
             if (req.Objectives       != null) course.Objectives       = req.Objectives;
             if (req.CertificateEnabled != null) course.CertificateEnabled = req.CertificateEnabled.Value;
@@ -280,11 +297,23 @@ public class TeacherCourseController : ControllerBase
             if (!hasLessons)
                 return BadRequest(new { error = "Ajoutez au moins une leçon publiée avant de soumettre" });
 
+            // Lot 9.7b (F5) : évaluation WinAI à la soumission, qui fixe la part
+            // de la plateforme (grille 10 à 60 %) sur la version soumise.
+            // Jamais bloquante : commission plancher si WinAI est indisponible.
+            if (!CourseSales.IsFreeCourse(course))
+                await CourseCommissionEvaluation.EvaluateAndStoreAsync(_db, _fastApi, _commission, _logger, course);
+
             course.Status          = "pending_review";
             course.RejectionReason = null;
             course.UpdatedAt       = DateTime.UtcNow;
             await _db.SaveChangesAsync();
-            return Ok(new { message = "Formation soumise à validation" });
+            return Ok(new
+            {
+                message = "Formation soumise à validation",
+                winAiScore = course.WinAiScore,
+                winAiJustification = course.WinAiJustification,
+                platformCommissionRate = course.PlatformCommissionRate,
+            });
         }
         catch (Exception ex)
         {
@@ -983,6 +1012,11 @@ public class CourseUpsertRequest
     public List<string>? Tags             { get; set; }
     public decimal?      Price            { get; set; }
     public bool?         IsFree           { get; set; }
+    /// <summary>
+    /// Lot 9.7b (18.16, F6) : ignoré. Une formation n'est jamais incluse dans
+    /// un abonnement ; le champ reste accepté pour ne pas casser les clients
+    /// déjà déployés qui l'envoient encore.
+    /// </summary>
     public bool?         IsIncludedInSub  { get; set; }
     public List<string>? Requirements     { get; set; }
     public List<string>? Objectives       { get; set; }

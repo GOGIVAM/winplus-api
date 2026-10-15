@@ -865,7 +865,7 @@ public class SubjectsController : ControllerBase
     ///     AdminLibraryController) ;
     ///   - corrigé : Exam.CorrectionUrl de l'épreuve la plus récente qui en a un.
     /// </summary>
-    private async Task<(ViewerDocument? doc, IActionResult? error)> ResolveViewerDocumentAsync(int id, ViewerDocumentKind kind)
+    private async Task<(ViewerDocument? doc, IActionResult? error)> ResolveViewerDocumentAsync(int id, ViewerDocumentKind kind, int? courseId = null)
     {
         var subject = await _subjectService.GetSubjectByIdAsync(id);
         if (subject == null)
@@ -886,7 +886,12 @@ public class SubjectsController : ControllerBase
                 return (null, StatusCode(401, new { error = "Veuillez vous connecter pour accéder à ce document." }));
             }
 
-            if (!await _contentAccess.HasPaidContentAccessAsync(userId, subject, User.IsAdmin()))
+            // Lot 9.7b (F13, 18.21) : une épreuve ou un livre ajouté à une
+            // formation se lit dans la visionneuse par les inscrits de cette
+            // formation (et par son auteur), sans achat séparé et toujours
+            // sans téléchargement : même filigrane, même absence d'adresse.
+            var viaCourse = courseId != null && await IsReadableThroughCourseAsync(userId, id, courseId.Value);
+            if (!viaCourse && !await _contentAccess.HasPaidContentAccessAsync(userId, subject, User.IsAdmin()))
                 return (null, StatusCode(403, new { error = "Veuillez acheter ce contenu pour pouvoir y accéder." }));
         }
 
@@ -925,6 +930,22 @@ public class SubjectsController : ControllerBase
     }
 
     /// <summary>
+    /// Lot 9.7b (F13) : vrai si la formation <paramref name="courseId"/>
+    /// contient une leçon publiée qui référence ce contenu du catalogue, et si
+    /// l'utilisateur y est inscrit (inscription active) ou en est l'auteur.
+    /// </summary>
+    private async Task<bool> IsReadableThroughCourseAsync(int userId, int subjectId, int courseId)
+    {
+        var inCourse = await _context.CourseLessons.AsNoTracking()
+            .AnyAsync(l => l.CourseId == courseId && l.SourceSubjectId == subjectId && l.IsPublished);
+        if (!inCourse) return false;
+        return await _context.CourseEnrollments.AsNoTracking()
+                   .AnyAsync(e => e.UserId == userId && e.CourseId == courseId && e.IsActive)
+               || await _context.Courses.AsNoTracking()
+                   .AnyAsync(c => c.Id == courseId && c.InstructorId == userId);
+    }
+
+    /// <summary>
     /// Libellé du filigrane : identité du compte connecté, lue en base (jamais
     /// fournie par le client), plus la date de consultation. L'identifiant
     /// interne permet de retrouver le compte même si le nom a été recadré.
@@ -958,13 +979,13 @@ public class SubjectsController : ControllerBase
     /// </summary>
     [HttpGet("{id}/view")]
     [Authorize]
-    public async Task<IActionResult> ViewStream(int id, [FromQuery] bool preview = false, [FromQuery] string? kind = null)
+    public async Task<IActionResult> ViewStream(int id, [FromQuery] bool preview = false, [FromQuery] string? kind = null, [FromQuery] int? courseId = null)
     {
         var docKind = string.Equals(kind, "correction", StringComparison.OrdinalIgnoreCase)
             ? ViewerDocumentKind.Correction
             : ViewerDocumentKind.Document;
 
-        var (doc, error) = await ResolveViewerDocumentAsync(id, docKind);
+        var (doc, error) = await ResolveViewerDocumentAsync(id, docKind, courseId);
         if (error != null) return error;
 
         var userId = User.GetUserId();

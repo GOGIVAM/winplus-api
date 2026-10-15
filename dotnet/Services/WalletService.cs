@@ -588,6 +588,22 @@ public class WalletService : IWalletService
         }
 
         await SyncWalletTopUpAsync(orderId);
+
+        // Lot 9.7b (F1/F8) : inscriptions aux formations de la commande
+        // alignées sur son statut (créées au paiement, désactivées au
+        // remboursement). Placé ici car toutes les confirmations et
+        // annulations passent par cette méthode, rejouée par la
+        // réconciliation. Un échec ne doit pas faire perdre les écritures
+        // déjà posées ci-dessus : il est journalisé et rattrapé au passage
+        // suivant de la réconciliation.
+        try
+        {
+            await CourseSales.SyncEnrollmentsForOrderAsync(_db, orderId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Inscriptions aux formations de la commande {OrderId} non synchronisées (réconciliation à venir)", orderId);
+        }
     }
 
     /// <summary>

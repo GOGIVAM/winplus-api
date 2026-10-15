@@ -240,6 +240,10 @@ public class CartService : ICartService
             if (course.Status != "published")
                 throw new InvalidOperationException($"La formation « {course.Title} » n'est pas publiée et ne peut pas être ajoutée au panier.");
 
+            // Lot 9.7b (F3, F10) : pas de rachat (déjà achetée, déjà inscrit,
+            // sa propre formation) ni d'achat d'une formation gratuite.
+            await CourseSales.EnsurePurchasableAsync(_db, userId, userId, course);
+
             var existing = await _cartRepository.GetByUserAndCourseAsync(userId, courseId);
             if (existing != null)
             {
@@ -306,6 +310,10 @@ public class CartService : ICartService
                 throw new InvalidOperationException($"Course {courseId} not found");
             if (course.Status != "published")
                 throw new InvalidOperationException($"La formation « {course.Title} » n'est pas publiée et ne peut pas être ajoutée au panier.");
+            // Lot 9.7b (F10) : une formation gratuite ne passe pas par le panier.
+            if (CourseSales.IsFreeCourse(course))
+                throw new CoursePurchaseRefusedException(course.Id, "free_course",
+                    $"La formation « {course.Title} » est gratuite : inscris-toi directement, sans achat.");
 
             var existing = await _cartRepository.GetByDeviceAndCourseAsync(deviceId, courseId);
             if (existing != null)

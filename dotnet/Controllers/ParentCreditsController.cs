@@ -11,7 +11,15 @@ namespace Backend.Controllers;
 public class PurchaseForChildRequest
 {
     public int ChildId { get; set; }
+    /// <summary>Épreuve ou livre du catalogue (exclusif avec <see cref="CourseId"/>).</summary>
     public int SubjectId { get; set; }
+
+    /// <summary>
+    /// Lot 9.7b (F14) : formation achetée pour l'enfant. Quand il est
+    /// renseigné, <see cref="SubjectId"/> est ignoré. L'inscription de
+    /// l'enfant est créée par le serveur à la confirmation du paiement.
+    /// </summary>
+    public int? CourseId { get; set; }
 
     /// <summary>
     /// Conservé pour compatibilité avec le client existant : le portefeuille
@@ -292,6 +300,9 @@ public class ParentCreditsController : ControllerBase
             if (!linked)
                 return StatusCode(403, new { success = false, error = "Cet enfant n'est pas lié à votre compte." });
 
+            if (request.CourseId is > 0)
+                return await PurchaseCourseForChildAsync(tx, parentId, request.ChildId, request.CourseId.Value);
+
             var subject = await _db.Subjects
                 .Where(s => s.Id == request.SubjectId && !s.IsDeleted && s.IsPublished)
                 .Select(s => new { s.Id, s.Title, s.Price })
@@ -362,7 +373,9 @@ public class ParentCreditsController : ControllerBase
             {
                 OrderId         = order.Id,
                 SubjectId       = subject.Id,
-                PriceAtPurchase = subject.Price
+                // Lot 9.7b (18.21) : Subject.Price est le prix TTC payé ; la
+                // ligne porte le HT déduit, base du revenu de l'auteur.
+                PriceAtPurchase = VatPolicy.ExclTaxFromInclTax(subject.Price)
             });
 
             if (payFromWallet)
@@ -463,9 +476,150 @@ public class ParentCreditsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Lot 9.7b (F14) : achat d'une formation pour un enfant lié, depuis le
+    /// portefeuille parent (dotation puis recharge). Mêmes règles que l'achat
+    /// d'une épreuve : transaction Serializable et verrou du portefeuille déjà
+    /// pris par l'appelant, idempotence sur une fenêtre courte, complément
+    /// Mobile Money proposé si le solde est insuffisant (la commande reste en
+    /// attente, sa confirmation ouvre l'accès). Refus (409) si la formation est
+    /// gratuite, déjà achetée ou déjà suivie par l'enfant, ou si elle
+    /// appartient au parent ou à l'enfant (F3, F10). Prix TTC payé (18.21) ;
+    /// la ligne porte le HT déduit, base du revenu du formateur.
+    /// </summary>
+    private async Task<IActionResult> PurchaseCourseForChildAsync(
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction tx, int parentId, int childId, int courseId)
+    {
+        var course = await _db.Courses.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == courseId && c.Status == "published");
+        if (course == null)
+            return NotFound(new { success = false, error = "Formation introuvable." });
+
+        var since = DateTime.UtcNow.Subtract(PurchaseForChildIdempotencyWindow);
+        var childMarker = ChildPurchaseMarker(childId);
+        var duplicate = await _db.Orders.AsNoTracking()
+            .Where(o => o.UserId == parentId
+                     && o.CreatedAt >= since
+                     && (o.PaymentMethod == "parent_wallet" || o.PaymentMethod == "mobile_money")
+                     && o.Items.Count == 1
+                     && o.Items.Any(i => i.CourseId == courseId)
+                     && o.Notes == childMarker)
+            .OrderByDescending(o => o.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (duplicate != null)
+        {
+            await tx.CommitAsync();
+            return Ok(new
+            {
+                data = new
+                {
+                    orderId        = duplicate.Id,
+                    orderNumber    = duplicate.OrderNumber,
+                    status         = duplicate.Status,
+                    paidWithWallet = duplicate.PaymentMethod == "parent_wallet",
+                    amount         = duplicate.TotalAmount,
+                },
+                success   = true,
+                duplicate = true,
+                message   = $"Cet achat a déjà été enregistré (commande {duplicate.OrderNumber}). Aucun second débit n'a été effectué.",
+            });
+        }
+
+        var block = await CourseSales.PurchaseBlockAsync(_db, parentId, childId, course);
+        if (block != null)
+            return Conflict(new { success = false, code = block.Value.Code, error = block.Value.Message, courseId });
+
+        var price = decimal.Round(course.Price, 0, MidpointRounding.AwayFromZero);
+        var available = await _wallet.GetAvailableAsync(parentId);
+        var payFromWallet = available >= price;
+
+        var order = new Order
+        {
+            UserId        = parentId,
+            OrderNumber   = $"WP-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString("N")[..6].ToUpperInvariant()}",
+            TotalAmount   = price,
+            Status        = payFromWallet ? "paid" : "pending",
+            PaymentMethod = payFromWallet ? "parent_wallet" : "mobile_money",
+            Notes         = childMarker,
+        };
+        _db.Orders.Add(order);
+        await _db.SaveChangesAsync();
+
+        _db.OrderItems.Add(new OrderItem
+        {
+            OrderId         = order.Id,
+            CourseId        = course.Id,
+            PriceAtPurchase = VatPolicy.ExclTaxFromInclTax(price),
+        });
+
+        if (payFromWallet)
+        {
+            await _wallet.DebitParentWalletAsync(
+                parentId, price, $"purchase_for_child:order:{order.Id}", course.Title, "Order", order.Id);
+            _db.ParentCreditLedgers.Add(new ParentCreditLedger
+            {
+                ParentId    = parentId,
+                EntryType   = "consumption",
+                Amount      = price,
+                ChildId     = childId,
+                OrderId     = order.Id,
+                PeriodStart = CurrentPeriodStart(),
+                Label       = course.Title,
+            });
+        }
+
+        await _db.SaveChangesAsync();
+        await tx.CommitAsync();
+
+        if (!payFromWallet)
+        {
+            return StatusCode(402, new
+            {
+                success = false,
+                requiresTopUp = true,
+                error = "Solde du portefeuille insuffisant pour cet achat. Rechargez via Mobile Money pour continuer.",
+                orderId = order.Id,
+                walletAvailable = available,
+                price,
+                missingXaf = price - available,
+            });
+        }
+
+        // Écritures de vente (formateur, commission) et inscription de
+        // l'enfant (CourseSales), idempotentes, rattrapées par la
+        // réconciliation en cas d'échec.
+        try { await _wallet.SyncOrderAsync(order.Id); }
+        catch (Exception ex) { _logger.LogError(ex, "Écritures de la commande {OrderId} non posées (réconciliation à venir)", order.Id); }
+
+        await _ntfy.PublishAsync(
+            topic: $"winplus-user-{childId}",
+            title: "Nouvelle formation disponible",
+            message: $"Un parent vient de vous offrir la formation « {course.Title} ».",
+            tags: new[] { "gift" },
+            userId: childId,
+            type: "content",
+            relatedEntityType: "course",
+            relatedEntityId: course.Id);
+
+        return Ok(new
+        {
+            data = new
+            {
+                orderId        = order.Id,
+                orderNumber    = order.OrderNumber,
+                status         = order.Status,
+                paidWithWallet = true,
+                amount         = price,
+                walletLeft     = available - price,
+                courseId       = course.Id,
+            },
+            success = true,
+        });
+    }
+
     /// <summary>Fenêtre de détection d'une double soumission de l'achat pour enfant.</summary>
     private static readonly TimeSpan PurchaseForChildIdempotencyWindow = TimeSpan.FromSeconds(60);
 
     /// <summary>Marqueur du bénéficiaire, écrit dans Order.Notes.</summary>
-    internal static string ChildPurchaseMarker(int childId) => $"purchase-for-child:{childId}";
+    internal static string ChildPurchaseMarker(int childId) => $"{CourseSales.ChildMarkerPrefix}{childId}";
 }

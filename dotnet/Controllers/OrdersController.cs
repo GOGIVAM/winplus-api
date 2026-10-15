@@ -154,7 +154,11 @@ public class OrdersController : ControllerBase
                 // restée en attente n'a rien débité et ne doit pas masquer un
                 // nouvel achat.
                 var since = DateTime.UtcNow.Subtract(BalancePaymentIdempotencyWindow);
-                var cartSubjectIds = pricing.Items.Select(i => i.SubjectId).OrderBy(id => id).ToList();
+                // Lot 9.7b (F4) : la clé porte sur les couples (type,
+                // identifiant) des lignes. Comparer les seuls SubjectId (nuls
+                // pour une formation) confondait deux formations différentes de
+                // même prix : la seconde n'était jamais achetée.
+                var cartKey = CourseSales.LinesKey(pricing.Items.Select(i => (i.SubjectId, i.CourseId)));
 
                 var candidates = await _db.Orders.AsNoTracking()
                     .Include(o => o.Items)
@@ -167,7 +171,7 @@ public class OrdersController : ControllerBase
                     .ToListAsync();
 
                 var duplicate = candidates.FirstOrDefault(o =>
-                    o.Items.Select(i => i.SubjectId).OrderBy(id => id).SequenceEqual(cartSubjectIds));
+                    CourseSales.LinesKey(o.Items.Select(i => (i.SubjectId, i.CourseId))) == cartKey);
 
                 if (duplicate != null)
                 {
@@ -251,6 +255,10 @@ public class OrdersController : ControllerBase
         catch (ContentNotPurchasableException ex)
         {
             return BadRequest(new { success = false, error = ex.Message, subjectId = ex.SubjectId });
+        }
+        catch (CoursePurchaseRefusedException ex)
+        {
+            return Conflict(new { success = false, code = ex.Code, error = ex.Message, courseId = ex.CourseId });
         }
         catch (InsufficientWalletBalanceException ex)
         {
@@ -353,6 +361,10 @@ public class OrdersController : ControllerBase
         {
             return BadRequest(new { success = false, error = ex.Message, subjectId = ex.SubjectId });
         }
+        catch (CoursePurchaseRefusedException ex)
+        {
+            return Conflict(new { success = false, code = ex.Code, error = ex.Message, courseId = ex.CourseId });
+        }
         catch (InsufficientWalletBalanceException ex)
         {
             return StatusCode(402, new { success = false, error = ex.Message, balanceXaf = ex.AvailableXaf });
@@ -435,6 +447,10 @@ public class OrdersController : ControllerBase
         catch (ContentNotPurchasableException ex)
         {
             return BadRequest(new { error = ex.Message, subjectId = ex.SubjectId });
+        }
+        catch (CoursePurchaseRefusedException ex)
+        {
+            return Conflict(new { code = ex.Code, error = ex.Message, courseId = ex.CourseId });
         }
         // Panier vide côté serveur au moment de payer : arrive typiquement quand
         // le panier n'a été rempli qu'en local (deviceId) avant une connexion
@@ -727,12 +743,12 @@ public class OrdersController : ControllerBase
                 .Select(s => new { s.Id, s.Title, s.Price })
                 .ToListAsync();
 
-            // Même règle de TVA que la création de commande (décision 10.1) :
-            // ce résumé annonçait 20 % alors que la commande est facturée à
-            // 19,25 %, arrondie à l'unité (XAF).
-            var subtotal = subjects.Sum(s => decimal.Round(s.Price, 0, MidpointRounding.AwayFromZero));
-            var tax   = VatPolicy.TaxOn(subtotal);
-            var total = subtotal + tax;
+            // Même règle que la création de commande : lot 9.7b (18.21), prix
+            // TTC saisis, TVA calculée à l'intérieur de chaque prix.
+            var prices = subjects.Select(s => decimal.Round(s.Price, 0, MidpointRounding.AwayFromZero)).ToList();
+            var total = prices.Sum();
+            var subtotal = prices.Sum(VatPolicy.ExclTaxFromInclTax);
+            var tax   = total - subtotal;
 
             return Ok(new
             {

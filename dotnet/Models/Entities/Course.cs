@@ -17,6 +17,12 @@ public class Course
     public List<string> Tags { get; set; } = new();
     public decimal Price { get; set; }
     public bool IsFree { get; set; }
+    /// <summary>
+    /// Lot 9.7b (suivi 18.16, F6) : OBSOLÈTE, toujours faux. Une formation
+    /// n'est jamais incluse dans un abonnement : elle se vend seule. La colonne
+    /// est conservée (mise à faux par SQL_CourseSalesTtc97b.sql) et sera
+    /// supprimée au lot suivant ; plus aucune API ne la lit ni ne l'expose.
+    /// </summary>
     public bool IsIncludedInSub { get; set; }
     public string Status { get; set; } = "draft";
     public int InstructorId { get; set; }

@@ -2357,6 +2357,102 @@ def _extract_text_for_analysis(raw_bytes: bytes, filename: Optional[str]) -> tup
             pass
 
 
+class EvaluateCourseLesson(BaseModel):
+    title: str
+    lesson_type: Optional[str] = None
+    excerpt: Optional[str] = None
+
+
+class EvaluateCourseSection(BaseModel):
+    title: str
+    lessons: List[EvaluateCourseLesson] = []
+
+
+class EvaluateCourseRequest(BaseModel):
+    title: str
+    short_description: Optional[str] = None
+    description: Optional[str] = None
+    level: Optional[str] = None
+    category: Optional[str] = None
+    objectives: List[str] = []
+    requirements: List[str] = []
+    sections: List[EvaluateCourseSection] = []
+    has_final_exam: bool = False
+
+
+class EvaluateCourseResponse(BaseModel):
+    winai_score: Optional[float] = None
+    winai_justification: Optional[str] = None
+
+
+# Lot 9.7b (F5) : plafond de texte transmis au modèle pour l'évaluation d'une
+# formation (titres, descriptions et extraits d'articles), comme les autres
+# analyses de ce module.
+_COURSE_EVAL_MAX_CHARS = 12000
+
+
+@teacher_ai_router.post("/teacher/evaluate-course", response_model=EvaluateCourseResponse)
+def evaluate_course(
+    body: EvaluateCourseRequest,
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
+):
+    """
+    Lot 9.7b (F5) : score WinAI (0-100) d'une formation soumise à validation,
+    sur sa structure réelle (objectifs, sections, leçons, extraits d'articles).
+    Le .NET traduit le score en part plateforme (grille de commission du
+    catalogue, bornée de 10 à 60 %) et le fige sur la formation. Consultatif
+    et jamais bloquant : un échec renvoie un score nul et le .NET applique la
+    commission plancher.
+    """
+    lines = [f"Titre : {body.title}"]
+    if body.level:
+        lines.append(f"Niveau : {body.level}")
+    if body.category:
+        lines.append(f"Matière : {body.category}")
+    if body.short_description:
+        lines.append(f"Résumé : {body.short_description}")
+    if body.description:
+        lines.append(f"Description : {body.description}")
+    if body.objectives:
+        lines.append("Objectifs : " + " ; ".join(body.objectives))
+    if body.requirements:
+        lines.append("Prérequis : " + " ; ".join(body.requirements))
+    lines.append(f"Examen final : {'oui' if body.has_final_exam else 'non'}")
+    for i, section in enumerate(body.sections, start=1):
+        lines.append(f"Section {i} : {section.title}")
+        for lesson in section.lessons:
+            kind = f" ({lesson.lesson_type})" if lesson.lesson_type else ""
+            lines.append(f"  - {lesson.title}{kind}")
+            if lesson.excerpt:
+                lines.append(f"    extrait : {lesson.excerpt[:600]}")
+    text = "\n".join(lines)[:_COURSE_EVAL_MAX_CHARS]
+
+    prompt = (
+        "Voici la structure réelle d'une formation payante soumise sur WinPlus (plateforme éducative camerounaise) :\n\n"
+        f"{text}\n\n"
+        "Évalue sa valeur pédagogique réelle (clarté des objectifs, progression, couverture des leçons, "
+        "présence d'évaluations, cohérence avec le niveau annoncé) par un score entre 0 et 100 (winai_score), "
+        "avec une justification courte et lisible par le professeur (winai_justification, 300 caractères au plus). "
+        "N'invente rien qui ne soit pas dans la structure fournie. "
+        "Réponds en JSON strict avec exactement les clés : winai_score (nombre), winai_justification (texte)."
+    )
+    system = (
+        "Tu es WinAI, évaluateur pédagogique pour la plateforme WinPlus. Tu notes une formation sur ce qu'elle "
+        "contient réellement. Réponds uniquement en JSON valide."
+    )
+    raw = _deepseek_json(prompt, system, max_tokens=500)
+    if not isinstance(raw, dict):
+        return EvaluateCourseResponse()
+
+    score = raw.get("winai_score")
+    try:
+        score = max(0.0, min(100.0, float(score))) if score is not None else None
+    except (TypeError, ValueError):
+        score = None
+    justification = (str(raw.get("winai_justification") or "").strip() or None)
+    return EvaluateCourseResponse(winai_score=score, winai_justification=justification)
+
+
 _CONTENT_KIND_FIELD_HINTS = {
     "epreuve": "titre, description, matière, niveau, difficulté estimée, année/session si mentionnée, type d'épreuve si détectable",
     "correction": "titre, description, matière, niveau",

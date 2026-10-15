@@ -20,7 +20,8 @@ namespace Backend.Controllers;
 /// client l'ajoutait une seconde fois à partir des PriceAdjustments. Le
 /// montant finalement dû reste celui de la commande créée (Order.TotalAmount).
 ///
-/// TVA : même règle que la commande (<see cref="VatPolicy"/>, 19,25 %).
+/// TVA : même règle que la commande (<see cref="VatPolicy"/>) : lot 9.7b (18.21),
+/// prix TTC saisis ; Subtotal = Total = somme des prix TTC, Tax = TVA incluse.
 /// </summary>
 [ApiController]
 [Route("api/cart")]
@@ -206,9 +207,9 @@ public class CartController : ControllerBase
                 ItemsCount = validatedItems.Count,
                 Subtotal = validatedItems.Sum(i => i.Price),
                 Discount = 0,
-                // Même TVA que la commande (décision 10.1) : 19,25 %, et non 10 %.
-                Tax = VatPolicy.TaxOn(validatedItems.Sum(i => i.Price)),
-                Total = VatPolicy.TotalInclTax(validatedItems.Sum(i => i.Price)),
+                // Lot 9.7b (18.21) : prix TTC saisis ; Tax = TVA incluse (informative), Total = somme des prix.
+                Tax = validatedItems.Sum(i => VatPolicy.TaxIncludedIn(i.Price)),
+                Total = validatedItems.Sum(i => i.Price),
                 Currency = "XAF",
                 UpdatedAt = DateTime.UtcNow
             };
@@ -352,8 +353,8 @@ public class CartController : ControllerBase
                     ItemsCount = updatedItems.Count,
                     Subtotal = updatedItems.Sum(i => i.Price),
                     Discount = 0,
-                    Tax = VatPolicy.TaxOn(updatedItems.Sum(i => i.Price)),
-                    Total = VatPolicy.TotalInclTax(updatedItems.Sum(i => i.Price)),
+                    Tax = updatedItems.Sum(i => VatPolicy.TaxIncludedIn(i.Price)),
+                    Total = updatedItems.Sum(i => i.Price),
                     Currency = "XAF",
                     UpdatedAt = DateTime.UtcNow
                 };
@@ -380,8 +381,8 @@ public class CartController : ControllerBase
                     ItemsCount = anonymousItems.Count,
                     Subtotal = anonymousItems.Sum(i => i.Price),
                     Discount = 0,
-                    Tax = VatPolicy.TaxOn(anonymousItems.Sum(i => i.Price)),
-                    Total = VatPolicy.TotalInclTax(anonymousItems.Sum(i => i.Price)),
+                    Tax = anonymousItems.Sum(i => VatPolicy.TaxIncludedIn(i.Price)),
+                    Total = anonymousItems.Sum(i => i.Price),
                     Currency = "XAF",
                     UpdatedAt = DateTime.UtcNow
                 };
@@ -394,6 +395,11 @@ public class CartController : ControllerBase
             {
                 return BadRequest(new { error = "Invalid request: no userId or deviceId" });
             }
+        }
+        // Lot 9.7b (F3, F10) : formation déjà achetée, déjà suivie, à soi ou gratuite.
+        catch (CoursePurchaseRefusedException ex)
+        {
+            return Conflict(new { code = ex.Code, error = ex.Message, courseId = ex.CourseId });
         }
         catch (Exception ex)
         {
@@ -774,8 +780,8 @@ public class CartController : ControllerBase
                 ItemsCount = serverItems.Count,
                 Subtotal = serverItems.Sum(i => i.Price),
                 Discount = 0,
-                Tax = VatPolicy.TaxOn(serverItems.Sum(i => i.Price)),
-                Total = VatPolicy.TotalInclTax(serverItems.Sum(i => i.Price)),
+                Tax = serverItems.Sum(i => VatPolicy.TaxIncludedIn(i.Price)),
+                Total = serverItems.Sum(i => i.Price),
                 Currency = "XAF",
                 UpdatedAt = DateTime.UtcNow
             };

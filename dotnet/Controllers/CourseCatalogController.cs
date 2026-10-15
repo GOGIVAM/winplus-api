@@ -76,7 +76,9 @@ public class CourseCatalogController : ControllerBase
                 .Select(c => new
                 {
                     c.Id, c.Title, c.Slug, c.ShortDescription, c.ThumbnailUrl,
-                    c.Level, c.Category, c.Price, c.IsFree, c.IsIncludedInSub,
+                    // Lot 9.7b (18.16, F6) : plus d'inclusion dans l'abonnement ;
+                    // Price est le prix TTC payé (18.21).
+                    c.Level, c.Category, c.Price, c.IsFree,
                     c.TotalDurationMin, c.LessonsCount, c.EnrolledCount,
                     c.AvgRating, c.ReviewsCount, c.Tags,
                     instructorName = c.Instructor.FirstName + " " + c.Instructor.LastName,
@@ -153,11 +155,44 @@ public class CourseCatalogController : ControllerBase
             bool enrolled = userId.HasValue && await _db.CourseEnrollments.AnyAsync(
                 e => e.UserId == userId && e.CourseId == id && e.IsActive);
 
+            // Lot 9.7b (F1, F2) : état d'achat. Une formation payée dont
+            // l'inscription manque (achat d'avant le 9.7b) est rattrapée ici,
+            // par la même règle que la confirmation du paiement.
+            bool purchased = false;
+            string? purchaseBlockCode = null;
+            if (userId.HasValue)
+            {
+                purchased = await CourseSales.IsPurchasedAsync(_db, userId.Value, id);
+                if (purchased && !enrolled)
+                {
+                    try
+                    {
+                        var paidOrderId = await CourseSales.OtherPaidOrderIdAsync(_db, userId.Value, id, excludedOrderId: 0);
+                        if (paidOrderId != null)
+                            await CourseSales.SyncEnrollmentsForOrderAsync(_db, paidOrderId.Value);
+                        enrolled = await _db.CourseEnrollments.AnyAsync(
+                            e => e.UserId == userId && e.CourseId == id && e.IsActive);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Rattrapage de l'inscription achetée impossible (formation {CourseId})", id);
+                    }
+                }
+                purchaseBlockCode = (await CourseSales.PurchaseBlockAsync(_db, userId.Value, userId.Value, course))?.Code;
+            }
+
             return Ok(new
             {
                 course.Id, course.Title, course.Slug, course.Description, course.ShortDescription,
                 course.ThumbnailUrl, course.PreviewVideoUrl, course.Language, course.Level,
-                course.Category, course.Tags, course.Price, course.IsFree, course.IsIncludedInSub,
+                // Price : prix TTC payé (18.21). Plus d'inclusion dans l'abonnement (18.16).
+                course.Category, course.Tags, course.Price, course.IsFree,
+                priceExclTax = VatPolicy.ExclTaxFromInclTax(course.IsFree ? 0 : course.Price),
+                vatIncluded = VatPolicy.TaxIncludedIn(course.IsFree ? 0 : course.Price),
+                isPurchased = purchased,
+                isOwner = userId.HasValue && course.InstructorId == userId.Value,
+                // free_course | own_course | already_enrolled | already_purchased, ou null si achetable.
+                purchaseBlockCode,
                 course.TotalDurationMin, course.LessonsCount, course.EnrolledCount,
                 course.AvgRating, course.ReviewsCount, course.Requirements, course.Objectives,
                 course.CertificateEnabled, course.CanalMessagerie, course.CreatedAt,

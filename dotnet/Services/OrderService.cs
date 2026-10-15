@@ -32,27 +32,54 @@ public class ContentNotPurchasableException : InvalidOperationException
 /// Ligne de panier valorisée au prix serveur. Exactement un des deux
 /// identifiants (SubjectId xor CourseId) est renseigné (B1, achat de formation).
 /// </summary>
-public record PricedCartItem(int? SubjectId, int? CourseId, string Title, decimal CartPrice, decimal ServerPrice);
+/// <remarks>
+/// Lot 9.7b (18.21) : <see cref="ServerPrice"/> est le prix TTC saisi (prix
+/// payé) ; <see cref="PriceExclTax"/> est le HT déduit, base du revenu vendeur
+/// et de la commission (OrderItem.PriceAtPurchase).
+/// </remarks>
+public record PricedCartItem(int? SubjectId, int? CourseId, string Title, decimal CartPrice, decimal ServerPrice)
+{
+    public decimal PriceExclTax => VatPolicy.ExclTaxFromInclTax(ServerPrice);
+}
 
 /// <summary>
-/// Valorisation serveur d'un panier : lignes, sous-total hors taxe au prix
-/// serveur, TVA, total TTC et liste des écarts constatés avec le prix vu au
-/// panier.
+/// Valorisation serveur d'un panier : lignes au prix TTC serveur, total TTC,
+/// TVA incluse et liste des écarts constatés avec le prix vu au panier.
 ///
 /// Décision 10.1 du suivi : <see cref="Total"/> est le montant TTC, celui qui
 /// est stocké dans <c>Order.TotalAmount</c>, payé via NotchPay et débité du
-/// solde professeur. <see cref="Subtotal"/> reste la somme hors taxe des
-/// prix de vente (base des revenus vendeur, via OrderItem.PriceAtPurchase).
+/// solde. Lot 9.7b (18.21) : les prix sont TTC saisis, la TVA n'est plus
+/// ajoutée mais calculée à l'intérieur de chaque ligne (<see cref="VatPolicy"/>).
 /// </summary>
-public record CartPricing(IReadOnlyList<PricedCartItem> Items, decimal Subtotal, IReadOnlyList<OrderPriceAdjustment> Adjustments)
+public record CartPricing(IReadOnlyList<PricedCartItem> Items, IReadOnlyList<OrderPriceAdjustment> Adjustments)
 {
     public bool IsEmpty => Items.Count == 0;
 
-    /// <summary>TVA sur le sous-total (voir <see cref="VatPolicy"/>).</summary>
-    public decimal Tax => VatPolicy.TaxOn(Subtotal);
+    /// <summary>Total TTC payé : somme des prix TTC des lignes.</summary>
+    public decimal Total => Items.Sum(i => i.ServerPrice);
 
-    /// <summary>Total TTC : sous-total hors taxe + TVA.</summary>
-    public decimal Total => Subtotal + Tax;
+    /// <summary>Total hors taxe : somme des HT déduits ligne à ligne.</summary>
+    public decimal SubtotalExclTax => Items.Sum(i => i.PriceExclTax);
+
+    /// <summary>TVA incluse dans le total (Total − SubtotalExclTax).</summary>
+    public decimal Tax => Total - SubtotalExclTax;
+}
+
+/// <summary>
+/// Lot 9.7b (F3, F10) : formation qui ne peut pas être achetée par cet
+/// utilisateur (déjà achetée, déjà inscrit, sa propre formation, gratuite).
+/// Traduite en 409 par les contrôleurs, avec un code stable pour les clients.
+/// </summary>
+public class CoursePurchaseRefusedException : InvalidOperationException
+{
+    public int CourseId { get; }
+    public string Code { get; }
+
+    public CoursePurchaseRefusedException(int courseId, string code, string message) : base(message)
+    {
+        CourseId = courseId;
+        Code = code;
+    }
 }
 
 public interface IOrderService
@@ -161,6 +188,11 @@ public class OrderService : IOrderService
             if (cartItem.CourseId != null)
             {
                 var (course, coursePrice) = await ResolveCourseServerPriceAsync(cartItem.CourseId.Value);
+                // Lot 9.7b (F3, F10) : déjà achetée, déjà inscrit, propre
+                // formation ou gratuite : refusée aussi à la commande, pas
+                // seulement à l'ajout au panier (panier rempli avant le 9.7b,
+                // achat fait entre-temps sur un autre appareil).
+                await CourseSales.EnsurePurchasableAsync(_db, userId, userId, course);
                 items.Add(new PricedCartItem(null, cartItem.CourseId, course.Title, cartItem.Price, coursePrice));
 
                 if (coursePrice != cartItem.Price)
@@ -197,8 +229,15 @@ public class OrderService : IOrderService
             }
         }
 
-        // Sous-total hors taxe ; CartPricing.Total (TTC) en est dérivé.
-        return new CartPricing(items, items.Sum(i => i.ServerPrice), adjustments);
+        // Lot 9.7b (F4) : une même formation ou un même contenu n'est jamais
+        // facturé deux fois dans une commande (clé (type, identifiant)).
+        items = items
+            .GroupBy(i => CourseSales.LineKey(i.SubjectId, i.CourseId))
+            .Select(g => g.First())
+            .ToList();
+
+        // Lignes TTC ; CartPricing en déduit le HT et la TVA incluse.
+        return new CartPricing(items, adjustments);
     }
 
     public async Task<Order> CreateOrderAsync(int userId, string paymentMethod, string? referralCode = null, string? promoCode = null)
@@ -215,10 +254,8 @@ public class OrderService : IOrderService
             if (pricing.IsEmpty)
                 throw new InvalidOperationException("Cart is empty");
 
-            // Décision 10.1 : le total stocké est TTC (TVA calculée ici, côté
-            // serveur). Le web l'affichait et le payait déjà TTC alors que la
-            // commande restait hors taxe : le contrôle de montant du webhook
-            // rejetait tout paiement du catalogue.
+            // Décision 10.1 : le total stocké est TTC. Lot 9.7b (18.21) : c'est
+            // la somme des prix TTC saisis, la TVA n'y est plus ajoutée.
             var totalAmount = pricing.Total;
 
             // Module 34 : la remise est recalculée ici, côté serveur, à partir
@@ -231,10 +268,15 @@ public class OrderService : IOrderService
             decimal discount = 0;
             if (normalizedPromoCode != null)
             {
-                // B1 (achat de formation) : les codes promo ne couvrent pour
-                // l'instant que le catalogue Subject (point ouvert, voir
-                // CartController.ApplyPromoCode)  une ligne Course n'a pas
-                // de SubjectId à transmettre ici.
+                // Lot 9.7b (F9) : POINT D'APPEL du service de promotion unifié
+                // (chantier A du 9.7b, « AppliesTo = courses »). Tant qu'il
+                // n'existe pas, les codes promo ne couvrent que le catalogue
+                // Subject : les lignes formation (pricing.Items avec CourseId)
+                // ne sont pas transmises. Au branchement, transmettre ici les
+                // CourseId et le total TTC des lignes formation ; la remise
+                // reste supportée par la plateforme seule (18.21) : le
+                // PriceAtPurchase (HT) des lignes n'est jamais réduit, le
+                // professeur est payé sur le prix plein.
                 var validation = await _promoCodeService.ValidatePromoCodeAsync(userId, new ValidatePromoCodeRequest
                 {
                     Code = normalizedPromoCode,
@@ -284,7 +326,10 @@ public class OrderService : IOrderService
                     OrderId = order.Id,
                     SubjectId = item.SubjectId,
                     CourseId = item.CourseId,
-                    PriceAtPurchase = item.ServerPrice,
+                    // Lot 9.7b (18.21) : HT déduit du prix TTC payé, base du
+                    // revenu vendeur, de la commission et de l'affiliation
+                    // (WalletService, AffiliateService, facture PdfService).
+                    PriceAtPurchase = item.PriceExclTax,
                     Order = order
                 });
             }

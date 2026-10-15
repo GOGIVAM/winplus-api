@@ -1,43 +1,51 @@
 namespace Backend.Services;
 
 /// <summary>
-/// TVA appliquée aux achats du catalogue (décision 10.1 du suivi).
+/// TVA des achats du catalogue et des formations.
 ///
-/// La taxe est calculée et stockée côté serveur, dans <c>Order.TotalAmount</c> :
-/// le client n'a plus à la recalculer, il affiche et paie le total renvoyé par
-/// la création de commande. Le contrôle de montant du webhook NotchPay
-/// (PaymentService.DetectAmountMismatchAsync) compare le montant payé à ce
-/// total TTC, sans tolérance.
+/// Lot 9.7b (suivi 18.21, défaut F11) : les prix du catalogue (épreuves,
+/// livres) et des formations sont des prix TTC saisis par le vendeur ou
+/// l'administrateur : le prix saisi est le prix payé. La TVA n'est plus ajoutée
+/// à la commande, elle est calculée À L'INTÉRIEUR du prix TTC, côté serveur,
+/// pour la facture et les écritures :
+///   HT  = arrondi(TTC / 1,1925) à l'XAF ;
+///   TVA = TTC − HT (jamais arrondie séparément, donc HT + TVA = TTC exactement).
+/// Le revenu du vendeur et la commission de la plateforme se calculent sur ce
+/// HT déduit (OrderItem.PriceAtPurchase reste le prix HT de la ligne), sans
+/// changer les règles de répartition.
 ///
-/// Taux : 19,25 % (TVA CEMAC, Cameroun), le même que celui affiché par le web
-/// (CartContext.TAX_RATE, pages panier et paiement). Aucun paramètre serveur
-/// ne portait ce taux jusqu'ici : il est centralisé ici, seul endroit à
-/// modifier.
+/// Décision 10.1 (toujours valable) : Order.TotalAmount est le montant TTC
+/// payé, comparé sans tolérance par le contrôle de montant du webhook NotchPay.
 ///
-/// Arrondi : le XAF n'a pas de sous-unité, la taxe est arrondie à l'unité,
-/// au plus proche, moitié vers le haut (identique au Math.round du web pour
-/// un montant positif).
+/// Arrondi : le XAF n'a pas de sous-unité, au plus proche, moitié vers le haut.
 ///
-/// Périmètre : commandes du catalogue (OrderService). Les abonnements ne sont
-/// pas concernés : aucun client (web SubscribeModal, mobile
-/// subscription_service) ni le serveur (SubscriptionsController.Purchase)
-/// n'ajoute de taxe au prix du plan, affiché et payé tel quel. Les y
-/// soumettre changerait le prix payé par les abonnés : décision produit
-/// distincte, non prise ici.
+/// Les abonnements ne sont pas concernés (chantier A du 9.7b) : prix TTC du
+/// plan, affiché et payé tel quel.
 /// </summary>
 public static class VatPolicy
 {
-    /// <summary>Taux de TVA du catalogue (19,25 %).</summary>
+    /// <summary>Taux de TVA (19,25 %, TVA CEMAC au Cameroun).</summary>
     public const decimal CatalogRate = 0.1925m;
 
-    /// <summary>Montant de TVA en XAF pour une base hors taxe.</summary>
-    public static decimal TaxOn(decimal amountExclTax)
+    /// <summary>Prix hors taxe déduit d'un prix TTC (XAF entier).</summary>
+    public static decimal ExclTaxFromInclTax(decimal amountInclTax)
     {
-        if (amountExclTax <= 0) return 0m;
-        return decimal.Round(amountExclTax * CatalogRate, 0, MidpointRounding.AwayFromZero);
+        if (amountInclTax <= 0) return 0m;
+        return decimal.Round(amountInclTax / (1m + CatalogRate), 0, MidpointRounding.AwayFromZero);
     }
 
-    /// <summary>Total toutes taxes comprises pour une base hors taxe.</summary>
-    public static decimal TotalInclTax(decimal amountExclTax) =>
-        amountExclTax + TaxOn(amountExclTax);
+    /// <summary>TVA contenue dans un prix TTC : TTC − HT déduit.</summary>
+    public static decimal TaxIncludedIn(decimal amountInclTax) =>
+        amountInclTax <= 0 ? 0m : amountInclTax - ExclTaxFromInclTax(amountInclTax);
+
+    /// <summary>
+    /// Ancienne règle (prix HT + 19,25 %), conservée pour la règle de migration
+    /// des prix vers le TTC (SQL_CourseSalesTtc97b.sql) : le nouveau prix TTC est
+    /// le prix réellement payé avant le 9.7b, soit HT + arrondi(HT × 19,25 %).
+    /// </summary>
+    public static decimal LegacyTotalInclTax(decimal amountExclTax)
+    {
+        if (amountExclTax <= 0) return 0m;
+        return amountExclTax + decimal.Round(amountExclTax * CatalogRate, 0, MidpointRounding.AwayFromZero);
+    }
 }

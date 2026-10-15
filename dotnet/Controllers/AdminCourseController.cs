@@ -31,13 +31,18 @@ public class AdminCourseController : ControllerBase
     private readonly ILogger<AdminCourseController> _logger;
     private readonly INtfyService _ntfy;
     private readonly IAdminAuditService _audit;
+    private readonly IFastApiClient _fastApi;
+    private readonly ICatalogCommissionService _commission;
 
-    public AdminCourseController(ApplicationDbContext db, ILogger<AdminCourseController> logger, INtfyService ntfy, IAdminAuditService audit)
+    public AdminCourseController(ApplicationDbContext db, ILogger<AdminCourseController> logger, INtfyService ntfy, IAdminAuditService audit,
+        IFastApiClient fastApi, ICatalogCommissionService commission)
     {
         _db = db;
         _logger = logger;
         _ntfy = ntfy;
         _audit = audit;
+        _fastApi = fastApi;
+        _commission = commission;
     }
 
     private static (int Page, int PageSize) Paging(int page, int pageSize) =>
@@ -76,7 +81,10 @@ public class AdminCourseController : ControllerBase
                 .Select(c => new
                 {
                     c.Id, c.Title, c.Slug, c.Status, c.Category, c.Level,
-                    c.Price, c.IsFree, c.IsIncludedInSub,
+                    // Lot 9.7b : prix TTC (18.21), plus d'abonnement (18.16),
+                    // évaluation WinAI et part plateforme (F5).
+                    c.Price, c.IsFree,
+                    c.WinAiScore, c.WinAiJustification, c.PlatformCommissionRate,
                     c.EnrolledCount, c.AvgRating, c.ReviewsCount, c.LessonsCount,
                     c.CreatedAt, c.PublishedAt, c.RejectionReason, c.ReviewedAt,
                     instructor = new
@@ -112,6 +120,13 @@ public class AdminCourseController : ControllerBase
         {
             var course = await _db.Courses.FirstOrDefaultAsync(c => c.Id == id);
             if (course == null) return NotFound(new { error = "Formation introuvable" });
+
+            // Lot 9.7b (F5) : une formation payante jamais évaluée (soumise
+            // avant le 9.7b) l'est à l'approbation ; sinon le taux fixé à la
+            // soumission est conservé. F10 : gratuit et prix réconciliés.
+            CourseSales.ReconcileFreeAndPrice(course);
+            if (!CourseSales.IsFreeCourse(course) && course.PlatformCommissionRate == null)
+                await CourseCommissionEvaluation.EvaluateAndStoreAsync(_db, _fastApi, _commission, _logger, course);
 
             var before = course.Status;
             course.Status      = "published";
