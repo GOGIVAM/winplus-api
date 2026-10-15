@@ -451,9 +451,12 @@ public class AdminOverviewAnalyticsController : ControllerBase
                         .Where(d => d.CreatedAt >= from && d.CreatedAt < end)
                         .Join(_db.Subjects.Where(s => !s.IsDeleted),
                               d => d.SubjectId, s => s.Id,
-                              (d, s) => new { s.Title })
-                        .GroupBy(x => x.Title)
-                        .Select(g => new { title = g.Key, downloads = g.Count() })
+                              (d, s) => new { s.Id, s.Title })
+                        // Par épreuve (et non par titre) : deux épreuves de même
+                        // titre ne sont plus fusionnées, et l'id permet d'ouvrir
+                        // le détail depuis « Contenus populaires ».
+                        .GroupBy(x => new { x.Id, x.Title })
+                        .Select(g => new { id = g.Key.Id, title = g.Key.Title, downloads = g.Count() })
                         .OrderByDescending(x => x.downloads)
                         .Take(5)
                         .ToListAsync())
