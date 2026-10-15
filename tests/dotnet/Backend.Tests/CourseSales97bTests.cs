@@ -12,6 +12,7 @@ using Backend.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -362,6 +363,24 @@ namespace Backend.Tests
             return (teacher.Id, buyer.Id, parent.Id, child.Id, a.Id, b.Id);
         }
 
+        /// <summary>
+        /// Contrôleur parent construit par injection : son constructeur évolue
+        /// avec le chantier A du 9.7b (droits effectifs). Les droits réels sont
+        /// fournis (parent sans abonnement, aucune dotation).
+        /// </summary>
+        private static ParentCreditsController ParentController(ApplicationDbContext db)
+        {
+            var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+            services.AddSingleton<ApplicationDbContext>(db);
+            services.AddSingleton<Microsoft.Extensions.Logging.ILogger<ParentCreditsController>>(NullLogger<ParentCreditsController>.Instance);
+            services.AddSingleton<INtfyService>(new Mock<INtfyService>().Object);
+            services.AddSingleton<IWalletService>(new WalletService(db, NullLogger<WalletService>.Instance));
+            services.AddSingleton<Microsoft.Extensions.Caching.Memory.IMemoryCache>(new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions()));
+            services.AddSingleton<Backend.Services.Entitlements.IEntitlementService>(sp =>
+                new Backend.Services.Entitlements.EntitlementService(db, sp.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>()));
+            using var provider = services.BuildServiceProvider();
+            return Microsoft.Extensions.DependencyInjection.ActivatorUtilities.CreateInstance<ParentCreditsController>(provider);
+        }
         private async Task CreditAsync(int owner, decimal amount)
         {
             await using var db = _pg.CreateContext();
@@ -430,8 +449,7 @@ namespace Backend.Tests
 
             await using (var db = _pg.CreateContext())
             {
-                var controller = CourseSales97bTests.Controller(new ParentCreditsController(db, NullLogger<ParentCreditsController>.Instance,
-                    new Mock<INtfyService>().Object, new WalletService(db, NullLogger<WalletService>.Instance)), w.Parent, "parent");
+                var controller = CourseSales97bTests.Controller(ParentController(db), w.Parent, "parent");
                 var result = await controller.PurchaseForChild(new PurchaseForChildRequest { ChildId = w.Child, CourseId = w.CourseA });
                 Assert.IsType<OkObjectResult>(result);
             }
@@ -451,8 +469,7 @@ namespace Backend.Tests
             // Seconde tentative pour le même enfant : refusée.
             await using (var db = _pg.CreateContext())
             {
-                var controller = CourseSales97bTests.Controller(new ParentCreditsController(db, NullLogger<ParentCreditsController>.Instance,
-                    new Mock<INtfyService>().Object, new WalletService(db, NullLogger<WalletService>.Instance)), w.Parent, "parent");
+                var controller = CourseSales97bTests.Controller(ParentController(db), w.Parent, "parent");
                 var again = await controller.PurchaseForChild(new PurchaseForChildRequest { ChildId = w.Child, CourseId = w.CourseA });
                 // Fenêtre d'idempotence (60 s) : la commande déjà payée est renvoyée, sans second débit.
                 Assert.IsType<OkObjectResult>(again);
