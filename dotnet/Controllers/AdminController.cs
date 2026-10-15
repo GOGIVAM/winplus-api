@@ -1652,8 +1652,9 @@ public class AdminController : ControllerBase
             })
             .ToListAsync();
         // La file reste un tableau (forme lue par le badge de la console) ;
-        // le total est donné en en-tête pour la pagination de l'historique.
-        Response.Headers["X-Total-Count"] = (await query.CountAsync()).ToString();
+        // l'historique est paginé : { items, total, page, pageSize }.
+        if (status == "processed")
+            return Ok(new { items = docs, total = await query.CountAsync(), page, pageSize });
         return Ok(docs);
     }
 
