@@ -156,6 +156,17 @@ public class LibraryController : ControllerBase
                 if (subject == null) return NotFound(new { success = false, error = "Contenu introuvable." });
                 var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
                 if (user == null) return Unauthorized();
+                // Lot 9.7b : droit favorites.max.
+                try
+                {
+                    await FavoriteService.EnsureFavoriteAllowedAsync(
+                        HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IEntitlementService>(),
+                        userId, await _db.Favorites.CountAsync(f => f.UserId == userId));
+                }
+                catch (FavoriteLimitException ex)
+                {
+                    return StatusCode(403, new { success = false, code = "favorites_limit", error = ex.Message });
+                }
 
                 favorite = new Favorite { UserId = userId, SubjectId = subjectId, User = user, Subject = subject };
                 _db.Favorites.Add(favorite);

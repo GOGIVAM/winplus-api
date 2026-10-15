@@ -192,8 +192,9 @@ public class PricingController : ControllerBase
             // grandeur publique est le multiplicateur relatif au plan gratuit.
             // Vérifié : aucun client web ni mobile ne lisait maxChatMessages.
             MaxChatMessages = null,
-            AiUsageMultiplier = Backend.Services.AiQuotaService.MultiplierFor(
-                Backend.Services.AiQuotaService.ReferenceTokensForPlan(plan, plan.Name)),
+            // Lot 9.7b : plus de quota déduit du nom du plan. Le multiplicateur
+            // réel d'un plan est servi par GET /api/pricing/catalog (droits typés).
+            AiUsageMultiplier = 1,
         };
     }
 }

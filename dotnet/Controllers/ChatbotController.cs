@@ -92,6 +92,35 @@ public class ChatbotController : ControllerBase
     /// si elle appartient à l'utilisateur authentifié et n'est pas supprimée
     /// (même règle que <c>ChatbotRepository.GetConversationByIdForUserAsync</c>).
     /// </summary>
+    /// <summary>
+    /// Lot 9.7b (18.17) : droits du chat lus dans les droits typés, jamais
+    /// dans un nom de plan : <c>ai.feature.chat</c>, <c>ai.feature.parent_advisor</c>
+    /// pour un parent (onglet WinAI parent), <c>ai.feature.attachments</c> pour
+    /// les photos, documents et audio. Renvoie le corps du refus 403, ou null.
+    /// </summary>
+    private async Task<object?> ChatFeatureRefusalAsync(int userId, bool hasAttachments, CancellationToken ct)
+    {
+        var entitlements = HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IEntitlementService>();
+        var ent = await entitlements.GetAsync(userId, ct);
+        string? missing = null;
+        if (!ent.Has(Backend.Services.Entitlements.EntitlementCatalog.AiChat))
+            missing = Backend.Services.Entitlements.EntitlementCatalog.AiChat;
+        else if (ent.Role == "parent" && !ent.Has(Backend.Services.Entitlements.EntitlementCatalog.AiParentAdvisor))
+            missing = Backend.Services.Entitlements.EntitlementCatalog.AiParentAdvisor;
+        else if (hasAttachments && !ent.Has(Backend.Services.Entitlements.EntitlementCatalog.AiAttachments))
+            missing = Backend.Services.Entitlements.EntitlementCatalog.AiAttachments;
+        if (missing == null) return null;
+        var label = Backend.Services.Entitlements.EntitlementCatalog.Find(missing)?.Label ?? missing;
+        return new
+        {
+            error = "feature_not_in_plan",
+            code = "feature_not_in_plan",
+            feature = missing,
+            message = $"« {label} » n'est pas inclus dans votre plan. Passez à un plan supérieur pour l'utiliser.",
+            upgradeRequired = true,
+        };
+    }
+
     private Task<bool> ConversationBelongsToUserAsync(int conversationId, int userId, CancellationToken ct) =>
         _dbContext.Conversations
             .AsNoTracking()
@@ -135,6 +164,9 @@ public class ChatbotController : ControllerBase
             if (request.ConversationId is int requestedConvId
                 && !await ConversationBelongsToUserAsync(requestedConvId, userId, HttpContext.RequestAborted))
                 return NotFound(new { error = "Conversation not found" });
+
+            var refusal = await ChatFeatureRefusalAsync(userId, false, HttpContext.RequestAborted);
+            if (refusal != null) return StatusCode(403, refusal);
 
             // 8.7 : même ClientMessageId que le flux SSE quand ce POST est le
             // repli REST (ou un « Réessayer ») du même message utilisateur —
@@ -585,6 +617,15 @@ public class ChatbotController : ControllerBase
         //
         // Le mur réserve un forfait pour CE message (ClientMessageId, 8.7), puis
         // le coût réel le remplace en fin de flux (8.1, bloc finally).
+        var featureRefusal = await ChatFeatureRefusalAsync(userId, hasAttachments, cancellationToken);
+        if (featureRefusal != null)
+        {
+            Response.StatusCode = 403;
+            Response.ContentType = "application/json; charset=utf-8";
+            await Response.WriteAsync(JsonSerializer.Serialize(featureRefusal), cancellationToken);
+            return;
+        }
+
         var quota = await _aiQuota.CheckAndReserveAsync(userId, request.ClientMessageId, "stream", cancellationToken);
         if (quota.Outcome == AiQuotaOutcome.Unavailable)
         {

@@ -574,6 +574,17 @@ public class ParentController : ControllerBase
                     return Conflict(new { error = "Cet enfant est déjà lié à votre compte" });
                 if (existing.Status == "pending")
                     return Conflict(new { error = "Demande déjà envoyée, en attente de réponse de l'élève" });
+            }
+
+            // Lot 9.7b : children.max appliqué côté serveur (liens acceptés et
+            // demandes en attente), 1 enfant sans abonnement.
+            var limit = await Backend.Services.Entitlements.ParentLinkLimits.CheckNewLinkAsync(
+                _db, HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IEntitlementService>(), parentId, student.Id);
+            if (!limit.Allowed)
+                return StatusCode(403, new { error = limit.Message, code = "children_limit", childrenMax = limit.Max });
+
+            if (existing != null)
+            {
                 // Rejected : on relance une nouvelle demande.
                 existing.Status = "pending";
                 existing.InitiatedBy = parentId;

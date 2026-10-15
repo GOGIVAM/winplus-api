@@ -13,6 +13,8 @@ using Backend.Data;
 using Backend.Models.DTOs;
 using Backend.Models.Entities;
 using Backend.Services;
+using Backend.Services.Entitlements;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Backend.Controllers;
 
@@ -35,6 +37,9 @@ namespace Backend.Controllers;
             _db = db ?? throw new ArgumentNullException(nameof(db));
             _fastApiClient = fastApiClient ?? throw new ArgumentNullException(nameof(fastApiClient));
         }
+
+        /// <summary>Lot 9.7b : porte des fonctions IA hors chat (droit + budget de tokens).</summary>
+        private IAiFeatureGate Gate => HttpContext.RequestServices.GetRequiredService<IAiFeatureGate>();
 
         private int GetCurrentUserId()
         {
@@ -329,11 +334,16 @@ namespace Backend.Controllers;
                 if (!await CanReadUserDataAsync(request.UserId))
                     return StatusCode(403, new { message = "Accès refusé à ces données." });
 
+                // Lot 9.7b (18.17) : droit ai.feature.study_plan, débité sur le budget de celui qui demande.
+                var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiStudyPlan);
+                if (!ticket.Allowed) return ticket.Refusal!;
+
                 var response = await _aiService.GeneratePersonalizedPathAsync(
                     request.UserId,
                     request.SubjectName,
                     request.DurationWeeks,
                     request.HoursPerWeek);
+                await Gate.CompleteAsync(ticket, response != null);
 
                 // Module 23 : plus de parcours vide présenté comme un succès.
                 if (response == null)
@@ -374,6 +384,17 @@ namespace Backend.Controllers;
                 Response.StatusCode = 400;
                 return;
             }
+
+            // Lot 9.7b (18.17) : droit ai.feature.error_explain, débité sur le
+            // budget WinAI (flux : estimation sur la réponse servie).
+            var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiErrorExplain, cancellationToken);
+            if (!ticket.Allowed)
+            {
+                await ticket.Refusal!.ExecuteResultAsync(ControllerContext);
+                return;
+            }
+            var relayedChars = 0;
+            var observedTokens = 0;
 
             Response.ContentType = "text/event-stream";
             Response.Headers["Cache-Control"] = "no-cache";
@@ -416,6 +437,17 @@ namespace Backend.Controllers;
                 {
                     var line = await reader.ReadLineAsync(cancellationToken);
                     if (line == null) break;
+                    if (line.Contains("\"usage_final\""))
+                    {
+                        try
+                        {
+                            using var doc = System.Text.Json.JsonDocument.Parse(line.StartsWith("data: ") ? line[6..] : line);
+                            if (doc.RootElement.TryGetProperty("tokens_used", out var tk) && tk.TryGetInt32(out var n)) observedTokens = n;
+                        }
+                        catch (System.Text.Json.JsonException) { }
+                        continue;
+                    }
+                    if (line.StartsWith("data: ")) relayedChars += line.Length - 6;
                     await Response.WriteAsync(line + "\n", cancellationToken);
                     await Response.Body.FlushAsync(cancellationToken);
                 }
@@ -433,6 +465,10 @@ namespace Backend.Controllers;
                     await Response.Body.FlushAsync(CancellationToken.None);
                 }
                 catch { }
+            }
+            finally
+            {
+                await Gate.CompleteAsync(ticket, relayedChars > 0, AiUsagePolicy.ProvisionalTokensPerMessage + relayedChars / AiUsagePolicy.CharsPerTokenEstimate, observedTokens);
             }
         }
 
@@ -479,12 +515,16 @@ namespace Backend.Controllers;
         [HttpPost("exam-coach/generate")]
         public async Task<IActionResult> ExamCoachGenerate([FromBody] object body, CancellationToken ct)
         {
+            // Lot 9.7b (18.17) : fonction activable par plan, débitée sur le budget WinAI.
+            var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiExamCoach, ct);
+            if (!ticket.Allowed) return ticket.Refusal!;
             var httpClient = _httpClientFactory.CreateClient("FastApiClient");
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/exam-coach/generate");
             req.Content = JsonContent.Create(body);
             var auth = HttpContext.Request.Headers["Authorization"].ToString();
             if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
             var res = await httpClient.SendAsync(req, ct);
+            await Gate.CompleteAsync(ticket, res.IsSuccessStatusCode, observedTokens: IAiFeatureGate.TokensOf(res));
             var content = await res.Content.ReadAsStringAsync(ct);
             return Content(content, "application/json");
         }
@@ -496,12 +536,16 @@ namespace Backend.Controllers;
         [HttpPost("exam-coach/recalibrate")]
         public async Task<IActionResult> ExamCoachRecalibrate([FromBody] object body, CancellationToken ct)
         {
+            // Lot 9.7b (18.17) : fonction activable par plan, débitée sur le budget WinAI.
+            var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiExamCoach, ct);
+            if (!ticket.Allowed) return ticket.Refusal!;
             var httpClient = _httpClientFactory.CreateClient("FastApiClient");
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/exam-coach/recalibrate");
             req.Content = JsonContent.Create(body);
             var auth = HttpContext.Request.Headers["Authorization"].ToString();
             if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
             var res = await httpClient.SendAsync(req, ct);
+            await Gate.CompleteAsync(ticket, res.IsSuccessStatusCode, observedTokens: IAiFeatureGate.TokensOf(res));
             var content = await res.Content.ReadAsStringAsync(ct);
             return Content(UnwrapPythonData(content), "application/json");
         }
@@ -513,11 +557,15 @@ namespace Backend.Controllers;
         [HttpGet("exam-coach/today")]
         public async Task<IActionResult> ExamCoachToday([FromQuery] int userId, CancellationToken ct)
         {
+            // Lot 9.7b (18.17) : fonction activable par plan, débitée sur le budget WinAI.
+            var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiExamCoach, ct);
+            if (!ticket.Allowed) return ticket.Refusal!;
             var httpClient = _httpClientFactory.CreateClient("FastApiClient");
             using var req = new HttpRequestMessage(HttpMethod.Get, $"/api/exam-coach/today/{userId}");
             var auth = HttpContext.Request.Headers["Authorization"].ToString();
             if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
             var res = await httpClient.SendAsync(req, ct);
+            await Gate.CompleteAsync(ticket, res.IsSuccessStatusCode, observedTokens: IAiFeatureGate.TokensOf(res));
             var content = await res.Content.ReadAsStringAsync(ct);
             return Content(UnwrapPythonData(content), "application/json");
         }
@@ -799,7 +847,11 @@ namespace Backend.Controllers;
             if (body == null) return BadRequest(new { message = "Corps de requête manquant" });
             body["user_id"] = GetCurrentUserId();
 
+            // Lot 9.7b (18.17) : droit ai.feature.adaptive_quiz, débité sur le budget WinAI.
+            var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiAdaptiveQuiz);
+            if (!ticket.Allowed) return ticket.Refusal!;
             var (statusCode, content) = await _fastApiClient.PostRawJsonAsync("/api/adaptive-quiz", body);
+            await Gate.CompleteAsync(ticket, statusCode is >= 200 and < 300);
             if (statusCode is < 200 or >= 300)
                 _logger.LogWarning("Quiz adaptatif WinAI en échec : HTTP {Status} {Body}", statusCode, content);
             return RelayPython(statusCode, content);
@@ -832,12 +884,16 @@ namespace Backend.Controllers;
         [HttpPost("study-session/generate")]
         public async Task<IActionResult> StudySessionGenerate([FromBody] object body, CancellationToken ct)
         {
+            // Lot 9.7b (18.17) : fonction activable par plan, débitée sur le budget WinAI.
+            var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiStudySession, ct);
+            if (!ticket.Allowed) return ticket.Refusal!;
             var httpClient = _httpClientFactory.CreateClient("FastApiClient");
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/study-session/generate");
             req.Content = JsonContent.Create(body);
             var auth = HttpContext.Request.Headers["Authorization"].ToString();
             if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
             var res = await httpClient.SendAsync(req, ct);
+            await Gate.CompleteAsync(ticket, res.IsSuccessStatusCode, observedTokens: IAiFeatureGate.TokensOf(res));
             var content = await res.Content.ReadAsStringAsync(ct);
             return Content(UnwrapPythonData(content), "application/json");
         }
@@ -874,12 +930,16 @@ namespace Backend.Controllers;
         [HttpPost("study-session/phase2/quiz")]
         public async Task<IActionResult> StudySessionPhase2Quiz([FromBody] object body, CancellationToken ct)
         {
+            // Lot 9.7b (18.17) : fonction activable par plan, débitée sur le budget WinAI.
+            var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiStudySession, ct);
+            if (!ticket.Allowed) return ticket.Refusal!;
             var httpClient = _httpClientFactory.CreateClient("FastApiClient");
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/study-session/phase2/quiz");
             req.Content = JsonContent.Create(body);
             var auth = HttpContext.Request.Headers["Authorization"].ToString();
             if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
             var res = await httpClient.SendAsync(req, ct);
+            await Gate.CompleteAsync(ticket, res.IsSuccessStatusCode, observedTokens: IAiFeatureGate.TokensOf(res));
             var content = await res.Content.ReadAsStringAsync(ct);
             if (!res.IsSuccessStatusCode)
                 return StatusCode((int)res.StatusCode, content);
@@ -894,12 +954,16 @@ namespace Backend.Controllers;
         [HttpPost("study-session/phase3/summary")]
         public async Task<IActionResult> StudySessionPhase3Summary([FromBody] object body, CancellationToken ct)
         {
+            // Lot 9.7b (18.17) : fonction activable par plan, débitée sur le budget WinAI.
+            var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiStudySession, ct);
+            if (!ticket.Allowed) return ticket.Refusal!;
             var httpClient = _httpClientFactory.CreateClient("FastApiClient");
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/study-session/phase3/summary");
             req.Content = JsonContent.Create(body);
             var auth = HttpContext.Request.Headers["Authorization"].ToString();
             if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
             var res = await httpClient.SendAsync(req, ct);
+            await Gate.CompleteAsync(ticket, res.IsSuccessStatusCode, observedTokens: IAiFeatureGate.TokensOf(res));
             var content = await res.Content.ReadAsStringAsync(ct);
             if (!res.IsSuccessStatusCode)
                 return StatusCode((int)res.StatusCode, content);
@@ -952,12 +1016,16 @@ namespace Backend.Controllers;
         [HttpPost("generate-quiz-questions")]
         public async Task<IActionResult> GenerateQuizQuestions([FromBody] object body, CancellationToken ct)
         {
+            // Lot 9.7b (18.17) : fonction activable par plan, débitée sur le budget WinAI.
+            var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiQuizGeneration, ct);
+            if (!ticket.Allowed) return ticket.Refusal!;
             var client = _httpClientFactory.CreateClient("FastApiClient");
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/ai/generate-quiz-questions");
             req.Content = JsonContent.Create(body);
             var auth = HttpContext.Request.Headers["Authorization"].ToString();
             if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
             var res = await client.SendAsync(req, ct);
+            await Gate.CompleteAsync(ticket, res.IsSuccessStatusCode, observedTokens: IAiFeatureGate.TokensOf(res));
             return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
         }
 
@@ -967,12 +1035,16 @@ namespace Backend.Controllers;
         [HttpPost("optimize-title")]
         public async Task<IActionResult> OptimizeTitle([FromBody] object body, CancellationToken ct)
         {
+            // Lot 9.7b (18.17) : fonction activable par plan, débitée sur le budget WinAI.
+            var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiTeacherAssist, ct);
+            if (!ticket.Allowed) return ticket.Refusal!;
             var client = _httpClientFactory.CreateClient("FastApiClient");
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/ai/optimize-title");
             req.Content = JsonContent.Create(body);
             var auth = HttpContext.Request.Headers["Authorization"].ToString();
             if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
             var res = await client.SendAsync(req, ct);
+            await Gate.CompleteAsync(ticket, res.IsSuccessStatusCode, observedTokens: IAiFeatureGate.TokensOf(res));
             return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
         }
 
@@ -982,12 +1054,16 @@ namespace Backend.Controllers;
         [HttpPost("generate-description")]
         public async Task<IActionResult> GenerateDescription([FromBody] object body, CancellationToken ct)
         {
+            // Lot 9.7b (18.17) : fonction activable par plan, débitée sur le budget WinAI.
+            var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiTeacherAssist, ct);
+            if (!ticket.Allowed) return ticket.Refusal!;
             var client = _httpClientFactory.CreateClient("FastApiClient");
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/ai/generate-description");
             req.Content = JsonContent.Create(body);
             var auth = HttpContext.Request.Headers["Authorization"].ToString();
             if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
             var res = await client.SendAsync(req, ct);
+            await Gate.CompleteAsync(ticket, res.IsSuccessStatusCode, observedTokens: IAiFeatureGate.TokensOf(res));
             return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
         }
 

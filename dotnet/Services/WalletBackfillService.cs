@@ -180,13 +180,14 @@ public class WalletBackfillService : IWalletBackfillService
 
         var bookings = await _db.TutorBookings.AsNoTracking()
             .Where(b => b.EscrowReleasedAt != null && b.TutorProfile != null)
-            .Select(b => new { b.TutorProfile!.UserId, b.PriceXaf }).ToListAsync(ct);
+            .Select(b => new { b.TutorProfile!.UserId, b.PriceXaf, b.TeacherShareAtPayment }).ToListAsync(ct);
         var shares = new Dictionary<int, decimal>();
         foreach (var b in bookings)
         {
+            // Lot 9.7b : part figée au paiement quand elle existe.
             if (!shares.TryGetValue(b.UserId, out var share))
                 shares[b.UserId] = share = await RevenueSplit.GetTeacherShareAsync(_db, b.UserId);
-            Add(b.UserId, RevenueSplit.NetXaf(b.PriceXaf, share));
+            Add(b.UserId, RevenueSplit.NetXaf(b.PriceXaf, b.TeacherShareAtPayment ?? share));
         }
 
         var commissions = await _db.AffiliateCommissions.AsNoTracking()

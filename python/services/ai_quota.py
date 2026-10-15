@@ -21,11 +21,11 @@ voir routes/chatbot_routes.py::_enforce_ai_quota) :
    quand elle se réinitialise, jamais de nombre de tokens) quand c'est la
    raison du refus.
 
-⚠ Grille, ratios et durées DUPLIQUÉS de backend/dotnet/Services/AiUsagePolicy.cs
-(blocs BEGIN/END identiques des deux côtés). Toute modification doit être faite
-aux deux endroits ; le script de comparaison décrit dans le rapport de la passe
-8.10 vérifie qu'ils coïncident. La source de vérité de la référence d'un plan
-reste la colonne "PricingPlans"."MaxChatMessages", lue ici en premier.
+⚠ Ratios et durées DUPLIQUÉS de backend/dotnet/Services/AiUsagePolicy.cs
+(blocs BEGIN/END identiques des deux côtés). Lot 9.7b : il n'y a plus de grille
+de plans à recopier. La référence d'un compte vient de ses droits typés
+(EntitlementService, .NET), inscrite par .NET sur chaque réserve
+("AiTokenUsages"."ReferenceTokens") et relue ici.
 """
 
 from __future__ import annotations
@@ -41,97 +41,30 @@ logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════ POLICY ════════════════════════════════════
 # Copie conforme de AiUsagePolicy.cs. Ne modifier qu'en même temps que lui.
+# Lot 9.7b : la grille de référence par NOM de plan et la grille des bonus
+# parent / établissement sont SUPPRIMÉES (ici et côté .NET). La référence d'un
+# compte vient de ses droits typés, résolus par EntitlementService (.NET), qui
+# l'inscrit sur chaque réserve ("AiTokenUsages"."ReferenceTokens").
 
 # BEGIN POLICY_CONSTANTS
-FREE_TIER_REFERENCE_TOKENS = 200_000
-DEFAULT_PAID_REFERENCE_TOKENS = 800_000
 WEEK_DIVISOR = 4
 SESSION_DIVISOR_OF_WEEK = 3
 SESSION_HOURS = 5
 WEEK_DAYS = 7
 REPLAY_WINDOW_MINUTES = 15
 PROVISIONAL_TOKENS_PER_MESSAGE = 1_000
-PARENT_BONUS_FALLBACK_DIVISOR = 4
-INSTITUTION_BONUS_DIVISOR = 5
-PARENT_BONUS_FULL_SHARES = 3
-INSTITUTION_BONUS_FULL_SHARES = 20
 CHARS_PER_TOKEN_ESTIMATE = 4
 # END POLICY_CONSTANTS
 
-# BEGIN REFERENCE_GRID
-REFERENCE_GRID: Tuple[Tuple[str, int], ...] = (
-    ("annuel", 3_000_000),
-    ("premium", 2_000_000),
-    ("standard", 800_000),
-    ("starter", 200_000),
-    ("expert", 5_000_000),
-    ("pro", 2_400_000),
-    ("basique", 200_000),
-    ("famille+", 2_000_000),
-    ("famille +", 2_000_000),
-    ("famille", 1_000_000),
-    ("vip", 4_000_000),
-)
-# END REFERENCE_GRID
-
-# BEGIN PARENT_BONUS_GRID
-PARENT_BONUS_GRID: Tuple[Tuple[str, int], ...] = (
-    ("famille+", 500_000),
-    ("famille +", 500_000),
-    ("famille", 250_000),
-    ("vip", 1_000_000),
-)
-# END PARENT_BONUS_GRID
+# Repli seulement quand aucune réserve n'a encore été posée par .NET pour ce
+# compte (aucune référence connue) : valeur par défaut du droit
+# ai.reference_tokens du plan gratuit (EntitlementCatalog.cs).
+FREE_REFERENCE_FALLBACK = 200_000
 
 SESSION_LENGTH = timedelta(hours=SESSION_HOURS)
 WEEK_LENGTH = timedelta(days=WEEK_DAYS)
 REPLAY_WINDOW = timedelta(minutes=REPLAY_WINDOW_MINUTES)
 
-
-def _is_free(price) -> Optional[bool]:
-    return None if price is None else float(price) <= 0
-
-
-def reference_tokens_for(column_value, price, name) -> int:
-    """Quota de référence d'un plan (miroir de ReferenceTokensFor)."""
-    if isinstance(column_value, int) and column_value > 0:
-        return column_value
-    if _is_free(price) is True:
-        return FREE_TIER_REFERENCE_TOKENS
-    n = (name or "").strip().lower()
-    if not n:
-        return FREE_TIER_REFERENCE_TOKENS
-    for keyword, tokens in REFERENCE_GRID:
-        if keyword in n:
-            return tokens
-    return DEFAULT_PAID_REFERENCE_TOKENS
-
-
-def parent_bonus_for(column_value, price, name) -> int:
-    if _is_free(price) is True:
-        return 0
-    n = (name or "").strip().lower()
-    for keyword, tokens in PARENT_BONUS_GRID:
-        if keyword in n:
-            return tokens
-    return reference_tokens_for(column_value, price, name) // PARENT_BONUS_FALLBACK_DIVISOR
-
-
-def institution_bonus_for(column_value, price, name) -> int:
-    if _is_free(price) is True:
-        return 0
-    return max(FREE_TIER_REFERENCE_TOKENS,
-               reference_tokens_for(column_value, price, name) // INSTITUTION_BONUS_DIVISOR)
-
-
-def shared_bonus(per_beneficiary: int, full_shares: int, beneficiaries: int) -> int:
-    """Plafond global des bonus (8.10, hypothèse à valider) : enveloppe de
-    `full_shares` parts complètes répartie entre tous les bénéficiaires."""
-    if per_beneficiary <= 0:
-        return 0
-    if beneficiaries <= full_shares:
-        return per_beneficiary
-    return per_beneficiary * full_shares // beneficiaries
 
 
 def weekly_limit(reference: int) -> int:
@@ -225,16 +158,18 @@ def limit_message(kind: str, resets_at: Optional[datetime]) -> str:
 # ═══════════════════════════ fin POLICY ════════════════════════════════════
 
 
-# Abonnement payant en cours même règle que AiQuotaService (.NET).
-_ACTIVE_PAID_SUB_SQL = text('''
-    SELECT p."MaxChatMessages", p."Price", COALESCE(s."PlanName", p."Name")
-    FROM "Subscriptions" s
-    JOIN "PricingPlans" p ON p."Id" = s."PricingPlanId"
-    WHERE s."UserId" = :uid AND s."IsDeleted" = FALSE AND s."IsActive" = TRUE
-      AND LOWER(s."Status") = 'active' AND p."Price" > 0
-    ORDER BY s."StartDate" DESC
-    LIMIT 1
-''')
+def _reference_tokens(session, user_id: int) -> int:
+    """Référence totale du compte (droits + bonus parent et licence), telle
+    que .NET l'a résolue (EntitlementService) et inscrite sur sa dernière
+    réserve. Lot 9.7b : plus aucune lecture de plan par nom ni par prix ici."""
+    row = session.execute(text('''
+        SELECT "ReferenceTokens" FROM "AiTokenUsages"
+        WHERE "UserId" = :uid AND "ReferenceTokens" IS NOT NULL
+        ORDER BY "CreatedAt" DESC LIMIT 1
+    '''), {"uid": user_id}).first()
+    if row and row[0] and int(row[0]) > 0:
+        return int(row[0])
+    return FREE_REFERENCE_FALLBACK
 
 
 @dataclass
@@ -251,47 +186,6 @@ def _aware(dt: Optional[datetime]) -> Optional[datetime]:
     if dt is None:
         return None
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-
-
-def _reference_tokens(session, user_id: int) -> int:
-    """Référence totale : plan personnel + bonus parent + bonus établissement,
-    bonus plafonnés (miroir de AiQuotaService.ResolveReferenceAsync)."""
-    own = session.execute(_ACTIVE_PAID_SUB_SQL, {"uid": user_id}).first()
-    total = reference_tokens_for(*own) if own else FREE_TIER_REFERENCE_TOKENS
-
-    parent_ids = [r[0] for r in session.execute(
-        text('SELECT DISTINCT "ParentId" FROM "ParentStudentLinks" WHERE "StudentId" = :uid AND "Status" = \'accepted\''),
-        {"uid": user_id},
-    )]
-    for pid in parent_ids:
-        row = session.execute(_ACTIVE_PAID_SUB_SQL, {"uid": pid}).first()
-        if not row:
-            continue
-        children = session.execute(
-            text('SELECT COUNT(DISTINCT "StudentId") FROM "ParentStudentLinks" WHERE "ParentId" = :pid AND "Status" = \'accepted\''),
-            {"pid": pid},
-        ).scalar() or 0
-        total += shared_bonus(parent_bonus_for(*row), PARENT_BONUS_FULL_SHARES, int(children))
-
-    inst_rows = session.execute(text('''
-        SELECT DISTINCT u."InstitutionId", u."Id"
-        FROM "InstitutionStudents" s
-        JOIN "Users" u ON u."InstitutionId" = s."InstitutionId"
-        WHERE s."StudentId" = :uid AND s."IsActive" = TRUE
-          AND u."Role" = 'institution' AND u."IsDeleted" = FALSE
-    '''), {"uid": user_id}).all()
-    best: dict[int, int] = {}
-    for inst_id, inst_user_id in inst_rows:
-        row = session.execute(_ACTIVE_PAID_SUB_SQL, {"uid": inst_user_id}).first()
-        if row:
-            best[inst_id] = max(best.get(inst_id, 0), institution_bonus_for(*row))
-    for inst_id, per_student in best.items():
-        students = session.execute(
-            text('SELECT COUNT(DISTINCT "StudentId") FROM "InstitutionStudents" WHERE "InstitutionId" = :iid AND "IsActive" = TRUE'),
-            {"iid": inst_id},
-        ).scalar() or 0
-        total += shared_bonus(per_student, INSTITUTION_BONUS_FULL_SHARES, int(students))
-    return total
 
 
 def _window_states(session, user_id: int, now: datetime) -> Tuple[WindowState, WindowState]:

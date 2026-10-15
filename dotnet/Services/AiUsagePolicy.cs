@@ -42,87 +42,30 @@ public enum AiReplayVerdict
 }
 
 /// <summary>
-/// Règles chiffrées du quota WinAI <b>seul endroit côté .NET</b> où vivent la
-/// grille de référence, la grille des bonus, les ratios session/semaine et les
-/// durées. Sa copie Python est <c>backend/python/services/ai_quota.py</c>
-/// (bloc « POLICY ») ; les deux doivent rester identiques. Les blocs
-/// <c>BEGIN/END</c> ci-dessous sont repérés tels quels par le script de
-/// comparaison (voir le rapport de la passe 8.10).
+/// Règles chiffrées du quota WinAI : ratios session/semaine, durées, réserve
+/// forfaitaire. Leur copie Python est <c>backend/python/services/ai_quota.py</c>
+/// (bloc « POLICY ») ; les deux doivent rester identiques (blocs BEGIN/END).
+///
+/// ⚠ Lot 9.7b : la grille de référence par NOM de plan et la grille des bonus
+/// parent / établissement ont été <b>supprimées</b> ici et en Python. La
+/// référence d'un compte et ses bonus viennent des droits typés
+/// (<c>Services/Entitlements/EntitlementService</c>, clés
+/// <c>ai.reference_tokens</c>, <c>ai.parent_bonus_per_child</c>,
+/// <c>ai.parent_bonus_shares</c>, licences), jamais d'un nom de plan.
 ///
 /// Classe sans dépendance (ni EF ni ASP.NET) : elle est vérifiable isolément.
 /// </summary>
 public static class AiUsagePolicy
 {
-    // ════════════════════════════════════════════════════════════════════
-    // Grille de RÉFÉRENCE par plan (une seule valeur par plan, 8.10)
-    //
-    // La valeur de référence est celle de la colonne
-    // "PricingPlans"."MaxChatMessages" (posée par
-    // Migrations/SQL_SeedPricingPlanTokenQuotas.sql) ; la grille ci-dessous
-    // n'est que le repli quand la colonne est vide. Depuis 8.10, cette valeur
-    // n'est PLUS un plafond mensuel appliqué : c'est l'unité dont on dérive
-    // la limite hebdomadaire et la limite de session (ratios plus bas). Elle
-    // sert aussi de base au multiplicateur affiché (8.3).
-    //
-    //   Plan       Référence   Semaine (÷4)   Session (÷3 de la semaine)
-    //   gratuit      200 000       50 000        16 666
-    //   Standard     800 000      200 000        66 666
-    //   Premium    2 000 000      500 000       166 666
-    //   Annuel     3 000 000      750 000       250 000
-    //   Pro        2 400 000      600 000       200 000
-    //   Expert     5 000 000    1 250 000       416 666
-    //   Famille    1 000 000      250 000        83 333
-    //   Famille+   2 000 000      500 000       166 666
-    //   VIP        4 000 000    1 000 000       333 333
-    //
-    // Ordre significatif : première clé contenue dans le nom retenue
-    // (« famille+ » avant « famille »).
-    // ════════════════════════════════════════════════════════════════════
-
     // BEGIN POLICY_CONSTANTS
-    public const int FreeTierReferenceTokens = 200_000;
-    public const int DefaultPaidReferenceTokens = 800_000;
     public const int WeekDivisor = 4;
     public const int SessionDivisorOfWeek = 3;
     public const int SessionHours = 5;
     public const int WeekDays = 7;
     public const int ReplayWindowMinutes = 15;
     public const int ProvisionalTokensPerMessage = 1_000;
-    public const int ParentBonusFallbackDivisor = 4;
-    public const int InstitutionBonusDivisor = 5;
-    public const int ParentBonusFullShares = 3;
-    public const int InstitutionBonusFullShares = 20;
     public const int CharsPerTokenEstimate = 4;
     // END POLICY_CONSTANTS
-
-    // BEGIN REFERENCE_GRID
-    private static readonly (string Keyword, int Tokens)[] ReferenceGrid =
-    {
-        ("annuel", 3_000_000),
-        ("premium", 2_000_000),
-        ("standard", 800_000),
-        ("starter", 200_000),
-        ("expert", 5_000_000),
-        ("pro", 2_400_000),
-        ("basique", 200_000),
-        ("famille+", 2_000_000),
-        ("famille +", 2_000_000),
-        ("famille", 1_000_000),
-        ("vip", 4_000_000),
-    };
-    // END REFERENCE_GRID
-
-    // Bonus accordé par un plan PARENT à chaque enfant lié (8.6), avant le
-    // plafond global (voir SharedBonus).
-    // BEGIN PARENT_BONUS_GRID
-    private static readonly (string Keyword, int Tokens)[] ParentBonusGrid =
-    {
-        ("famille+", 500_000),
-        ("famille +", 500_000),
-        ("famille", 250_000),
-        ("vip", 1_000_000),
-    };
-    // END PARENT_BONUS_GRID
 
     public static readonly TimeSpan SessionLength = TimeSpan.FromHours(SessionHours);
     public static readonly TimeSpan WeekLength = TimeSpan.FromDays(WeekDays);
@@ -131,82 +74,16 @@ public static class AiUsagePolicy
     /// Durée pendant laquelle un <c>ClientMessageId</c> non finalisé peut être
     /// rattaché (repli REST après 8 s, « Réessayer »). Au-delà, l'identifiant
     /// n'ouvre plus rien : la requête est décomptée comme un nouveau message.
-    /// 15 minutes couvrent largement le repli automatique (8 s) et un
-    /// « Réessayer » manuel après une coupure réseau.
     /// </summary>
     public static readonly TimeSpan ReplayWindow = TimeSpan.FromMinutes(ReplayWindowMinutes);
 
-    // ════════════════════════════════════════════════════════════════════
-    // Quotas de référence et bonus
-    // ════════════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Quota de référence d'un plan. <paramref name="columnValue"/> =
-    /// <c>PricingPlans.MaxChatMessages</c> ; <paramref name="isFree"/> = prix nul.
-    /// Un plan gratuit (ou inconnu) a le quota découverte, jamais zéro (8.4).
-    /// </summary>
-    public static int ReferenceTokensFor(int? columnValue, bool? isFree, string? name)
-    {
-        if (columnValue is int v && v > 0) return v;
-        if (isFree == true) return FreeTierReferenceTokens;
-        var n = name?.Trim().ToLowerInvariant();
-        if (string.IsNullOrEmpty(n)) return FreeTierReferenceTokens;
-        foreach (var (keyword, tokens) in ReferenceGrid)
-            if (n.Contains(keyword)) return tokens;
-        return DefaultPaidReferenceTokens;
-    }
-
-    /// <summary>Bonus par enfant d'un plan parent payant, avant plafond global.</summary>
-    public static int ParentBonusFor(int? columnValue, bool? isFree, string? name)
-    {
-        if (isFree == true) return 0;
-        var n = name?.Trim().ToLowerInvariant() ?? string.Empty;
-        foreach (var (keyword, tokens) in ParentBonusGrid)
-            if (n.Contains(keyword)) return tokens;
-        // Plan parent non recensé : 25 % de sa référence.
-        return ReferenceTokensFor(columnValue, isFree, name) / ParentBonusFallbackDivisor;
-    }
-
-    /// <summary>Bonus par élève d'un établissement abonné, avant plafond global.</summary>
-    public static int InstitutionBonusFor(int? columnValue, bool? isFree, string? name)
-    {
-        if (isFree == true) return 0;
-        return Math.Max(FreeTierReferenceTokens,
-            ReferenceTokensFor(columnValue, isFree, name) / InstitutionBonusDivisor);
-    }
-
-    /// <summary>
-    /// <b>Plafond global des bonus (8.10) hypothèse à valider par le
-    /// product owner.</b>
-    ///
-    /// Un plan donateur n'ouvre pas son bonus en entier à un nombre illimité
-    /// de bénéficiaires : il dispose d'une enveloppe de
-    /// <paramref name="fullShares"/> parts complètes, répartie à parts égales
-    /// entre ses bénéficiaires actifs.
-    ///
-    ///   - Parent : 3 parts. Jusqu'à 3 enfants liés, chacun reçoit le bonus
-    ///     complet ; au-delà, l'enveloppe (3 × bonus) est partagée
-    ///     (4 enfants → 3/4 du bonus chacun).
-    ///   - Établissement : 20 parts. Jusqu'à 20 élèves actifs, bonus complet ;
-    ///     au-delà, 20 × bonus partagé (200 élèves → 1/10 du bonus chacun).
-    ///
-    /// Le total distribué par un plan donateur est donc borné par
-    /// <c>fullShares × bonus</c>, quel que soit le nombre de bénéficiaires.
-    /// </summary>
-    public static int SharedBonus(int perBeneficiary, int fullShares, int beneficiaries)
-    {
-        if (perBeneficiary <= 0) return 0;
-        if (beneficiaries <= fullShares) return perBeneficiary;
-        return (int)((long)perBeneficiary * fullShares / beneficiaries);
-    }
-
     /// <summary>
     /// Multiplicateur relatif au plan gratuit (8.3), seule grandeur exposée.
-    /// Les ratios session/semaine étant les mêmes pour tous les plans, il est
-    /// identique sur la référence, la semaine et la session.
+    /// <paramref name="freeReferenceTokens"/> = référence du plan gratuit élève
+    /// (droit <c>ai.reference_tokens</c> du plan gratuit).
     /// </summary>
-    public static int MultiplierFor(long referenceTokens) =>
-        Math.Max(1, (int)Math.Round((double)referenceTokens / FreeTierReferenceTokens));
+    public static int MultiplierFor(long referenceTokens, long freeReferenceTokens) =>
+        Math.Max(1, (int)Math.Round((double)referenceTokens / Math.Max(1, freeReferenceTokens)));
 
     // ════════════════════════════════════════════════════════════════════
     // Limites dérivées (8.10)

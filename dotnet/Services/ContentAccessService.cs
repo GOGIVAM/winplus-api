@@ -37,11 +37,13 @@ public static class PaidOrderStatus
 public interface IContentAccessService
 {
     /// <summary>
-    /// Vrai si l'utilisateur dispose réellement d'un abonnement payant en
-    /// cours. Le palier d'abonnement vit dans la table Subscriptions, jamais
-    /// dans le rôle du compte (cause racine du mur payant inerte).
+    /// Lot 9.7b : vrai si les droits effectifs du compte ouvrent le catalogue
+    /// payant (droit <c>catalog.access</c> : plan personnel du bon public, plan
+    /// parent qui couvre l'enfant, siège de licence). Remplace l'ancien
+    /// « tout abonnement payant », qui ouvrait le catalogue à un abonnement
+    /// professeur ou parent (étude 9.7b, 0.2 point 7).
     /// </summary>
-    Task<bool> HasActiveSubscriptionAsync(int userId);
+    Task<bool> HasCatalogAccessAsync(int userId);
 
     /// <summary>
     /// Vrai si l'utilisateur a droit d'accéder au contenu payant fourni.
@@ -53,49 +55,16 @@ public interface IContentAccessService
 public class ContentAccessService : IContentAccessService
 {
     private readonly ApplicationDbContext _context;
+    private readonly Backend.Services.Entitlements.IEntitlementService _entitlements;
 
-    public ContentAccessService(ApplicationDbContext context)
+    public ContentAccessService(ApplicationDbContext context, Backend.Services.Entitlements.IEntitlementService entitlements)
     {
         _context = context;
+        _entitlements = entitlements;
     }
 
-    /// <summary>
-    /// ⚠ Dette connue, à lever au Module 21 : <c>Subscription.IsActive</c>
-    /// n'est jamais réévalué à l'expiration, et la fenêtre de validité réelle
-    /// (comparaison à EndDate) n'est donc pas fiable aujourd'hui. On s'appuie
-    /// sur <c>Status == "active"</c>, seul champ réellement piloté
-    /// (SubscriptionExpirationService le passe à "expired"), en plus de
-    /// l'indicateur existant. Le jour où la fenêtre de validité sera corrigée,
-    /// ce test devra intégrer la comparaison de dates.
-    ///
-    /// Le plan associé doit en outre être un plan <b>payant</b>
-    /// (<c>PricingPlan.Price &gt; 0</c>). SubscriptionsController autorise en
-    /// effet et c'est voulu la création directe d'un abonnement « active »
-    /// sur un plan gratuit, sans le moindre paiement. Sans ce test, un tel
-    /// abonnement gratuit ouvrait à lui seul tout le catalogue payant : il
-    /// suffisait de s'abonner au plan à 0 F pour contourner le mur payant.
-    ///
-    /// <c>IgnoreQueryFilters()</c> neutralise le filtre global de suppression
-    /// logique sur PricingPlan, pour qu'un plan payant archivé par un
-    /// administrateur ne coupe pas l'accès des abonnés qui l'ont réellement
-    /// payé ; le filtre sur Subscription reste appliqué explicitement via
-    /// <c>!s.IsDeleted</c>.
-    /// </summary>
-    public async Task<bool> HasActiveSubscriptionAsync(int userId) =>
-        await _context.Subscriptions
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .AnyAsync(s => s.UserId == userId
-                        && !s.IsDeleted
-                        && s.IsActive
-                        // Même règle de casse que pour les commandes
-                        // (correction §7.2) : la base porte aussi bien
-                        // "active" que "Active" sur les lignes héritées, et
-                        // SubscriptionRepository a déjà été corrigé en ce sens.
-                        && s.Status.ToLower() == "active"
-                        // Un plan gratuit ne vaut pas abonnement payant.
-                        && s.PricingPlan != null
-                        && s.PricingPlan.Price > 0);
+    public async Task<bool> HasCatalogAccessAsync(int userId) =>
+        (await _entitlements.GetAsync(userId)).Has(Backend.Services.Entitlements.EntitlementCatalog.CatalogAccess);
 
     /// <summary>
     /// Statuts de commande qui valent « encaissement acquis ».
@@ -121,7 +90,7 @@ public class ContentAccessService : IContentAccessService
         if (isAdmin) return true;
         if (subject.AuthorUserId == userId) return true;
 
-        if (await HasActiveSubscriptionAsync(userId)) return true;
+        if (await HasCatalogAccessAsync(userId)) return true;
 
         // Achat confirmé par l'utilisateur lui-même. Cette voie n'exige pas
         // d'inscription : l'inscription est un acte postérieur à l'achat

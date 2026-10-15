@@ -309,6 +309,16 @@ public class ExamCoachController : ControllerBase
     private async Task<(JsonElement PlanJson, float ConfidenceScore, IActionResult? Error)> GeneratePlanFromPythonAsync(
         int userId, string examType, DateTime examDate, float hoursPerDay)
     {
+        // Lot 9.7b (18.17) : Exam Coach = droit ai.feature.exam_coach de l'élève
+        // concerné, débité sur son budget de tokens (aussi quand le parent
+        // active le mode veille pour lui).
+        var gate = HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IAiFeatureGate>();
+        var ticket = await gate.BeginAsync(userId, Backend.Services.Entitlements.EntitlementCatalog.AiExamCoach);
+        if (!ticket.Allowed) return (default, 0f, ticket.Refusal);
+        var served = false;
+        var observed = 0;
+        try
+        {
         var httpClient = _httpClientFactory.CreateClient("FastApiClient");
         var body = new
         {
@@ -328,6 +338,8 @@ public class ExamCoachController : ControllerBase
                 req.Headers.TryAddWithoutValidation("Authorization", auth);
 
             var res = await httpClient.SendAsync(req);
+            observed = Backend.Services.Entitlements.IAiFeatureGate.TokensOf(res);
+            served = res.IsSuccessStatusCode;
 
             if (!res.IsSuccessStatusCode)
             {
@@ -351,6 +363,11 @@ public class ExamCoachController : ControllerBase
         {
             _logger.LogError(ex, "Error calling Python exam-coach/generate");
             return (default, 0f, StatusCode(502, new { message = "Could not reach AI service" }));
+        }
+        }
+        finally
+        {
+            await gate.CompleteAsync(ticket, served, observedTokens: observed);
         }
     }
 }

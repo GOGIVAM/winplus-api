@@ -53,6 +53,10 @@ public class FavoritesController : ControllerBase
             var result = await _favoriteService.AddFavoriteAsync(userId, id);
             return Ok(result);
         }
+        catch (FavoriteLimitException ex)
+        {
+            return StatusCode(403, new { error = ex.Message, code = "favorites_limit" });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erreur lors de l'ajout du favori");

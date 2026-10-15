@@ -106,6 +106,23 @@ public sealed class ParentAdvisorThresholdService : BackgroundService
             .Distinct()
             .ToListAsync(ct);
 
+        // Lot 9.7b : les alertes immédiates sont un droit du plan parent
+        // (parent.realtime_alerts, Famille et Famille+) et ne portent que sur
+        // les enfants couverts par ce plan (children.max). Sans ce droit, le
+        // parent garde la synthèse hebdomadaire (WeeklyParentReportService).
+        // Traitement déclenché par le système : non imputé au budget WinAI.
+        var entitlements = scope.ServiceProvider.GetRequiredService<Backend.Services.Entitlements.IEntitlementService>();
+        var eligible = new List<LinkDto>();
+        foreach (var parentId in links.Select(l => l.ParentId).Distinct())
+        {
+            var ent = await entitlements.GetAsync(parentId, ct);
+            if (!ent.Has(Backend.Services.Entitlements.EntitlementCatalog.ParentRealtimeAlerts)) continue;
+            var covered = await Backend.Services.Entitlements.EntitlementService.CoveredChildrenAsync(
+                db, parentId, ent.Int(Backend.Services.Entitlements.EntitlementCatalog.ChildrenMax), ct);
+            eligible.AddRange(links.Where(l => l.ParentId == parentId && covered.Contains(l.ChildId)));
+        }
+        links = eligible;
+
         if (links.Count == 0) return true;
 
         // Un seul appel pour tous les couples parent-enfant du jour : évite N

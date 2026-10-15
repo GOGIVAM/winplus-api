@@ -94,6 +94,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ==================== WINAI TOKEN ACCOUNTING (lot 9.7b, 18.17) ====================
+# Chaque requete ouvre un compteur des tokens LLM consommes (DeepSeekClient
+# l'alimente) et le renvoie dans l'en-tete X-WinAI-Tokens : le proxy .NET
+# (FastApiClient.ConsumeWinAiTokens) l'impute au budget WinAI de l'utilisateur
+# pour les fonctions IA hors chat (meme budget que le chat).
+from services.token_accounting import begin_request_usage, end_request_usage, WINAI_TOKENS_HEADER
+
+
+@app.middleware("http")
+async def winai_token_usage_header(request, call_next):
+    box, ctx_token = begin_request_usage()
+    try:
+        response = await call_next(request)
+    finally:
+        end_request_usage(ctx_token)
+    response.headers[WINAI_TOKENS_HEADER] = str(int(box[0]))
+    return response
+
+
 # ==================== RATE LIMITING ====================
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter

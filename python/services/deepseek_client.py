@@ -10,7 +10,7 @@ import requests
 from typing import Dict, List, Optional, Any, Generator
 from dotenv import load_dotenv
 
-from services.token_accounting import estimate_prompt_tokens, estimate_tokens, usage_total
+from services.token_accounting import estimate_prompt_tokens, estimate_tokens, record_usage, usage_total
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -122,6 +122,8 @@ class DeepSeekClient:
                     tokens_used = prompt_tokens + completion_tokens
                     usage_estimated = True
 
+                # Lot 9.7b (18.17) : impute a la requete HTTP en cours (en-tete X-WinAI-Tokens).
+                record_usage(tokens_used)
                 logger.info(f"DeepSeek response received: {tokens_used} tokens in {generation_time}ms (finish_reason={finish_reason})")
                 # finish_reason == "length" : la réponse a été coupée par max_tokens
                 # avant sa fin naturelle  très souvent du JSON invalide en aval
@@ -302,6 +304,7 @@ class DeepSeekClient:
                 completion_tokens = int(usage.get("completion_tokens") or 0)
             # Rien de généré ni d'usage renvoyé (erreur avant le premier
             # token) : pas d'événement, la réserve côté .NET décide.
+            record_usage(tokens_used)
             if full_content or not estimated:
                 yield "data: " + json.dumps({
                     "usage_final": True,

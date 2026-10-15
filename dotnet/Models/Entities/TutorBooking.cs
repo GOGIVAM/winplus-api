@@ -150,6 +150,15 @@ public class TutorBooking
     /// <summary>Montant brut conservé pour le tuteur (annulation tardive, litige partiel), commission déduite au registre.</summary>
     public decimal? TutorRetainedXaf { get; set; }
 
+    /// <summary>
+    /// Lot 9.7b (18.15, 18.21) : part du tuteur (0.70 à 0.80, droit
+    /// <c>teacher.revenue_share</c>, siège enseignant de licence compris)
+    /// figée au paiement de la séance. Un changement de plan ultérieur ne
+    /// modifie plus le revenu d'une séance déjà payée.
+    /// </summary>
+    [Column(TypeName = "numeric(5,4)")]
+    public decimal? TeacherShareAtPayment { get; set; }
+
     [MaxLength(300)]
     public string? CancellationReason { get; set; }
     public int? CancelledByUserId { get; set; }

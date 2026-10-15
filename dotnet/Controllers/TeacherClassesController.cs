@@ -136,6 +136,18 @@ public class TeacherClassesController : ControllerBase
             if (duplicate)
                 return BadRequest(new { success = false, error = "Vous avez déjà une classe portant ce nom." });
 
+            // Lot 9.7b : droit teacher.max_classes (classes actives), siège
+            // enseignant de licence compris, appliqué côté serveur.
+            var ent = await HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IEntitlementService>().GetAsync(teacherId);
+            var activeClasses = await _db.TeacherClasses.CountAsync(c => c.TeacherId == teacherId && c.IsActive);
+            if (!ent.AllowsOneMore(Backend.Services.Entitlements.EntitlementCatalog.TeacherMaxClasses, activeClasses))
+                return StatusCode(403, new
+                {
+                    success = false,
+                    code = "classes_limit",
+                    error = $"Votre plan permet {ent.Int(Backend.Services.Entitlements.EntitlementCatalog.TeacherMaxClasses)} classe(s) active(s). Archivez une classe ou passez à un plan supérieur.",
+                });
+
             var klass = new TeacherClass
             {
                 TeacherId    = teacherId,
@@ -380,6 +392,16 @@ public class TeacherClassesController : ControllerBase
                 .AnyAsync(cs => cs.TeacherClassId == id && cs.StudentId == studentId);
             if (!already)
             {
+                // Lot 9.7b : droit teacher.max_students_per_class.
+                var ent = await HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IEntitlementService>().GetAsync(teacherId);
+                var members = await _db.TeacherClassStudents.CountAsync(cs => cs.TeacherClassId == id);
+                if (!ent.AllowsOneMore(Backend.Services.Entitlements.EntitlementCatalog.TeacherMaxStudentsPerClass, members))
+                    return StatusCode(403, new
+                    {
+                        success = false,
+                        code = "class_students_limit",
+                        error = $"Votre plan permet {ent.Int(Backend.Services.Entitlements.EntitlementCatalog.TeacherMaxStudentsPerClass)} élèves par classe. Passez à un plan supérieur pour en ajouter.",
+                    });
                 _db.TeacherClassStudents.Add(new TeacherClassStudent { TeacherClassId = id, StudentId = studentId.Value });
                 await _db.SaveChangesAsync();
 

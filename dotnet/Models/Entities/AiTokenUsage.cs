@@ -88,5 +88,12 @@ public class AiTokenUsage
     public string? AttemptId { get; set; }
 
     [ForeignKey(nameof(UserId))]
+    /// <summary>
+    /// Lot 9.7b : référence WinAI totale du compte (droits + bonus) au moment
+    /// de la réserve. Le contrôle Python (ai_quota.py) la relit pour calculer
+    /// les limites sans recopier de grille de plans.
+    /// </summary>
+    public long? ReferenceTokens { get; set; }
+
     public User? User { get; set; }
 }

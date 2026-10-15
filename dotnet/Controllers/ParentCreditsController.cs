@@ -60,10 +60,13 @@ public class ParentCreditsController : ControllerBase
     private readonly ILogger<ParentCreditsController> _logger;
     private readonly INtfyService _ntfy;
     private readonly IWalletService _wallet;
+    private readonly Backend.Services.Entitlements.IEntitlementService _entitlements;
 
-    public ParentCreditsController(ApplicationDbContext db, ILogger<ParentCreditsController> logger, INtfyService ntfy, IWalletService wallet)
+    public ParentCreditsController(ApplicationDbContext db, ILogger<ParentCreditsController> logger, INtfyService ntfy, IWalletService wallet,
+        Backend.Services.Entitlements.IEntitlementService entitlements)
     {
         _wallet = wallet;
+        _entitlements = entitlements;
         _db = db;
         _logger = logger;
         _ntfy = ntfy;
@@ -78,37 +81,17 @@ public class ParentCreditsController : ControllerBase
     private static DateTime CurrentPeriodEnd(DateTime periodStart) => periodStart.AddMonths(1);
 
     /// <summary>
-    /// Crée la dotation du mois en cours si le parent a un abonnement payant
-    /// actif dont le plan en prévoit une, et qu'elle n'a pas déjà été écrite.
-    /// Appelé par chaque endpoint qui a besoin d'un solde à jour (lecture
-    /// paresseuse, comme l'ancien registre de crédits).
+    /// Lot 9.7b : dotation du cycle en cours (droit parent.monthly_credit_xaf,
+    /// cycle mensuel calé sur la date d'abonnement, voir ParentAllowance) et
+    /// limite d'enfants (droit children.max), lus dans les droits effectifs.
+    /// Appelé par chaque endpoint qui a besoin d'un solde à jour.
     /// </summary>
     private async Task<(string? PlanName, int? MaxChildren, DateTime? SubscriptionEndDate)> EnsureMonthlyAllocationAsync(int parentId)
     {
-        var periodStart = CurrentPeriodStart();
-
-        var subscription = await _db.Subscriptions.AsNoTracking()
-            .Where(s => s.UserId == parentId && s.Status == "active" && !s.IsDeleted)
-            .OrderByDescending(s => s.StartDate)
-            .Select(s => new
-            {
-                s.EndDate,
-                planName = s.PricingPlan != null ? s.PricingPlan.Name : null,
-                monthly = s.PricingPlan != null ? s.PricingPlan.MonthlyCredits : null,
-                maxChildren = s.PricingPlan != null ? s.PricingPlan.MaxChildren : null,
-            })
-            .FirstOrDefaultAsync();
-
-        if (subscription == null) return (null, null, null);
-
-        if (subscription.monthly is > 0)
-        {
-            await _wallet.PostParentMonthlyAllocationAsync(
-                parentId, subscription.monthly.Value, periodStart, CurrentPeriodEnd(periodStart),
-                subscription.planName ?? "Standard");
-        }
-
-        return (subscription.planName, subscription.maxChildren, subscription.EndDate);
+        var ent = await Backend.Services.Entitlements.ParentAllowance.EnsureCurrentAsync(_entitlements, _wallet, parentId, DateTime.UtcNow);
+        if (ent.Plan == null) return (null, null, null);
+        var max = ent.Int(Backend.Services.Entitlements.EntitlementCatalog.ChildrenMax);
+        return (ent.Plan.PlanName, max == Backend.Services.Entitlements.EntitlementCatalog.Unlimited ? null : (int?)max, ent.Plan.EndDate);
     }
 
     /// <summary>GET /api/parent/credits — résumé compatible avec l'ancien registre, désormais porté par le portefeuille.</summary>

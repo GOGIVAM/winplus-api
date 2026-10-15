@@ -45,6 +45,14 @@ public interface IFastApiClient
     /// </summary>
     Task<(int StatusCode, string? Body)> GetRawJsonAsync(string endpoint);
     Task<bool> HealthCheckAsync();
+
+    /// <summary>
+    /// Lot 9.7b (18.17) : tokens LLM r?ellement consomm?s par les appels Python
+    /// faits depuis le dernier appel ? cette m?thode (en-t?te X-WinAI-Tokens pos?
+    /// par FastAPI), remis ? z?ro ? la lecture. Sert au d?compte des fonctions
+    /// IA hors chat sur le budget de l'utilisateur (AiFeatureGate).
+    /// </summary>
+    int ConsumeWinAiTokens();
     
     // Méthodes métier
     // Module 23 : GetRecommendationsAsync, AnalyzeProgressAsync et
@@ -240,6 +248,23 @@ public class FastApiClient : IFastApiClient
             request.Headers.TryAddWithoutValidation("Authorization", incoming);
     }
 
+    // ── Lot 9.7b : décompte des tokens des fonctions IA hors chat ──────────
+
+    /// <summary>En-tête posé par le middleware FastAPI (services/token_accounting.py).</summary>
+    public const string WinAiTokensHeader = "X-WinAI-Tokens";
+
+    private int _winAiTokens;
+
+    /// <summary>Cumule les tokens annoncés par chaque réponse (retries compris : chaque tentative a coûté).</summary>
+    private void TrackWinAiUsage(HttpResponseMessage response)
+    {
+        if (response.Headers.TryGetValues(WinAiTokensHeader, out var values)
+            && int.TryParse(values.FirstOrDefault(), out var n) && n > 0)
+            Interlocked.Add(ref _winAiTokens, n);
+    }
+
+    public int ConsumeWinAiTokens() => Interlocked.Exchange(ref _winAiTokens, 0);
+
     /// <summary>
     /// GET request avec retry + circuit breaker
     /// </summary>
@@ -256,6 +281,7 @@ public class FastApiClient : IFastApiClient
                     AttachAuthorization(request);
 
                     var response = await _httpClient.SendAsync(request);
+                    TrackWinAiUsage(response);
                     response.EnsureSuccessStatusCode();
 
                     var content = await response.Content.ReadAsStringAsync();
@@ -295,6 +321,7 @@ public class FastApiClient : IFastApiClient
                     AttachAuthorization(request);
 
                     var response = await _httpClient.SendAsync(request);
+                    TrackWinAiUsage(response);
                     var body = await response.Content.ReadAsStringAsync();
                     return ((int)response.StatusCode, (string?)body);
                 }));
@@ -332,6 +359,7 @@ public class FastApiClient : IFastApiClient
                     AttachAuthorization(request);
 
                     var response = await _httpClient.SendAsync(request);
+                    TrackWinAiUsage(response);
                     var body = await response.Content.ReadAsStringAsync();
                     return ((int)response.StatusCode, (string?)body);
                 }));
@@ -369,6 +397,7 @@ public class FastApiClient : IFastApiClient
                     AttachAuthorization(request);
 
                     var response = await _httpClient.SendAsync(request);
+                    TrackWinAiUsage(response);
                     response.EnsureSuccessStatusCode();
 
                     var responseContent = await response.Content.ReadAsStringAsync();
@@ -608,6 +637,7 @@ public class FastApiClient : IFastApiClient
                     request.Headers.TryAddWithoutValidation("Authorization", authorizationHeader);
 
                 var response = await _httpClient.SendAsync(request);
+                TrackWinAiUsage(response);
                 if (response.IsSuccessStatusCode)
                 {
                     _logger.LogInformation("Ingestion RAG mise en file pour {DocId}", docId);

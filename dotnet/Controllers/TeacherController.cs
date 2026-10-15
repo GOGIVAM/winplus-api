@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using System.Net.Http.Json;
 using Backend.Data;
 using Backend.Services;
+using Backend.Services.Entitlements;
+using Microsoft.Extensions.DependencyInjection;
 using Backend.Extensions;
 
 namespace Backend.Controllers;
@@ -35,6 +37,11 @@ public class TeacherController : ControllerBase
     // ── WinAI proxy helpers ──────────────────────────────────────────────────
 
     private HttpClient PyClient() => _httpClientFactory.CreateClient("FastApiClient");
+
+    /// <summary>Lot 9.7b : porte des fonctions IA hors chat (droit + budget de tokens).</summary>
+    private IAiFeatureGate Gate => HttpContext.RequestServices.GetRequiredService<IAiFeatureGate>();
+
+    private int GetCurrentUserId() => User.GetUserId();
 
     private void ForwardAuth(HttpRequestMessage req)
     {
@@ -98,10 +105,14 @@ public class TeacherController : ControllerBase
     [HttpPost("generate-correction")]
     public async Task<IActionResult> GenerateCorrection([FromBody] object body, CancellationToken ct)
     {
+        // Lot 9.7b (18.17) : fonction activable par plan, débitée sur le budget WinAI.
+        var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiCorrectionAssist, ct);
+        if (!ticket.Allowed) return ticket.Refusal!;
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/generate-correction");
         req.Content = System.Net.Http.Json.JsonContent.Create(body);
         ForwardAuth(req);
         var res = await PyClient().SendAsync(req, ct);
+        await Gate.CompleteAsync(ticket, res.IsSuccessStatusCode, observedTokens: IAiFeatureGate.TokensOf(res));
         return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
     }
 
@@ -111,10 +122,14 @@ public class TeacherController : ControllerBase
     [HttpPost("predict-popularity")]
     public async Task<IActionResult> PredictPopularity([FromBody] object body, CancellationToken ct)
     {
+        // Lot 9.7b (18.17) : fonction activable par plan, débitée sur le budget WinAI.
+        var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiTeacherAssist, ct);
+        if (!ticket.Allowed) return ticket.Refusal!;
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/predict-popularity");
         req.Content = System.Net.Http.Json.JsonContent.Create(body);
         ForwardAuth(req);
         var res = await PyClient().SendAsync(req, ct);
+        await Gate.CompleteAsync(ticket, res.IsSuccessStatusCode, observedTokens: IAiFeatureGate.TokensOf(res));
         return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
     }
 
@@ -124,10 +139,14 @@ public class TeacherController : ControllerBase
     [HttpPost("analyze-submission")]
     public async Task<IActionResult> AnalyzeSubmission([FromBody] object body, CancellationToken ct)
     {
+        // Lot 9.7b (18.17) : fonction activable par plan, débitée sur le budget WinAI.
+        var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiCorrectionAssist, ct);
+        if (!ticket.Allowed) return ticket.Refusal!;
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/analyze-submission");
         req.Content = System.Net.Http.Json.JsonContent.Create(body);
         ForwardAuth(req);
         var res = await PyClient().SendAsync(req, ct);
+        await Gate.CompleteAsync(ticket, res.IsSuccessStatusCode, observedTokens: IAiFeatureGate.TokensOf(res));
         return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
     }
 

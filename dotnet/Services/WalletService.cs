@@ -720,7 +720,8 @@ public class WalletService : IWalletService
 
             if (await FindByKeyAsync(key) == null)
             {
-                var share = await RevenueSplit.GetTeacherShareAsync(_db, teacherId);
+                // Lot 9.7b : part figée au paiement (18.15).
+                var share = await RevenueSplit.FrozenBookingShareAsync(_db, booking.Id, teacherId);
                 var net = RevenueSplit.NetXaf(booking.PriceXaf, share);
                 var commission = booking.PriceXaf - net;
                 if (net > 0)
@@ -768,7 +769,7 @@ public class WalletService : IWalletService
             var retainedCommissionKey = isDispute ? $"tutoring_dispute_partial_commission:{booking.Id}" : TutoringRetainedCommissionKey(booking.Id);
             {
                 var retained = booking.TutorRetainedXaf.Value;
-                var share = await RevenueSplit.GetTeacherShareAsync(_db, teacherId);
+                var share = await RevenueSplit.FrozenBookingShareAsync(_db, booking.Id, teacherId);
                 var net = RevenueSplit.NetXaf(retained, share);
                 var commission = retained - net;
                 var label = isDispute
@@ -885,7 +886,8 @@ public class WalletService : IWalletService
         {
             if (await FindByKeyAsync(key) != null) return;
 
-            var share = await RevenueSplit.GetTeacherShareAsync(_db, teacherId);
+            // Lot 9.7b : part figée au paiement (18.15).
+            var share = await RevenueSplit.FrozenSessionShareAsync(_db, enrollment.Id, teacherId);
             var net = RevenueSplit.NetXaf(enrollment.PriceChargedXaf.Value, share);
             var commission = enrollment.PriceChargedXaf.Value - net;
             var label = $"Session payante : {enrollment.Title}";

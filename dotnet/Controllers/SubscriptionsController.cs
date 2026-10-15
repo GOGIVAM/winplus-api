@@ -35,6 +35,11 @@ public class SubscriptionsController : ControllerBase
         _aiQuota = aiQuota;
     }
 
+    private sealed record SubscriptionDetails(bool AutoRenew, bool CancelAtPeriodEnd, decimal? PricePaidTtc, string? PendingPlanName, string? PendingBillingPeriod);
+
+    /// <summary>Détails du cycle d'abonnement (renouvellement, résiliation, montant payé) : complétés à l'étape 3 du 9.7b.</summary>
+    private Task<SubscriptionDetails?> SubscriptionDetailsAsync(int? subscriptionId) => Task.FromResult<SubscriptionDetails?>(null);
+
     /// <summary>GET /api/subscriptions/me  abonnement actif de l'utilisateur connecté.</summary>
     [HttpGet("me")]
     public async Task<IActionResult> GetCurrent()
@@ -42,12 +47,10 @@ public class SubscriptionsController : ControllerBase
         try
         {
             var userId = User.GetUserId();
-            var sub = await _db.Subscriptions
-                .AsNoTracking()
-                .Include(s => s.PricingPlan)
-                .Where(s => s.UserId == userId && !s.IsDeleted && s.Status.ToLower() == "active")
-                .OrderByDescending(s => s.StartDate)
-                .FirstOrDefaultAsync();
+            // Lot 9.7b : abonnement en vigueur selon la règle unique
+            // (SubscriptionRules), droits effectifs selon EntitlementService.
+            var entitlementService = HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IEntitlementService>();
+            var ent = await entitlementService.GetAsync(userId, HttpContext.RequestAborted);
 
             // Partie 8.3 / 8.10 : l'usage WinAI est exposé sous forme RELATIVE
             // (multiplicateur par rapport au plan gratuit) et par ÉTAT des
@@ -100,52 +103,31 @@ public class SubscriptionsController : ControllerBase
                     : null,
             };
 
-            if (sub == null)
-            {
-                return Ok(new
-                {
-                    id = 0,
-                    planName = "Libre",
-                    tier = "free",
-                    status = "active",
-                    expiresAt = DateTime.UtcNow.AddYears(10),
-                    autoRenew = false,
-                    downloadsUsed = 0,
-                    downloadsLimit = 5,
-                    quizUsedToday = 0,
-                    quizDailyLimit = 3,
-                    // Les anciens champs aiMessagesUsed/aiMessagesLimit
-                    // (compteurs bruts) sont retirés : voir aiUsage.
-                    aiUsage.aiUsageMultiplier,
-                    aiUsage.aiUsageLabel,
-                    aiUsage.aiQuotaExhausted,
-                    aiUsage.aiHasParentBonus,
-                    aiUsage.aiHasInstitutionBonus,
-                    aiUsage.aiUsageResetAt,
-                    aiUsage.aiLimitReached,
-                    aiUsage.aiLimitResetsAt,
-                    aiUsage.aiLimitMessage,
-                });
-            }
-
-            var plan = sub.PricingPlan;
-            var effectivePlanName = sub.PlanName ?? plan?.Name;
+            // Lot 9.7b : plus de « tier » (nom de plan à tester côté client),
+            // ni de champs fictifs (downloadsLimit, quizDailyLimit : les
+            // téléchargements sont interdits depuis la Partie 11 et aucune
+            // limite de quiz n'existe). Les clients lisent hasPlan et les
+            // droits (GET /api/me/entitlements, repris ici sous entitlements).
+            var details = await SubscriptionDetailsAsync(ent.Plan?.SubscriptionId);
             return Ok(new
             {
-                id = sub.Id,
-                // Requis pour renouveler : POST /subscriptions/purchase prend un
-                // PlanId (PricingPlan), pas l'id de la Subscription elle-même.
-                pricingPlanId = sub.PricingPlanId,
-                planName = effectivePlanName ?? "Standard",
-                tier = effectivePlanName?.ToLower() ?? "standard",
-                status = sub.Status,
-                expiresAt = sub.EndDate ?? sub.StartDate.AddMonths(1),
-                autoRenew = sub.EndDate == null,
-                price = plan?.Price ?? 0,
-                downloadsUsed = 0,
-                downloadsLimit = plan?.MaxDownloads ?? 30,
-                quizUsedToday = 0,
-                quizDailyLimit = 20,
+                id = ent.Plan?.SubscriptionId ?? 0,
+                hasPlan = ent.Plan != null,
+                pricingPlanId = ent.Plan?.PricingPlanId,
+                planKey = ent.Plan?.PlanKey,
+                planName = ent.Plan?.PlanName ?? "Gratuit",
+                audience = ent.Audience,
+                status = ent.Plan?.Status ?? "free",
+                billingPeriod = ent.Plan?.BillingPeriod,
+                startDate = ent.Plan?.StartDate,
+                expiresAt = ent.Plan?.EndDate,
+                graceUntil = ent.Plan?.GraceUntil,
+                autoRenew = details?.AutoRenew ?? false,
+                cancelAtPeriodEnd = details?.CancelAtPeriodEnd ?? false,
+                price = details?.PricePaidTtc,
+                pendingPlanName = details?.PendingPlanName,
+                pendingBillingPeriod = details?.PendingBillingPeriod,
+                entitlements = Backend.Controllers.MeEntitlementsController.ToResponse(ent),
                 aiUsage.aiUsageMultiplier,
                 aiUsage.aiUsageLabel,
                 aiUsage.aiQuotaExhausted,

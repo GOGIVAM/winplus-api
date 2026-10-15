@@ -690,9 +690,17 @@ public class StudentController : ControllerBase
         var link = await _db.ParentStudentLinks.FindAsync(id);
         if (link == null || link.StudentId != me) return NotFound();
 
+        // Lot 9.7b : children.max du plan du parent appliqué à l'acceptation
+        // (seuls les liens déjà acceptés comptent ici).
+        var entitlements = HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IEntitlementService>();
+        var verdict = await Backend.Services.Entitlements.ParentLinkLimits.CheckNewLinkAsync(_db, entitlements, link.ParentId, me, countPending: false);
+        if (!verdict.Allowed)
+            return Conflict(new { error = "Le plan de ce parent ne couvre plus d'enfant supplémentaire. Il doit passer à un plan supérieur avant que tu acceptes.", code = "children_limit" });
+
         link.Status = "accepted";
         link.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+        entitlements.Invalidate();
         return Ok(new { success = true });
     }
 

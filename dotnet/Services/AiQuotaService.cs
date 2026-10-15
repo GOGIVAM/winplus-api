@@ -2,6 +2,7 @@ using Backend.Data;
 using Backend.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using Backend.Services.Entitlements;
 
 namespace Backend.Services;
 
@@ -118,9 +119,10 @@ public sealed record AiQuotaSnapshot(
     int InstitutionBonusTokens,
     AiWindowState Session,
     AiWindowState Week,
-    bool UsageUnavailable)
+    bool UsageUnavailable,
+    long FreeReferenceTokens = 200_000)
 {
-    public int Multiplier => AiUsagePolicy.MultiplierFor(ReferenceTokens);
+    public int Multiplier => AiUsagePolicy.MultiplierFor(ReferenceTokens, FreeReferenceTokens);
     public AiLimitKind? LimitReached => AiUsagePolicy.Binding(Session, Week).Kind;
     public DateTime? ResetsAt => AiUsagePolicy.Binding(Session, Week).ResetsAt;
     public bool IsExhausted => LimitReached is not null;
@@ -130,29 +132,17 @@ public class AiQuotaService : IAiQuotaService
 {
     private readonly ApplicationDbContext _context;
     private readonly ILogger<AiQuotaService> _logger;
+    private readonly IEntitlementService _entitlements;
 
-    public AiQuotaService(ApplicationDbContext context, ILogger<AiQuotaService> logger)
+    public AiQuotaService(ApplicationDbContext context, ILogger<AiQuotaService> logger, IEntitlementService entitlements)
     {
         _context = context;
         _logger = logger;
+        _entitlements = entitlements;
     }
 
     /// <summary>Compatibilité : réserve forfaitaire (voir <see cref="AiUsagePolicy"/>).</summary>
     public const int ProvisionalTokensPerMessage = AiUsagePolicy.ProvisionalTokensPerMessage;
-
-    /// <summary>Multiplicateur relatif au plan gratuit (8.3).</summary>
-    public static int MultiplierFor(long referenceTokens) => AiUsagePolicy.MultiplierFor(referenceTokens);
-
-    /// <summary>
-    /// Quota de RÉFÉRENCE d'un plan (8.10 : plus un plafond mensuel, l'unité
-    /// dont on dérive semaine et session). <paramref name="planName"/> = nom
-    /// figé sur l'abonnement, utilisé en repli quand la colonne est vide.
-    /// </summary>
-    public static int ReferenceTokensForPlan(PricingPlan? plan, string? planName) =>
-        AiUsagePolicy.ReferenceTokensFor(
-            plan?.MaxChatMessages,
-            plan is null ? null : plan.Price <= 0,
-            planName ?? plan?.Name);
 
     // ─── Détection des erreurs Postgres ──────────────────────────────────
 
@@ -178,120 +168,16 @@ public class AiQuotaService : IAiQuotaService
 
     private static string NewId() => Guid.NewGuid().ToString("N");
 
-    // ─── Référence totale (8.6 + plafond 8.10) ───────────────────────────
-
-    /// <summary>
-    /// Abonnement payant en cours, plan inclus. <c>IgnoreQueryFilters</c> : un
-    /// plan payant archivé ne coupe pas l'accès de ceux qui l'ont payé.
-    /// </summary>
-    private async Task<Subscription?> GetActivePaidSubscriptionAsync(int userId, CancellationToken ct) =>
-        await _context.Subscriptions
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .Include(s => s.PricingPlan)
-            .Where(s => s.UserId == userId
-                     && !s.IsDeleted
-                     && s.IsActive
-                     && s.Status.ToLower() == "active"
-                     && s.PricingPlan != null
-                     && s.PricingPlan.Price > 0)
-            .OrderByDescending(s => s.StartDate)
-            .FirstOrDefaultAsync(ct);
-
-    private async Task<(int Personal, int ParentBonus, int InstitutionBonus)> ResolveReferenceAsync(
-        int userId, CancellationToken ct)
-    {
-        // 1. Plan personnel sans abonnement payant : référence gratuite (8.4).
-        var ownSub = await GetActivePaidSubscriptionAsync(userId, ct);
-        int personal = ownSub is null
-            ? AiUsagePolicy.FreeTierReferenceTokens
-            : ReferenceTokensForPlan(ownSub.PricingPlan, ownSub.PlanName);
-
-        // 2. Parents liés (ParentStudentLink « accepted »). Plafond global :
-        //    l'enveloppe du plan parent est partagée entre TOUS ses enfants
-        //    liés acceptés (AiUsagePolicy.SharedBonus).
-        var parentIds = await _context.ParentStudentLinks
-            .AsNoTracking()
-            .Where(l => l.StudentId == userId && l.Status == "accepted")
-            .Select(l => l.ParentId)
-            .Distinct()
-            .ToListAsync(ct);
-
-        int parentBonus = 0;
-        foreach (var parentId in parentIds)
-        {
-            var parentSub = await GetActivePaidSubscriptionAsync(parentId, ct);
-            if (parentSub is null) continue;
-            var perChild = AiUsagePolicy.ParentBonusFor(
-                parentSub.PricingPlan?.MaxChatMessages,
-                parentSub.PricingPlan is null ? null : parentSub.PricingPlan.Price <= 0,
-                parentSub.PlanName ?? parentSub.PricingPlan?.Name);
-            var children = await _context.ParentStudentLinks
-                .AsNoTracking()
-                .Where(l => l.ParentId == parentId && l.Status == "accepted")
-                .Select(l => l.StudentId)
-                .Distinct()
-                .CountAsync(ct);
-            parentBonus += AiUsagePolicy.SharedBonus(perChild, AiUsagePolicy.ParentBonusFullShares, children);
-        }
-
-        // 3. Établissements de rattachement (InstitutionStudent actif ; le
-        //    bonus porte sur l'abonnement des comptes « institution » de
-        //    l'établissement). Une fois par établissement, sur son meilleur
-        //    abonnement, puis partagé entre ses élèves actifs.
-        var institutionIds = await _context.InstitutionStudents
-            .AsNoTracking()
-            .Where(s => s.StudentId == userId && s.IsActive)
-            .Select(s => s.InstitutionId)
-            .Distinct()
-            .ToListAsync(ct);
-
-        int institutionBonus = 0;
-        if (institutionIds.Count > 0)
-        {
-            var institutionUsers = await _context.Users
-                .AsNoTracking()
-                .Where(u => u.Role == "institution"
-                         && u.InstitutionId != null
-                         && institutionIds.Contains(u.InstitutionId.Value)
-                         && !u.IsDeleted)
-                .Select(u => new { u.Id, InstitutionId = u.InstitutionId!.Value })
-                .ToListAsync(ct);
-
-            var bestPerInstitution = new Dictionary<int, int>();
-            foreach (var instUser in institutionUsers)
-            {
-                var instSub = await GetActivePaidSubscriptionAsync(instUser.Id, ct);
-                if (instSub is null) continue;
-                var bonus = AiUsagePolicy.InstitutionBonusFor(
-                    instSub.PricingPlan?.MaxChatMessages,
-                    instSub.PricingPlan is null ? null : instSub.PricingPlan.Price <= 0,
-                    instSub.PlanName ?? instSub.PricingPlan?.Name);
-                bestPerInstitution[instUser.InstitutionId] = Math.Max(
-                    bestPerInstitution.TryGetValue(instUser.InstitutionId, out var cur) ? cur : 0, bonus);
-            }
-
-            foreach (var (instId, perStudent) in bestPerInstitution)
-            {
-                var students = await _context.InstitutionStudents
-                    .AsNoTracking()
-                    .Where(s => s.InstitutionId == instId && s.IsActive)
-                    .Select(s => s.StudentId)
-                    .Distinct()
-                    .CountAsync(ct);
-                institutionBonus += AiUsagePolicy.SharedBonus(perStudent, AiUsagePolicy.InstitutionBonusFullShares, students);
-            }
-        }
-
-        return (personal, parentBonus, institutionBonus);
-    }
-
     // ─── Lecture ─────────────────────────────────────────────────────────
 
     public async Task<AiQuotaSnapshot> GetSnapshotAsync(int userId, CancellationToken cancellationToken = default)
     {
-        var (personal, parentBonus, institutionBonus) = await ResolveReferenceAsync(userId, cancellationToken);
-        long reference = (long)personal + parentBonus + institutionBonus;
+        // Lot 9.7b : référence = droit ai.reference_tokens (plan personnel,
+        // ou plancher d'un siège de licence) + bonus des donateurs (parent,
+        // licence), tous résolus par EntitlementService. Plus aucune lecture
+        // de plan par nom ni par prix ici.
+        var ent = await _entitlements.GetAsync(userId, cancellationToken);
+        long reference = ent.TotalReferenceTokens;
         int referenceClamped = (int)Math.Min(int.MaxValue, reference);
 
         var now = DateTime.UtcNow;
@@ -327,9 +213,10 @@ public class AiQuotaService : IAiQuotaService
 
         return new AiQuotaSnapshot(
             ReferenceTokens: referenceClamped,
-            PersonalTokens: personal,
-            ParentBonusTokens: parentBonus,
-            InstitutionBonusTokens: institutionBonus,
+            PersonalTokens: (int)Math.Min(int.MaxValue, ent.PersonalReferenceTokens),
+            ParentBonusTokens: (int)Math.Min(int.MaxValue, ent.ParentBonusTokens),
+            InstitutionBonusTokens: (int)Math.Min(int.MaxValue, ent.LicenseBonusTokens),
+            FreeReferenceTokens: ent.FreeReferenceTokens,
             Session: session,
             Week: week,
             UsageUnavailable: unavailable);
@@ -434,6 +321,10 @@ public class AiQuotaService : IAiQuotaService
                     Source = source,
                     CreatedAt = now,
                     AttemptId = attemptId,
+                    // Lot 9.7b : référence totale au moment de la réserve, lue
+                    // par le contrôle Python (ai_quota.py) au lieu de recopier
+                    // une grille de plans.
+                    ReferenceTokens = snapshot.ReferenceTokens,
                 };
                 _context.AiTokenUsages.Add(reservation);
 

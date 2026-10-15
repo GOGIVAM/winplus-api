@@ -26,8 +26,41 @@ comptée au forfait IMAGE_TOKEN_ESTIMATE quand l'usage réel manque.
 
 from __future__ import annotations
 
+import contextvars
 import math
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+# ── Lot 9.7b (18.17) : tokens consommés par la requête HTTP en cours ─────────
+# Le middleware de app.py ouvre une « boîte » (liste mutable partagée : les
+# routes synchrones tournent dans un thread qui reçoit une COPIE du contexte,
+# la liste reste la même) ; DeepSeekClient y ajoute chaque usage ; le total
+# repart vers .NET dans l'en-tête X-WinAI-Tokens.
+WINAI_TOKENS_HEADER = "X-WinAI-Tokens"
+_request_usage: contextvars.ContextVar[Optional[List[int]]] = contextvars.ContextVar("winai_request_usage", default=None)
+
+
+def begin_request_usage() -> Tuple[List[int], contextvars.Token]:
+    box: List[int] = [0]
+    return box, _request_usage.set(box)
+
+
+def end_request_usage(token: contextvars.Token) -> None:
+    try:
+        _request_usage.reset(token)
+    except ValueError:
+        pass
+
+
+def record_usage(tokens: int) -> None:
+    """Ajoute un coût réel (ou estimé) à la requête en cours, s'il y en a une."""
+    box = _request_usage.get()
+    if box is not None and tokens and tokens > 0:
+        box[0] += int(tokens)
+
+
+def current_request_usage() -> int:
+    box = _request_usage.get()
+    return int(box[0]) if box is not None else 0
 
 CHARS_PER_TOKEN = 4
 

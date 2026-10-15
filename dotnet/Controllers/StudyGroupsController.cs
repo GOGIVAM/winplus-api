@@ -220,6 +220,20 @@ public class StudyGroupsController : ControllerBase
 
             var userId = User.GetUserId();
 
+            // Lot 9.7b : droit groups.max_owned (élèves), appliqué côté serveur.
+            var ent = await HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IEntitlementService>().GetAsync(userId);
+            if (ent.Audience == Backend.Models.Entities.PlanAudiences.Student)
+            {
+                var owned = await _db.StudyGroups.CountAsync(g => g.OwnerId == userId && g.IsActive);
+                if (!ent.AllowsOneMore(Backend.Services.Entitlements.EntitlementCatalog.GroupsMaxOwned, owned))
+                    return StatusCode(403, new
+                    {
+                        success = false,
+                        code = "groups_limit",
+                        error = $"Votre plan permet de créer {ent.Int(Backend.Services.Entitlements.EntitlementCatalog.GroupsMaxOwned)} groupe(s) d'étude. Passez à un plan supérieur pour en créer davantage.",
+                    });
+            }
+
             var group = new StudyGroup
             {
                 OwnerId        = userId,

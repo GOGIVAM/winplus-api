@@ -213,6 +213,14 @@ public class AdminPlansController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Audit de bascule (lecture seule) : droits appliqués par l'ancien code
+    /// comparés aux droits de la nouvelle grille après migration (étude 6.3).
+    /// </summary>
+    [HttpGet("entitlements/audit")]
+    public async Task<IActionResult> Audit() =>
+        Ok(await new EntitlementMigrationAudit(_db, _entitlements).RunAsync(HttpContext.RequestAborted));
+
     /// <summary>Octroi manuel d'un plan (contrôle du public, version publiée, motif obligatoire).</summary>
     [HttpPost("plans/grant")]
     public async Task<IActionResult> Grant([FromBody] GrantPlanRequest req)

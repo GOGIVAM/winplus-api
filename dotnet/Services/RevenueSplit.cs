@@ -1,5 +1,7 @@
 using Backend.Data;
+using Backend.Services.Entitlements;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace Backend.Services;
 
@@ -11,11 +13,16 @@ namespace Backend.Services;
 ///
 /// Le XAF n'a pas de sous-unité : seule la commission est arrondie, le net
 /// s'obtient par soustraction, de sorte que net + commission = prix payé.
+///
+/// Lot 9.7b (18.15, 18.21) : la part vient du droit <c>teacher.revenue_share</c>
+/// (Gratuit 70 / Fondateur 70 / Pro 75 / Expert 80 %, siège enseignant d'une
+/// licence = au moins 75 %), et non plus d'un plan lu par nom. Sans abonnement
+/// payant, c'est le palier le plus bas (plan gratuit), et non plus 80 %. Elle
+/// est <b>figée au paiement</b> sur la réservation ou l'inscription.
 /// </summary>
 public static class RevenueSplit
 {
-    /// <summary>Part enseignant appliquée faute d'abonnement actif (comportement historique).</summary>
-    public const decimal DefaultTeacherShare = 0.80m;
+    private static readonly IMemoryCache NoCache = new MemoryCache(new MemoryCacheOptions());
 
     public static decimal CommissionXaf(decimal grossXaf, decimal revenueShare) =>
         Math.Round(grossXaf * (1 - revenueShare), 0, MidpointRounding.AwayFromZero);
@@ -27,11 +34,41 @@ public static class RevenueSplit
     public static decimal Xaf(decimal amount) =>
         Math.Round(amount, 0, MidpointRounding.AwayFromZero);
 
-    /// <summary>Part enseignant lue sur le plan d'abonnement actif du professeur (70/75/80 %).</summary>
-    public static async Task<decimal> GetTeacherShareAsync(ApplicationDbContext db, int teacherId) =>
-        await db.Subscriptions.AsNoTracking()
-            .Where(s => s.UserId == teacherId && s.Status == "active" && !s.IsDeleted)
-            .OrderByDescending(s => s.StartDate)
-            .Select(s => s.PricingPlan != null ? s.PricingPlan.TeacherRevenueShare : null)
-            .FirstOrDefaultAsync() ?? DefaultTeacherShare;
+    /// <summary>Part enseignant actuelle (droits effectifs, sans cache).</summary>
+    public static async Task<decimal> GetTeacherShareAsync(ApplicationDbContext db, int teacherId)
+    {
+        var ent = await new EntitlementService(db, NoCache).ComputeAsync(teacherId);
+        return ent.Fraction(EntitlementCatalog.TeacherRevenueShare);
+    }
+
+    /// <summary>
+    /// Part figée d'une séance : celle enregistrée au paiement ; à défaut
+    /// (première observation du paiement), la part actuelle, aussitôt figée.
+    /// </summary>
+    public static async Task<decimal> FrozenBookingShareAsync(ApplicationDbContext db, int bookingId, int teacherId)
+    {
+        var booking = await db.TutorBookings.FirstOrDefaultAsync(b => b.Id == bookingId);
+        if (booking?.TeacherShareAtPayment is decimal frozen) return frozen;
+        var share = await GetTeacherShareAsync(db, teacherId);
+        if (booking != null)
+        {
+            booking.TeacherShareAtPayment = share;
+            await db.SaveChangesAsync();
+        }
+        return share;
+    }
+
+    /// <summary>Même règle pour l'inscription payante à une session.</summary>
+    public static async Task<decimal> FrozenSessionShareAsync(ApplicationDbContext db, int sessionEnrollmentId, int teacherId)
+    {
+        var enrollment = await db.SessionEnrollments.FirstOrDefaultAsync(e => e.Id == sessionEnrollmentId);
+        if (enrollment?.TeacherShareAtPayment is decimal frozen) return frozen;
+        var share = await GetTeacherShareAsync(db, teacherId);
+        if (enrollment != null)
+        {
+            enrollment.TeacherShareAtPayment = share;
+            await db.SaveChangesAsync();
+        }
+        return share;
+    }
 }

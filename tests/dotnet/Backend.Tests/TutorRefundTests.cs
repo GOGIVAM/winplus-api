@@ -264,9 +264,9 @@ namespace Backend.Tests
             var rows = await EntriesAsync(id);
             Assert.Single(rows, t => t.EntryType == WalletEntryTypes.TutoringRefund);
             Assert.Equal(4700, ConfirmedSum(rows, t => t.OwnerId == Student));
-            // Part conservée 5 000 : 4 000 net tuteur (80 %), 1 000 commission.
-            Assert.Equal(4000, ConfirmedSum(rows, t => t.OwnerId == Tutor));
-            Assert.Equal(1000 + 300, ConfirmedSum(rows, t => t.OwnerType == WalletOwnerTypes.Platform));
+            // Part conservée 5 000 : 3 500 net tuteur (70 % sans abonnement, lot 9.7b), 1 500 commission.
+            Assert.Equal(3500, ConfirmedSum(rows, t => t.OwnerId == Tutor));
+            Assert.Equal(1500 + 300, ConfirmedSum(rows, t => t.OwnerType == WalletOwnerTypes.Platform));
             // Revenu en attente du prix plein : annulé, jamais confirmé.
             Assert.All(rows.Where(t => t.IdempotencyKey == WalletService.TutoringKey(id)), t => Assert.Equal(WalletEntryStatus.Reversed, t.Status));
             Assert.Equal(Price, ConfirmedSum(rows));

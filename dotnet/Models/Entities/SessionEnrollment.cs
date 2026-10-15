@@ -20,6 +20,10 @@ public class SessionEnrollment
 
     public string? NotchpayReference { get; set; }
 
+    /// <summary>Lot 9.7b (18.15) : part du professeur figée au paiement de l'inscription.</summary>
+    [Column(TypeName = "numeric(5,4)")]
+    public decimal? TeacherShareAtPayment { get; set; }
+
     [ForeignKey(nameof(SessionId))]
     public Session? Session { get; set; }
 

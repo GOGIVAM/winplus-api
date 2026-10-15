@@ -104,11 +104,17 @@ public class TutorProfileController : ControllerBase
 
     private async Task<IActionResult> ProxyToWinAI(string pythonPath, object body, CancellationToken ct)
     {
+        // Lot 9.7b (18.17) : aides WinAI du répétiteur (tarif, profil) = droit
+        // ai.feature.teacher_assist, débité sur son budget de tokens.
+        var gate = HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IAiFeatureGate>();
+        var ticket = await gate.BeginAsync(User.GetUserId(), Backend.Services.Entitlements.EntitlementCatalog.AiTeacherAssist, ct);
+        if (!ticket.Allowed) return ticket.Refusal!;
         var client = _httpClientFactory.CreateClient("FastApiClient");
         using var req = new HttpRequestMessage(HttpMethod.Post, pythonPath) { Content = JsonContent.Create(body) };
         var auth = HttpContext.Request.Headers["Authorization"].ToString();
         if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
         var res = await client.SendAsync(req, ct);
+        await gate.CompleteAsync(ticket, res.IsSuccessStatusCode, observedTokens: Backend.Services.Entitlements.IAiFeatureGate.TokensOf(res));
         return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
     }
 

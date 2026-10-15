@@ -37,12 +37,15 @@ public class TeacherContentController : ControllerBase
     private readonly ApplicationDbContext _db;
     private readonly ILogger<TeacherContentController> _logger;
     private readonly ITeacherService _teacherService;
+    private readonly Backend.Services.Entitlements.IEntitlementService _entitlements;
 
-    public TeacherContentController(ApplicationDbContext db, ILogger<TeacherContentController> logger, ITeacherService teacherService)
+    public TeacherContentController(ApplicationDbContext db, ILogger<TeacherContentController> logger, ITeacherService teacherService,
+        Backend.Services.Entitlements.IEntitlementService entitlements)
     {
         _db = db;
         _logger = logger;
         _teacherService = teacherService;
+        _entitlements = entitlements;
     }
 
     /// <summary>Solde WinPlus dépensable (Module 2, US-CAT-06).</summary>
@@ -355,11 +358,10 @@ public class TeacherContentController : ControllerBase
             var teacherId = User.GetUserId();
             var share = await GetRevenueShareAsync(teacherId);
 
-            var plan = await _db.Subscriptions.AsNoTracking()
-                .Where(s => s.UserId == teacherId && s.Status == "active" && !s.IsDeleted)
-                .OrderByDescending(s => s.StartDate)
-                .Select(s => s.PricingPlan != null ? s.PricingPlan.Name : null)
-                .FirstOrDefaultAsync();
+            // Lot 9.7b : plan et part lus dans les droits effectifs (siège
+            // enseignant de licence compris), plus de lecture de plan par nom.
+            var ent = await _entitlements.GetAsync(teacherId);
+            var plan = ent.Plan?.PlanName;
 
             return Ok(new
             {
@@ -380,13 +382,10 @@ public class TeacherContentController : ControllerBase
     }
 
     /// <summary>
-    /// Part enseignant lue sur le plan actif. Null si aucun plan : le frontend
-    /// affiche alors un état vide au lieu d'inventer un pourcentage.
+    /// Lot 9.7b : part enseignant actuelle (droit teacher.revenue_share), y
+    /// compris sans abonnement (palier le plus bas, plan gratuit). La part
+    /// d'une séance déjà payée est celle figée au paiement.
     /// </summary>
     private async Task<decimal?> GetRevenueShareAsync(int teacherId) =>
-        await _db.Subscriptions.AsNoTracking()
-            .Where(s => s.UserId == teacherId && s.Status == "active" && !s.IsDeleted)
-            .OrderByDescending(s => s.StartDate)
-            .Select(s => s.PricingPlan != null ? s.PricingPlan.TeacherRevenueShare : null)
-            .FirstOrDefaultAsync();
+        (await _entitlements.GetAsync(teacherId)).Fraction(Backend.Services.Entitlements.EntitlementCatalog.TeacherRevenueShare);
 }

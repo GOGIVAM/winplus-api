@@ -381,6 +381,7 @@ builder.Services.AddScoped<ITokenTopUpService, UnavailableTokenTopUpService>();
 // Lot 9.7b : droits typés (service unique), gestion des plans.
 builder.Services.AddScoped<Backend.Services.Entitlements.IEntitlementService, Backend.Services.Entitlements.EntitlementService>();
 builder.Services.AddScoped<Backend.Services.Entitlements.PlanCatalogService>();
+builder.Services.AddScoped<Backend.Services.Entitlements.IAiFeatureGate, Backend.Services.Entitlements.AiFeatureGate>();
 
 // Création réelle de l'abonnement à la confirmation du paiement (Module 18,
 // correction §7.3) : sans elle, un client qui payait un abonnement n'obtenait

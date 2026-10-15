@@ -253,7 +253,7 @@ namespace Backend.Tests
             await wallet.SyncTutorBookingAsync(62);
             var before = await wallet.GetBalanceAsync(Teacher);
             Assert.Equal(0, before.AvailableXaf);
-            Assert.Equal(4000, before.PendingXaf); // part enseignant par défaut : 80 %
+            Assert.Equal(3500, before.PendingXaf); // lot 9.7b : sans abonnement, palier le plus bas (70 %)
 
             (await db.TutorBookings.FirstAsync(b => b.Id == 62)).EscrowReleasedAt = DateTime.UtcNow;
             await db.SaveChangesAsync();
@@ -261,11 +261,11 @@ namespace Backend.Tests
             await wallet.SyncTutorBookingAsync(62); // libération rejouée
 
             var after = await wallet.GetBalanceAsync(Teacher);
-            Assert.Equal(4000, after.AvailableXaf);
+            Assert.Equal(3500, after.AvailableXaf);
             Assert.Equal(0, after.PendingXaf);
             var platform = await db.WalletTransactions.Where(t => t.OwnerType == WalletOwnerTypes.Platform).ToListAsync();
             Assert.Single(platform);
-            Assert.Equal(1000, platform[0].Amount);
+            Assert.Equal(1500, platform[0].Amount);
             Assert.Equal(WalletEntryStatus.Confirmed, platform[0].Status);
         }
 
@@ -398,8 +398,8 @@ namespace Backend.Tests
 
             var report = await backfill.RunAsync();
             Assert.True(report.Equal, string.Join("; ", report.Mismatches.Select(m => $"{m.UserId}: {m.LegacyXaf} ≠ {m.LedgerXaf}")));
-            // 2000 + 4000 (80 % de 5000) + 100 - 300 - 500 - 1000 = 4300
-            Assert.Equal(4300, await wallet.GetAvailableAsync(Teacher));
+            // 2000 + 3500 (70 % de 5000, lot 9.7b) + 100 - 300 - 500 - 1000 = 3800
+            Assert.Equal(3800, await wallet.GetAvailableAsync(Teacher));
 
             var count = await db.WalletTransactions.CountAsync();
             var again = await backfill.RunAsync();

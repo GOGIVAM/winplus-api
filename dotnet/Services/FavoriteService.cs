@@ -12,12 +12,28 @@ public class FavoriteService : IFavoriteService
     private readonly IUserRepository _userRepository;
     private readonly ILogger<FavoriteService> _logger;
 
-    public FavoriteService(IFavoriteRepository favoriteRepository, ISubjectRepository subjectRepository, IUserRepository userRepository, ILogger<FavoriteService> logger)
+    private readonly Backend.Services.Entitlements.IEntitlementService? _entitlements;
+
+    public FavoriteService(IFavoriteRepository favoriteRepository, ISubjectRepository subjectRepository, IUserRepository userRepository, ILogger<FavoriteService> logger,
+        Backend.Services.Entitlements.IEntitlementService? entitlements = null)
     {
         _favoriteRepository = favoriteRepository;
         _subjectRepository = subjectRepository;
         _userRepository = userRepository;
         _logger = logger;
+        _entitlements = entitlements;
+    }
+
+    /// <summary>
+    /// Lot 9.7b : droit favorites.max appliqué côté serveur (il ne l'était que
+    /// sur mobile, à 3). Lève <see cref="FavoriteLimitException"/> au-delà.
+    /// </summary>
+    public static async Task EnsureFavoriteAllowedAsync(Backend.Services.Entitlements.IEntitlementService entitlements, int userId, int currentCount)
+    {
+        var ent = await entitlements.GetAsync(userId);
+        if (!ent.AllowsOneMore(Backend.Services.Entitlements.EntitlementCatalog.FavoritesMax, currentCount))
+            throw new FavoriteLimitException(
+                $"Votre plan permet {ent.Int(Backend.Services.Entitlements.EntitlementCatalog.FavoritesMax)} favoris. Retirez-en un ou passez à un plan supérieur.");
     }
 
     public async Task<IEnumerable<Favorite>> GetFavoritesAsync(int userId)
@@ -61,6 +77,12 @@ public class FavoriteService : IFavoriteService
             var existing = await _favoriteRepository.GetByUserAndSubjectAsync(userId, subjectId);
             if (existing != null)
                 return existing;
+
+            if (_entitlements != null)
+            {
+                var count = (await _favoriteRepository.GetByUserIdAsync(userId)).Count();
+                await EnsureFavoriteAllowedAsync(_entitlements, userId, count);
+            }
 
             var subject = await _subjectRepository.GetByIdAsync(subjectId);
             if (subject == null)
@@ -215,4 +237,10 @@ public class FavoriteService : IFavoriteService
             return new List<dynamic>();
         }
     }
+}
+
+/// <summary>Lot 9.7b : plafond de favoris du plan atteint (droit favorites.max).</summary>
+public sealed class FavoriteLimitException : Exception
+{
+    public FavoriteLimitException(string message) : base(message) { }
 }

@@ -218,10 +218,11 @@ namespace Backend.Tests
             using var doc = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
             var data = doc.RootElement.GetProperty("data");
 
-            // 10 000 encaissés = 8 000 dus au professeur + 2 000 de part plateforme.
+            // 10 000 encaissés = 7 000 dus au professeur sans abonnement (70 %,
+            // lot 9.7b) + 3 000 de part plateforme.
             Assert.Equal(10000, data.GetProperty("collectedTutoringXaf").GetDecimal());
-            Assert.Equal(2000, data.GetProperty("platformCommissionXaf").GetDecimal());
-            Assert.True(data.GetProperty("dueAvailableXaf").GetDecimal() >= 8000);
+            Assert.Equal(3000, data.GetProperty("platformCommissionXaf").GetDecimal());
+            Assert.True(data.GetProperty("dueAvailableXaf").GetDecimal() >= 7000);
         }
     }
 }
