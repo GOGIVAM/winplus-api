@@ -24,7 +24,7 @@ from schemas import ChatRequest, ChatResponse, ChatbotHealthResponse, ChatMessag
 from database import (
     Database, Conversation, ChatMessage as ChatMessageDB, UserAIMemory, User,
     QuizAttempt, DailyScore, QuizMistake, ExamCoachPlanNet,
-    TutorProfile, TutorSubject, TutorLevel,
+    TutorProfile, TutorSubject, TutorLevel, Subject, Exam,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,50 @@ def _load_performance_history(user_id: int) -> dict:
     except Exception as e:
         logger.warning(f"Could not load performance history for user {user_id}: {e}")
         return {}
+
+
+_CATALOG_HINT = re.compile(r"catalogu|annale|sujet|épreuve|epreuve|corrig|recommand", re.I)
+
+
+def _load_catalog_block(limit: int = 40) -> str:
+    """Extrait compact du catalogue publié (épreuve, examen, niveau, matière, prix).
+
+    Sans lui, une demande « recommande-moi des sujets » faisait répondre à WinAI
+    qu'il n'avait aucune donnée sur le catalogue."""
+    try:
+        db = Database()
+        session = db.SessionLocal()
+        try:
+            rows = (
+                session.query(Subject.Id, Subject.Title, Subject.Category, Subject.Price,
+                              Exam.ExamType, Exam.Level, Exam.Year)
+                .outerjoin(Exam, (Exam.SubjectId == Subject.Id) & (Exam.IsDeleted == False))  # noqa: E712
+                .filter(Subject.IsPublished == True, Subject.IsDeleted == False)  # noqa: E712
+                .order_by(Subject.EnrollmentCount.desc())
+                .limit(limit * 2)
+                .all()
+            )
+            seen, lines = set(), []
+            for r in rows:
+                if r.Id in seen:
+                    continue
+                seen.add(r.Id)
+                meta = [x for x in (r.ExamType, r.Level, r.Category, str(r.Year) if r.Year else None) if x]
+                price = float(r.Price or 0)
+                prix = "gratuit" if price == 0 else f"{price:g} XAF"
+                lines.append(f"  - {r.Title} ({', '.join(meta)}) · {prix}")
+                if len(lines) >= limit:
+                    break
+            if not lines:
+                return ""
+            return ("\n\n[Catalogue WinPlus : épreuves publiées]\n" + "\n".join(lines)
+                    + "\nPour une recommandation, choisis UNIQUEMENT dans cette liste, en citant le titre exact,"
+                      " et rapproche-la du niveau, des lacunes et de l'examen visé de l'élève.")
+        finally:
+            session.close()
+    except Exception as e:
+        logger.warning(f"Could not load catalog block: {e}")
+        return ""
 
 
 def _load_quiz_mistakes(user_id: int, limit: int = 10) -> list:
@@ -435,7 +479,10 @@ def _build_prompt_from_request(
         recent_activity=list(getattr(user_context, "recent_activity", None) or []),
         navigation_history=list(getattr(user_context, "navigation_history", None) or []),
     )
-    return build_system_prompt(ctx), ctx.role
+    prompt = build_system_prompt(ctx)
+    if role == "student" and _CATALOG_HINT.search(current_message or ""):
+        prompt += _load_catalog_block()
+    return prompt, ctx.role
 
 
 async def format_messages_for_deepseek(messages: List[ChatMessage], user_id: Optional[int] = None) -> List[Dict[str, str]]:
