@@ -241,4 +241,30 @@ public class NotificationsController : ControllerBase
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }
+
+    /// <summary>
+    /// Supprime une notification de l'utilisateur (elle reste dans la liste
+    /// jusqu'à cette suppression volontaire).
+    /// </summary>
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> Delete(int id)
+    {
+        try
+        {
+            var userId = User.GetUserId();
+            var deleted = await _db.Notifications
+                .Where(n => n.Id == id && n.UserId == userId)
+                .ExecuteDeleteAsync();
+
+            if (deleted == 0)
+                return NotFound(new { success = false, error = "Notification not found" });
+
+            return Ok(new { success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting notification {Id}", id);
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
 }
