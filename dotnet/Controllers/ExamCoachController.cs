@@ -65,7 +65,9 @@ public class ExamCoachController : ControllerBase
         {
             UserId          = userId,
             ExamType        = request.ExamType,
-            ExamDate        = request.ExamDate,
+            // Date du formulaire sans fuseau (Kind=Unspecified) : PostgreSQL refuse
+            // de l'écrire en timestamptz et la création du plan échouait en 500.
+            ExamDate        = DateTime.SpecifyKind(request.ExamDate.Date, DateTimeKind.Utc),
             HoursPerDay     = request.HoursPerDay,
             PlanJson        = planJson.GetRawText(),
             ConfidenceScore = confidenceScore,
@@ -236,7 +238,7 @@ public class ExamCoachController : ControllerBase
         {
             UserId                     = childId,
             ExamType                   = request.ExamType,
-            ExamDate                   = request.ExamDate.Value,
+            ExamDate                   = DateTime.SpecifyKind(request.ExamDate.Value.Date, DateTimeKind.Utc),
             HoursPerDay                = request.HoursPerDay,
             PlanJson                   = planJson.GetRawText(),
             ConfidenceScore            = confidenceScore,

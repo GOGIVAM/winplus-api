@@ -217,10 +217,13 @@ class LearningHistory(Base):
     UserId = Column(Integer, ForeignKey('Users.Id'), nullable=False)
     SubjectId = Column(Integer, ForeignKey('Subjects.Id'), nullable=False)
     ContentId = Column(Integer, ForeignKey('CourseContents.Id'))
-    ActionType = Column(String(50))  # 'view', 'complete', 'quiz_attempt', etc.
-    Duration = Column(Integer)  # seconds
-    Timestamp = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    Metadata = Column(Text)  # JSON metadata
+    # Noms d'attributs gardés (utilisés par les routes), colonnes réelles de la
+    # table : ActionType/Duration/Timestamp/Metadata n'existent pas en base, et
+    # toute requête sur ce modèle échouait (analyse de l'élève, coach d'examen).
+    ActionType = Column('ActivityType', String(50))  # 'lesson_view', 'quiz_attempt', etc.
+    Duration = Column('DurationSeconds', Integer)  # secondes
+    Timestamp = Column('ActivityAt', DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    Metadata = Column('EventDetails', Text)  # détails JSON
 
 
 class Conversation(Base):

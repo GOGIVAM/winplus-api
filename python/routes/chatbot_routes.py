@@ -50,7 +50,9 @@ def _load_performance_history(user_id: int) -> dict:
                 subject = getattr(a, "SubjectTitle", None) or "Général"
                 score = float(a.Score or 0)
                 by_subject.setdefault(subject, []).append(score)
-            return {s: round(sum(v) / len(v), 1) for s, v in by_subject.items()}
+            # QuizAttempt.Score est un pourcentage (0-100) ; le prompt l'affiche « /20 » :
+            # sans conversion, WinAI lisait « 21,9/20 » et le relevait comme une anomalie.
+            return {s: round(sum(v) / len(v) * 20 / 100, 1) for s, v in by_subject.items()}
         finally:
             session.close()
     except Exception as e:

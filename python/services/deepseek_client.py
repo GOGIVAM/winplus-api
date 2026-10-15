@@ -25,6 +25,11 @@ class DeepSeekClient:
         self.model = os.getenv('DEEPSEEK_MODEL', 'WinAI-chat')
         self.timeout = int(os.getenv('DEEPSEEK_TIMEOUT', '60'))
         self.max_tokens = int(os.getenv('DEEPSEEK_MAX_TOKENS', '2000'))
+        # Plancher de budget : le modèle (deepseek-v4-flash) raisonne avant de répondre
+        # et ce raisonnement est décompté de max_tokens. Avec 200 à 900 tokens, les
+        # réponses revenaient vides ou tronquées (mémoire WinAI, quiz, analyses JSON).
+        # C'est un plafond, pas une consommation : une réponse courte ne coûte pas plus.
+        self.min_tokens = int(os.getenv('DEEPSEEK_MIN_TOKENS', '2000'))
         self.temperature = float(os.getenv('DEEPSEEK_TEMPERATURE', '0.7'))
         self.max_retries = 3
         
@@ -65,7 +70,7 @@ class DeepSeekClient:
         request_body = {
             "model": self.model,
             "messages": all_messages,
-            "max_tokens": max_tokens or self.max_tokens,
+            "max_tokens": max(max_tokens or self.max_tokens, self.min_tokens),
             "temperature": self.temperature if temperature is None else temperature,
             "stream": False
         }
@@ -206,7 +211,7 @@ class DeepSeekClient:
         request_body = {
             "model": self.model,
             "messages": all_messages,
-            "max_tokens": max_tokens or self.max_tokens,
+            "max_tokens": max(max_tokens or self.max_tokens, self.min_tokens),
             "temperature": self.temperature if temperature is None else temperature,
             "stream": True,
             "stream_options": {"include_usage": True},
@@ -240,6 +245,7 @@ class DeepSeekClient:
                 )
             response.raise_for_status()
 
+            finish_reason = None
             for raw_line in response.iter_lines():
                 if not raw_line:
                     continue
@@ -258,6 +264,8 @@ class DeepSeekClient:
                     if data.get("usage"):
                         usage = data["usage"]
                     choices = data.get("choices") or []
+                    if choices and choices[0].get("finish_reason"):
+                        finish_reason = choices[0]["finish_reason"]
                     delta = (choices[0].get("delta", {}).get("content") or "") if choices else ""
                     if delta:
                         full_content += delta
@@ -272,6 +280,15 @@ class DeepSeekClient:
         except Exception as e:
             logger.error(f"DeepSeek stream error: {e}")
             yield f'data: {json.dumps({"error": "Stream error"})}\n\n'
+
+        # Rien d'écrit : le modèle a épuisé son budget à raisonner (finish_reason
+        # « length ») ou n'a rien renvoyé. Sans ce message, l'élève voyait une
+        # bulle « (aucune réponse) », par exemple pour « Génère-moi un quiz ».
+        if not full_content:
+            logger.warning(f"DeepSeek stream sans contenu (finish_reason={finish_reason})")
+            fallback = ("Je n'ai pas réussi à terminer ma réponse cette fois-ci. "
+                        "Réessaie, ou demande-moi une version plus courte (par exemple 3 questions au lieu de 5).")
+            yield "data: " + json.dumps({"delta": fallback}) + "\n\n"
 
         if emit_usage:
             tokens_used = usage_total(usage)

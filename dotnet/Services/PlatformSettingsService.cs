@@ -73,7 +73,7 @@ public static class PlatformSettingDefinitions
             "0.7", "ChatbotService (requête envoyée au moteur WinAI)", 0m, 1.5m, "Chatbot:Temperature"),
         new PlatformSettingDefinition(WinAiChatMaxTokens, PlatformSettingTypes.Int, "winai", "Longueur maximale d'une réponse du chat",
             "Nombre maximal de tokens générés par réponse du chat WinAI (le quota mensuel de chaque plan reste appliqué en plus).",
-            "2000", "ChatbotService (requête envoyée au moteur WinAI)", 256m, 8000m, "Chatbot:MaxTokens"),
+            "6000", "ChatbotService (requête envoyée au moteur WinAI)", 256m, 8000m, "Chatbot:MaxTokens"),
         new PlatformSettingDefinition(TutorDisputeWindowHours, PlatformSettingTypes.Int, "tutoring", "Délai de contestation d'une séance (heures)",
             "Durée pendant laquelle le payeur peut contester une séance après sa fin ; l'argent du tuteur est libéré ensuite.",
             "24", "TutorPolicySettings (réservations, engagements, libération)", 1m, 168m, "TutorBooking:DisputeWindowHours"),
