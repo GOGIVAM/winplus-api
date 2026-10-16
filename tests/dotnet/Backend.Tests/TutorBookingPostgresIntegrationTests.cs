@@ -106,7 +106,7 @@ namespace Backend.Tests
                 DROP INDEX ""UX_TutorReviews_Booking_Author"";
                 DROP INDEX ""IX_TutorReviews_TutorBookingId"";
                 CREATE UNIQUE INDEX ""IX_TutorReviews_TutorBookingId"" ON ""TutorReviews""(""TutorBookingId"");");
-            foreach (var script in new[] { "SQL_TutorPayersParticipantsGroupsAndAssignments.sql", "SQL_InstitutionWalletHolderAndAttachmentConsent.sql", "SQL_TutorWeeklyMonthlyEngagements.sql", "SQL_TutorInPersonVerificationAndReports.sql", "SQL_TutorInPersonVerificationDelivery.sql", "SQL_Admin97a.sql", "SQL_Subscriptions97bSocle.sql", "SQL_Subscriptions97bBranchement.sql", "SQL_Subscriptions97bCycle.sql" })
+            foreach (var script in new[] { "SQL_TutorPayersParticipantsGroupsAndAssignments.sql", "SQL_InstitutionWalletHolderAndAttachmentConsent.sql", "SQL_TutorWeeklyMonthlyEngagements.sql", "SQL_TutorInPersonVerificationAndReports.sql", "SQL_TutorInPersonVerificationDelivery.sql", "SQL_Admin97a.sql", "SQL_Subscriptions97bSocle.sql", "SQL_Subscriptions97bBranchement.sql", "SQL_Subscriptions97bCycle.sql", "SQL_Institution97bLicenses.sql" })
             {
                 var sql = await File.ReadAllTextAsync(FindMigration(script));
                 await db.Database.ExecuteSqlRawAsync(sql);

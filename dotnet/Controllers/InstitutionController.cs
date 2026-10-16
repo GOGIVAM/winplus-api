@@ -5,6 +5,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Backend.Models.Entities;
 using Backend.Services;
+using Backend.Extensions;
+using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Controllers;
 
@@ -31,6 +33,37 @@ public class InstitutionController : ControllerBase
     }
 
     private HttpClient PyClient() => _httpClientFactory.CreateClient("FastApiClient");
+
+    /// <summary>
+    /// Lot 9.7b, étape 4 (étude 2.3) : les fonctions IA d'un compte
+    /// établissement sont réservées aux établissements sous licence et
+    /// prélevées sur le budget WinAI de la licence (20 000 tokens par siège et
+    /// par an). Renvoie la réponse de refus, ou null si l'appel peut partir.
+    /// </summary>
+    private async Task<(IActionResult? Refusal, int? InstitutionUserId)> InstitutionAiGateAsync()
+    {
+        var db = HttpContext.RequestServices.GetRequiredService<Backend.Data.ApplicationDbContext>();
+        int userId;
+        try { userId = User.GetUserId(); } catch { return (null, null); }
+        var me = await db.Users.AsNoTracking().Where(u => u.Id == userId).Select(u => new { u.Role, u.InstitutionId }).FirstOrDefaultAsync();
+        if (me == null || !string.Equals(me.Role, "institution", StringComparison.OrdinalIgnoreCase) || me.InstitutionId is not int iid)
+            return (null, null);
+        var licenses = HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.InstitutionLicenseService>();
+        var (budget, used) = await licenses.AiBudgetAsync(iid);
+        if (budget <= 0)
+            return (StatusCode(403, new { success = false, code = "license_required", error = "Les analyses WinAI de l'établissement sont incluses dans la licence WinPlus. Souscrivez une licence (ou un essai) pour les utiliser." }), null);
+        if (used >= budget)
+            return (StatusCode(402, new { success = false, code = "institution_ai_budget_exhausted", error = "Le budget WinAI de votre licence est épuisé pour cette période." }), null);
+        return (null, userId);
+    }
+
+    private async Task RecordInstitutionAiAsync(int? institutionUserId, string feature, HttpResponseMessage response)
+    {
+        if (institutionUserId is not int uid) return;
+        var tokens = Backend.Services.Entitlements.IAiFeatureGate.TokensOf(response);
+        await HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.InstitutionLicenseService>()
+            .RecordAiUsageAsync(uid, feature, tokens);
+    }
 
     private void ForwardAuth(HttpClient client)
     {
@@ -103,9 +136,12 @@ public class InstitutionController : ControllerBase
     {
         try
         {
+            var (refusal, instUser) = await InstitutionAiGateAsync();
+            if (refusal != null) return refusal;
             var client = PyClient();
             ForwardAuth(client);
             var response = await client.PostAsJsonAsync("/api/institution/class-prediction", body);
+            await RecordInstitutionAiAsync(instUser, "prediction", response);
             var content = await response.Content.ReadAsStringAsync();
             Response.ContentType = "application/json";
             return StatusCode((int)response.StatusCode, content);
@@ -124,11 +160,14 @@ public class InstitutionController : ControllerBase
     {
         try
         {
+            var (refusal, instUser) = await InstitutionAiGateAsync();
+            if (refusal != null) return refusal;
             var client = PyClient();
             ForwardAuth(client);
             var url = $"/api/institution/benchmark/{institutionId}";
             if (!string.IsNullOrEmpty(studentIds)) url += $"?student_ids={Uri.EscapeDataString(studentIds)}";
             var response = await client.GetAsync(url);
+            await RecordInstitutionAiAsync(instUser, "benchmark", response);
             var content = await response.Content.ReadAsStringAsync();
             Response.ContentType = "application/json";
             return StatusCode((int)response.StatusCode, content);
@@ -147,9 +186,12 @@ public class InstitutionController : ControllerBase
     {
         try
         {
+            var (refusal, instUser) = await InstitutionAiGateAsync();
+            if (refusal != null) return refusal;
             var client = PyClient();
             ForwardAuth(client);
             var response = await client.PostAsJsonAsync("/api/institution/action-plan", body);
+            await RecordInstitutionAiAsync(instUser, "action_plan", response);
             var content = await response.Content.ReadAsStringAsync();
             Response.ContentType = "application/json";
             return StatusCode((int)response.StatusCode, content);
@@ -168,11 +210,14 @@ public class InstitutionController : ControllerBase
     {
         try
         {
+            var (refusal, instUser) = await InstitutionAiGateAsync();
+            if (refusal != null) return refusal;
             var client = PyClient();
             ForwardAuth(client);
             var url = $"/api/institution/at-risk-students/{institutionId}";
             if (!string.IsNullOrEmpty(studentIds)) url += $"?student_ids={Uri.EscapeDataString(studentIds)}";
             var response = await client.GetAsync(url);
+            await RecordInstitutionAiAsync(instUser, "at_risk", response);
             var content = await response.Content.ReadAsStringAsync();
             Response.ContentType = "application/json";
             return StatusCode((int)response.StatusCode, content);

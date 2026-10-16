@@ -35,6 +35,10 @@ public class SubscriptionExpirationService : BackgroundService
                 using var scope = _scopeFactory.CreateScope();
                 var lifecycle = scope.ServiceProvider.GetRequiredService<SubscriptionLifecycleService>();
                 var report = await lifecycle.RenewDueAsync(DateTime.UtcNow, stoppingToken);
+                // Lot 9.7b, étape 4 : licences d'établissement (préavis 30 jours, renouvellement par le portefeuille, grâce).
+                var licenses = await scope.ServiceProvider.GetRequiredService<InstitutionLicenseService>().RenewDueAsync(DateTime.UtcNow, stoppingToken);
+                if (licenses.Renewed + licenses.InGrace + licenses.Expired > 0)
+                    _logger.LogInformation("Licences : {Renewed} renouvelée(s), {Grace} en grâce, {Expired} terminée(s)", licenses.Renewed, licenses.InGrace, licenses.Expired);
                 if (report.Renewed + report.InGrace + report.Expired > 0)
                     _logger.LogInformation("Abonnements : {Renewed} renouvelé(s), {Grace} en grâce, {Expired} terminé(s)",
                         report.Renewed, report.InGrace, report.Expired);

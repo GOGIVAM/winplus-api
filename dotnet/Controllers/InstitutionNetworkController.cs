@@ -208,6 +208,9 @@ public class InstitutionNetworkController : ControllerBase
         link.Status = "accepted";
         link.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+        // Lot 9.7b (étude 2.3) : siège enseignant attribué à l'affiliation acceptée, s'il en reste.
+        await Backend.Services.Entitlements.InstitutionLicenseService.For(_db, HttpContext?.RequestServices)
+            .TryAutoAssignAsync(link.InstitutionId, SeatKinds.Teacher, link.TeacherId);
         return Ok(new { success = true });
     }
 

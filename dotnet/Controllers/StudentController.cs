@@ -770,6 +770,20 @@ public class StudentController : ControllerBase
             link.ConfirmationStatus = status;
             link.RespondedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
+
+            // Lot 9.7b (étude 2.3) : un siège de licence est attribué au
+            // rattachement accepté, s'il en reste ; il est libéré au refus.
+            var licenses = Backend.Services.Entitlements.InstitutionLicenseService.For(_db, HttpContext?.RequestServices);
+            if (status == InstitutionAttachmentStatuses.Accepted)
+                await licenses.TryAutoAssignAsync(link.InstitutionId, SeatKinds.Student, me);
+            else
+            {
+                var seats = await _db.InstitutionSeats.Where(s => s.UserId == me && s.Kind == SeatKinds.Student && s.ReleasedAt == null
+                                                               && s.License!.InstitutionId == link.InstitutionId).ToListAsync();
+                foreach (var seat in seats) seat.ReleasedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+                Backend.Services.Entitlements.EntitlementService.InvalidateAll();
+            }
         }
         return Ok(new { success = true, data = new { link.Id, status = link.ConfirmationStatus, respondedAt = link.RespondedAt } });
     }

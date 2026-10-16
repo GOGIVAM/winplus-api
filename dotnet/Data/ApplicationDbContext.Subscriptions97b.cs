@@ -14,6 +14,8 @@ public partial class ApplicationDbContext
     public DbSet<PlanPrice> PlanPrices => Set<PlanPrice>();
     public DbSet<PlanEntitlement> PlanEntitlements => Set<PlanEntitlement>();
     public DbSet<AiTokenCredit> AiTokenCredits => Set<AiTokenCredit>();
+    public DbSet<InstitutionLicense> InstitutionLicenses => Set<InstitutionLicense>();
+    public DbSet<InstitutionSeat> InstitutionSeats => Set<InstitutionSeat>();
 
     private void OnModelCreatingSubscriptions97b(ModelBuilder modelBuilder)
     {
@@ -56,6 +58,23 @@ public partial class ApplicationDbContext
                 .WithMany(v => v.Entitlements)
                 .HasForeignKey(e => e.PlanVersionId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<InstitutionLicense>(entity =>
+        {
+            entity.ToTable("InstitutionLicenses");
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.InstitutionId, e.Status });
+            entity.HasOne(e => e.Institution).WithMany().HasForeignKey(e => e.InstitutionId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<InstitutionSeat>(entity =>
+        {
+            entity.ToTable("InstitutionSeats");
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.LicenseId, e.Kind });
+            entity.HasIndex(e => new { e.UserId, e.Kind });
+            entity.HasOne(e => e.License).WithMany(l => l.Seats).HasForeignKey(e => e.LicenseId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<AiTokenCredit>(entity =>

@@ -384,6 +384,7 @@ builder.Services.AddScoped<Backend.Services.Entitlements.PlanCatalogService>();
 builder.Services.AddScoped<Backend.Services.Entitlements.IAiFeatureGate, Backend.Services.Entitlements.AiFeatureGate>();
 builder.Services.AddScoped<Backend.Services.Entitlements.IPromotionService, Backend.Services.Entitlements.PromotionService>();
 builder.Services.AddScoped<Backend.Services.Entitlements.SubscriptionLifecycleService>();
+builder.Services.AddScoped<Backend.Services.Entitlements.InstitutionLicenseService>();
 
 // Création réelle de l'abonnement à la confirmation du paiement (Module 18,
 // correction §7.3) : sans elle, un client qui payait un abonnement n'obtenait

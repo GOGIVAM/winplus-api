@@ -128,4 +128,6 @@ public static class AdminAuditActions
     public const string PlanVersionUpdated = "plan.version_updated";
     public const string PlanVersionDiscarded = "plan.version_discarded";
     public const string PlanVersionPublished = "plan.version_published";
+    public const string LicenseCreated = "license.created";
+    public const string LicenseEnded = "license.ended";
 }

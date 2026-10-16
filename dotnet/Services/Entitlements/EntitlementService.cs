@@ -101,6 +101,8 @@ public class EntitlementService : IEntitlementService
 
     private static long _generation;
 
+    private static readonly IEntitlementDonor[] DefaultDonors = { new LicenseEntitlementDonor() };
+
     private readonly ApplicationDbContext _db;
     private readonly IMemoryCache _cache;
     private readonly IEnumerable<IEntitlementDonor> _donors;
@@ -109,7 +111,8 @@ public class EntitlementService : IEntitlementService
     {
         _db = db;
         _cache = cache;
-        _donors = donors ?? Array.Empty<IEntitlementDonor>();
+        // Donateurs par défaut (licence d'établissement) : aussi pour les instances construites hors injection.
+        _donors = donors != null && donors.Any() ? donors : DefaultDonors;
     }
 
     public void Invalidate() => Interlocked.Increment(ref _generation);

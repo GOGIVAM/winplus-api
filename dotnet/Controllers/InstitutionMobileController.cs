@@ -411,6 +411,18 @@ public class InstitutionMobileController : ControllerBase
                 });
             }
 
+            // Lot 9.7b, étape 4 : plan d'action WinAI réservé aux établissements
+            // sous licence, prélevé sur le budget WinAI de la licence.
+            var licenses = HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.InstitutionLicenseService>();
+            if (institutionId is int lid)
+            {
+                var (budget, used) = await licenses.AiBudgetAsync(lid, ct);
+                if (budget <= 0)
+                    return StatusCode(403, new { code = "license_required", message = "Les analyses WinAI de l'établissement sont incluses dans la licence WinPlus." });
+                if (used >= budget)
+                    return StatusCode(402, new { code = "institution_ai_budget_exhausted", message = "Le budget WinAI de votre licence est épuisé pour cette période." });
+            }
+
             var client = _httpClientFactory.CreateClient("FastApiClient");
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/institution/action-plan")
             {
@@ -426,6 +438,8 @@ public class InstitutionMobileController : ControllerBase
                 req.Headers.TryAddWithoutValidation("Authorization", auth);
 
             var res = await client.SendAsync(req, ct);
+            if (institutionId != null)
+                await licenses.RecordAiUsageAsync(userId, "action_plan", Backend.Services.Entitlements.IAiFeatureGate.TokensOf(res), ct);
             var content = await res.Content.ReadAsStringAsync(ct);
             if (!res.IsSuccessStatusCode)
             {
