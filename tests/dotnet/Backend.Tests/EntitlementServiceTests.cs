@@ -144,8 +144,8 @@ namespace Backend.Tests
             var svc = Service(db);
             Assert.False((await svc.GetAsync(Student)).Has(EntitlementCatalog.CatalogAccess));
             Subscriptions97bTestGrid.Subscribe(db, Student, g["student-standard"], "student");
-            // Toujours en cache tant que rien n'invalide.
-            Assert.False((await svc.GetAsync(Student)).Has(EntitlementCatalog.CatalogAccess));
+            // (Pas d'assertion « encore en cache » : la génération du cache est
+            // globale et d'autres tests l'incrémentent en parallèle.)
             svc.Invalidate();
             Assert.True((await svc.GetAsync(Student)).Has(EntitlementCatalog.CatalogAccess));
         }

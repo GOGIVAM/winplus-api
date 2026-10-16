@@ -3,16 +3,36 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Extensions;
-using Backend.Models.Entities;
 using Backend.Models.DTOs;
+using Backend.Models.Entities;
 using Backend.Services;
-using System.Text.Json;
+using Backend.Services.Entitlements;
 
 namespace Backend.Controllers;
 
-public record SubscribeRequest(int PlanId, string Billing = "monthly");
-public record PurchaseSubscriptionRequest(int PlanId, string Phone, string Billing = "monthly");
+public sealed class SubscriptionQuoteRequest
+{
+    public int PlanId { get; set; }
+    public string? BillingPeriod { get; set; }
+    public string? PromoCode { get; set; }
+}
 
+public sealed class AutoRenewRequest
+{
+    public bool Enabled { get; set; }
+}
+
+/// <summary>
+/// Abonnements de l'utilisateur (lot 9.7b, décisions 18.12, 18.14, 18.15,
+/// 18.19, 18.20). Toute la logique (prix, remises, essais, prorata, descente,
+/// résiliation, renouvellement) est dans <see cref="SubscriptionLifecycleService"/> ;
+/// ce contrôleur ne fait que la transporter.
+///
+/// Retiré au 9.7b : POST /api/subscriptions (souscription directe d'un plan
+/// gratuit : le plan gratuit est l'état par défaut, sans ligne d'abonnement)
+/// et le calcul de prix « plan.Price × période » (défaut 0.2 point 4 : le plan
+/// Annuel était facturé 863 040 F sur un an).
+/// </summary>
 [ApiController]
 [Route("api/subscriptions")]
 [Authorize]
@@ -22,93 +42,60 @@ public class SubscriptionsController : ControllerBase
     private readonly ILogger<SubscriptionsController> _logger;
     private readonly IPaymentService _paymentService;
     private readonly IAiQuotaService _aiQuota;
+    private readonly SubscriptionLifecycleService _lifecycle;
+    private readonly IEntitlementService _entitlements;
 
     public SubscriptionsController(
         ApplicationDbContext db,
         ILogger<SubscriptionsController> logger,
         IPaymentService paymentService,
-        IAiQuotaService aiQuota)
+        IAiQuotaService aiQuota,
+        SubscriptionLifecycleService lifecycle,
+        IEntitlementService entitlements)
     {
         _db = db;
         _logger = logger;
         _paymentService = paymentService;
         _aiQuota = aiQuota;
+        _lifecycle = lifecycle;
+        _entitlements = entitlements;
     }
 
-    private sealed record SubscriptionDetails(bool AutoRenew, bool CancelAtPeriodEnd, decimal? PricePaidTtc, string? PendingPlanName, string? PendingBillingPeriod);
+    private IActionResult Fail(SubscriptionLifecycleException ex) => StatusCode(ex.StatusCode, new { error = ex.Message });
 
-    /// <summary>Détails du cycle d'abonnement (renouvellement, résiliation, montant payé) : complétés à l'étape 3 du 9.7b.</summary>
-    private Task<SubscriptionDetails?> SubscriptionDetailsAsync(int? subscriptionId) => Task.FromResult<SubscriptionDetails?>(null);
-
-    /// <summary>GET /api/subscriptions/me  abonnement actif de l'utilisateur connecté.</summary>
+    /// <summary>GET /api/subscriptions/me : abonnement en vigueur, cycle et droits effectifs.</summary>
     [HttpGet("me")]
     public async Task<IActionResult> GetCurrent()
     {
         try
         {
             var userId = User.GetUserId();
-            // Lot 9.7b : abonnement en vigueur selon la règle unique
-            // (SubscriptionRules), droits effectifs selon EntitlementService.
-            var entitlementService = HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IEntitlementService>();
-            var ent = await entitlementService.GetAsync(userId, HttpContext.RequestAborted);
+            var ent = await _entitlements.GetAsync(userId, HttpContext.RequestAborted);
 
-            // Partie 8.3 / 8.10 : l'usage WinAI est exposé sous forme RELATIVE
-            // (multiplicateur par rapport au plan gratuit) et par ÉTAT des
-            // limites (quelle limite est atteinte, quand elle se réinitialise),
-            // jamais en nombre brut de tokens. Le calcul est celui qu'applique
-            // réellement le chat (IAiQuotaService), bonus parent/établissement
-            // compris (8.6).
-            //
-            // Point C : cette route ne doit jamais tomber à cause du quota IA.
-            // GetSnapshotAsync tolère déjà l'absence de la table du journal ;
-            // toute autre erreur est rattrapée ici et donne l'état par défaut.
+            // 8.3 / 8.10 : usage WinAI en relatif, jamais en tokens. Ne doit
+            // jamais faire tomber cette route (point C).
             AiQuotaSnapshot? ai = null;
-            try
-            {
-                ai = await _aiQuota.GetSnapshotAsync(userId, HttpContext.RequestAborted);
-            }
+            try { ai = await _aiQuota.GetSnapshotAsync(userId, HttpContext.RequestAborted); }
             catch (Exception aiEx) when (aiEx is not OperationCanceledException)
             {
                 _logger.LogWarning(aiEx, "État du quota WinAI indisponible pour {UserId} : valeurs par défaut renvoyées", userId);
             }
-
-            var multiplier = ai?.Multiplier ?? 1;
+            var multiplier = ai?.Multiplier ?? ent.AiMultiplier;
             var limitReached = ai?.LimitReached;
             var limitResetsAt = ai?.ResetsAt;
-            var aiUsage = new
-            {
-                aiUsageMultiplier = multiplier,
-                aiUsageLabel = multiplier <= 1
-                    ? "Usage WinAI du plan gratuit"
-                    : $"{multiplier}x plus d'usage WinAI que le plan gratuit",
-                aiQuotaExhausted = limitReached is not null,
-                aiHasParentBonus = (ai?.ParentBonusTokens ?? 0) > 0,
-                aiHasInstitutionBonus = (ai?.InstitutionBonusTokens ?? 0) > 0,
-                // 8.10 : "session" (5 h glissantes), "week" (7 jours glissants)
-                // ou null si aucune limite n'est atteinte.
-                aiLimitReached = limitReached switch
-                {
-                    AiLimitKind.Session => "session",
-                    AiLimitKind.Week => "week",
-                    _ => null,
-                },
-                // Heure (UTC) à laquelle l'utilisateur pourra de nouveau
-                // écrire ; null si aucune limite n'est atteinte. Le champ
-                // historique aiUsageResetAt porte la même valeur (il désignait
-                // le début du mois suivant, qui n'a plus de sens depuis 8.10).
-                aiLimitResetsAt = limitResetsAt,
-                aiUsageResetAt = limitResetsAt,
-                aiLimitMessage = limitReached is AiLimitKind kind
-                    ? AiUsagePolicy.LimitMessage(kind, limitResetsAt)
-                    : null,
-            };
 
-            // Lot 9.7b : plus de « tier » (nom de plan à tester côté client),
-            // ni de champs fictifs (downloadsLimit, quizDailyLimit : les
-            // téléchargements sont interdits depuis la Partie 11 et aucune
-            // limite de quiz n'existe). Les clients lisent hasPlan et les
-            // droits (GET /api/me/entitlements, repris ici sous entitlements).
-            var details = await SubscriptionDetailsAsync(ent.Plan?.SubscriptionId);
+            var sub = ent.Plan == null ? null : await _db.Subscriptions.AsNoTracking()
+                .Where(s => s.Id == ent.Plan.SubscriptionId)
+                .Select(s => new
+                {
+                    s.AutoRenew, s.CancelAtPeriodEnd, s.PricePaidTtc, s.PendingPricingPlanId, s.PendingBillingPeriod,
+                    s.TrialEndsAt, s.CurrentPeriodStart,
+                })
+                .FirstOrDefaultAsync();
+            var pendingName = sub?.PendingPricingPlanId is int pp
+                ? await _db.PricingPlans.IgnoreQueryFilters().Where(p => p.Id == pp).Select(p => p.Name).FirstOrDefaultAsync()
+                : null;
+
             return Ok(new
             {
                 id = ent.Plan?.SubscriptionId ?? 0,
@@ -120,23 +107,26 @@ public class SubscriptionsController : ControllerBase
                 status = ent.Plan?.Status ?? "free",
                 billingPeriod = ent.Plan?.BillingPeriod,
                 startDate = ent.Plan?.StartDate,
+                currentPeriodStart = sub?.CurrentPeriodStart,
                 expiresAt = ent.Plan?.EndDate,
                 graceUntil = ent.Plan?.GraceUntil,
-                autoRenew = details?.AutoRenew ?? false,
-                cancelAtPeriodEnd = details?.CancelAtPeriodEnd ?? false,
-                price = details?.PricePaidTtc,
-                pendingPlanName = details?.PendingPlanName,
-                pendingBillingPeriod = details?.PendingBillingPeriod,
-                entitlements = Backend.Controllers.MeEntitlementsController.ToResponse(ent),
-                aiUsage.aiUsageMultiplier,
-                aiUsage.aiUsageLabel,
-                aiUsage.aiQuotaExhausted,
-                aiUsage.aiHasParentBonus,
-                aiUsage.aiHasInstitutionBonus,
-                aiUsage.aiUsageResetAt,
-                aiUsage.aiLimitReached,
-                aiUsage.aiLimitResetsAt,
-                aiUsage.aiLimitMessage,
+                trialEndsAt = sub?.TrialEndsAt,
+                autoRenew = sub?.AutoRenew ?? false,
+                cancelAtPeriodEnd = sub?.CancelAtPeriodEnd ?? false,
+                price = sub?.PricePaidTtc,
+                pendingPlanId = sub?.PendingPricingPlanId,
+                pendingPlanName = pendingName,
+                pendingBillingPeriod = sub?.PendingBillingPeriod,
+                entitlements = MeEntitlementsController.ToResponse(ent),
+                aiUsageMultiplier = multiplier,
+                aiUsageLabel = multiplier <= 1 ? "Usage WinAI du plan gratuit" : $"{multiplier}x plus d'usage WinAI que le plan gratuit",
+                aiQuotaExhausted = limitReached is not null,
+                aiHasParentBonus = ent.ParentBonusTokens > 0,
+                aiHasInstitutionBonus = ent.LicenseBonusTokens > 0,
+                aiLimitReached = limitReached switch { AiLimitKind.Session => "session", AiLimitKind.Week => "week", _ => null },
+                aiLimitResetsAt = limitResetsAt,
+                aiUsageResetAt = limitResetsAt,
+                aiLimitMessage = limitReached is AiLimitKind kind ? AiUsagePolicy.LimitMessage(kind, limitResetsAt) : null,
             });
         }
         catch (Exception ex)
@@ -146,241 +136,88 @@ public class SubscriptionsController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// POST /api/subscriptions  souscrire à un plan.
-    ///
-    /// ⚠ Correction §7.1 du suivi. Cet endpoint créait une ligne
-    /// <c>Subscriptions</c> avec <c>Status = "active"</c> sans la moindre
-    /// vérification de paiement : n'importe quel compte authentifié pouvait
-    /// s'offrir le plan le plus cher d'un appel, ce qui contournait en entier
-    /// le mur payant du Module 17 (lequel n'accorde l'accès au contenu payant
-    /// qu'à l'appui, notamment, d'un abonnement actif).
-    ///
-    /// Il n'a pas été supprimé parce qu'il a deux appelants réels la modale
-    /// d'abonnement web (<c>SubscribeModal.tsx</c>, appelée après confirmation
-    /// du paiement pour « activer ») et l'écran de tarifs mobile
-    /// (<c>pricing_screen.dart</c> via <c>SubscriptionService.subscribe</c>).
-    /// Il ne crée plus rien pour un plan payant : il se contente de rendre
-    /// l'abonnement que la confirmation de paiement a créé (Module 18, §7.3),
-    /// ce qui garde la modale web fonctionnelle, et refuse explicitement le
-    /// cas où aucun paiement n'a été confirmé. Seul un plan réellement gratuit
-    /// (prix nul) reste directement souscriptible.
-    /// </summary>
-    [HttpPost]
-    public async Task<IActionResult> Subscribe([FromBody] SubscribeRequest req)
+    /// <summary>POST /api/subscriptions/quote : prix réellement facturé (remise, essai, prorata) avant paiement.</summary>
+    [HttpPost("quote")]
+    public async Task<IActionResult> Quote([FromBody] SubscriptionQuoteRequest req)
     {
-        try
-        {
-            var userId = User.GetUserId();
-            var plan = await _db.PricingPlans.FindAsync(req.PlanId);
-            if (plan == null) return NotFound(new { error = "Plan introuvable" });
-
-            if (!SubscriptionOrderIntent.IsKnownBilling(req.Billing))
-                return BadRequest(new { error = "Période de facturation invalide (monthly, quarterly ou yearly)." });
-
-            // Plan payant : aucune activation directe. L'abonnement ne peut
-            // venir que de la confirmation d'un paiement.
-            if (plan.Price > 0)
-            {
-                var activated = await _db.Subscriptions.AsNoTracking()
-                    .Where(s => s.UserId == userId
-                             && s.PricingPlanId == req.PlanId
-                             && !s.IsDeleted
-                             && s.Status.ToLower() == "active")
-                    .OrderByDescending(s => s.StartDate)
-                    .FirstOrDefaultAsync();
-
-                if (activated != null)
-                    return Ok(new { success = true, subscriptionId = activated.Id, alreadyActive = true });
-
-                _logger.LogWarning(
-                    "Activation directe refusée : l'utilisateur {UserId} demande le plan payant {PlanId} sans paiement confirmé",
-                    userId, req.PlanId);
-
-                return StatusCode(402, new
-                {
-                    error = "Ce plan est payant : l'abonnement est activé automatiquement "
-                          + "à la confirmation du paiement. Utilisez POST /api/subscriptions/purchase.",
-                    requiresPayment = true,
-                });
-            }
-
-            // Plan gratuit : souscription directe légitime, rien n'est à
-            // encaisser. Idempotent, pour qu'un double appel ne produise pas
-            // deux lignes actives.
-            //
-            // ⚠ Régression corrigée : la résiliation portait sur TOUS les
-            // abonnements actifs de l'utilisateur, sans regarder le prix de
-            // leur plan. Souscrire au plan gratuit résiliait donc un
-            // abonnement PAYANT en cours, silencieusement. On ne résilie plus
-            // que ce qui est lui-même gratuit (Price == 0) ou déjà expiré ; un
-            // abonnement payant encore en cours de validité fait refuser la
-            // bascule (409) au lieu d'être annulé.
-            var now = DateTime.UtcNow;
-
-            var existingActive = await _db.Subscriptions
-                .Where(s => s.UserId == userId && s.Status.ToLower() == "active" && !s.IsDeleted)
-                .ToListAsync();
-
-            var alreadyOnThisPlan = existingActive.FirstOrDefault(s => s.PricingPlanId == req.PlanId);
-            if (alreadyOnThisPlan != null)
-                return Ok(new { success = true, subscriptionId = alreadyOnThisPlan.Id, alreadyActive = true });
-
-            // Prix du plan porté par chacun de ces abonnements : c'est la seule
-            // façon de distinguer un abonnement gratuit d'un abonnement payé.
-            //
-            // IgnoreQueryFilters : un plan payant archivé (suppression logique)
-            // reste le plan réellement payé par l'abonné. Filtré, il disparaissait
-            // du dictionnaire, l'abonnement n'était plus reconnu comme payant et
-            // la bascule vers le plan gratuit le résiliait (passe de clôture du
-            // lot 0, même règle que ContentAccessService.HasActiveSubscriptionAsync).
-            var activePlanIds = existingActive.Select(s => s.PricingPlanId).Distinct().ToList();
-            var activePlanPrices = await _db.PricingPlans.IgnoreQueryFilters().AsNoTracking()
-                .Where(p => activePlanIds.Contains(p.Id))
-                .ToDictionaryAsync(p => p.Id, p => p.Price);
-
-            var paidInForce = existingActive.FirstOrDefault(s =>
-                activePlanPrices.TryGetValue(s.PricingPlanId, out var price)
-                && price > 0
-                && (!s.EndDate.HasValue || s.EndDate.Value > now));
-
-            if (paidInForce != null)
-            {
-                _logger.LogWarning(
-                    "Bascule vers le plan gratuit refusée : l'utilisateur {UserId} a l'abonnement payant actif {SubscriptionId}",
-                    userId, paidInForce.Id);
-
-                return Conflict(new
-                {
-                    error = "Vous avez déjà un abonnement payant en cours. "
-                          + "Il n'est pas remplacé par le plan gratuit : attendez son échéance "
-                          + "ou résiliez-le avant de souscrire au plan gratuit.",
-                    hasPaidSubscription = true,
-                    subscriptionId = paidInForce.Id,
-                });
-            }
-
-            // Ne restent ici que des abonnements gratuits ou déjà expirés.
-            foreach (var s in existingActive)
-            {
-                s.Status = "cancelled";
-                s.EndDate = now;
-                s.IsActive = false;
-                s.UpdatedAt = now;
-            }
-
-            var intent = new SubscriptionOrderIntent(req.PlanId, req.Billing.ToLowerInvariant());
-            var newSub = new Subscription
-            {
-                UserId = userId,
-                PricingPlanId = req.PlanId,
-                PlanName = plan.Name,
-                StartDate = now,
-                EndDate = now.AddMonths(intent.DurationMonths),
-                Status = "active",
-                IsActive = true,
-            };
-            _db.Subscriptions.Add(newSub);
-            await _db.SaveChangesAsync();
-
-            return Ok(new { success = true, subscriptionId = newSub.Id });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error creating subscription");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
+        try { return Ok(await _lifecycle.QuoteAsync(User.GetUserId(), req.PlanId, req.BillingPeriod, req.PromoCode, HttpContext.RequestAborted)); }
+        catch (SubscriptionLifecycleException ex) { return Fail(ex); }
     }
 
-    /// <summary>POST /api/subscriptions/purchase  initie un paiement NotchPay pour un abonnement.</summary>
+    /// <summary>
+    /// POST /api/subscriptions/purchase : souscription, montée, descente ou
+    /// essai. method = balance (solde) ou mobile_money (NotchPay, numéro requis).
+    /// </summary>
     [HttpPost("purchase")]
-    public async Task<IActionResult> Purchase([FromBody] PurchaseSubscriptionRequest req)
+    public async Task<IActionResult> Purchase([FromBody] SubscriptionPurchaseRequest req)
     {
+        var userId = User.GetUserId();
         try
         {
-            var userId = User.GetUserId();
-            var plan = await _db.PricingPlans.FindAsync(req.PlanId);
-            if (plan == null) return NotFound(new { error = "Plan introuvable" });
-
-            // Période refusée plutôt que ramenée silencieusement au mois :
-            // l'ancien `switch` facturait le mois pour toute valeur inconnue,
-            // alors que l'intention relue à la confirmation (§7.3) doit
-            // décrire exactement ce qui a été payé.
-            if (!SubscriptionOrderIntent.IsKnownBilling(req.Billing))
-                return BadRequest(new { error = "Période de facturation invalide (monthly, quarterly ou yearly)." });
-
-            var billing = req.Billing.ToLowerInvariant();
-            var baseAmount = plan.Price;
-            var amount = billing switch
+            var method = (req.Method ?? (string.IsNullOrWhiteSpace(req.Phone) ? "balance" : "mobile_money")).ToLowerInvariant();
+            if (method is not ("balance" or "mobile_money"))
+                return BadRequest(new { error = "Moyen de paiement invalide (balance ou mobile_money)." });
+            req.Method = method;
+            if (method == "mobile_money" && string.IsNullOrWhiteSpace(req.Phone))
             {
-                "yearly"    => Math.Round(baseAmount * 12 * 0.8m),
-                "quarterly" => Math.Round(baseAmount * 3 * 0.9m),
-                _           => baseAmount,
-            };
+                var quote = await _lifecycle.QuoteAsync(userId, req.PlanId, req.BillingPeriod, req.PromoCode, HttpContext.RequestAborted);
+                if (quote.AmountDueTtc > 0) return BadRequest(new { error = "Numéro Mobile Money requis." });
+            }
 
-            // Créer un order de type subscription. L'intention d'abonnement
-            // (plan + période) est écrite par le type dédié, seul endroit qui
-            // compose ce format, et seul endroit qui le relit à la
-            // confirmation du paiement (SubscriptionActivationService).
-            //
-            // Statut en minuscules : la casse « Pending » ressortait de la
-            // normalisation du Module 19 comme une valeur distincte pour
-            // toutes les comparaisons non corrigées.
-            var order = new Order
+            var result = await _lifecycle.PurchaseAsync(userId, req, HttpContext.RequestAborted);
+            if (result.Status != "payment_pending")
+                return Ok(new { status = result.Status, subscriptionId = result.SubscriptionId, orderId = result.OrderId, amount = result.AmountTtc, currency = "XAF", quote = result.Quote, message = result.Message });
+
+            var payment = await _paymentService.InitiateNotchPayAsync(userId, new InitiatePaymentRequest
             {
-                UserId = userId,
-                OrderNumber = $"SUB-{userId}-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}",
-                TotalAmount = amount,
-                Status = "pending",
-                PaymentMethod = "notchpay",
-                Notes = new SubscriptionOrderIntent(req.PlanId, billing).ToString(),
-            };
-            _db.Orders.Add(order);
-            await _db.SaveChangesAsync();
-
-            var payReq = new InitiatePaymentRequest
-            {
-                OrderId = order.Id,
-                Phone = req.Phone,
-                Amount = amount,
-                Description = $"Abonnement {plan.Name} ({req.Billing})",
-            };
-            var result = await _paymentService.InitiateNotchPayAsync(userId, payReq);
-
-            return Ok(new { paymentId = result.PaymentId, amount, currency = "XAF" });
+                OrderId = result.OrderId!.Value,
+                Phone = req.Phone!,
+                Amount = result.AmountTtc,
+                Description = $"Abonnement {result.Quote.PlanName} ({BillingPeriods.Label(result.Quote.BillingPeriod)})",
+            });
+            return Ok(new { status = result.Status, orderId = result.OrderId, paymentId = payment.PaymentId, amount = result.AmountTtc, currency = "XAF", quote = result.Quote, message = result.Message });
         }
+        catch (SubscriptionLifecycleException ex) { return Fail(ex); }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error initiating subscription purchase");
+            _logger.LogError(ex, "Error initiating subscription purchase for {UserId}", userId);
             return StatusCode(500, new { error = "Erreur lors du paiement de l'abonnement" });
         }
     }
 
-    /// <summary>POST /api/subscriptions/me/cancel  résilier l'abonnement actif.</summary>
+    /// <summary>POST /api/subscriptions/me/cancel : résiliation en fin de période (accès conservé, sans remboursement partiel).</summary>
     [HttpPost("me/cancel")]
     public async Task<IActionResult> Cancel()
     {
         try
         {
-            var userId = User.GetUserId();
-            var sub = await _db.Subscriptions
-                .Where(s => s.UserId == userId && s.Status.ToLower() == "active" && !s.IsDeleted)
-                .OrderByDescending(s => s.StartDate)
-                .FirstOrDefaultAsync();
-
-            if (sub == null) return NotFound(new { error = "Aucun abonnement actif" });
-
-            sub.Status = "cancelled";
-            sub.EndDate = DateTime.UtcNow;
-            sub.UpdatedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync();
-
-            return Ok(new { success = true });
+            var sub = await _lifecycle.CancelAsync(User.GetUserId(), HttpContext.RequestAborted);
+            return Ok(new { success = true, accessUntil = sub.EndDate, message = $"Résilié : vous gardez l'accès jusqu'au {sub.EndDate:dd/MM/yyyy}, sans remboursement de la période en cours." });
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error cancelling subscription");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
+        catch (SubscriptionLifecycleException ex) { return Fail(ex); }
+    }
+
+    /// <summary>POST /api/subscriptions/me/resume : annule la résiliation avant l'échéance.</summary>
+    [HttpPost("me/resume")]
+    public async Task<IActionResult> Resume()
+    {
+        try { await _lifecycle.ResumeAsync(User.GetUserId(), HttpContext.RequestAborted); return Ok(new { success = true }); }
+        catch (SubscriptionLifecycleException ex) { return Fail(ex); }
+    }
+
+    /// <summary>PUT /api/subscriptions/me/auto-renew : renouvellement automatique par le solde (3 jours de grâce si le solde manque).</summary>
+    [HttpPut("me/auto-renew")]
+    public async Task<IActionResult> AutoRenew([FromBody] AutoRenewRequest req)
+    {
+        try { var s = await _lifecycle.SetAutoRenewAsync(User.GetUserId(), req.Enabled, HttpContext.RequestAborted); return Ok(new { success = true, autoRenew = s.AutoRenew }); }
+        catch (SubscriptionLifecycleException ex) { return Fail(ex); }
+    }
+
+    /// <summary>DELETE /api/subscriptions/me/pending : annule une descente de plan programmée.</summary>
+    [HttpDelete("me/pending")]
+    public async Task<IActionResult> CancelPending()
+    {
+        try { await _lifecycle.CancelPendingChangeAsync(User.GetUserId(), HttpContext.RequestAborted); return Ok(new { success = true }); }
+        catch (SubscriptionLifecycleException ex) { return Fail(ex); }
     }
 }

@@ -127,13 +127,41 @@ public class SubscriptionActivationService : ISubscriptionActivationService
     /// </summary>
     private static readonly string[] PaidOrderStatuses = { "completed", "paid" };
 
-    public SubscriptionActivationService(ApplicationDbContext db, ILogger<SubscriptionActivationService> logger)
+    private readonly Backend.Services.Entitlements.SubscriptionLifecycleService? _lifecycle;
+
+    public SubscriptionActivationService(ApplicationDbContext db, ILogger<SubscriptionActivationService> logger,
+        Backend.Services.Entitlements.SubscriptionLifecycleService? lifecycle = null)
     {
         _db = db;
         _logger = logger;
+        _lifecycle = lifecycle;
     }
 
+    /// <summary>
+    /// Lot 9.7b : une commande d'abonnement sur un plan de la grille versionnée
+    /// est appliquée par le cycle d'abonnement unique (montée au prorata,
+    /// renouvellement sans perte de jours, essai, remise, idempotence par
+    /// commande). Seule une commande antérieure au 9.7b (plan sans public)
+    /// passe encore par l'activation historique ci-dessous.
+    /// </summary>
     public async Task<Subscription?> ActivateFromOrderAsync(int orderId)
+    {
+        var notes = await _db.Orders.AsNoTracking().Where(o => o.Id == orderId).Select(o => o.Notes).FirstOrDefaultAsync();
+        var intent = Backend.Services.Entitlements.SubscriptionIntent.Parse(notes);
+        if (intent == null) return null;
+        var isGridPlan = await _db.PricingPlans.IgnoreQueryFilters().AnyAsync(p => p.Id == intent.PlanId && p.Audience != null);
+        if (isGridPlan)
+        {
+            var lifecycle = _lifecycle ?? new Backend.Services.Entitlements.SubscriptionLifecycleService(_db,
+                new Backend.Services.Entitlements.EntitlementService(_db, new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions())),
+                new Backend.Services.Entitlements.PromotionService(_db),
+                new WalletService(_db, Microsoft.Extensions.Logging.Abstractions.NullLogger<WalletService>.Instance));
+            return await lifecycle.ActivateFromOrderAsync(orderId);
+        }
+        return await LegacyActivateFromOrderAsync(orderId);
+    }
+
+    private async Task<Subscription?> LegacyActivateFromOrderAsync(int orderId)
     {
         var order = await _db.Orders.AsNoTracking().FirstOrDefaultAsync(o => o.Id == orderId);
         if (order == null)

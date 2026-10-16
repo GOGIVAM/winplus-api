@@ -13,6 +13,7 @@ public partial class ApplicationDbContext
     public DbSet<PlanVersion> PlanVersions => Set<PlanVersion>();
     public DbSet<PlanPrice> PlanPrices => Set<PlanPrice>();
     public DbSet<PlanEntitlement> PlanEntitlements => Set<PlanEntitlement>();
+    public DbSet<AiTokenCredit> AiTokenCredits => Set<AiTokenCredit>();
 
     private void OnModelCreatingSubscriptions97b(ModelBuilder modelBuilder)
     {
@@ -57,10 +58,21 @@ public partial class ApplicationDbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<AiTokenCredit>(entity =>
+        {
+            entity.ToTable("AiTokenCredits");
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.IdempotencyKey).IsUnique();
+        });
+
         modelBuilder.Entity<Subscription>(entity =>
         {
             entity.Property(e => e.BillingPeriod).HasMaxLength(20);
             entity.Property(e => e.Audience).HasMaxLength(20);
+            entity.Property(e => e.PendingBillingPeriod).HasMaxLength(20);
+            entity.Property(e => e.PricePaidTtc).HasColumnType("numeric(12,0)");
+            entity.HasIndex(e => e.OrderId);
             entity.HasOne(e => e.PlanVersion)
                 .WithMany()
                 .HasForeignKey(e => e.PlanVersionId)

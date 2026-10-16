@@ -377,11 +377,13 @@ builder.Services.AddScoped<IContentAccessService, ContentAccessService>();
 builder.Services.AddScoped<IAiQuotaService, AiQuotaService>();
 // Recharge de quota WinAI (décision 8.5) : point d'extension seulement la
 // recharge réelle dépend du wallet du Module 1/14, pas encore construit.
-builder.Services.AddScoped<ITokenTopUpService, UnavailableTokenTopUpService>();
+builder.Services.AddScoped<ITokenTopUpService, TokenTopUpService>();
 // Lot 9.7b : droits typés (service unique), gestion des plans.
 builder.Services.AddScoped<Backend.Services.Entitlements.IEntitlementService, Backend.Services.Entitlements.EntitlementService>();
 builder.Services.AddScoped<Backend.Services.Entitlements.PlanCatalogService>();
 builder.Services.AddScoped<Backend.Services.Entitlements.IAiFeatureGate, Backend.Services.Entitlements.AiFeatureGate>();
+builder.Services.AddScoped<Backend.Services.Entitlements.IPromotionService, Backend.Services.Entitlements.PromotionService>();
+builder.Services.AddScoped<Backend.Services.Entitlements.SubscriptionLifecycleService>();
 
 // Création réelle de l'abonnement à la confirmation du paiement (Module 18,
 // correction §7.3) : sans elle, un client qui payait un abonnement n'obtenait

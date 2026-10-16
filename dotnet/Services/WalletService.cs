@@ -173,7 +173,8 @@ public static class WalletSources
         [Affiliate] = new[] { WalletEntryTypes.AffiliateCommission },
         [Recharge] = new[] { WalletEntryTypes.Recharge },
         [AdminCredit] = new[] { WalletEntryTypes.AdminCredit },
-        [Purchase] = new[] { WalletEntryTypes.BalancePurchase, WalletEntryTypes.ClassAssignment, WalletEntryTypes.AllocationConsumption, WalletEntryTypes.ParentWalletPurchase, WalletEntryTypes.ContentRemovalRefund, WalletEntryTypes.CatalogRefund },
+        [Purchase] = new[] { WalletEntryTypes.BalancePurchase, WalletEntryTypes.ClassAssignment, WalletEntryTypes.AllocationConsumption, WalletEntryTypes.ParentWalletPurchase, WalletEntryTypes.ContentRemovalRefund, WalletEntryTypes.CatalogRefund,
+            WalletEntryTypes.SubscriptionPayment, WalletEntryTypes.TokenTopUp, WalletEntryTypes.InstitutionLicensePayment },
         [Withdrawal] = new[] { WalletEntryTypes.WithdrawalRequested, WalletEntryTypes.WithdrawalProcessed },
         [MonthlyAllocation] = new[] { WalletEntryTypes.MonthlyAllocation, WalletEntryTypes.AllocationExpired },
     };

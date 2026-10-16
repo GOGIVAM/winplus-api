@@ -268,20 +268,20 @@ public class OrderService : IOrderService
             decimal discount = 0;
             if (normalizedPromoCode != null)
             {
-                // Lot 9.7b (F9) : POINT D'APPEL du service de promotion unifié
-                // (chantier A du 9.7b, « AppliesTo = courses »). Tant qu'il
-                // n'existe pas, les codes promo ne couvrent que le catalogue
-                // Subject : les lignes formation (pricing.Items avec CourseId)
-                // ne sont pas transmises. Au branchement, transmettre ici les
-                // CourseId et le total TTC des lignes formation ; la remise
-                // reste supportée par la plateforme seule (18.21) : le
-                // PriceAtPurchase (HT) des lignes n'est jamais réduit, le
-                // professeur est payé sur le prix plein.
+                // Lot 9.7b (F9) : service de promotion unifié (chantier A).
+                // Les lignes catalogue (cible « catalog ») et formation (cible
+                // « courses ») sont transmises avec leurs totaux TTC ; la remise
+                // est supportée par la plateforme seule (18.21) : elle réduit
+                // le total payé, jamais le PriceAtPurchase (HT) des lignes, sur
+                // lequel le professeur est payé au prix plein.
                 var validation = await _promoCodeService.ValidatePromoCodeAsync(userId, new ValidatePromoCodeRequest
                 {
                     Code = normalizedPromoCode,
                     CartTotal = totalAmount,
                     SubjectIds = pricing.Items.Where(i => i.SubjectId != null).Select(i => i.SubjectId!.Value).ToList(),
+                    CatalogTotal = pricing.Items.Where(i => i.SubjectId != null).Sum(i => i.ServerPrice),
+                    CourseIds = pricing.Items.Where(i => i.CourseId != null).Select(i => i.CourseId!.Value).ToList(),
+                    CoursesTotal = pricing.Items.Where(i => i.CourseId != null).Sum(i => i.ServerPrice),
                 });
                 if (validation.IsValid)
                 {

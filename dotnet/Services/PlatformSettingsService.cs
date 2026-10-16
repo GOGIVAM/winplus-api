@@ -50,6 +50,9 @@ public static class PlatformSettingDefinitions
     public const string TutorReportWindowDays = "tutor.report_window_days";
     public const string IdentityRetentionApproved = "tutor.identity_retention_days_approved";
     public const string IdentityRetentionRejected = "tutor.identity_retention_days_rejected";
+    // Lot 9.7b (18.17) : recharge de tokens WinAI par le portefeuille.
+    public const string WinAiTopUpPricePerMillion = "winai.topup.price_per_million_xaf";
+    public const string WinAiTopUpPackTokens = "winai.topup.pack_tokens";
 
     public static readonly IReadOnlyList<PlatformSettingDefinition> All = new[]
     {
@@ -92,6 +95,12 @@ public static class PlatformSettingDefinitions
         new PlatformSettingDefinition(IdentityRetentionRejected, PlatformSettingTypes.Int, "retention", "Conservation des pièces d'identité refusées (jours)",
             "Délai avant suppression des fichiers d'identité après un refus.",
             "7", "TutorVerificationSettings (purge des pièces)", 0m, 365m, "TutorVerification:IdentityRetentionDaysAfterRejection"),
+        new PlatformSettingDefinition(WinAiTopUpPricePerMillion, PlatformSettingTypes.Int, "winai", "Recharge WinAI : prix TTC par million de tokens (XAF)",
+            "Prix payé par le portefeuille pour 1 000 000 de tokens WinAI en plus du plan (étude 9.7b : 2 000 XAF, plus cher au token que les plans).",
+            "2000", "TokenTopUpService (recharge de tokens)", 100m, 100000m),
+        new PlatformSettingDefinition(WinAiTopUpPackTokens, PlatformSettingTypes.Int, "winai", "Recharge WinAI : taille d'un paquet (tokens)",
+            "Nombre de tokens d'un paquet de recharge ; l'utilisateur achète un ou plusieurs paquets.",
+            "250000", "TokenTopUpService (recharge de tokens)", 10000m, 10000000m),
     };
 
     private static readonly Dictionary<string, PlatformSettingDefinition> ByKey = All.ToDictionary(d => d.Key);

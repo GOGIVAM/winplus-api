@@ -95,5 +95,11 @@ public class AiTokenUsage
     /// </summary>
     public long? ReferenceTokens { get; set; }
 
+    /// <summary>
+    /// Lot 9.7b : message servi sur la réserve de tokens rechargés (limites du
+    /// plan atteintes). Il est décompté de la réserve et exclu des fenêtres.
+    /// </summary>
+    public bool FromTopUp { get; set; }
+
     public User? User { get; set; }
 }

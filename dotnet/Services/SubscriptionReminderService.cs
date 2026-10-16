@@ -49,7 +49,7 @@ public class SubscriptionReminderService : BackgroundService
 
         var subscriptions = await db.Subscriptions
             .Include(s => s.User)
-            .Where(s => s.Status == "active"
+            .Where(s => (s.Status == "active" || s.Status == "trialing") && !s.CancelAtPeriodEnd && !s.AutoRenew
                      && s.EndDate != null
                      && s.EndDate > now
                      && s.EndDate <= cutoff)

@@ -1,8 +1,16 @@
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
+using Backend.Services.Entitlements;
 
 namespace Backend.Services;
 
+/// <summary>
+/// Passe horaire du cycle d'abonnement. Lot 9.7b : elle ne se contente plus
+/// d'expirer à l'échéance ; elle délègue à
+/// <see cref="SubscriptionLifecycleService.RenewDueAsync"/> le renouvellement
+/// automatique par le solde (18.15), la grâce de 3 jours, la coupure, la fin
+/// des essais et des abonnements résiliés, avec notification à chaque étape.
+/// </summary>
 public class SubscriptionExpirationService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
@@ -21,48 +29,22 @@ public class SubscriptionExpirationService : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            await Task.Delay(Interval, stoppingToken);
-
+            try { await Task.Delay(TimeSpan.FromMinutes(2), stoppingToken); } catch (OperationCanceledException) { break; }
             try
             {
-                await ExpireSubscriptionsAsync(stoppingToken);
+                using var scope = _scopeFactory.CreateScope();
+                var lifecycle = scope.ServiceProvider.GetRequiredService<SubscriptionLifecycleService>();
+                var report = await lifecycle.RenewDueAsync(DateTime.UtcNow, stoppingToken);
+                if (report.Renewed + report.InGrace + report.Expired > 0)
+                    _logger.LogInformation("Abonnements : {Renewed} renouvelé(s), {Grace} en grâce, {Expired} terminé(s)",
+                        report.Renewed, report.InGrace, report.Expired);
             }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
+            catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erreur lors de l'expiration des abonnements");
+                _logger.LogError(ex, "Erreur lors du cycle des abonnements (renouvellement, grâce, expiration)");
             }
+            try { await Task.Delay(Interval, stoppingToken); } catch (OperationCanceledException) { break; }
         }
-    }
-
-    private async Task ExpireSubscriptionsAsync(CancellationToken ct)
-    {
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
-        var now = DateTime.UtcNow;
-        var expired = await db.Subscriptions
-            .Where(s => s.Status == "active" && s.EndDate != null && s.EndDate < now)
-            .ToListAsync(ct);
-
-        if (expired.Count == 0) return;
-
-        foreach (var sub in expired)
-        {
-            sub.Status = "expired";
-            // Module 21 (reste signalé §9.4) : IsActive n'était jamais remis à
-            // faux à l'expiration. Sans effet sur ContentAccessService (qui
-            // exige déjà Status == "active" en plus de IsActive), mais c'est
-            // une des sept définitions divergentes d'« abonnement actif » —
-            // tout code qui ne teste que IsActive doit désormais voir juste.
-            sub.IsActive = false;
-            sub.UpdatedAt = now;
-        }
-
-        await db.SaveChangesAsync(ct);
-        _logger.LogInformation("{Count} abonnement(s) expiré(s)", expired.Count);
     }
 }

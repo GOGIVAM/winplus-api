@@ -32,12 +32,54 @@ public class PromoCodeService : IPromoCodeService
         _platformSettings = platformSettings;
     }
 
-    private static string NormalizeScope(string? scope)
+    private static string NormalizeScope(string? scope) =>
+        PromoCodeScopes.Normalize(scope)
+        ?? throw new InvalidOperationException("Cibles invalides : catalog, courses, subscriptions, token_topup, institution_license.");
+
+    /// <summary>
+    /// Lot 9.7b : champs du modèle de promotion unifié, validés ici (seul point
+    /// d'écriture des offres). La nature déduit le type historique de remise.
+    /// </summary>
+    private static void ApplyPromotionFields(PromoCode p, PromotionFields? f, string? discountType)
     {
-        var s = (scope ?? PromoCodeScopes.Catalog).Trim().ToLowerInvariant();
-        if (!PromoCodeScopes.IsValid(s))
-            throw new InvalidOperationException("Périmètre invalide : catalog, subscription ou all.");
-        return s;
+        if (f?.Kind != null)
+        {
+            if (!PromotionKinds.IsValid(f.Kind)) throw new InvalidOperationException("Nature d'offre invalide.");
+            p.Kind = f.Kind;
+        }
+        else if (discountType != null)
+            p.Kind = discountType == "FixedAmount" ? PromotionKinds.DiscountAmount : PromotionKinds.DiscountPercent;
+        p.DiscountType = p.Kind == PromotionKinds.DiscountAmount ? "FixedAmount" : "Percentage";
+        if (p.Kind == PromotionKinds.DiscountPercent && (p.DiscountValue <= 0 || p.DiscountValue > 100))
+            throw new InvalidOperationException("Une remise en pourcentage est comprise entre 0 et 100.");
+        if (p.Kind == PromotionKinds.DiscountAmount && p.DiscountValue <= 0)
+            throw new InvalidOperationException("Une remise en montant doit être positive.");
+        if (f == null) return;
+        if (f.RequiresCode.HasValue) p.RequiresCode = f.RequiresCode.Value;
+        if (f.PlanIds != null) p.PlanIds = f.PlanIds.Count == 0 ? null : JsonSerializer.Serialize(f.PlanIds);
+        if (f.Audiences != null) p.Audiences = string.IsNullOrWhiteSpace(f.Audiences) ? null : f.Audiences.Trim().ToLowerInvariant();
+        if (f.BillingPeriods != null) p.BillingPeriods = string.IsNullOrWhiteSpace(f.BillingPeriods) ? null : f.BillingPeriods.Trim().ToLowerInvariant();
+        if (f.SubscriptionDuration != null)
+        {
+            if (!PromotionDurations.IsValid(f.SubscriptionDuration)) throw new InvalidOperationException("Durée de remise invalide (first_payment, all_periods, n_periods).");
+            p.SubscriptionDuration = f.SubscriptionDuration;
+        }
+        if (f.DurationPeriods.HasValue) p.DurationPeriods = Math.Max(1, f.DurationPeriods.Value);
+        if (p.SubscriptionDuration == PromotionDurations.NPeriods && (p.DurationPeriods ?? 0) < 1)
+            throw new InvalidOperationException("Indiquez le nombre de périodes remisées.");
+        if (f.TrialDays.HasValue) p.TrialDays = Math.Clamp(f.TrialDays.Value, 1, 365);
+        if (p.Kind == PromotionKinds.TrialDays && (p.TrialDays ?? 0) < 1) throw new InvalidOperationException("Indiquez la durée de l'essai en jours.");
+        if (f.BonusTokens.HasValue) p.BonusTokens = Math.Max(0, f.BonusTokens.Value);
+        if (f.TargetRoles != null) p.TargetRoles = string.IsNullOrWhiteSpace(f.TargetRoles) ? null : f.TargetRoles.Trim().ToLowerInvariant();
+        if (f.Eligibility != null)
+        {
+            if (!PromotionEligibility.IsValid(f.Eligibility)) throw new InvalidOperationException("Éligibilité invalide.");
+            p.Eligibility = f.Eligibility;
+        }
+        if (f.NewAccountDays.HasValue) p.NewAccountDays = Math.Max(1, f.NewAccountDays.Value);
+        if (f.EligibleUserIds != null) p.EligibleUserIds = f.EligibleUserIds.Count == 0 ? null : JsonSerializer.Serialize(f.EligibleUserIds);
+        if (f.EligibleInstitutionIds != null) p.EligibleInstitutionIds = f.EligibleInstitutionIds.Count == 0 ? null : JsonSerializer.Serialize(f.EligibleInstitutionIds);
+        if (f.Stackable.HasValue) p.Stackable = f.Stackable.Value;
     }
 
     public async Task<PromoCodeDto> CreatePromoCodeAsync(int adminUserId, CreatePromoCodeRequest request)
@@ -57,7 +99,7 @@ public class PromoCodeService : IPromoCodeService
             {
                 Code = request.Code.ToUpper(),
                 Description = request.Description,
-                DiscountType = request.DiscountType,
+                DiscountType = request.DiscountType ?? "Percentage",
                 DiscountValue = request.DiscountValue,
                 MinimumPurchase = request.MinimumPurchase,
                 MaximumDiscount = request.MaximumDiscount,
@@ -72,6 +114,7 @@ public class PromoCodeService : IPromoCodeService
                 CreatedBy = adminUserId,
                 CreatedAt = DateTime.UtcNow
             };
+            ApplyPromotionFields(promoCode, request.Promotion, request.DiscountType);
 
             _context.PromoCodes.Add(promoCode);
             await _context.SaveChangesAsync();
@@ -87,129 +130,42 @@ public class PromoCodeService : IPromoCodeService
         }
     }
 
+    /// <summary>
+    /// Lot 9.7b : validation au panier par le moteur unifié (PromotionService).
+    /// La remise porte sur les lignes catalogue (cible « catalog ») et sur les
+    /// lignes formation (cible « courses », F9) que le code vise ; elle est
+    /// supportée par la plateforme seule (18.21) : seul le total payé baisse.
+    /// </summary>
     public async Task<PromoCodeValidationResult> ValidatePromoCodeAsync(int userId, ValidatePromoCodeRequest request)
     {
-        try
+        var engine = new Backend.Services.Entitlements.PromotionService(_context, _platformSettings);
+        var coursesBase = Math.Max(0, request.CoursesTotal ?? 0);
+        var catalogBase = Math.Max(0, request.CatalogTotal ?? (request.CartTotal - coursesBase));
+        var result = new PromoCodeValidationResult { IsValid = false, DiscountAmount = 0, FinalAmount = request.CartTotal };
+
+        Backend.Services.Entitlements.OfferQuote? catalog = null, courses = null;
+        if (catalogBase > 0 || coursesBase <= 0)
+            catalog = await engine.QuoteAsync(userId, new Backend.Services.Entitlements.PromotionContext(
+                PromoCodeScopes.Catalog, catalogBase > 0 ? catalogBase : request.CartTotal, SubjectIds: request.SubjectIds), request.Code);
+        if (coursesBase > 0)
+            courses = await engine.QuoteAsync(userId, new Backend.Services.Entitlements.PromotionContext(
+                PromoCodeScopes.Courses, coursesBase, CourseIds: request.CourseIds), request.Code);
+
+        var valid = (catalog?.Valid ?? false) || (courses?.Valid ?? false);
+        if (!valid)
         {
-            var promoCode = await _context.PromoCodes
-                .Include(p => p.Usages)
-                .FirstOrDefaultAsync(p => p.Code == request.Code.ToUpper());
-
-            var result = new PromoCodeValidationResult
-            {
-                IsValid = false,
-                DiscountAmount = 0,
-                FinalAmount = request.CartTotal
-            };
-
-            // Lot 9.7a (18.2) : « Codes promo » désactivables dans l'admin.
-            if (_platformSettings != null && !_platformSettings.GetBool(PlatformSettingDefinitions.PromoCodesEnabled))
-            {
-                result.ErrorMessage = "Les codes promo sont momentanément désactivés.";
-                return result;
-            }
-
-            // Validations
-            if (promoCode == null)
-            {
-                result.ErrorMessage = "Invalid promo code";
-                return result;
-            }
-
-            // Lot 9.7a (18.7) : un code réservé aux abonnements ne réduit pas
-            // une commande du catalogue (seul appelant de cette validation).
-            if (!PromoCodeScopes.AppliesToCatalog(promoCode.AppliesTo))
-            {
-                result.ErrorMessage = "Ce code s'applique uniquement aux abonnements.";
-                return result;
-            }
-
-            if (!promoCode.IsActive)
-            {
-                result.ErrorMessage = "This promo code is no longer active";
-                return result;
-            }
-
-            var now = DateTime.UtcNow;
-            if (promoCode.ValidFrom > now)
-            {
-                result.ErrorMessage = $"This promo code is not valid yet (valid from {promoCode.ValidFrom:yyyy-MM-dd})";
-                return result;
-            }
-
-            if (promoCode.ValidUntil.HasValue && promoCode.ValidUntil < now)
-            {
-                result.ErrorMessage = "This promo code has expired";
-                return result;
-            }
-
-            // Check global usage limit
-            if (promoCode.UsageLimit.HasValue && promoCode.UsageCount >= promoCode.UsageLimit.Value)
-            {
-                result.ErrorMessage = "This promo code has reached its usage limit";
-                return result;
-            }
-
-            // Check per-user usage limit
-            var userUsageCount = await _context.PromoCodeUsages
-                .Where(u => u.PromoCodeId == promoCode.Id && u.UserId == userId)
-                .CountAsync();
-
-            if (promoCode.PerUserLimit.HasValue && userUsageCount >= promoCode.PerUserLimit.Value)
-            {
-                result.ErrorMessage = "You have already used this promo code the maximum number of times";
-                return result;
-            }
-
-            // Check minimum purchase amount
-            if (promoCode.MinimumPurchase.HasValue && request.CartTotal < promoCode.MinimumPurchase.Value)
-            {
-                result.ErrorMessage = $"Minimum purchase of {promoCode.MinimumPurchase:C} required";
-                return result;
-            }
-
-            // Check applicable subjects
-            if (!string.IsNullOrEmpty(promoCode.ApplicableSubjectIds))
-            {
-                var applicableIds = JsonSerializer.Deserialize<List<int>>(promoCode.ApplicableSubjectIds);
-                var hasApplicableSubject = request.SubjectIds?.Any(id => applicableIds?.Contains(id) ?? false) ?? false;
-                
-                if (!hasApplicableSubject)
-                {
-                    result.ErrorMessage = "This promo code is not applicable to items in your cart";
-                    return result;
-                }
-            }
-
-            // Calculate discount
-            decimal discount = 0;
-            if (promoCode.DiscountType == "Percentage")
-            {
-                discount = request.CartTotal * (promoCode.DiscountValue / 100);
-                
-                // Apply maximum discount cap if defined
-                if (promoCode.MaximumDiscount.HasValue && discount > promoCode.MaximumDiscount.Value)
-                {
-                    discount = promoCode.MaximumDiscount.Value;
-                }
-            }
-            else if (promoCode.DiscountType == "FixedAmount")
-            {
-                discount = Math.Min(promoCode.DiscountValue, request.CartTotal);
-            }
-
-            result.IsValid = true;
-            result.DiscountAmount = Math.Round(discount, 2);
-            result.FinalAmount = Math.Max(0, request.CartTotal - result.DiscountAmount);
-            result.PromoCode = MapToDto(promoCode);
-
+            result.ErrorMessage = catalog?.Error ?? courses?.Error ?? "Code promo invalide.";
             return result;
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error validating promo code");
-            throw;
-        }
+        var promo = (catalog?.Valid == true ? catalog.Promo : courses!.Promo)!;
+        var discount = (catalog?.Valid == true ? catalog.Discount : 0) + (courses?.Valid == true ? courses.Discount : 0);
+        if (promo.MaximumDiscount is decimal max && discount > max) discount = max;
+        discount = Math.Min(discount, request.CartTotal);
+        result.IsValid = true;
+        result.DiscountAmount = Math.Round(discount, 0, MidpointRounding.AwayFromZero);
+        result.FinalAmount = Math.Max(0, request.CartTotal - result.DiscountAmount);
+        result.PromoCode = MapToDto(promo);
+        return result;
     }
 
     /// <summary>
@@ -399,8 +355,9 @@ public class PromoCodeService : IPromoCodeService
             if (promoCode == null) return null;
 
             promoCode.Description = request.Description;
-            promoCode.DiscountType = request.DiscountType;
+            if (request.DiscountType != null) promoCode.DiscountType = request.DiscountType;
             promoCode.DiscountValue = request.DiscountValue;
+            if (request.PerUserLimit.HasValue) promoCode.PerUserLimit = request.PerUserLimit;
             promoCode.MinimumPurchase = request.MinimumPurchase;
             promoCode.MaximumDiscount = request.MaximumDiscount;
             promoCode.UsageLimit = request.UsageLimit;
@@ -409,6 +366,7 @@ public class PromoCodeService : IPromoCodeService
                 ? JsonSerializer.Serialize(request.ApplicableSubjectIds)
                 : null;
             if (request.AppliesTo != null) promoCode.AppliesTo = NormalizeScope(request.AppliesTo);
+            ApplyPromotionFields(promoCode, request.Promotion, request.DiscountType);
             promoCode.UpdatedAt = DateTime.UtcNow;
 
             _context.PromoCodes.Update(promoCode);
@@ -423,6 +381,12 @@ public class PromoCodeService : IPromoCodeService
             _logger.LogError(ex, "Error updating promo code {PromoCodeId}", id);
             throw;
         }
+    }
+
+    private static List<int>? ParseIds(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<List<int>>(json); } catch { return null; }
     }
 
     private static DateTime Utc(DateTime dt) =>
@@ -458,7 +422,25 @@ public class PromoCodeService : IPromoCodeService
             ValidUntil = promoCode.ValidUntil,
             IsActive = promoCode.IsActive,
             ApplicableSubjectIds = applicableIds,
-            AppliesTo = string.IsNullOrWhiteSpace(promoCode.AppliesTo) ? PromoCodeScopes.Catalog : promoCode.AppliesTo,
+            AppliesTo = PromoCodeScopes.Normalize(promoCode.AppliesTo) ?? PromoCodeScopes.Catalog,
+            Promotion = new PromotionFields
+            {
+                Kind = promoCode.Kind,
+                RequiresCode = promoCode.RequiresCode,
+                PlanIds = ParseIds(promoCode.PlanIds),
+                Audiences = promoCode.Audiences,
+                BillingPeriods = promoCode.BillingPeriods,
+                SubscriptionDuration = promoCode.SubscriptionDuration,
+                DurationPeriods = promoCode.DurationPeriods,
+                TrialDays = promoCode.TrialDays,
+                BonusTokens = promoCode.BonusTokens,
+                TargetRoles = promoCode.TargetRoles,
+                Eligibility = promoCode.Eligibility,
+                NewAccountDays = promoCode.NewAccountDays,
+                EligibleUserIds = ParseIds(promoCode.EligibleUserIds),
+                EligibleInstitutionIds = ParseIds(promoCode.EligibleInstitutionIds),
+                Stackable = promoCode.Stackable,
+            },
             CreatedAt = promoCode.CreatedAt
         };
     }

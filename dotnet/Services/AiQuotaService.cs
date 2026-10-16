@@ -190,7 +190,9 @@ public class AiQuotaService : IAiQuotaService
             var weekStart = now - AiUsagePolicy.WeekLength;
             records = (await _context.AiTokenUsages
                     .AsNoTracking()
-                    .Where(u => u.UserId == userId && u.CreatedAt > weekStart)
+                    // Lot 9.7b : les messages servis sur la réserve rechargée
+                    // n'entrent pas dans les fenêtres du plan.
+                    .Where(u => u.UserId == userId && u.CreatedAt > weekStart && !u.FromTopUp)
                     .Select(u => new { u.CreatedAt, u.TokensCharged })
                     .ToListAsync(cancellationToken))
                 .Select(r => new AiUsageRecord(r.CreatedAt, r.TokensCharged))
@@ -308,9 +310,17 @@ public class AiQuotaService : IAiQuotaService
                 if (snapshot.UsageUnavailable)
                     return new AiQuotaDecision(AiQuotaOutcome.Unavailable, messageId, attemptId, null, null);
 
+                // Lot 9.7b (8.5, 18.17) : limite du plan atteinte → la réserve
+                // de tokens rechargés prend le relais tant qu'elle n'est pas vide.
+                var fromTopUp = false;
                 if (snapshot.IsExhausted)
-                    return new AiQuotaDecision(AiQuotaOutcome.LimitReached, messageId, attemptId,
-                        snapshot.LimitReached, snapshot.ResetsAt);
+                {
+                    if (await TokenTopUpService.RemainingAsync(_context, userId, cancellationToken) > 0)
+                        fromTopUp = true;
+                    else
+                        return new AiQuotaDecision(AiQuotaOutcome.LimitReached, messageId, attemptId,
+                            snapshot.LimitReached, snapshot.ResetsAt);
+                }
 
                 var reservation = new AiTokenUsage
                 {
@@ -325,6 +335,7 @@ public class AiQuotaService : IAiQuotaService
                     // par le contrôle Python (ai_quota.py) au lieu de recopier
                     // une grille de plans.
                     ReferenceTokens = snapshot.ReferenceTokens,
+                    FromTopUp = fromTopUp,
                 };
                 _context.AiTokenUsages.Add(reservation);
 

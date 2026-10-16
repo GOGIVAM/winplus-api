@@ -649,18 +649,19 @@ public class CartController : ControllerBase
 
             var cartItems = (await _cartService.GetUserCartAsync(userId)).ToList();
             var cartTotal = cartItems.Sum(i => i.Price);
-            // B1 (achat de formation) : SubjectId est désormais nullable (une
-            // ligne peut être une formation via CourseId). Les codes promo ne
-            // couvrent pour l'instant que le catalogue Subject  une formation
-            // au panier n'est simplement jamais éligible à la remise, point
-            // ouvert documenté dans le rapport de lot plutôt que tranché ici.
+            // Lot 9.7b (F9) : les formations du panier sont éligibles aux codes
+            // « courses » (moteur de promotion unifié) ; même calcul qu'à la
+            // création de la commande. Indicatif : la commande recalcule.
             var subjectIds = cartItems.Where(i => i.SubjectId != null).Select(i => i.SubjectId!.Value).ToList();
 
             var result = await _promoCodeService.ValidatePromoCodeAsync(userId, new ValidatePromoCodeRequest
             {
                 Code       = request.Code,
                 CartTotal  = cartTotal > 0 ? cartTotal : 1m, // évite la validation [Range(0.01,...)]
-                SubjectIds = subjectIds
+                SubjectIds = subjectIds,
+                CatalogTotal = cartItems.Where(i => i.SubjectId != null).Sum(i => i.Price),
+                CourseIds = cartItems.Where(i => i.CourseId != null).Select(i => i.CourseId!.Value).ToList(),
+                CoursesTotal = cartItems.Where(i => i.CourseId != null).Sum(i => i.Price),
             });
 
             if (!result.IsValid)

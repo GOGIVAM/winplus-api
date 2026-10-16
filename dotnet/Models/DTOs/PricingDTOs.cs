@@ -24,15 +24,6 @@ public class PricingPlanResponse
     public int AiUsageMultiplier { get; set; } = 1;
 }
 
-public class PromotionResponse
-{
-    public int Id { get; set; }
-    public string Code { get; set; } = string.Empty;
-    public decimal DiscountPercent { get; set; }
-    public DateTime? ValidFrom { get; set; }
-    public DateTime? ValidUntil { get; set; }
-}
-
 public class PricingCategoryGroup
 {
     public string Category { get; set; } = string.Empty;

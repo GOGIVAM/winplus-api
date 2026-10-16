@@ -24,13 +24,16 @@ public class PromoCodesController : ControllerBase
     private static object Summary(PromoCodeDto p) => new
     {
         p.Code, p.DiscountType, p.DiscountValue, p.UsageLimit, p.ValidUntil, p.IsActive, p.AppliesTo,
+        // Lot 9.7b : champs du modèle de promotion unifié (essai, durée de la remise, éligibilité).
+        p.Promotion.Kind, p.Promotion.RequiresCode, p.Promotion.Audiences, p.Promotion.PlanIds, p.Promotion.BillingPeriods,
+        p.Promotion.SubscriptionDuration, p.Promotion.DurationPeriods, p.Promotion.TrialDays, p.Promotion.BonusTokens, p.Promotion.Eligibility,
     };
 
     /// <summary>
     /// Create a new promo code (admin only)
     /// </summary>
     [HttpPost]
-    [Authorize(Policy = "AdminOnly")]
+    [Authorize(Policy = Backend.Extensions.AuthorizationPolicies.SubscriptionManagement)]
     public async Task<IActionResult> CreatePromoCode([FromBody] CreatePromoCodeRequest request)
     {
         try
@@ -154,7 +157,7 @@ public class PromoCodesController : ControllerBase
     /// Get all promo codes including inactive (admin only)
     /// </summary>
     [HttpGet("admin")]
-    [Authorize(Policy = "AdminOnly")]
+    [Authorize(Policy = Backend.Extensions.AuthorizationPolicies.SubscriptionManagement)]
     public async Task<IActionResult> GetAllPromoCodesAdmin()
     {
         try
@@ -207,7 +210,7 @@ public class PromoCodesController : ControllerBase
     /// Deactivate a promo code (admin only)
     /// </summary>
     [HttpDelete("{id}")]
-    [Authorize(Policy = "AdminOnly")]
+    [Authorize(Policy = Backend.Extensions.AuthorizationPolicies.SubscriptionManagement)]
     public async Task<IActionResult> DeactivatePromoCode(int id)
     {
         try
@@ -240,7 +243,7 @@ public class PromoCodesController : ControllerBase
     /// Update an existing promo code (admin only)
     /// </summary>
     [HttpPut("{id}")]
-    [Authorize(Policy = "AdminOnly")]
+    [Authorize(Policy = Backend.Extensions.AuthorizationPolicies.SubscriptionManagement)]
     public async Task<IActionResult> UpdatePromoCode(int id, [FromBody] UpdatePromoCodeRequest request)
     {
         try
@@ -273,7 +276,7 @@ public class PromoCodesController : ControllerBase
     /// Toggle promo code active status (admin only)
     /// </summary>
     [HttpPatch("{id}/status")]
-    [Authorize(Policy = "AdminOnly")]
+    [Authorize(Policy = Backend.Extensions.AuthorizationPolicies.SubscriptionManagement)]
     public async Task<IActionResult> UpdatePromoCodeStatus(int id, [FromBody] UpdatePromoCodeStatusRequest request)
     {
         try

@@ -191,7 +191,7 @@ def _aware(dt: Optional[datetime]) -> Optional[datetime]:
 def _window_states(session, user_id: int, now: datetime) -> Tuple[WindowState, WindowState]:
     reference = _reference_tokens(session, user_id)
     rows = session.execute(
-        text('SELECT "CreatedAt", "TokensCharged" FROM "AiTokenUsages" WHERE "UserId" = :uid AND "CreatedAt" > :start'),
+        text('SELECT "CreatedAt", "TokensCharged" FROM "AiTokenUsages" WHERE "UserId" = :uid AND "CreatedAt" > :start AND "FromTopUp" = FALSE'),
         {"uid": user_id, "start": now - WEEK_LENGTH},
     ).all()
     records = [(_aware(r[0]), int(r[1] or 0)) for r in rows]

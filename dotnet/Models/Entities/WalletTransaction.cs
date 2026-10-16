@@ -206,6 +206,10 @@ public static class WalletEntryTypes
 
     /// <summary>Crédit du nouveau titulaire lors d'un changement de titulaire du portefeuille institution.</summary>
     public const string InstitutionHolderTransferIn = "InstitutionHolderTransferIn";
+    // Lot 9.7b : abonnement, recharge de tokens WinAI et licence d'établissement payés par le solde.
+    public const string SubscriptionPayment = "SubscriptionPayment";
+    public const string TokenTopUp = "TokenTopUp";
+    public const string InstitutionLicensePayment = "InstitutionLicensePayment";
 }
 
 public static class WalletEntryStatus

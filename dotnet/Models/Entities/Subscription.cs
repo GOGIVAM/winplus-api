@@ -68,6 +68,40 @@ public class Subscription
     /// </summary>
     public DateTime? GraceUntil { get; set; }
 
+    // ── Lot 9.7b, étape 3 : cycle d'abonnement (18.15, 18.20) ──────────────
+
+    /// <summary>Montant TTC réellement payé pour la période en cours (après remise et prorata).</summary>
+    public decimal? PricePaidTtc { get; set; }
+
+    /// <summary>Dernière commande ayant payé une période (idempotence de l'activation).</summary>
+    public int? OrderId { get; set; }
+
+    /// <summary>Début de la période en cours (StartDate reste la date de souscription).</summary>
+    public DateTime? CurrentPeriodStart { get; set; }
+
+    /// <summary>Renouvellement automatique par le solde du portefeuille.</summary>
+    public bool AutoRenew { get; set; }
+
+    /// <summary>Résilié : accès jusqu'à EndDate, sans remboursement partiel, puis expiration.</summary>
+    public bool CancelAtPeriodEnd { get; set; }
+    public DateTime? CancelledAt { get; set; }
+
+    /// <summary>Descente de plan ou changement de période programmé à l'échéance.</summary>
+    public int? PendingPricingPlanId { get; set; }
+    public string? PendingBillingPeriod { get; set; }
+
+    /// <summary>Code promo dont la remise s'applique encore aux renouvellements.</summary>
+    public int? PromoCodeId { get; set; }
+
+    /// <summary>Périodes encore remisées (null = toutes, 0 = plus aucune).</summary>
+    public int? RemainingDiscountedPeriods { get; set; }
+
+    /// <summary>Fin de l'essai gratuit, si l'abonnement a commencé par un essai (un seul par compte et par public).</summary>
+    public DateTime? TrialEndsAt { get; set; }
+
+    /// <summary>Dernière tentative de renouvellement par le solde (échec compris).</summary>
+    public DateTime? LastRenewalAttemptAt { get; set; }
+
     public PlanVersion? PlanVersion { get; set; }
 
     // Navigation properties

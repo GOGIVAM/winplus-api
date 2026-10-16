@@ -84,7 +84,8 @@ public partial class ApplicationDbContext : DbContext
     public DbSet<Level> Levels => Set<Level>();
     public DbSet<Goal> Goals => Set<Goal>();
     public DbSet<AcademicRecord> AcademicRecords => Set<AcademicRecord>();
-    public DbSet<Promotion> Promotions => Set<Promotion>();
+    // Lot 9.7b : l'entité Promotion (code mort, table vide) est supprimée au
+    // profit du modèle de promotion unifié porté par PromoCode.
     public DbSet<HomePage> HomePages => Set<HomePage>();
     public DbSet<HomePageFeature> HomePageFeatures => Set<HomePageFeature>();
     public DbSet<Page> Pages => Set<Page>();
@@ -1425,14 +1426,7 @@ modelBuilder.Entity<Exam>(entity =>
             entity.Property(e => e.BillingPeriod).HasMaxLength(50);
         });
 
-        // Configure Promotion entity
-        modelBuilder.Entity<Promotion>(entity =>
-        {
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.Code).IsRequired().HasMaxLength(50);
-            entity.Property(e => e.DiscountPercent).HasPrecision(5, 2);
-            entity.HasIndex(e => e.Code).IsUnique();
-        });
+
 
         // Configure Institution entity
         modelBuilder.Entity<Institution>(entity =>
