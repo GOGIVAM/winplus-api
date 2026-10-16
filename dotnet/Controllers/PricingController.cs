@@ -48,6 +48,29 @@ public class PricingController : ControllerBase
     }
 
     /// <summary>
+    /// GET /api/pricing/licenses : grille publique des licences d'établissement
+    /// (lot 9.7b étape 4, décision 18.21), prix TTC par élève et par an.
+    /// </summary>
+    [HttpGet("licenses")]
+    public IActionResult GetLicenseGrid() => Ok(new
+    {
+        minSeats = LicensePolicy.MinStudentSeats,
+        studentsPerTeacherSeat = LicensePolicy.StudentsPerTeacherSeat,
+        minTeacherSeats = LicensePolicy.MinTeacherSeats,
+        tiers = new[]
+        {
+            new { tier = LicenseTiers.School, label = "École", fromSeats = 20, toSeats = (int?)199, yearlyPerSeatTtc = LicensePolicy.YearlyPricePerSeat(20) },
+            new { tier = LicenseTiers.Establishment, label = "Établissement", fromSeats = 200, toSeats = (int?)999, yearlyPerSeatTtc = LicensePolicy.YearlyPricePerSeat(200) },
+            new { tier = LicenseTiers.Network, label = "Réseau", fromSeats = 1000, toSeats = (int?)null, yearlyPerSeatTtc = LicensePolicy.YearlyPricePerSeat(1000) },
+        },
+        studentRights = new[] { "Catalogue complet en lecture", "Plan d'étude et session guidée", "Exam Coach", "Bonus d'usage WinAI ajouté au plan de l'élève" },
+        teacherRights = new[] { "Outils du plan Pro (10 classes de 100 élèves)", "Génération de quiz et correction assistée", "Part de 75 % sur le tutorat si son plan est inférieur" },
+        institutionRights = new[] { "Tableau de bord, élèves à risque, plan d'action et prévisions WinAI", "Rapports dans l'application et export CSV" },
+        trialDays = LicensePolicy.DefaultTrialDays,
+        trialSeats = LicensePolicy.TrialSeats,
+    });
+
+    /// <summary>
     /// GET /api/pricing/plans?audience=student (ou category=students, forme
     /// historique) : liste plate des cartes d'un public.
     /// </summary>
