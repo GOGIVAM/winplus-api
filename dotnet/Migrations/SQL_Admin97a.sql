@@ -117,7 +117,13 @@ UPDATE "Announcements"
 ALTER TABLE "PromoCodes" ADD COLUMN IF NOT EXISTS "AppliesTo" VARCHAR(20) NOT NULL DEFAULT 'catalog';
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CK_PromoCodes_AppliesTo') THEN
+    -- SQL_Subscriptions97bCycle.sql élargit ensuite la colonne (VARCHAR(120),
+    -- plusieurs cibles) et retire cette contrainte : ne la reposer que tant
+    -- que la colonne est encore au format du 9.7a, sinon chaque rejeu échoue.
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CK_PromoCodes_AppliesTo')
+       AND EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'PromoCodes' AND column_name = 'AppliesTo'
+                     AND character_maximum_length = 20) THEN
         ALTER TABLE "PromoCodes" ADD CONSTRAINT "CK_PromoCodes_AppliesTo"
             CHECK ("AppliesTo" IN ('catalog', 'subscription', 'all'));
     END IF;
