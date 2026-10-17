@@ -38,6 +38,7 @@ from typing import List, Optional, Set
 
 from RAG.query_service import retrieve_context
 from RAG.shared.contracts import RAGQueryRequest, RetrievedContext
+from RAG.shared.cost import CHAT_MAX_ITERATIONS, search_cost_estimate
 from schemas import ChatbotContextRequest
 
 logger = logging.getLogger(__name__)
@@ -139,57 +140,73 @@ def _format_context_block(
     )
 
 
-async def _safe_retrieve(request: RAGQueryRequest, label: str) -> Optional[RetrievedContext]:
+async def _safe_retrieve(request: RAGQueryRequest, label: str) -> tuple[Optional[RetrievedContext], int]:
+    """Renvoie le résultat (ou None) et le coût de la recherche en tokens
+    équivalents (lot 9.7b) : celui remonté par le moteur, sinon une
+    estimation (un embedding et un rerank), y compris en cas d'échec ou de
+    délai dépassé, les appels ayant pu avoir lieu."""
     try:
-        return await asyncio.wait_for(retrieve_context(request), timeout=RAG_TIMEOUT_SECONDS)
+        result = await asyncio.wait_for(retrieve_context(request), timeout=RAG_TIMEOUT_SECONDS)
+        cost = result.cost_tokens if result and result.cost_tokens > 0 else search_cost_estimate(request.question)
+        return result, cost
     except asyncio.TimeoutError:
         logger.warning(f"[RAG chat bridge] Timeout ({RAG_TIMEOUT_SECONDS}s) dépassé sur la recherche {label}")
-        return None
+        return None, search_cost_estimate(request.question)
     except Exception as e:
         logger.warning(f"[RAG chat bridge] Recherche {label} échouée, poursuite sans : {e}")
-        return None
+        return None, search_cost_estimate(request.question)
 
 
 async def build_rag_context_block(
     user_context: Optional[ChatbotContextRequest],
     messages: List[dict],
     user_id: Optional[int] = None,
-) -> str:
-    """Retourne un bloc de texte à ajouter au prompt système WinAI, ou une
-    chaîne vide si RAG n'a rien trouvé de pertinent (ni côté public, ni
-    côté personnel). Ne lève jamais d'exception : un souci RAG ne doit
-    jamais empêcher WinAI de répondre normalement (dégradation silencieuse
-    par source  un échec sur l'une n'empêche pas l'autre)."""
+) -> tuple[str, int]:
+    """Retourne le bloc de texte à ajouter au prompt système WinAI (ou une
+    chaîne vide si RAG n'a rien trouvé de pertinent) et le coût réel de la
+    recherche en tokens équivalents (embedding, reranking, reformulation).
+
+    Lot 9.7b (décision 18.21) : n'est plus appelé à chaque message. Seul le
+    mode « base de connaissance », activé par l'utilisateur dans le chat,
+    l'appelle (routes/chatbot_routes.py) ; son coût est ajouté au décompte
+    du message, et la boucle Self-RAG est limitée à une reformulation.
+    Ne lève jamais d'exception : un souci RAG ne doit jamais empêcher WinAI
+    de répondre normalement (dégradation silencieuse par source)."""
     last_message = _extract_last_user_text(messages)
     if not last_message:
-        return ""
+        return "", 0
 
     passages: List[str] = []
     citations = []
+    cost = 0
 
     scope = detect_scope(user_context, last_message)
     if scope:
         public_request = RAGQueryRequest(
-            question=last_message, filters={**scope, "status": "active"}, top_k=RAG_TOP_K
+            question=last_message, filters={**scope, "status": "active"}, top_k=RAG_TOP_K,
+            max_iterations=CHAT_MAX_ITERATIONS,
         )
-        public_result = await _safe_retrieve(public_request, "publique (catalogue)")
+        public_result, c = await _safe_retrieve(public_request, "publique (catalogue)")
+        cost += c
         if public_result and not public_result.refused:
             passages.extend(public_result.passages)
             citations.extend(public_result.citations)
 
     if user_id is not None:
         personal_request = RAGQueryRequest(
-            question=last_message, filters={"owner_user_id": user_id, "status": "active"}, top_k=RAG_TOP_K
+            question=last_message, filters={"owner_user_id": user_id, "status": "active"}, top_k=RAG_TOP_K,
+            max_iterations=CHAT_MAX_ITERATIONS,
         )
-        personal_result = await _safe_retrieve(personal_request, "personnelle")
+        personal_result, c = await _safe_retrieve(personal_request, "personnelle")
+        cost += c
         if personal_result and not personal_result.refused:
             passages.extend(personal_result.passages)
             citations.extend(personal_result.citations)
 
     if not passages:
-        return ""
+        return "", cost
 
     accessible_subject_ids = _accessible_subject_ids(user_context)
     accessible_course_ids = _accessible_course_ids(user_context)
     merged = RetrievedContext(passages=passages, citations=citations, refused=False)
-    return _format_context_block(merged, accessible_subject_ids, accessible_course_ids)
+    return _format_context_block(merged, accessible_subject_ids, accessible_course_ids), cost

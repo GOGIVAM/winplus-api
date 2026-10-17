@@ -165,7 +165,7 @@ public class ChatbotController : ControllerBase
                 && !await ConversationBelongsToUserAsync(requestedConvId, userId, HttpContext.RequestAborted))
                 return NotFound(new { error = "Conversation not found" });
 
-            var refusal = await ChatFeatureRefusalAsync(userId, false, HttpContext.RequestAborted);
+            var refusal = await ChatFeatureRefusalAsync(userId, request.Attachments?.Count > 0, HttpContext.RequestAborted);
             if (refusal != null) return StatusCode(403, refusal);
 
             // 8.7 : même ClientMessageId que le flux SSE quand ce POST est le
@@ -782,6 +782,8 @@ public class ChatbotController : ControllerBase
                 // 8.7/8.8 : transmis à FastAPI pour que son propre contrôle de
                 // quota reconnaisse la réserve posée ou rattachée ici.
                 client_message_id = quota.ReservationId,
+                // Lot 9.7b (18.21) : mode « base de connaissance » (désactivé par défaut), coût de la recherche imputé.
+                knowledge_base = request.KnowledgeBase,
                 max_tokens = _platformSettings?.GetInt(PlatformSettingDefinitions.WinAiChatMaxTokens) ?? 2000,
                 temperature = (double)(_platformSettings?.GetDecimal(PlatformSettingDefinitions.WinAiChatTemperature) ?? 0.7m),
                 user_context = new

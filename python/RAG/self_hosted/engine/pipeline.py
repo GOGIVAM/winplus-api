@@ -115,7 +115,9 @@ def _retrieve_and_rerank(request: RAGQueryRequest) -> tuple[List[dict], List[tup
     reranked: List[tuple] = []
     question_for_retrieval = request.question
 
-    while iterations < config.SELF_RAG_MAX_ITERATIONS:
+    # Lot 9.7b : plafond d'itérations de la requête (chat : une reformulation au plus).
+    max_iterations = max(1, request.max_iterations or config.SELF_RAG_MAX_ITERATIONS)
+    while iterations < max_iterations:
         texts = [c["payload"]["text"] for c in candidates]
         if not texts:
             break
@@ -123,7 +125,7 @@ def _retrieve_and_rerank(request: RAGQueryRequest) -> tuple[List[dict], List[tup
         reranked = _apply_relevance_boost(candidates, rerank(request.question, texts, top_k=request.top_k))
         avg_score = sum(s for _, s in reranked) / len(reranked) if reranked else 0.0
 
-        if avg_score >= config.RERANK_CONFIDENCE_THRESHOLD or iterations == config.SELF_RAG_MAX_ITERATIONS - 1:
+        if avg_score >= config.RERANK_CONFIDENCE_THRESHOLD or iterations == max_iterations - 1:
             break
 
         # Boucle Self-RAG (Phase 3, §3.9) : le contexte est jugé insuffisant,

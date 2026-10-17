@@ -152,6 +152,10 @@ class RAGQueryRequest(BaseModel):
         ),
     )
     top_k: int = 5
+    # Lot 9.7b : plafond d'itérations Self-RAG pour cet appel (None = valeur
+    # de configuration). Le mode « base de connaissance » du chat le fixe à 2,
+    # soit au plus une reformulation.
+    max_iterations: Optional[int] = None
 
 
 class RetrievedContext(BaseModel):
@@ -165,6 +169,9 @@ class RetrievedContext(BaseModel):
     refused: bool = False
     complexity: Optional[str] = None
     latency_ms: int = 0
+    # Lot 9.7b (18.21) : coût réel de la recherche (embedding, reranking,
+    # reformulation) converti en tokens équivalents, imputé au budget WinAI.
+    cost_tokens: int = 0
 
 
 class RAGAnswer(BaseModel):

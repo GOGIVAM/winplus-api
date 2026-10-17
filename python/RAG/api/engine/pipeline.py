@@ -15,6 +15,7 @@ from RAG.api.indexing.embedding_client import embed_query
 from RAG.api.validation.faithfulness import validate_answer
 from RAG.shared.bm25_index import BM25Registry
 from RAG.shared.config import REFUSAL_MESSAGE, RERANK_CONFIDENCE_THRESHOLD, SELF_RAG_MAX_ITERATIONS
+from RAG.shared.cost import embedding_cost_tokens, reformulation_cost_tokens, RERANK_TOKEN_EQUIVALENT
 from RAG.shared.contracts import Citation, RAGAnswer, RAGQueryRequest, RetrievedContext
 from RAG.shared.rrf import reciprocal_rank_fusion
 from RAG.shared.vector_store import get_by_ids, search_dense
@@ -56,34 +57,42 @@ def _apply_relevance_boost(candidates: List[dict], reranked: List[tuple]) -> Lis
     return sorted(boosted, key=lambda pair: pair[1], reverse=True)
 
 
-def _retrieve_and_rerank(request: RAGQueryRequest) -> tuple[List[dict], List[tuple]]:
+def _retrieve_and_rerank(request: RAGQueryRequest) -> tuple[List[dict], List[tuple], int]:
     """Recherche hybride + boucle Self-RAG (reformulation si le rerank est
     peu confiant), sans génération ni validation  factorisé pour être
     partagé entre run_query() (réponse autonome de ce module) et
-    retrieve_passages() (utilisé par l'intégration chatbot WinAI)."""
+    retrieve_passages() (utilisé par l'intégration chatbot WinAI).
+
+    Lot 9.7b : renvoie aussi le coût réel de la recherche en tokens
+    équivalents (embeddings, appels de rerank, reformulations), et respecte
+    le plafond d'itérations de la requête (chat : une reformulation au plus)."""
+    max_iterations = max(1, request.max_iterations or SELF_RAG_MAX_ITERATIONS)
+    cost = embedding_cost_tokens(request.question)
     query_vector = embed_query(request.question)
     candidates = _hybrid_retrieve(query_vector, request.question, request.filters, request.top_k)
 
     iterations = 0
     reranked: List[tuple] = []
 
-    while iterations < SELF_RAG_MAX_ITERATIONS:
+    while iterations < max_iterations:
         texts = [c["payload"]["text"] for c in candidates]
         if not texts:
             break
 
         reranked = _apply_relevance_boost(candidates, rerank(request.question, texts, top_k=request.top_k))
+        cost += RERANK_TOKEN_EQUIVALENT
         avg_score = sum(s for _, s in reranked) / len(reranked) if reranked else 0.0
 
-        if avg_score >= RERANK_CONFIDENCE_THRESHOLD or iterations == SELF_RAG_MAX_ITERATIONS - 1:
+        if avg_score >= RERANK_CONFIDENCE_THRESHOLD or iterations == max_iterations - 1:
             break
 
         reformulated = reformulate_query(request.question)
+        cost += reformulation_cost_tokens(request.question, reformulated) + embedding_cost_tokens(reformulated)
         new_vector = embed_query(reformulated)
         candidates = _hybrid_retrieve(new_vector, reformulated, request.filters, request.top_k)
         iterations += 1
 
-    return candidates, reranked
+    return candidates, reranked, cost
 
 
 def _to_citations(candidates: List[dict], reranked: List[tuple]) -> tuple[List[dict], List[str], List[Citation]]:
@@ -112,19 +121,20 @@ def retrieve_passages(request: RAGQueryRequest) -> RetrievedContext:
     génération finale reste celle du prompt WinAI existant (persona,
     pédagogie, mémoire élève), RAG ne fait qu'apporter du contexte."""
     start = time.time()
-    candidates, reranked = _retrieve_and_rerank(request)
+    candidates, reranked, cost = _retrieve_and_rerank(request)
     if not reranked:
-        return RetrievedContext(refused=True, latency_ms=int((time.time() - start) * 1000))
+        return RetrievedContext(refused=True, latency_ms=int((time.time() - start) * 1000), cost_tokens=cost)
     _, passages, citations = _to_citations(candidates, reranked)
     return RetrievedContext(
-        passages=passages, citations=citations, refused=False, latency_ms=int((time.time() - start) * 1000)
+        passages=passages, citations=citations, refused=False, latency_ms=int((time.time() - start) * 1000),
+        cost_tokens=cost,
     )
 
 
 def run_query(request: RAGQueryRequest) -> RAGAnswer:
     start = time.time()
 
-    candidates, reranked = _retrieve_and_rerank(request)
+    candidates, reranked, _cost = _retrieve_and_rerank(request)
 
     if not reranked:
         return RAGAnswer(

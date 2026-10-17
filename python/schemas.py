@@ -268,6 +268,8 @@ class ChatRequest(BaseModel):
     # ce message (même rôle que StreamChatBody.client_message_id sur /stream).
     # Sans réserve valide, /chat refuse le message (services/ai_quota.py).
     client_message_id: Optional[str] = None
+    # Lot 9.7b (18.21) : mode « base de connaissance » activé par l'utilisateur (désactivé par défaut).
+    knowledge_base: bool = False
 
 
 class ChatResponse(BaseModel):

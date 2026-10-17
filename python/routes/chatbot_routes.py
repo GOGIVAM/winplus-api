@@ -712,9 +712,14 @@ async def chat(
         # mention explicite), et TOUJOURS le contexte personnel de l'utilisateur
         # (ses propres pièces jointes déjà indexées)  dégradation silencieuse
         # en cas d'échec/timeout, ne casse jamais le comportement WinAI existant.
-        rag_block = await build_rag_context_block(chat_request.user_context, formatted_messages, current_user.user_id)
-        if rag_block:
-            system_prompt += rag_block
+        # Lot 9.7b (18.21) : la base de connaissance n'est interrogée que si
+        # l'utilisateur a activé ce mode dans le chat ; le coût réel de la
+        # recherche (embedding, rerank) est ajouté au décompte du message.
+        rag_cost = 0
+        if chat_request.knowledge_base:
+            rag_block, rag_cost = await build_rag_context_block(chat_request.user_context, formatted_messages, current_user.user_id)
+            if rag_block:
+                system_prompt += rag_block
 
         logger.info(
             f"Processing chat request from user {current_user.user_id} "
@@ -749,7 +754,8 @@ async def chat(
         # Retourner la réponse au format attendu
         return {
             "content": result.get('content', ''),
-            "tokens_used": result.get('tokens_used', 0),
+            "tokens_used": int(result.get('tokens_used', 0) or 0) + rag_cost,
+            "rag_tokens": rag_cost,
             "generation_time_ms": result.get('generation_time_ms', 0),
             "success": result.get('success', False),
             "error": result.get('error')
@@ -775,6 +781,8 @@ class StreamChatBody(BaseModel):
     # Partie 8.7/8.8 : identifiant du message utilisateur. Transmis par le
     # proxy .NET, qui a déjà posé la réserve de quota pour ce message.
     client_message_id: Optional[str] = None
+    # Lot 9.7b (18.21) : mode « base de connaissance » activé par l'utilisateur.
+    knowledge_base: bool = False
 
 
 @chatbot_router.post('/stream', tags=["chatbot"])
@@ -818,9 +826,13 @@ async def stream_chat(
                 body.user_context.force_language = detected  # type: ignore[assignment]
         system_prompt, winai_role = _build_prompt_from_request(body.user_context, current_user, last_user_text)
 
-    rag_block = await build_rag_context_block(body.user_context, messages, current_user.user_id)
-    if rag_block:
-        system_prompt += rag_block
+    # Lot 9.7b (18.21) : recherche dans la base de connaissance seulement si
+    # le mode est activé ; son coût est ajouté à l'événement d'usage final.
+    rag_cost = 0
+    if body.knowledge_base:
+        rag_block, rag_cost = await build_rag_context_block(body.user_context, messages, current_user.user_id)
+        if rag_block:
+            system_prompt += rag_block
 
     logger.info(f"Stream request from user {current_user.user_id}, winai_role={winai_role}, conv_id={conv_id}")
 
@@ -846,7 +858,11 @@ async def stream_chat(
                     try:
                         data = json.loads(chunk[6:].strip())
                         if data.get("usage_final"):
-                            tokens_used = int(data.get("tokens_used") or 0)
+                            tokens_used = int(data.get("tokens_used") or 0) + rag_cost
+                            if rag_cost:
+                                data["tokens_used"] = tokens_used
+                                data["rag_tokens"] = rag_cost
+                                chunk = "data: " + json.dumps(data) + "\n\n"
                         else:
                             full_content += data.get("delta", "")
                     except Exception:

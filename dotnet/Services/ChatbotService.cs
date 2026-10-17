@@ -168,6 +168,8 @@ public class ChatbotService : IChatbotService
         // Décision 10.4 : FastAPI /chat n'accepte plus un message sans la
         // réserve de quota .NET correspondante (même règle que /stream).
         fastapiRequest.ClientMessageId = quotaReservationId;
+        // Lot 9.7b (18.21) : base de connaissance seulement si l'utilisateur a activé le mode.
+        fastapiRequest.KnowledgeBase = request.KnowledgeBase;
 
         // Appeler FastAPI/DeepSeek
         var fastapiResponse = await CallFastApiServiceAsync(fastapiRequest);

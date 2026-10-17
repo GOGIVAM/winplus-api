@@ -40,6 +40,14 @@ public class SendMessageRequest
     /// </summary>
     [MaxLength(64)]
     public string? ClientMessageId { get; set; }
+
+    /// <summary>
+    /// Lot 9.7b (18.21) : mode « base de connaissance » activé par
+    /// l'utilisateur dans le chat (désactivé par défaut). Sans lui, la base de
+    /// connaissance (RAG) n'est pas interrogée ; avec lui, le coût réel de la
+    /// recherche est ajouté au décompte du message.
+    /// </summary>
+    public bool KnowledgeBase { get; set; }
 }
 
 /// <summary>
@@ -108,6 +116,14 @@ public class StreamChatRequest
     /// <summary>Voir <see cref="SendMessageRequest.ClientMessageId"/> (Partie 8.7).</summary>
     [MaxLength(64)]
     public string? ClientMessageId { get; set; }
+
+    /// <summary>
+    /// Lot 9.7b (18.21) : mode « base de connaissance » activé par
+    /// l'utilisateur dans le chat (désactivé par défaut). Sans lui, la base de
+    /// connaissance (RAG) n'est pas interrogée ; avec lui, le coût réel de la
+    /// recherche est ajouté au décompte du message.
+    /// </summary>
+    public bool KnowledgeBase { get; set; }
 }
 
 /// <summary>
@@ -433,6 +449,9 @@ public class FastApiChatRequest
     /// exigée par FastAPI /chat depuis la décision 10.4.
     /// </summary>
     public string? ClientMessageId { get; set; }
+
+    /// <summary>Lot 9.7b : mode « base de connaissance » (sérialisé « knowledge_base »).</summary>
+    public bool KnowledgeBase { get; set; }
 }
 
 /// <summary>
