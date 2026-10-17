@@ -287,8 +287,9 @@ public class EntitlementService : IEntitlementService
 
     /// <summary>
     /// Ce que le plan d'un parent apporte à un enfant donné : l'enfant doit
-    /// figurer parmi les <c>children.max</c> premiers liens acceptés (les plus
-    /// anciens, étude 1.4) ; le bonus WinAI par enfant est réparti entre les
+    /// figurer parmi les <c>children.max</c> enfants couverts (choix du parent,
+    /// sinon liens acceptés les plus anciens, étude 1.4, voir
+    /// <see cref="CoveredChildrenAsync"/>) ; le bonus WinAI par enfant est réparti entre les
     /// enfants couverts au-delà de <c>ai.parent_bonus_shares</c> parts (8.10).
     /// </summary>
     public async Task<(bool OpensCatalog, long BonusTokens, string Label)?> ComputeParentDonationAsync(
