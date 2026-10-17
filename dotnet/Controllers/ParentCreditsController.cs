@@ -195,6 +195,101 @@ public class ParentCreditsController : ControllerBase
     }
 
     /// <summary>
+    /// GET /api/parent/payments?limit=50 : historique réel des paiements du
+    /// parent (écran « Paiements » mobile, qui affichait une liste fictive).
+    /// Fusionne, du plus récent au plus ancien :
+    ///   - ses commandes (catalogue, formations, abonnements), payées par
+    ///     Mobile Money ou par le solde : statut, moyen, opérateur ;
+    ///   - les débits de son portefeuille hors commande (achat pour un enfant,
+    ///     cours particuliers, recharge WinAI, licence) et ses recharges.
+    /// Un achat par le solde lié à une commande n'apparaît qu'une fois (la
+    /// commande). « Dépensé ce mois » = commandes payées + débits hors
+    /// commande du mois civil en cours ; les recharges n'en font pas partie.
+    /// </summary>
+    [HttpGet("payments")]
+    public async Task<IActionResult> GetPayments([FromQuery] int limit = 50)
+    {
+        try
+        {
+            if (limit is < 1 or > 200) limit = 50;
+            var parentId = User.GetUserId();
+            var now = DateTime.UtcNow;
+            var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
+            var orders = await _db.Orders.AsNoTracking()
+                .Where(o => o.UserId == parentId && !o.IsDeleted && o.Status.ToLower() != "cancelled")
+                .OrderByDescending(o => o.CreatedAt)
+                .Take(limit)
+                .Select(o => new
+                {
+                    o.Id, o.OrderNumber, o.TotalAmount, o.Status, o.PaymentMethod, o.CreatedAt, o.CompletedDate, o.Notes,
+                    Titles = o.Items.Select(i => i.Subject != null ? i.Subject.Title : i.Course != null ? i.Course.Title : null).ToList(),
+                    Operator = o.Payments.OrderByDescending(p => p.CreatedAt).Select(p => p.Operator).FirstOrDefault(),
+                })
+                .ToListAsync();
+
+            static string OrderStatus(string s) => s.ToLowerInvariant() switch
+            {
+                "completed" => "paid",
+                "refunded" => "refunded",
+                "pending" => "pending",
+                "refund_requested" => "refund_requested",
+                _ => "failed",
+            };
+            static string Method(string? method, string? op)
+            {
+                var m = (method ?? "").ToLowerInvariant();
+                if (m.Contains("balance") || m.Contains("wallet") || m.Contains("solde")) return "Solde";
+                return (op ?? "").ToLowerInvariant() switch
+                {
+                    "mtn" => "MTN Mobile Money",
+                    "orange" => "Orange Money",
+                    "" => "Mobile Money",
+                    var other => other.ToUpperInvariant(),
+                };
+            }
+
+            var items = orders.Select(o =>
+            {
+                var titles = o.Titles.Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
+                var label = titles.Count > 0
+                    ? titles[0] + (titles.Count > 1 ? $" (+{titles.Count - 1})" : "")
+                    : o.OrderNumber.StartsWith("SUB-", StringComparison.OrdinalIgnoreCase)
+                        ? (string.IsNullOrWhiteSpace(o.Notes) ? "Abonnement WinPlus" : o.Notes!.Length > 80 ? o.Notes[..80] : o.Notes)
+                        : $"Commande {o.OrderNumber}";
+                return new ParentPaymentItem("order", o.Id, label, o.TotalAmount, "debit", OrderStatus(o.Status),
+                    Method(o.PaymentMethod, o.Operator), o.CompletedDate ?? o.CreatedAt, o.OrderNumber);
+            }).ToList();
+
+            var orderIds = orders.Select(o => o.Id).ToHashSet();
+            var (walletRows, _) = await _wallet.GetHistoryAsync(parentId, "all", 1, limit);
+            foreach (var w in walletRows)
+            {
+                var src = WalletSources.ForEntryType(w.EntryType);
+                var isRecharge = src == WalletSources.Recharge && w.AmountXaf > 0;
+                var isSpending = w.AmountXaf < 0 && (src == WalletSources.Purchase || src == WalletSources.Tutoring);
+                if (!isRecharge && !isSpending) continue;
+                if (w.SourceType == "Order" && w.SourceId is int oid && orderIds.Contains(oid)) continue;
+                items.Add(new ParentPaymentItem(isRecharge ? "recharge" : "wallet", w.Id, w.Label, Math.Abs(w.AmountXaf),
+                    isRecharge ? "credit" : "debit", w.Status == WalletEntryStatus.Confirmed ? "paid" : w.Status,
+                    isRecharge ? "Mobile Money" : "Solde", w.Date, null));
+            }
+
+            var sorted = items.OrderByDescending(i => i.Date).Take(limit).ToList();
+            var monthSpent = items.Where(i => i.Direction == "debit" && i.Status == "paid" && i.Date >= monthStart).Sum(i => i.AmountXaf);
+            return Ok(new { data = new { items = sorted, monthSpentXaf = monthSpent, currency = "XAF" }, success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting parent payments");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    public sealed record ParentPaymentItem(string Kind, long Id, string Label, decimal AmountXaf, string Direction,
+        string Status, string Method, DateTime Date, string? Reference);
+
+    /// <summary>
     /// Retour d'usage sur les achats faits pour un enfant (inchangé par ce
     /// module, conservé sur le registre historique : l'achat pour enfant par
     /// portefeuille écrit désormais aussi une ligne de registre à titre
