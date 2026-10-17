@@ -92,8 +92,10 @@ public class SessionsController : ControllerBase
         };
         var auth = HttpContext.Request.Headers["Authorization"].ToString();
         if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
-        var res = await client.SendAsync(req, ct);
-        return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+        // Lot 9.7b (18.17) : compte-rendu demandé par le professeur = aide
+        // WinAI (ai.feature.teacher_assist), débitée sur son budget.
+        return await Backend.Services.Entitlements.AiGateProxy.ProxyAsync(this, HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IAiFeatureGate>(),
+            User.GetUserId(), Backend.Services.Entitlements.EntitlementCatalog.AiTeacherAssist, "", client, req, ct);
     }
 
     /// <summary>Enregistre le résumé édité par le professeur avant envoi.</summary>

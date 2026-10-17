@@ -33,10 +33,12 @@ public class AdminCourseController : ControllerBase
     private readonly IAdminAuditService _audit;
     private readonly IFastApiClient _fastApi;
     private readonly ICatalogCommissionService _commission;
+    private readonly Backend.Services.Entitlements.IEntitlementService _entitlements;
 
     public AdminCourseController(ApplicationDbContext db, ILogger<AdminCourseController> logger, INtfyService ntfy, IAdminAuditService audit,
-        IFastApiClient fastApi, ICatalogCommissionService commission)
+        IFastApiClient fastApi, ICatalogCommissionService commission, Backend.Services.Entitlements.IEntitlementService entitlements)
     {
+        _entitlements = entitlements;
         _db = db;
         _logger = logger;
         _ntfy = ntfy;
@@ -120,6 +122,13 @@ public class AdminCourseController : ControllerBase
         {
             var course = await _db.Courses.FirstOrDefaultAsync(c => c.Id == id);
             if (course == null) return NotFound(new { error = "Formation introuvable" });
+
+            // Lot 9.7b : limite de formations publiées simultanément du plan
+            // du professeur (teacher.max_published_courses). Seules les
+            // nouvelles publications sont bloquées ; rien n'est dépublié.
+            var limit = await Backend.Services.Entitlements.CoursePublicationLimits.CheckApproveAsync(
+                _db, _entitlements, course.InstructorId, course.Id, course.Status);
+            if (!limit.Allowed) return Conflict(limit.Refusal);
 
             // Lot 9.7b (F5) : une formation payante jamais évaluée (soumise
             // avant le 9.7b) l'est à l'approbation ; sinon le taux fixé à la

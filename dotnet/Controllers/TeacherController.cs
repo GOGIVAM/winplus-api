@@ -59,8 +59,9 @@ public class TeacherController : ControllerBase
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/class-analysis");
         req.Content = System.Net.Http.Json.JsonContent.Create(body);
         ForwardAuth(req);
-        var res = await PyClient().SendAsync(req, ct);
-        return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+        // Lot 9.7b (18.17) : analyse lancée par le professeur (choix d'un
+        // contenu) = aide WinAI (ai.feature.teacher_assist), débitée.
+        return await AiGateProxy.ProxyAsync(this, Gate, GetCurrentUserId(), EntitlementCatalog.AiTeacherAssist, "", PyClient(), req, ct);
     }
 
     // ── Feature 3  GET /api/teacher/content-impact/{contentId} ─────────────
@@ -528,7 +529,10 @@ public class TeacherController : ControllerBase
         if (alert == null) return NotFound(new { error = "Alerte introuvable" });
         if (alert.Traitee) return Ok(new { alreadyTreated = true });
 
-        string messageText;
+        // Lot 9.7b (18.17) : message rédigé par WinAI à la demande du
+        // professeur (ai.feature.teacher_assist), débité sur son budget.
+        // Droit ou budget indisponible : le message par défaut part quand même.
+        string messageText = "";
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/inactivity-relaunch-message")
@@ -536,9 +540,13 @@ public class TeacherController : ControllerBase
                 Content = System.Net.Http.Json.JsonContent.Create(new { course_title = alert.Course.Title }),
             };
             ForwardAuth(req);
-            var res = await PyClient().SendAsync(req);
-            var json = await res.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
-            messageText = json.TryGetProperty("message_text", out var m) ? m.GetString() ?? "" : "";
+            var (ticket, sent) = await AiGateProxy.SendAsync(Gate, teacherId, EntitlementCatalog.AiTeacherAssist, "", PyClient(), req, HttpContext.RequestAborted);
+            if (ticket.Allowed && sent != null)
+            {
+                using var res = sent;
+                var json = await res.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+                messageText = json.TryGetProperty("message_text", out var m) ? m.GetString() ?? "" : "";
+            }
         }
         catch { messageText = ""; }
         if (string.IsNullOrWhiteSpace(messageText))

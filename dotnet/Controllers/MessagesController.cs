@@ -748,13 +748,24 @@ public class MessagesController : ControllerBase
         }
     }
 
-    private async Task<IActionResult> ProxyToPythonAsync(string path, object payload)
+    private async Task<IActionResult> ProxyToPythonAsync(string path, object payload, bool debited = false)
     {
         var client = _http.CreateClient("FastApiClient");
         var token = HttpContext.Request.Headers.Authorization.FirstOrDefault();
         if (!string.IsNullOrEmpty(token) && token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
             client.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token["Bearer ".Length..]);
+
+        if (debited)
+        {
+            // Lot 9.7b (18.17) : rédaction demandée par l'utilisateur, incluse
+            // dans tous les plans et débitée sur son budget WinAI. Les réponses
+            // rapides proposées automatiquement à l'ouverture d'un message
+            // restent absorbées par la plateforme (affichage automatique).
+            using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = JsonContent.Create(payload) };
+            return await Backend.Services.Entitlements.AiGateProxy.ProxyAsync(this, HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IAiFeatureGate>(),
+                User.GetUserId(), null, "messaging", client, request, HttpContext.RequestAborted, copyStatus: true);
+        }
 
         var res = await client.PostAsJsonAsync(path, payload);
         var body = await res.Content.ReadAsStringAsync();
@@ -770,12 +781,12 @@ public class MessagesController : ControllerBase
     /// <summary>WinAI génère une réponse longue et rédigée pour un message complexe (US-MSG-07).</summary>
     [HttpPost("generate-reply")]
     public Task<IActionResult> GenerateReply([FromBody] GenerateReplyRequest req)
-        => ProxyToPythonAsync("/api/messaging/generate-reply", new { message_text = req.MessageText, context = req.Context });
+        => ProxyToPythonAsync("/api/messaging/generate-reply", new { message_text = req.MessageText, context = req.Context }, debited: true);
 
     /// <summary>WinAI formalise un résumé libre en communication destinée aux parents (US-MSG-10).</summary>
     [HttpPost("parent-report")]
     public Task<IActionResult> ParentReport([FromBody] ParentReportRequest req)
-        => ProxyToPythonAsync("/api/messaging/parent-report", new { student_name = req.StudentName, summary_text = req.SummaryText });
+        => ProxyToPythonAsync("/api/messaging/parent-report", new { student_name = req.StudentName, summary_text = req.SummaryText }, debited: true);
 
     /// <summary>Mes modèles de message enregistrés (US-MSG-08).</summary>
     [HttpGet("templates")]

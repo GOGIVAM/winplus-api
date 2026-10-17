@@ -31,13 +31,16 @@ public class WeeklyGoalSuggestionsController : ControllerBase
     private readonly ApplicationDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<WeeklyGoalSuggestionsController> _logger;
+    private readonly Backend.Services.Entitlements.IAiFeatureGate _gate;
 
     public WeeklyGoalSuggestionsController(
         ApplicationDbContext db,
         IHttpClientFactory httpClientFactory,
-        ILogger<WeeklyGoalSuggestionsController> logger)
+        ILogger<WeeklyGoalSuggestionsController> logger,
+        Backend.Services.Entitlements.IAiFeatureGate gate)
     {
         _db = db;
+        _gate = gate;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
@@ -91,6 +94,14 @@ public class WeeklyGoalSuggestionsController : ControllerBase
         var done = new { studyHours = Math.Round(minutes / 60d, 1), quiz = quizDone, downloads = downloadsDone };
 
         // 1. WinAI. Budget serré : la section doit s'afficher tout de suite.
+        // Lot 9.7b (18.17) : fonction incluse dans tous les plans, débitée
+        // sur le budget WinAI de l'utilisateur au coût réel. Budget épuisé :
+        // on passe directement au calcul local (aiPowered = false).
+        var ticket = await _gate.BeginIncludedAsync(userId, "weekly_goals", ct);
+        var aiBlocked = !ticket.Allowed;
+        var served = false;
+        var observed = 0;
+        if (ticket.Allowed)
         try
         {
             var client = _httpClientFactory.CreateClient("FastApiClient");
@@ -113,7 +124,9 @@ public class WeeklyGoalSuggestionsController : ControllerBase
             if (!string.IsNullOrWhiteSpace(auth))
                 req.Headers.TryAddWithoutValidation("Authorization", auth);
 
-            var res = await client.SendAsync(req, cts.Token);
+            using var res = await client.SendAsync(req, cts.Token);
+            observed = Backend.Services.Entitlements.IAiFeatureGate.TokensOf(res);
+            served = res.IsSuccessStatusCode;
 
             if (res.IsSuccessStatusCode)
             {
@@ -139,6 +152,10 @@ public class WeeklyGoalSuggestionsController : ControllerBase
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             _logger.LogWarning(ex, "WinAI goal-suggestions indisponible, repli local.");
+        }
+        finally
+        {
+            await _gate.CompleteAsync(ticket, served, observedTokens: observed);
         }
 
         // 2. Repli déterministe, mêmes champs.
@@ -175,6 +192,7 @@ public class WeeklyGoalSuggestionsController : ControllerBase
         {
             success = true,
             aiPowered = false,
+            aiQuotaReached = aiBlocked,
             data = new
             {
                 level,

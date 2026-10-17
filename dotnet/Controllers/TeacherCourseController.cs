@@ -5,6 +5,7 @@ using Backend.Data;
 using Backend.Extensions;
 using Backend.Models.Entities;
 using Backend.Services;
+using Backend.Services.Entitlements;
 
 namespace Backend.Controllers;
 
@@ -36,9 +37,14 @@ public class TeacherCourseController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IFastApiClient _fastApi;
     private readonly ICatalogCommissionService _commission;
+    private readonly IEntitlementService _entitlements;
+    private readonly IAiFeatureGate _gate;
 
-    public TeacherCourseController(ApplicationDbContext db, ILogger<TeacherCourseController> logger, ICourseGamificationService gamification, INtfyService ntfy, IHttpClientFactory httpClientFactory, IFastApiClient fastApi, ICatalogCommissionService commission)
+    public TeacherCourseController(ApplicationDbContext db, ILogger<TeacherCourseController> logger, ICourseGamificationService gamification, INtfyService ntfy, IHttpClientFactory httpClientFactory, IFastApiClient fastApi, ICatalogCommissionService commission,
+        IEntitlementService entitlements, IAiFeatureGate gate)
     {
+        _entitlements = entitlements;
+        _gate = gate;
         _fastApi = fastApi;
         _commission = commission;
         _db = db;
@@ -77,6 +83,27 @@ public class TeacherCourseController : ControllerBase
             _logger.LogError(ex, "Error listing teacher courses");
             return StatusCode(500, new { error = "Internal server error" });
         }
+    }
+
+    /// <summary>
+    /// Lot 9.7b : limite de formations publiées simultanément du plan
+    /// (droit teacher.max_published_courses), affichée au professeur.
+    /// GET /api/teacher/courses/publication-limit
+    /// → { max (null si illimité), unlimited, published, pending, remaining }
+    /// </summary>
+    [HttpGet("publication-limit")]
+    public async Task<IActionResult> GetPublicationLimit(CancellationToken ct)
+    {
+        var snap = await CoursePublicationLimits.GetAsync(_db, _entitlements, User.GetUserId(), null, ct);
+        return Ok(new
+        {
+            max = snap.Unlimited ? (long?)null : snap.Max,
+            unlimited = snap.Unlimited,
+            published = snap.Published,
+            pending = snap.Pending,
+            remaining = snap.Remaining,
+            overLimit = !snap.Unlimited && snap.Published > snap.Max,
+        });
     }
 
     /// <summary>
@@ -296,6 +323,12 @@ public class TeacherCourseController : ControllerBase
             var hasLessons = await _db.CourseLessons.AnyAsync(l => l.CourseId == id && l.IsPublished);
             if (!hasLessons)
                 return BadRequest(new { error = "Ajoutez au moins une leçon publiée avant de soumettre" });
+
+            // Lot 9.7b : formations publiées simultanément selon le plan
+            // (teacher.max_published_courses). Les formations publiées et en
+            // attente de validation occupent une place ; rien n'est dépublié.
+            var limit = await CoursePublicationLimits.CheckSubmitAsync(_db, _entitlements, teacherId, id);
+            if (!limit.Allowed) return StatusCode(403, limit.Refusal);
 
             // Lot 9.7b (F5) : évaluation WinAI à la soumission, qui fixe la part
             // de la plateforme (grille 10 à 60 %) sur la version soumise.
@@ -823,23 +856,39 @@ public class TeacherCourseController : ControllerBase
             : inactive;
         if (targets.Count == 0) return Ok(new { sent = 0 });
 
-        string messageText;
-        try
+        // Lot 9.7b (18.17) : message rédigé par WinAI à la demande du
+        // professeur = aide de publication (ai.feature.teacher_assist),
+        // débitée sur son budget. Fonction ou budget indisponible : le
+        // message par défaut part quand même (la relance n'est jamais bloquée).
+        string messageText = "";
+        var ticket = await _gate.BeginAsync(teacherId, EntitlementCatalog.AiTeacherAssist);
+        if (ticket.Allowed)
         {
-            var client = _httpClientFactory.CreateClient("FastApiClient");
-            using var httpReq = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/inactivity-relaunch-message")
+            var served = false;
+            var observed = 0;
+            try
             {
-                Content = System.Net.Http.Json.JsonContent.Create(new { course_title = course.Title })
-            };
-            var auth = HttpContext.Request.Headers["Authorization"].ToString();
-            if (!string.IsNullOrEmpty(auth)) httpReq.Headers.TryAddWithoutValidation("Authorization", auth);
-            var res = await client.SendAsync(httpReq);
-            var json = await res.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
-            messageText = json.TryGetProperty("message_text", out var m) ? m.GetString() ?? "" : "";
-        }
-        catch
-        {
-            messageText = "";
+                var client = _httpClientFactory.CreateClient("FastApiClient");
+                using var httpReq = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/inactivity-relaunch-message")
+                {
+                    Content = System.Net.Http.Json.JsonContent.Create(new { course_title = course.Title })
+                };
+                var auth = HttpContext.Request.Headers["Authorization"].ToString();
+                if (!string.IsNullOrEmpty(auth)) httpReq.Headers.TryAddWithoutValidation("Authorization", auth);
+                var res = await client.SendAsync(httpReq);
+                observed = IAiFeatureGate.TokensOf(res);
+                served = res.IsSuccessStatusCode;
+                var json = await res.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+                messageText = json.TryGetProperty("message_text", out var m) ? m.GetString() ?? "" : "";
+            }
+            catch
+            {
+                messageText = "";
+            }
+            finally
+            {
+                await _gate.CompleteAsync(ticket, served, observedTokens: observed);
+            }
         }
         if (string.IsNullOrWhiteSpace(messageText))
             messageText = $"On continue « {course.Title} » ? Reprends où tu t'es arrêté(e), je suis là si tu as des questions !";
@@ -892,6 +941,13 @@ public class TeacherCourseController : ControllerBase
     [HttpPost("generate-syllabus")]
     public async Task<IActionResult> GenerateSyllabus([FromBody] object body, CancellationToken ct)
     {
+        // Lot 9.7b (18.17) : création de formation assistée (droit
+        // ai.feature.course_builder, plans Pro et Expert), débitée sur le
+        // budget WinAI du professeur au coût réel annoncé par FastAPI.
+        var ticket = await _gate.BeginAsync(User.GetUserId(), EntitlementCatalog.AiCourseBuilder, ct);
+        if (!ticket.Allowed) return ticket.Refusal!;
+        var served = false;
+        var observed = 0;
         try
         {
             var client = _httpClientFactory.CreateClient("FastApiClient");
@@ -902,6 +958,8 @@ public class TeacherCourseController : ControllerBase
             var auth = HttpContext.Request.Headers["Authorization"].ToString();
             if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
             var res = await client.SendAsync(req, ct);
+            observed = IAiFeatureGate.TokensOf(res);
+            served = res.IsSuccessStatusCode;
             Response.StatusCode = (int)res.StatusCode;
             return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
         }
@@ -912,6 +970,10 @@ public class TeacherCourseController : ControllerBase
             // indiscernable d'un vrai bug applicatif côté client.
             _logger.LogError(ex, "Service IA injoignable pour generate-syllabus");
             return StatusCode(503, new { success = false, error = "Le service de génération WinAI est temporairement indisponible. Réessaie dans quelques instants." });
+        }
+        finally
+        {
+            await _gate.CompleteAsync(ticket, served, observedTokens: observed);
         }
     }
 
@@ -928,6 +990,11 @@ public class TeacherCourseController : ControllerBase
         {
             var teacherId = User.GetUserId();
             if (await OwnCourse(id, teacherId) == null) return NotFound(new { error = "Formation introuvable" });
+            // Lot 9.7b : l'import d'un syllabus fait partie de la création de
+            // formation assistée (ai.feature.course_builder). Aucun appel au
+            // modèle ici : contrôle du droit seul, sans débit.
+            var refusal = await _gate.RequireAsync(teacherId, EntitlementCatalog.AiCourseBuilder);
+            if (refusal != null) return refusal;
             if (request.Weeks == null || request.Weeks.Count == 0)
                 return BadRequest(new { error = "Aucune semaine à importer." });
 

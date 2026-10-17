@@ -51,7 +51,18 @@ public class AssignmentsController : ControllerBase
                     };
                     var auth = HttpContext.Request.Headers["Authorization"].ToString();
                     if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
-                    var res = await client.SendAsync(req);
+                    // Lot 9.7b (18.17) : barème WinAI = correction assistée
+                    // (ai.feature.correction_assist), débitée sur le budget du
+                    // professeur. Droit ou budget absent : devoir créé sans barème.
+                    var gate = HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IAiFeatureGate>();
+                    var (ticket, sent) = await Backend.Services.Entitlements.AiGateProxy.SendAsync(gate, teacherId,
+                        Backend.Services.Entitlements.EntitlementCatalog.AiCorrectionAssist, "", client, req, HttpContext.RequestAborted);
+                    if (!ticket.Allowed)
+                    {
+                        return Ok(new { data = assignment, success = true, rubricSkipped = true,
+                            rubricMessage = "Devoir créé sans barème WinAI : la correction assistée n'est pas incluse dans votre plan ou votre usage WinAI est épuisé." });
+                    }
+                    using var res = sent!;
                     if (res.IsSuccessStatusCode)
                     {
                         var rubricJson = await res.Content.ReadAsStringAsync();

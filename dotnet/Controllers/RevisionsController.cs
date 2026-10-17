@@ -365,9 +365,16 @@ public class RevisionsController : ControllerBase
         if (userId == 0)
             return Unauthorized(new { message = "User not authenticated" });
 
+        // Lot 9.7b (18.17) : fiche générée par WinAI à la demande, incluse
+        // dans tous les plans et débitée sur le budget au coût réel.
+        var gate = HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IAiFeatureGate>();
+        var ticket = await gate.BeginIncludedAsync(userId, "revision_sheet", HttpContext.RequestAborted);
+        if (!ticket.Allowed) return (ActionResult)ticket.Refusal!;
+        var served = false;
         try
         {
             var revision = await _revisionService.GenerateAIRevisionAsync(userId, request?.Subject, request?.Topic, request?.Difficulty);
+            served = true;
             return Ok(revision);
         }
         catch (ArgumentException ex)
@@ -377,6 +384,10 @@ public class RevisionsController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return StatusCode(503, new { message = ex.Message });
+        }
+        finally
+        {
+            await gate.CompleteAsync(ticket, served);
         }
     }
 
@@ -410,9 +421,16 @@ public class RevisionsController : ControllerBase
         if (!linked)
             return StatusCode(403, new { message = "Cet enfant n'est pas lié à votre compte." });
 
+        // Lot 9.7b (18.17) : demandée par le parent, débitée sur SON budget
+        // WinAI (fonction incluse dans tous les plans).
+        var gate = HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IAiFeatureGate>();
+        var ticket = await gate.BeginIncludedAsync(parentId, "revision_sheet", HttpContext.RequestAborted);
+        if (!ticket.Allowed) return (ActionResult)ticket.Refusal!;
+        var served = false;
         try
         {
             var revision = await _revisionService.GenerateAIRevisionAsync(request.ChildId, request.Subject, request.Topic, request.Difficulty);
+            served = true;
 
             var message = request.NotifyWithParentName
                 ? $"Ton parent t'a préparé une fiche de révision sur {revision.Subject}."
@@ -437,6 +455,10 @@ public class RevisionsController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return StatusCode(503, new { message = ex.Message });
+        }
+        finally
+        {
+            await gate.CompleteAsync(ticket, served);
         }
     }
 

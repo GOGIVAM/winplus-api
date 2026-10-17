@@ -31,7 +31,24 @@ public sealed class AiFeatureTicket
 public interface IAiFeatureGate
 {
     Task<AiFeatureTicket> BeginAsync(int userId, string featureKey, CancellationToken ct = default);
+
+    /// <summary>
+    /// Fonction IA incluse dans tous les plans (aucun interrupteur par plan :
+    /// fiche de révision, objectifs de la semaine, aides de messagerie…), mais
+    /// débitée sur le même budget de tokens que le chat (18.17). Seule la
+    /// réserve et le décompte s'appliquent ; <paramref name="source"/> est le
+    /// nom court inscrit au journal (préfixe « f: », 20 caractères au plus).
+    /// </summary>
+    Task<AiFeatureTicket> BeginIncludedAsync(int userId, string source, CancellationToken ct = default);
+
     Task CompleteAsync(AiFeatureTicket ticket, bool served, int estimatedTokens = 0, int observedTokens = 0);
+
+    /// <summary>
+    /// Vrai si le droit est ouvert, sans réserve de tokens (étape sans appel
+    /// au modèle mais réservée au même droit, ex. import d'un syllabus).
+    /// Renvoie la réponse 403 à renvoyer sinon.
+    /// </summary>
+    Task<IActionResult?> RequireAsync(int userId, string featureKey, CancellationToken ct = default);
 
     /// <summary>Tokens annoncés par une réponse FastAPI lue sans IFastApiClient.</summary>
     static int TokensOf(System.Net.Http.HttpResponseMessage response) =>
@@ -59,26 +76,38 @@ public class AiFeatureGate : IAiFeatureGate
         return s.Length <= 20 ? s : s[..20];
     }
 
+    /// <summary>Réponse 403 « fonction absente du plan ».</summary>
+    public static IActionResult NotInPlan(string featureKey)
+    {
+        var label = EntitlementCatalog.Find(featureKey)?.Label ?? featureKey;
+        return new ObjectResult(new
+        {
+            error = $"« {label} » n'est pas inclus dans votre plan. Passez à un plan supérieur pour l'utiliser.",
+            code = "feature_not_in_plan",
+            feature = featureKey,
+            upgradeRequired = true,
+        }) { StatusCode = 403 };
+    }
+
+    public async Task<IActionResult?> RequireAsync(int userId, string featureKey, CancellationToken ct = default)
+    {
+        var ent = await _entitlements.GetAsync(userId, ct);
+        return ent.Has(featureKey) ? null : NotInPlan(featureKey);
+    }
+
     public async Task<AiFeatureTicket> BeginAsync(int userId, string featureKey, CancellationToken ct = default)
     {
         var ent = await _entitlements.GetAsync(userId, ct);
         if (!ent.Has(featureKey))
-        {
-            var label = EntitlementCatalog.Find(featureKey)?.Label ?? featureKey;
-            return new AiFeatureTicket
-            {
-                UserId = userId,
-                FeatureKey = featureKey,
-                Refusal = new ObjectResult(new
-                {
-                    error = $"« {label} » n'est pas inclus dans votre plan. Passez à un plan supérieur pour l'utiliser.",
-                    code = "feature_not_in_plan",
-                    feature = featureKey,
-                    upgradeRequired = true,
-                }) { StatusCode = 403 },
-            };
-        }
+            return new AiFeatureTicket { UserId = userId, FeatureKey = featureKey, Refusal = NotInPlan(featureKey) };
+        return await ReserveAsync(userId, featureKey, ct);
+    }
 
+    public Task<AiFeatureTicket> BeginIncludedAsync(int userId, string source, CancellationToken ct = default) =>
+        ReserveAsync(userId, source, ct);
+
+    private async Task<AiFeatureTicket> ReserveAsync(int userId, string featureKey, CancellationToken ct)
+    {
         // Réinitialise le compteur de l'en-tête : seuls les appels de CETTE fonction comptent.
         _fastApi.ConsumeWinAiTokens();
         var decision = await _quota.CheckAndReserveAsync(userId, null, SourceFor(featureKey), ct);

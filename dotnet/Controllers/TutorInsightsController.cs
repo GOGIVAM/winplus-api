@@ -57,9 +57,10 @@ public class TutorInsightsController : ControllerBase
         };
         var auth = HttpContext.Request.Headers["Authorization"].ToString();
         if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
-        var res = await client.SendAsync(req, ct);
-        Response.StatusCode = (int)res.StatusCode;
-        return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+        // Lot 9.7b (18.17) : fiche demandée par le répétiteur = aide WinAI
+        // (ai.feature.teacher_assist), débitée sur son budget.
+        return await Backend.Services.Entitlements.AiGateProxy.ProxyAsync(this, HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IAiFeatureGate>(),
+            tutorUserId, Backend.Services.Entitlements.EntitlementCatalog.AiTeacherAssist, "", client, req, ct, copyStatus: true);
     }
 
     /// <summary>Enregistre la fiche (générée puis éventuellement éditée par le répétiteur) avant partage.</summary>
@@ -102,7 +103,13 @@ public class TutorInsightsController : ControllerBase
         };
         var auth = HttpContext.Request.Headers["Authorization"].ToString();
         if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
-        var res = await client.SendAsync(req, ct);
+        // Lot 9.7b (18.17) : rapport demandé à la main = aide WinAI débitée
+        // sur le budget du répétiteur. Le cycle automatique du 1er du mois
+        // (TutorCoachingReportService) reste absorbé par la plateforme.
+        var (ticket, sent) = await Backend.Services.Entitlements.AiGateProxy.SendAsync(HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IAiFeatureGate>(),
+            tutorUserId, Backend.Services.Entitlements.EntitlementCatalog.AiTeacherAssist, "", client, req, ct);
+        if (!ticket.Allowed) return ticket.Refusal!;
+        using var res = sent!;
         var body = await res.Content.ReadAsStringAsync(ct);
         if (!res.IsSuccessStatusCode)
         {

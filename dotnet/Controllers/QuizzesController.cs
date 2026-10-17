@@ -153,9 +153,17 @@ public class QuizzesController : ControllerBase
         if (userId == 0)
             return Unauthorized(new { message = "User not authenticated" });
 
+        // Lot 9.7b (18.17) : quiz généré par WinAI = droit
+        // ai.feature.adaptive_quiz, débité sur le budget au coût réel
+        // (en-tête X-WinAI-Tokens relevé par IFastApiClient).
+        var gate = HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IAiFeatureGate>();
+        var ticket = await gate.BeginAsync(userId, Backend.Services.Entitlements.EntitlementCatalog.AiAdaptiveQuiz, HttpContext.RequestAborted);
+        if (!ticket.Allowed) return (ActionResult)ticket.Refusal!;
+        var served = false;
         try
         {
             var quiz = await _quizService.GenerateAIQuizAsync(userId, request?.Subject, request?.Topic, request?.Difficulty);
+            served = true;
             return Ok(quiz);
         }
         catch (ArgumentException ex)
@@ -168,6 +176,10 @@ public class QuizzesController : ControllerBase
         {
             // Échec réel de la génération IA (DeepSeek indisponible/vide) : vraie panne.
             return StatusCode(503, new { message = ex.Message });
+        }
+        finally
+        {
+            await gate.CompleteAsync(ticket, served);
         }
     }
 
