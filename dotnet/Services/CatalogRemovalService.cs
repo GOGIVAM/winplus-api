@@ -48,10 +48,26 @@ public class CatalogRemovalService : ICatalogRemovalService
         _db.OrderItems.AsNoTracking()
             .Where(oi => oi.SubjectId == subjectId && oi.Order.UserId != null && PaidOrderStatus.All.Contains(oi.Order.Status.ToLower()));
 
+    /// <summary>
+    /// Montant TTC réellement payé pour une ligne (décision du 2026-10-17) :
+    /// `PriceAtPurchase` est le HT, le client a payé le TTC de la commande. La
+    /// ligne reçoit sa part du total payé au prorata de son HT, ce qui tient
+    /// compte d'une remise appliquée à la commande.
+    /// </summary>
+    internal static decimal PaidInclTax(decimal lineExclTax, decimal orderTotalPaid, decimal orderExclTaxSum)
+    {
+        if (lineExclTax <= 0m) return 0m;
+        if (orderExclTaxSum <= 0m || orderTotalPaid <= 0m) return VatPolicy.LegacyTotalInclTax(lineExclTax);
+        return decimal.Round(orderTotalPaid * lineExclTax / orderExclTaxSum, 0, MidpointRounding.AwayFromZero);
+    }
+
     public async Task<CatalogRemovalImpact> GetImpactAsync(int subjectId)
     {
-        var rows = await PaidItems(subjectId).Select(oi => new { oi.Order.UserId, oi.PriceAtPurchase }).ToListAsync();
-        return new CatalogRemovalImpact(rows.Select(r => r.UserId).Distinct().Count(), rows.Sum(r => r.PriceAtPurchase));
+        var rows = await PaidItems(subjectId)
+            .Select(oi => new { oi.Order.UserId, oi.PriceAtPurchase, oi.Order.TotalAmount, ExclSum = oi.Order.Items.Sum(x => x.PriceAtPurchase) })
+            .ToListAsync();
+        return new CatalogRemovalImpact(rows.Select(r => r.UserId).Distinct().Count(),
+            rows.Sum(r => PaidInclTax(r.PriceAtPurchase, r.TotalAmount, r.ExclSum)));
     }
 
     public async Task<CatalogRemovalResult?> RemoveAsync(int subjectId)
@@ -60,7 +76,7 @@ public class CatalogRemovalService : ICatalogRemovalService
         if (subject == null) return null;
 
         var paidItems = await PaidItems(subjectId)
-            .Select(oi => new { oi.Id, oi.PriceAtPurchase, BuyerId = oi.Order.UserId })
+            .Select(oi => new { oi.Id, oi.PriceAtPurchase, BuyerId = oi.Order.UserId, oi.Order.TotalAmount, ExclSum = oi.Order.Items.Sum(x => x.PriceAtPurchase) })
             .ToListAsync();
 
         var refunded = new HashSet<int>();
@@ -70,12 +86,13 @@ public class CatalogRemovalService : ICatalogRemovalService
         {
             try
             {
-                if (item.PriceAtPurchase > 0)
+                var refundXaf = PaidInclTax(item.PriceAtPurchase, item.TotalAmount, item.ExclSum);
+                if (refundXaf > 0)
                 {
                     await _wallet.PostAsync(new WalletEntry(item.BuyerId, WalletEntryTypes.ContentRemovalRefund,
-                        item.PriceAtPurchase, $"content_removal_refund:orderitem:{item.Id}",
+                        refundXaf, $"content_removal_refund:orderitem:{item.Id}",
                         $"Remboursement : « {subject.Title} » retiré de la vente", "OrderItem", item.Id));
-                    refundedXaf += item.PriceAtPurchase;
+                    refundedXaf += refundXaf;
                 }
 
                 var saleEntry = await _wallet.FindByKeyAsync(WalletService.CatalogSaleKey(item.Id));
@@ -87,7 +104,7 @@ public class CatalogRemovalService : ICatalogRemovalService
 
                 refunded.Add(item.BuyerId!.Value);
                 await _ntfy.PublishAsync($"winplus-user-{item.BuyerId}", "Contenu retiré de la vente",
-                    $"« {subject.Title} » n'est plus disponible sur WinPlus. Le montant payé ({item.PriceAtPurchase:0} XAF) " +
+                    $"« {subject.Title} » n'est plus disponible sur WinPlus. Le montant payé ({refundXaf:0} XAF) " +
                     "a été crédité sur votre portefeuille WinPlus.",
                     userId: item.BuyerId, type: "ContentRemoved", relatedEntityType: "subject", relatedEntityId: subjectId);
             }
