@@ -39,6 +39,7 @@ public static class EntitlementCatalog
 
     // Catalogue
     public const string CatalogAccess = "catalog.access";
+    public const string CatalogPreviewPages = "catalog.preview_pages";
 
     // WinAI
     public const string AiReferenceTokens = "ai.reference_tokens";
@@ -85,6 +86,10 @@ public static class EntitlementCatalog
         // ContentAccessService.HasPaidContentAccessAsync
         new(CatalogAccess, EntitlementType.Boolean, "", "false", "Catalogue complet",
             "Lecture dans la visionneuse de tout le catalogue payant (épreuves, corrigés, livres), sans téléchargement.", ST, Group: "Catalogue"),
+        // SubjectsController.ViewStream (aperçu servi limité par le serveur)
+        new(CatalogPreviewPages, EntitlementType.Integer, "pages", "3", "Aperçu du catalogue",
+            "Premières pages lisibles d'une épreuve ou d'un livre payant non acquis (visionneuse, filigrane, sans téléchargement).",
+            ST, ShowOnPricing: false, Group: "Catalogue"),
 
         // AiQuotaService (référence ; semaine = ÷4, session = ÷3 de la semaine)
         new(AiReferenceTokens, EntitlementType.Integer, "tokens", "200000", "Usage WinAI",
@@ -121,7 +126,7 @@ public static class EntitlementCatalog
         // CorrectionsController (correction assistée)
         new(AiCorrectionAssist, EntitlementType.Boolean, "", "false", "Correction assistée",
             "WinAI propose une correction des devoirs.", T, Group: "WinAI"),
-        // Exposé au chantier B (syllabus de formation) : AiFeatureGate.EnsureAsync(course_builder)
+        // TeacherCourseController generate-syllabus (débit) et import-syllabus (droit seul)
         new(AiCourseBuilder, EntitlementType.Boolean, "", "false", "Création de formation assistée",
             "Génération et import de syllabus de formation.", T, Group: "WinAI"),
         // EntitlementService (bonus parent → enfants couverts)
@@ -151,7 +156,7 @@ public static class EntitlementCatalog
             "Classes actives simultanées.", T, AllowUnlimited: true, Group: "Professeur"),
         new(TeacherMaxStudentsPerClass, EntitlementType.Integer, "élèves", "30", "Élèves par classe",
             "Élèves par classe.", T, AllowUnlimited: true, Group: "Professeur"),
-        // Exposé au chantier B (publication des formations)
+        // CoursePublicationLimits : soumission (TeacherCourseController) et approbation (AdminCourseController)
         new(TeacherMaxPublishedCourses, EntitlementType.Integer, "formations", "1", "Formations publiées",
             "Formations publiées simultanément (le catalogue reste illimité).", T, AllowUnlimited: true, Group: "Professeur"),
 

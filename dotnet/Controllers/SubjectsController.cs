@@ -461,7 +461,25 @@ public class SubjectsController : ControllerBase
             return BadRequest(new { error = "file_url requis" });
 
         request.FileUrl = _storage.PresignGetUrl(request.FileUrl, TimeSpan.FromMinutes(10));
-        var result = await _fastApiClient.PostAsync<AnalyzeContentUploadResponse>("/api/teacher/analyze-content-upload", request);
+        // Lot 9.7b (18.17) : préremplissage demandé par l'auteur = aide de
+        // publication (ai.feature.teacher_assist), débitée sur son budget au
+        // coût réel. Droit ou budget absent : formulaire vide, sans erreur.
+        // L'évaluation de la commission à la création reste à la charge de la
+        // plateforme (EvaluateAndStoreCommissionAsync).
+        AnalyzeContentUploadResponse? result = null;
+        var gate = HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IAiFeatureGate>();
+        var ticket = await gate.BeginAsync(User.GetUserId(), Backend.Services.Entitlements.EntitlementCatalog.AiTeacherAssist);
+        if (ticket.Allowed)
+        {
+            try
+            {
+                result = await _fastApiClient.PostAsync<AnalyzeContentUploadResponse>("/api/teacher/analyze-content-upload", request);
+            }
+            finally
+            {
+                await gate.CompleteAsync(ticket, served: result != null);
+            }
+        }
         // Module 7, §7B : « le professeur doit pouvoir comprendre, avant
         // publication, quelle part lui revient ». Le score vient de Python,
         // mais la traduction en part plateforme reste une responsabilité du
@@ -851,7 +869,33 @@ public class SubjectsController : ControllerBase
     /// </summary>
     private enum ViewerDocumentKind { Document, Correction }
 
-    private sealed record ViewerDocument(Subject Subject, Exam? Exam, string StorageUrl, ViewerDocumentKind Kind);
+    /// <param name="PreviewPages">
+    /// Lot 9.7b (catalog.preview_pages) : null = document complet ; sinon
+    /// nombre maximal de pages d'aperçu que le serveur a le droit de servir.
+    /// </param>
+    private sealed record ViewerDocument(Subject Subject, Exam? Exam, string StorageUrl, ViewerDocumentKind Kind, int? PreviewPages = null);
+
+    /// <summary>En-têtes de l'aperçu (lus par les visionneuses web et mobile).</summary>
+    public const string PreviewPagesHeader = "X-WinPlus-Preview-Pages";
+    public const string TotalPagesHeader = "X-WinPlus-Total-Pages";
+
+    /// <summary>
+    /// Accès d'un compte à un contenu payant du catalogue : complet (gratuit,
+    /// acheté, abonnement, parent, licence, formation), aperçu (droit
+    /// catalog.preview_pages, énoncé ou livre seulement), ou fermé.
+    /// </summary>
+    private async Task<(bool Full, int PreviewPages)> ResolveAccessAsync(int userId, Subject subject, ViewerDocumentKind kind, int? courseId)
+    {
+        if (subject.Price <= 0) return (true, 0);
+        var viaCourse = courseId != null && await IsReadableThroughCourseAsync(userId, subject.Id, courseId.Value);
+        if (viaCourse || await _contentAccess.HasPaidContentAccessAsync(userId, subject, User.IsAdmin()))
+            return (true, 0);
+        if (kind == ViewerDocumentKind.Correction) return (false, 0);
+        var entitlements = HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IEntitlementService>();
+        var ent = await entitlements.GetAsync(userId);
+        var pages = ent.Int(Backend.Services.Entitlements.EntitlementCatalog.CatalogPreviewPages);
+        return (false, (int)Math.Clamp(pages, 0, 1000));
+    }
 
     /// <summary>
     /// Vérifie qu'un utilisateur a le droit de consulter un sujet (gratuit,
@@ -870,6 +914,7 @@ public class SubjectsController : ControllerBase
         var subject = await _subjectService.GetSubjectByIdAsync(id);
         if (subject == null)
             return (null, NotFound(new { error = "Document introuvable." }));
+        int? preview = null;
 
         // Un brouillon n'est consultable que par son auteur ou un
         // administrateur, comme dans le catalogue (Module 17).
@@ -890,9 +935,22 @@ public class SubjectsController : ControllerBase
             // formation se lit dans la visionneuse par les inscrits de cette
             // formation (et par son auteur), sans achat séparé et toujours
             // sans téléchargement : même filigrane, même absence d'adresse.
-            var viaCourse = courseId != null && await IsReadableThroughCourseAsync(userId, id, courseId.Value);
-            if (!viaCourse && !await _contentAccess.HasPaidContentAccessAsync(userId, subject, User.IsAdmin()))
-                return (null, StatusCode(403, new { error = "Veuillez acheter ce contenu pour pouvoir y accéder." }));
+            // Lot 9.7b (catalog.preview_pages) : sans accès, l'énoncé ou le
+            // livre reste lisible en aperçu ; seules ses N premières pages
+            // sont servies (découpe côté serveur, voir ViewStream).
+            var (full, previewPages) = await ResolveAccessAsync(userId, subject, kind, courseId);
+            if (!full)
+            {
+                if (previewPages <= 0)
+                    return (null, StatusCode(403, new
+                    {
+                        error = kind == ViewerDocumentKind.Correction
+                            ? "Le corrigé se débloque avec l'achat de ce contenu ou un abonnement qui inclut le catalogue."
+                            : "Veuillez acheter ce contenu pour pouvoir y accéder.",
+                        code = "content_locked",
+                    }));
+                preview = previewPages;
+            }
         }
 
         if (kind == ViewerDocumentKind.Correction)
@@ -905,7 +963,7 @@ public class SubjectsController : ControllerBase
             if (examWithCorrection == null)
                 return (null, NotFound(new { error = "Le corrigé n'est pas encore disponible pour cette épreuve." }));
 
-            return (new ViewerDocument(subject, examWithCorrection, examWithCorrection.CorrectionUrl!, kind), null);
+            return (new ViewerDocument(subject, examWithCorrection, examWithCorrection.CorrectionUrl!, kind, preview), null);
         }
 
         var exam = await _context.Exams
@@ -914,7 +972,7 @@ public class SubjectsController : ControllerBase
             .FirstOrDefaultAsync();
 
         if (exam != null)
-            return (new ViewerDocument(subject, exam, exam.DocumentUrl!, kind), null);
+            return (new ViewerDocument(subject, exam, exam.DocumentUrl!, kind, preview), null);
 
         // Livre du catalogue : pas d'Exam, le fichier vit sur le CourseContent.
         var bookUrl = await _context.CourseContents.AsNoTracking()
@@ -924,7 +982,7 @@ public class SubjectsController : ControllerBase
             .FirstOrDefaultAsync();
 
         if (!string.IsNullOrEmpty(bookUrl))
-            return (new ViewerDocument(subject, null, bookUrl, kind), null);
+            return (new ViewerDocument(subject, null, bookUrl, kind, preview), null);
 
         return (null, NotFound(new { error = "Le fichier n'est pas encore disponible pour ce contenu." }));
     }
@@ -967,6 +1025,35 @@ public class SubjectsController : ControllerBase
     }
 
     /// <summary>
+    /// Lot 9.7b : ce que la visionneuse peut montrer à l'utilisateur connecté
+    /// pour ce contenu, sans charger le document.
+    /// GET /api/subjects/{id}/view-access?courseId=
+    /// → { document: full|preview|locked, correction: full|locked, previewPages }
+    /// « preview » : seules les previewPages premières pages sont servies par
+    /// /view (droit catalog.preview_pages ; le nombre total de pages est
+    /// renvoyé par /view dans l'en-tête X-WinPlus-Total-Pages).
+    /// </summary>
+    [HttpGet("{id}/view-access")]
+    [Authorize]
+    public async Task<IActionResult> ViewAccess(int id, [FromQuery] int? courseId = null)
+    {
+        var subject = await _subjectService.GetSubjectByIdAsync(id);
+        var (viewerId, viewerIsAdmin) = CurrentViewer();
+        if (subject == null || !IsVisibleToViewer(subject, viewerId, viewerIsAdmin))
+            return NotFound(new { error = "Document introuvable." });
+        var userId = User.GetUserId();
+        var (fullDoc, previewPages) = await ResolveAccessAsync(userId, subject, ViewerDocumentKind.Document, courseId);
+        var (fullCorrection, _) = await ResolveAccessAsync(userId, subject, ViewerDocumentKind.Correction, courseId);
+        return Ok(new
+        {
+            document = fullDoc ? "full" : previewPages > 0 ? "preview" : "locked",
+            correction = fullCorrection ? "full" : "locked",
+            previewPages = fullDoc ? 0 : previewPages,
+            price = subject.Price,
+        });
+    }
+
+    /// <summary>
     /// Sert le PDF d'une épreuve, de son corrigé ou d'un livre à la
     /// visionneuse intégrée (web : pdf.js, mobile : lecteur embarqué), avec un
     /// filigrane nominatif incrusté côté serveur sur chaque page (Module 44,
@@ -991,6 +1078,8 @@ public class SubjectsController : ControllerBase
         var userId = User.GetUserId();
 
         byte[] stamped;
+        int? servedPreviewPages = null;
+        var totalPages = 0;
         try
         {
             var bucket = _storage.Bucket;
@@ -1002,11 +1091,34 @@ public class SubjectsController : ControllerBase
             // Le filigrane est obligatoire : si l'incrustation échoue, on
             // refuse la consultation plutôt que de servir le fichier d'origine.
             var label = await BuildWatermarkLabelAsync(userId);
-            stamped = await _watermark.StampAsync(obj.ResponseStream, label, HttpContext.RequestAborted);
+            if (doc.PreviewPages is int allowed)
+            {
+                // Lot 9.7b (catalog.preview_pages) : aperçu découpé ici. Le
+                // PDF renvoyé ne contient que les premières pages ; il reste
+                // toujours au moins une page réservée à l'achat ou à
+                // l'abonnement (un document d'une page n'a pas d'aperçu).
+                using var buffer = new MemoryStream();
+                await obj.ResponseStream.CopyToAsync(buffer, HttpContext.RequestAborted);
+                var bytes = buffer.ToArray();
+                totalPages = PdfPageCounter.Count(bytes);
+                var pages = CatalogPreview.ServedPages(allowed, totalPages);
+                if (pages <= 0)
+                    return StatusCode(403, new { error = "Ce document est trop court pour un aperçu. Achetez-le ou abonnez-vous pour le lire.", code = "preview_unavailable" });
+                stamped = await _watermark.StampPreviewAsync(new MemoryStream(bytes), label, pages, HttpContext.RequestAborted);
+                servedPreviewPages = pages;
+            }
+            else
+            {
+                stamped = await _watermark.StampAsync(obj.ResponseStream, label, HttpContext.RequestAborted);
+            }
         }
         catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
         {
             return new EmptyResult();
+        }
+        catch (PdfPreviewUnavailableException)
+        {
+            return StatusCode(403, new { error = "Ce document est trop court pour un aperçu. Achetez-le ou abonnez-vous pour le lire.", code = "preview_unavailable" });
         }
         catch (Exception ex)
         {
@@ -1026,7 +1138,7 @@ public class SubjectsController : ControllerBase
         // l'élève n'ait rien demandé)  ça ne doit jamais compter comme une
         // consultation ni apparaître dans l'historique. Le corrigé n'est
         // pas compté non plus : il accompagne une épreuve déjà comptée.
-        if (!preview && docKind == ViewerDocumentKind.Document)
+        if (!preview && servedPreviewPages == null && docKind == ViewerDocumentKind.Document)
         {
             try
             {
@@ -1062,6 +1174,12 @@ public class SubjectsController : ControllerBase
         Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private";
         Response.Headers["Pragma"] = "no-cache";
         Response.Headers["X-Content-Type-Options"] = "nosniff";
+        if (servedPreviewPages is int served)
+        {
+            Response.Headers[PreviewPagesHeader] = served.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (totalPages > 0)
+                Response.Headers[TotalPagesHeader] = totalPages.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
         return File(stamped, "application/pdf");
     }
 

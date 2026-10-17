@@ -150,7 +150,7 @@ builder.Services.AddCors(options =>
             .AllowCredentials()
             .WithMethods("GET", "POST", "PUT", "DELETE", "PATCH")
                 .WithHeaders("Content-Type", "Authorization", "X-Requested-With", "Accept")
-            .WithExposedHeaders("Content-Disposition");
+            .WithExposedHeaders("Content-Disposition", "X-WinPlus-Preview-Pages", "X-WinPlus-Total-Pages");
     });
 });
 

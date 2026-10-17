@@ -33,13 +33,38 @@ public interface IDocumentWatermarkService
     /// jamais servir le document d'origine à la place.
     /// </summary>
     Task<byte[]> StampAsync(Stream sourcePdf, string label, CancellationToken ct = default);
+
+    /// <summary>
+    /// Lot 9.7b (droit catalog.preview_pages) : comme <see cref="StampAsync"/>,
+    /// mais le PDF renvoyé ne contient que les <paramref name="pages"/>
+    /// premières pages du document (les autres ne quittent jamais le
+    /// serveur). Lève <see cref="PdfPreviewUnavailableException"/> si le
+    /// document ne compte pas au moins une page de plus que l'aperçu : un
+    /// aperçu ne livre jamais le document entier.
+    /// </summary>
+    Task<byte[]> StampPreviewAsync(Stream sourcePdf, string label, int pages, CancellationToken ct = default);
+}
+
+/// <summary>Le document est trop court pour un aperçu partiel.</summary>
+public sealed class PdfPreviewUnavailableException : Exception
+{
+    public PdfPreviewUnavailableException(string message, Exception? inner = null) : base(message, inner) { }
 }
 
 public sealed class DocumentWatermarkService : IDocumentWatermarkService
 {
     private const int MaxLabelLength = 90;
 
-    public async Task<byte[]> StampAsync(Stream sourcePdf, string label, CancellationToken ct = default)
+    public Task<byte[]> StampAsync(Stream sourcePdf, string label, CancellationToken ct = default) =>
+        StampCoreAsync(sourcePdf, label, null, ct);
+
+    public Task<byte[]> StampPreviewAsync(Stream sourcePdf, string label, int pages, CancellationToken ct = default)
+    {
+        if (pages < 1) throw new PdfPreviewUnavailableException("Aucune page d'aperçu demandée.");
+        return StampCoreAsync(sourcePdf, label, pages, ct);
+    }
+
+    private async Task<byte[]> StampCoreAsync(Stream sourcePdf, string label, int? previewPages, CancellationToken ct)
     {
         var workDir = Path.Combine(Path.GetTempPath(), "winplus-watermark", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workDir);
@@ -58,8 +83,25 @@ public sealed class DocumentWatermarkService : IDocumentWatermarkService
             {
                 WriteOverlay(overlayPath, safeLabel);
 
-                DocumentOperation
-                    .LoadFile(sourcePath)
+                var operation = DocumentOperation.LoadFile(sourcePath);
+                if (previewPages is int n)
+                {
+                    // Garde-fou : la page n+1 doit exister, sinon l'aperçu
+                    // serait le document complet. qpdf échoue sur une page
+                    // hors du document.
+                    var probePath = Path.Combine(workDir, "probe.pdf");
+                    try
+                    {
+                        DocumentOperation.LoadFile(sourcePath).TakePages((n + 1).ToString(CultureInfo.InvariantCulture)).Save(probePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new PdfPreviewUnavailableException("Document trop court pour un aperçu partiel.", ex);
+                    }
+                    operation = operation.TakePages(n == 1 ? "1" : $"1-{n.ToString(CultureInfo.InvariantCulture)}");
+                }
+
+                operation
                     .OverlayFile(new DocumentOperation.LayerConfiguration
                     {
                         FilePath = overlayPath,
