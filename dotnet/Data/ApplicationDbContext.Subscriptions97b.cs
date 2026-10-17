@@ -16,6 +16,8 @@ public partial class ApplicationDbContext
     public DbSet<AiTokenCredit> AiTokenCredits => Set<AiTokenCredit>();
     public DbSet<InstitutionLicense> InstitutionLicenses => Set<InstitutionLicense>();
     public DbSet<InstitutionSeat> InstitutionSeats => Set<InstitutionSeat>();
+    /// <summary>Enfants couverts choisis par le parent (SQL_ParentChildCoverage97b.sql).</summary>
+    public DbSet<ParentChildCoverage> ParentChildCoverages => Set<ParentChildCoverage>();
 
     private void OnModelCreatingSubscriptions97b(ModelBuilder modelBuilder)
     {
@@ -75,6 +77,15 @@ public partial class ApplicationDbContext
             entity.HasIndex(e => new { e.LicenseId, e.Kind });
             entity.HasIndex(e => new { e.UserId, e.Kind });
             entity.HasOne(e => e.License).WithMany(l => l.Seats).HasForeignKey(e => e.LicenseId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ParentChildCoverage>(entity =>
+        {
+            entity.ToTable("ParentChildCoverages");
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.ParentId, e.StudentId }).IsUnique();
+            entity.HasOne(e => e.Parent).WithMany().HasForeignKey(e => e.ParentId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Student).WithMany().HasForeignKey(e => e.StudentId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<AiTokenCredit>(entity =>

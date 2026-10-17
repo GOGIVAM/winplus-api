@@ -311,7 +311,13 @@ public class EntitlementService : IEntitlementService
         return (opens, bonus, $"Plan {parentSub.PricingPlan?.Name ?? parentSub.PlanName} du parent");
     }
 
-    /// <summary>Enfants couverts par un plan parent : liens acceptés les plus anciens, dans la limite <paramref name="max"/> (-1 = tous).</summary>
+    /// <summary>
+    /// Enfants couverts par un plan parent, dans la limite <paramref name="max"/>
+    /// (-1 = tous) : d'abord ceux que le parent a désignés
+    /// (<see cref="ParentChildCoverage"/>, s'ils sont toujours liés et
+    /// acceptés), puis, pour les places restantes, les liens acceptés les plus
+    /// anciens (règle par défaut, étude 1.4). Ordre stable : celui des liens.
+    /// </summary>
     public static async Task<List<int>> CoveredChildrenAsync(ApplicationDbContext db, int parentId, long max, CancellationToken ct = default)
     {
         var ordered = await db.ParentStudentLinks.AsNoTracking()
@@ -320,7 +326,23 @@ public class EntitlementService : IEntitlementService
             .Select(l => l.StudentId)
             .ToListAsync(ct);
         var distinct = ordered.Distinct().ToList();
-        return max == EntitlementCatalog.Unlimited ? distinct : distinct.Take((int)Math.Max(0, max)).ToList();
+        if (max == EntitlementCatalog.Unlimited) return distinct;
+        var limit = (int)Math.Max(0, max);
+        if (distinct.Count <= limit) return distinct;
+
+        var chosen = await db.ParentChildCoverages.AsNoTracking()
+            .Where(c => c.ParentId == parentId)
+            .Select(c => c.StudentId)
+            .ToListAsync(ct);
+        var chosenSet = chosen.ToHashSet();
+        var covered = distinct.Where(chosenSet.Contains).Take(limit).ToList();
+        foreach (var id in distinct)
+        {
+            if (covered.Count >= limit) break;
+            if (!covered.Contains(id)) covered.Add(id);
+        }
+        // Ordre des liens (les plus anciens d'abord), quel que soit le choix.
+        return distinct.Where(covered.Contains).ToList();
     }
 
     /// <summary>
