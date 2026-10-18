@@ -208,6 +208,13 @@ public class TutorBookingController : ControllerBase
     [HttpPost("{id:int}/summarize")]
     public async Task<IActionResult> Summarize(int id, [FromBody] GenerateTutorBookingSummaryRequestDto request, CancellationToken ct)
     {
+        // Seul le répétiteur de la séance peut en générer le compte-rendu.
+        if (_db == null) return StatusCode(500);
+        var userId = User.GetUserId();
+        var isTutor = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AnyAsync(
+            _db.TutorBookings, b => b.Id == id && b.TutorProfile != null && b.TutorProfile.UserId == userId, ct);
+        if (!isTutor) return Forbid();
+
         var client = _httpClientFactory.CreateClient("FastApiClient");
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/teacher/session-summary")
         {
@@ -218,7 +225,7 @@ public class TutorBookingController : ControllerBase
         // Lot 9.7b (18.17) : compte-rendu demandé par le professeur = aide
         // WinAI (ai.feature.teacher_assist), débitée sur son budget.
         return await Backend.Services.Entitlements.AiGateProxy.ProxyAsync(this, HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IAiFeatureGate>(),
-            User.GetUserId(), Backend.Services.Entitlements.EntitlementCatalog.AiTeacherAssist, "", client, req, ct);
+            userId, Backend.Services.Entitlements.EntitlementCatalog.AiTeacherAssist, "", client, req, ct);
     }
 
     /// <summary>Enregistre le compte-rendu édité par le répétiteur avant envoi à l'élève.</summary>
