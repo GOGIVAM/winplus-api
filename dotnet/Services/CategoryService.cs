@@ -1,6 +1,7 @@
 using Backend.Data;
 using Backend.Models.DTOs;
 using Microsoft.EntityFrameworkCore;
+using Backend.Utils;
 
 namespace Backend.Services;
 
@@ -57,14 +58,33 @@ public class CategoryService : ICategoryService
                 .OrderBy(t => t)
                 .ToListAsync();
 
+            // Un groupe par école ou examen (« IUT », « FMSB »…) au lieu d'une
+            // entrée par intitulé saisi : « IUT/Concours d'entrée – … » et
+            // « IUT- Épreuve de concours » comptent tous dans « IUT ».
+            var counts = await _context.Exams
+                .Where(e => !e.IsDeleted && e.ExamType != null)
+                .GroupBy(e => e.ExamType)
+                .Select(g => new { Type = g.Key, Count = g.Count() })
+                .ToListAsync();
+
             var examList = examTypes
-                .Select((examType, index) => new CategoryItem
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .GroupBy(t => ExamTypeGroups.GroupKey(t))
+                .Select(g => new
+                {
+                    Key = g.Key,
+                    // Libellé le plus court du groupe : « IUT » plutôt que l'intitulé complet.
+                    Label = ExamTypeGroups.Head(g.OrderBy(t => ExamTypeGroups.Head(t).Length).First()),
+                    Count = counts.Where(c => ExamTypeGroups.GroupKey(c.Type) == g.Key).Sum(c => c.Count),
+                })
+                .OrderBy(g => g.Label)
+                .Select((g, index) => new CategoryItem
                 {
                     Id = index + 1,
-                    Name = (examType != null ? examType.ToLower().Replace(" ", "-") : $"exam-{index}"),
-                    DisplayName = examType ?? $"Examen {index}",
-                    Description = $"Cours et épreuves pour {examType}",
-                    Count = _context.Exams.Count(e => e.ExamType == examType && !e.IsDeleted)
+                    Name = g.Key,
+                    DisplayName = g.Label,
+                    Description = $"Cours et épreuves pour {g.Label}",
+                    Count = g.Count,
                 })
                 .ToList();
 

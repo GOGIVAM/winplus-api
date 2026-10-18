@@ -9,6 +9,7 @@ using Backend.Models.DTOs;
 using Backend.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
+using Backend.Utils;
 
 namespace Backend.Controllers;
 
@@ -797,10 +798,21 @@ public class SubjectsController : ControllerBase
             pageSize = Math.Clamp(pageSize, 1, 500);
 
             var (viewerId, viewerIsAdmin) = CurrentViewer();
+            // Les types saisis en base sont souvent l'intitulé complet
+            // (« IUT/Concours d'entrée – … ») : on retient tous ceux du même
+            // groupe que le type demandé (voir ExamTypeGroups), pas seulement
+            // le libellé exact.
+            var allTypes = await _context.Exams.AsNoTracking()
+                .Where(e => !e.IsDeleted && e.ExamType != null)
+                .Select(e => e.ExamType)
+                .Distinct()
+                .ToListAsync();
+            var matchingTypes = allTypes.Where(t => ExamTypeGroups.Matches(t, examType)).ToList();
+
             var query = _context.Subjects
                 .Where(s => !s.IsDeleted && _context.Exams.Any(e =>
                     e.SubjectId == s.Id && !e.IsDeleted &&
-                    e.ExamType.ToLower() == examType.ToLower()))
+                    matchingTypes.Contains(e.ExamType)))
                 .Where(s => s.IsPublished || viewerIsAdmin || (viewerId != null && s.AuthorUserId == viewerId))
                 .OrderByDescending(s => s.CreatedAt);
 
@@ -810,7 +822,7 @@ public class SubjectsController : ControllerBase
             var subjectIds = subjects.Select(s => s.Id).ToList();
             var matchingExams = await _context.Exams.AsNoTracking()
                 .Where(e => e.SubjectId != null && subjectIds.Contains(e.SubjectId.Value) && !e.IsDeleted
-                            && e.ExamType.ToLower() == examType.ToLower())
+                            && matchingTypes.Contains(e.ExamType))
                 .ToListAsync();
             var examMap = matchingExams
                 .GroupBy(e => e.SubjectId!.Value)
