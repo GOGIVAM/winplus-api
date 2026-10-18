@@ -57,6 +57,12 @@ public class TutorProfile
     /// <summary>Statut "En vacances" : profil visible mais réservations bloquées.</summary>
     public bool IsOnVacation { get; set; } = false;
 
+    /// <summary>
+    /// Lot 9.6 : génère le support de séance WinAI dès l'acceptation d'une
+    /// séance unique (débité sur le budget du tuteur). Désactivé par défaut.
+    /// </summary>
+    public bool AutoGenerateSessionMaterial { get; set; } = false;
+
     // ── Vérification / crédibilité ────────────────────────────────────────
     /// <summary>
     /// Diplôme validé par l'équipe WinPlus → badge "Vérifié Diplôme".

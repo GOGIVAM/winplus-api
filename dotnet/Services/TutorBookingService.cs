@@ -1110,10 +1110,30 @@ public class TutorBookingService : ITutorBookingService
                 .Select(r => r.TutorBookingId).ToListAsync()).ToHashSet();
         }
 
+        // Lot 9.6 : état du support de séance WinAI (le tuteur voit aussi ses
+        // brouillons ; les autres seulement un support partagé).
+        var materials = new Dictionary<int, (int TutorUserId, int Version, int? SharedVersion)>();
+        if (bookings.Count > 0)
+        {
+            var ids = bookings.Select(b => b.Id).ToList();
+            materials = (await _context.TutorSessionMaterials.AsNoTracking()
+                .Where(m => ids.Contains(m.TutorBookingId))
+                .Select(m => new { m.TutorBookingId, m.TutorUserId, m.Version, m.SharedVersion })
+                .ToListAsync())
+                .ToDictionary(m => m.TutorBookingId, m => (m.TutorUserId, m.Version, m.SharedVersion));
+        }
+
         return bookings.Select(b =>
         {
             var dto = MapToDto(b);
             if (b.PayerInstitutionId is int iid && names.TryGetValue(iid, out var n)) dto.PayerName = n;
+            if (materials.TryGetValue(b.Id, out var mat))
+            {
+                var viewerIsTutor = viewerUserId != null && b.TutorProfile?.UserId == viewerUserId;
+                dto.SessionMaterialStatus = viewerIsTutor
+                    ? (mat.SharedVersion == null ? "draft" : mat.SharedVersion == mat.Version ? "shared" : "shared_with_changes")
+                    : mat.SharedVersion != null && TutorSessionMaterialService.SharedStatuses.Contains(b.Status) ? "shared" : null;
+            }
             if (viewerUserId is int v)
             {
                 dto.ViewerIsPayer = IsPayerSide(b, v, viewerInstitutionId);

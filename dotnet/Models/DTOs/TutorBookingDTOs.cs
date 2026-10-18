@@ -293,6 +293,12 @@ public class TutorBookingDto
     /// <summary>Peut signaler : participant ou payeur d'une séance confirmée, effectuée, contestée ou annulée, pas encore signalée par lui.</summary>
     public bool CanReport { get; set; }
     public bool HasReported { get; set; }
+
+    /// <summary>
+    /// Lot 9.6 : support de séance WinAI. Tuteur : draft | shared |
+    /// shared_with_changes ; participants et payeur : shared (sinon null).
+    /// </summary>
+    public string? SessionMaterialStatus { get; set; }
     public DateTime CreatedAt { get; set; }
 }
 

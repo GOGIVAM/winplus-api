@@ -81,6 +81,8 @@ namespace Backend.Tests
                 ["ai.feature.quiz_generation"] = quiz ? "true" : "false",
                 ["ai.feature.correction_assist"] = corr ? "true" : "false",
                 ["ai.feature.course_builder"] = builder ? "true" : "false",
+                // Lot 9.6 : support de séance WinAI, ouvert sur tous les plans professeur.
+                ["ai.feature.session_material"] = "true",
             };
             Add("teacher-free", "teacher", "Gratuit", true, 0, 0, Teacher(70, false, 1, 30, 1, 200_000, false, false, false));
             Add("teacher-fondateur", "teacher", "Fondateur", false, 1, 5000, Teacher(70, true, 3, 50, 3, 1_000_000, true, true, false));

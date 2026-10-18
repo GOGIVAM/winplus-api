@@ -136,6 +136,27 @@ class GenerateQuizResponse(BaseModel):
     questions: List[QuizQuestionOut]
 
 
+def _parse_quiz_questions(raw: Any, limit: int) -> List[QuizQuestionOut]:
+    """QCM au format {id, text, options[{id, text}], correctOptionId, explanation}
+    lus depuis une sortie DeepSeek ; les entrées mal formées sont écartées.
+    Partagé par la génération de quiz et le support de séance (lot 9.6)."""
+    questions: List[QuizQuestionOut] = []
+    if not isinstance(raw, list):
+        return questions
+    for i, q in enumerate(raw[:limit]):
+        try:
+            questions.append(QuizQuestionOut(
+                id=str(q.get("id", f"q{i+1}")),
+                text=str(q.get("text", "")),
+                options=[QuizOptionOut(id=str(o["id"]), text=str(o["text"])) for o in q.get("options", [])],
+                correctOptionId=str(q.get("correctOptionId", "a")),
+                explanation=str(q.get("explanation", "")),
+            ))
+        except Exception:
+            pass
+    return questions
+
+
 def _assert_teacher_can_target_student(session, teacher_id: int, student_id: int) -> None:
     """
     14.2 : un professeur ne peut personnaliser une génération que pour un
@@ -206,19 +227,7 @@ async def generate_quiz_questions(
 
     raw = _deepseek_json(prompt, system, max_tokens=3000)
 
-    questions: List[QuizQuestionOut] = []
-    if isinstance(raw, list):
-        for i, q in enumerate(raw[:10]):
-            try:
-                questions.append(QuizQuestionOut(
-                    id=str(q.get("id", f"q{i+1}")),
-                    text=str(q.get("text", "")),
-                    options=[QuizOptionOut(id=str(o["id"]), text=str(o["text"])) for o in q.get("options", [])],
-                    correctOptionId=str(q.get("correctOptionId", "a")),
-                    explanation=str(q.get("explanation", "")),
-                ))
-            except Exception:
-                pass
+    questions = _parse_quiz_questions(raw, 10)
 
     if not questions:
         questions = [QuizQuestionOut(
@@ -1747,6 +1756,205 @@ async def generate_revision_sheet(
         )
 
     raise HTTPException(status_code=500, detail="Génération de la fiche de révision impossible pour le moment.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature 12 bis  POST /teacher/session-material (lot 9.6, suivi 17.5)
+# Support de séance de tutorat : cours structuré, quiz et exercices liés aux
+# sujets saisis à la réservation, adaptés au niveau (du groupe pour une séance
+# de groupe), au style d'apprentissage des élèves (_load_student_generation_signals,
+# 14.2) et au profil du tuteur (_load_teacher_profile_data, module 15).
+# Appelé par .NET (TutorSessionMaterialService) avec le jeton du tuteur, après
+# IAiFeatureGate (droit ai.feature.session_material, débit des tokens réels
+# sur le budget du tuteur via l'en-tête X-WinAI-Tokens).
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SessionMaterialRequest(BaseModel):
+    booking_id: int
+    subject: Optional[str] = None
+    topics: List[str] = []
+    duration_minutes: int = 60
+    mode: Optional[str] = None
+    participant_count: int = 1
+    levels: List[str] = []
+    instructions: Optional[str] = None
+
+
+def _session_material_budget(duration_minutes: int) -> dict:
+    """Volume proportionné à la durée de la séance (tranches de 30 min) et
+    budget de tokens de sortie correspondant (plafonné)."""
+    d = max(30, int(duration_minutes or 60))
+    if d <= 30:
+        sections, quiz, exercises = 2, 5, 2
+    elif d <= 60:
+        sections, quiz, exercises = 3, 8, 3
+    elif d <= 120:
+        sections, quiz, exercises = 4, 10, 4
+    else:
+        sections, quiz, exercises = 5, 12, 5
+    max_tokens = min(6000, 900 + sections * 450 + quiz * 170 + exercises * 380)
+    return {"sections": sections, "quiz": quiz, "exercises": exercises, "max_tokens": max_tokens}
+
+
+def _load_session_participants(session, booking_id: int, tutor_user_id: int, is_admin: bool) -> List[dict]:
+    """Participants de la séance, après contrôle que le compte connecté en est
+    le tuteur (sinon 403) : le style d'apprentissage d'un élève n'est lu que
+    pour les élèves de SA séance (même garde-fou que _assert_teacher_can_target_student)."""
+    from sqlalchemy import text
+    row = session.execute(text(
+        'SELECT b."StudentUserId", p."UserId" FROM "TutorBookings" b '
+        'JOIN "TutorProfiles" p ON p."Id" = b."TutorProfileId" WHERE b."Id" = :id'
+    ), {"id": booking_id}).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Séance introuvable.")
+    if not is_admin and int(row[1]) != int(tutor_user_id):
+        raise HTTPException(status_code=403, detail="Cette séance ne vous appartient pas.")
+    ids = [int(r[0]) for r in session.execute(text(
+        'SELECT "StudentUserId" FROM "TutorBookingParticipants" WHERE "TutorBookingId" = :id ORDER BY "Id"'
+    ), {"id": booking_id}).fetchall()]
+    if not ids:
+        ids = [int(row[0])]
+    ids = list(dict.fromkeys(ids))[:20]
+    users = {u.Id: u for u in session.query(User).filter(User.Id.in_(ids)).all()}
+    return [{"id": i, "level": (users[i].Level or "").strip() if i in users else ""} for i in ids]
+
+
+def _group_level_line(levels: List[str], participant_count: int) -> str:
+    distinct = [l for l in dict.fromkeys(l.strip() for l in levels if l and l.strip())]
+    if not distinct:
+        return "Niveau non renseigné : vise le niveau habituel de la matière et explique les prérequis."
+    if len(distinct) == 1:
+        return f"Niveau : {distinct[0]}."
+    counts = {l: sum(1 for x in levels if x and x.strip() == l) for l in distinct}
+    main = max(distinct, key=lambda l: counts[l])
+    return (
+        f"Séance de groupe ({participant_count} élèves) aux niveaux variés : {', '.join(distinct)}. "
+        f"Vise le niveau le plus fréquent ({main}), rappelle les prérequis pour les plus jeunes "
+        "et propose un exercice d'approfondissement pour les plus avancés."
+    )
+
+
+@teacher_ai_router.post("/teacher/session-material")
+async def generate_session_material(
+    body: SessionMaterialRequest,
+    current_user: UserTokenData = Depends(require_role("teacher", "admin")),
+):
+    topics = [t.strip()[:100] for t in (body.topics or []) if t and t.strip()][:10]
+    subject = (body.subject or "").strip()[:100]
+    instructions = (body.instructions or "").strip()[:500]
+    if not topics and not subject and not instructions:
+        raise HTTPException(status_code=422, detail="Aucun sujet indiqué pour cette séance.")
+
+    is_admin = (current_user.role or "").lower() == "admin"
+    db = Database()
+    session = db.SessionLocal()
+    try:
+        participants = _load_session_participants(session, body.booking_id, current_user.user_id, is_admin)
+    finally:
+        session.close()
+
+    levels = [p["level"] for p in participants if p["level"]] or [l for l in (body.levels or []) if l]
+    participant_count = max(len(participants), int(body.participant_count or 1))
+    is_group = participant_count > 1
+
+    # 14.2 / module 16 : style d'apprentissage et matières inscrites des élèves
+    # (brique partagée avec la génération de quiz), au plus 6 élèves lus.
+    styles: List[str] = []
+    enrolled: List[str] = []
+    for p in participants[:6]:
+        style_instruction, subjects = _load_student_generation_signals(p["id"])
+        if style_instruction:
+            styles.append(style_instruction)
+        enrolled.extend(subjects)
+    distinct_styles = list(dict.fromkeys(styles))
+    if len(distinct_styles) == 1 and not is_group:
+        style_line = f"[Style d'apprentissage de l'élève]\n{distinct_styles[0]}\n"
+    elif distinct_styles:
+        style_line = ("[Styles d'apprentissage du groupe] Les élèves n'apprennent pas tous de la même façon : "
+                      "alterne explications écrites, schémas décrits, exemples concrets et mise en pratique.\n")
+    else:
+        style_line = ""
+    enrolled_line = (f"Matières suivies par {'les élèves' if is_group else 'l’élève'} sur WinPlus : "
+                     f"{', '.join(list(dict.fromkeys(enrolled))[:6])}.\n") if enrolled else ""
+
+    # Module 15 : profil du tuteur (matières, niveaux, style déclaré).
+    teacher_line = ""
+    try:
+        from routes.chatbot_routes import _load_teacher_profile_data
+        tp = _load_teacher_profile_data(current_user.user_id) or {}
+        if tp.get("teaching_style"):
+            teacher_line = f"Le tuteur se présente ainsi : « {str(tp['teaching_style'])[:120]} ». Garde un ton cohérent avec ce profil.\n"
+    except Exception as e:  # profil indisponible : génération sans ce signal
+        logger.info(f"[session-material] profil tuteur indisponible : {e}")
+
+    budget = _session_material_budget(body.duration_minutes)
+    mode_line = "Séance en présentiel." if body.mode and body.mode != "online" else "Séance en ligne."
+    prompt = (
+        f"Prépare le support d'une séance de cours particulier de {max(30, body.duration_minutes)} minutes.\n"
+        f"Matière : {subject or 'à déduire des sujets'}.\n"
+        f"Sujets à travailler (indiqués à la réservation) : {', '.join(topics) if topics else 'non précisés'}.\n"
+        f"{_group_level_line(levels, participant_count)}\n"
+        f"{mode_line}\n"
+        f"{enrolled_line}{teacher_line}{style_line}"
+        + (f"Consigne du tuteur : {instructions}\n" if instructions else "")
+        + "\nRéponds avec UN objet JSON, exactement ces champs :\n"
+        '{"title":"...","subject":"...","level":"...","objectives":["..."],'
+        '"course":{"introduction":"...","sections":[{"title":"...","content":"...","example":"..."}],"summary":"...","keyPoints":["..."]},'
+        '"quiz":[{"id":"q1","text":"...","options":[{"id":"a","text":"..."},{"id":"b","text":"..."},{"id":"c","text":"..."},{"id":"d","text":"..."}],"correctOptionId":"a","explanation":"..."}],'
+        '"exercises":[{"id":"e1","title":"...","statement":"...","difficulty":"facile|moyen|difficile","hints":["..."],"solution":"..."}],'
+        '"groupNote":"..."}\n'
+        f"Contraintes : {budget['sections']} sections de cours, exactement {budget['quiz']} questions de quiz "
+        f"(4 options, une seule correcte), {budget['exercises']} exercices de difficulté croissante avec indices et corrigé détaillé. "
+        "Tout porte sur les sujets indiqués, au programme camerounais, en français clair. "
+        + ("Le champ groupNote explique en 1 à 2 phrases comment le support s'adapte au groupe. " if is_group else "Laisse groupNote vide. ")
+        + "N'invente ni référence de manuel ni source externe. Réponds uniquement avec l'objet JSON."
+    )
+    system = (
+        "Tu es WinAI, assistant pédagogique des tuteurs WinPlus (Cameroun). Tu prépares des supports de séance "
+        "structurés et exacts. Réponds uniquement avec un JSON valide."
+    )
+
+    raw = _deepseek_json(prompt, system, max_tokens=budget["max_tokens"])
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=502, detail="Génération du support impossible pour le moment.")
+
+    course = raw.get("course") if isinstance(raw.get("course"), dict) else {}
+    sections = []
+    for s in (course.get("sections") or [])[:budget["sections"] + 2]:
+        if isinstance(s, dict) and (s.get("title") or s.get("content")):
+            sections.append({
+                "title": str(s.get("title", "")),
+                "content": str(s.get("content", "")),
+                "example": str(s.get("example", "")) if s.get("example") else None,
+            })
+    quiz = [q.model_dump() for q in _parse_quiz_questions(raw.get("quiz"), budget["quiz"] + 3)]
+    exercises = []
+    for i, e in enumerate((raw.get("exercises") or [])[:budget["exercises"] + 2]):
+        if isinstance(e, dict) and e.get("statement"):
+            exercises.append({
+                "id": str(e.get("id", f"e{i+1}")),
+                "title": str(e.get("title", f"Exercice {i+1}")),
+                "statement": str(e.get("statement", "")),
+                "difficulty": str(e.get("difficulty", "moyen")),
+                "hints": [str(h) for h in (e.get("hints") or []) if h][:4],
+                "solution": str(e.get("solution", "")),
+            })
+
+    return {
+        "title": str(raw.get("title", "")),
+        "subject": str(raw.get("subject", "")) or subject or None,
+        "level": str(raw.get("level", "")) or None,
+        "objectives": [str(o) for o in (raw.get("objectives") or []) if o][:6],
+        "course": {
+            "introduction": str(course.get("introduction", "")),
+            "sections": sections,
+            "summary": str(course.get("summary", "")),
+            "keyPoints": [str(k) for k in (course.get("keyPoints") or []) if k][:10],
+        },
+        "quiz": quiz,
+        "exercises": exercises,
+        "groupNote": (str(raw.get("groupNote", "")) or None) if is_group else None,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

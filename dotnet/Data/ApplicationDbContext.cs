@@ -1934,5 +1934,8 @@ modelBuilder.Entity<Exam>(entity =>
 
         // ── Lot 9.7b : abonnements dynamiques (voir ApplicationDbContext.Subscriptions97b.cs) ──
         OnModelCreatingSubscriptions97b(modelBuilder);
+
+        // ── Lot 9.6 : supports de séance WinAI (voir ApplicationDbContext.TutorSessionMaterials.cs) ──
+        OnModelCreatingTutorSessionMaterials(modelBuilder);
     }
 }

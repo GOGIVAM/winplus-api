@@ -469,6 +469,8 @@ builder.Services.AddScoped<ITutorAssignmentService, TutorAssignmentService>();
 // Lot 9.4 : engagement mensuel (séances générées, paiement d'avance, renouvellement).
 builder.Services.AddScoped<ITutorEngagementService, TutorEngagementService>();
 builder.Services.AddScoped<ITutorReviewService, TutorReviewService>();
+// Lot 9.6 (suivi 17.5) : support de séance généré par WinAI.
+builder.Services.AddScoped<ITutorSessionMaterialService, TutorSessionMaterialService>();
 // Lot 9.5 (suivi 17.11, 17.12, 17.16) : vérification pour le présentiel, stockage privé, signalements.
 builder.Services.AddScoped<IPrivateFileStore, PrivateFileStore>();
 builder.Services.AddScoped<ITutorVerificationService, TutorVerificationService>();

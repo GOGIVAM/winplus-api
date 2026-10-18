@@ -10,6 +10,9 @@
 --     IsDeleted = TRUE (la colonne IsArchived n'existe pas en base), sans suppression, pour garder
 --     l'historique des commandes et des abonnements qui les citent.
 -- Les mêmes valeurs servent aux tests (tests/dotnet/Backend.Tests/Subscriptions97bTestGrid.cs).
+-- Lot 9.6 : droit ai.feature.session_material ajouté aux familles professeur
+-- d'une base neuve ; une base déjà migrée le reçoit par SQL_TutorSessionMaterials.sql
+-- (une seule fois, sans écraser un réglage admin).
 --
 -- Prérequis : SQL_Subscriptions97bSocle.sql (tables PlanVersions, PlanPrices,
 -- PlanEntitlements, colonnes PlanKey, Audience, IsFreeTier, SortOrder).
@@ -124,25 +127,29 @@ SELECT pg_temp.grid97b_family('teacher-free', 'teacher', 'Gratuit', TRUE, 0, 0,
     ARRAY['teacher.revenue_share','70', 'catalog.access','false', 'teacher.max_classes','1',
           'teacher.max_students_per_class','30', 'teacher.max_published_courses','1',
           'ai.reference_tokens','200000', 'ai.topup','true', 'ai.feature.chat','true', 'ai.feature.teacher_assist','true',
-          'ai.feature.quiz_generation','false', 'ai.feature.correction_assist','false', 'ai.feature.course_builder','false']);
+          'ai.feature.quiz_generation','false', 'ai.feature.correction_assist','false', 'ai.feature.course_builder','false',
+          'ai.feature.session_material','true']);
 SELECT pg_temp.grid97b_family('teacher-fondateur', 'teacher', 'Fondateur', FALSE, 1, 5000,
     'Trois classes, le catalogue, la génération de quiz et la correction assistée.',
     ARRAY['teacher.revenue_share','70', 'catalog.access','true', 'teacher.max_classes','3',
           'teacher.max_students_per_class','50', 'teacher.max_published_courses','3',
           'ai.reference_tokens','1000000', 'ai.topup','true', 'ai.feature.chat','true', 'ai.feature.teacher_assist','true',
-          'ai.feature.quiz_generation','true', 'ai.feature.correction_assist','true', 'ai.feature.course_builder','false']);
+          'ai.feature.quiz_generation','true', 'ai.feature.correction_assist','true', 'ai.feature.course_builder','false',
+          'ai.feature.session_material','true']);
 SELECT pg_temp.grid97b_family('teacher-pro', 'teacher', 'Pro', FALSE, 2, 10000,
     'Dix classes, 75 % sur le tutorat et la création de formation assistée.',
     ARRAY['teacher.revenue_share','75', 'catalog.access','true', 'teacher.max_classes','10',
           'teacher.max_students_per_class','100', 'teacher.max_published_courses','10',
           'ai.reference_tokens','2400000', 'ai.topup','true', 'ai.feature.chat','true', 'ai.feature.teacher_assist','true',
-          'ai.feature.quiz_generation','true', 'ai.feature.correction_assist','true', 'ai.feature.course_builder','true']);
+          'ai.feature.quiz_generation','true', 'ai.feature.correction_assist','true', 'ai.feature.course_builder','true',
+          'ai.feature.session_material','true']);
 SELECT pg_temp.grid97b_family('teacher-expert', 'teacher', 'Expert', FALSE, 3, 15000,
     'Classes et formations illimitées, 80 % sur le tutorat.',
     ARRAY['teacher.revenue_share','80', 'catalog.access','true', 'teacher.max_classes','-1',
           'teacher.max_students_per_class','-1', 'teacher.max_published_courses','-1',
           'ai.reference_tokens','5000000', 'ai.topup','true', 'ai.feature.chat','true', 'ai.feature.teacher_assist','true',
-          'ai.feature.quiz_generation','true', 'ai.feature.correction_assist','true', 'ai.feature.course_builder','true']);
+          'ai.feature.quiz_generation','true', 'ai.feature.correction_assist','true', 'ai.feature.course_builder','true',
+          'ai.feature.session_material','true']);
 
 DROP FUNCTION IF EXISTS pg_temp.grid97b_family(TEXT, TEXT, TEXT, BOOLEAN, INTEGER, NUMERIC, TEXT, TEXT[]);
 

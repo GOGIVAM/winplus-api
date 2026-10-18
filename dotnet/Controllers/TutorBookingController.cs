@@ -121,8 +121,48 @@ public class TutorBookingController : ControllerBase
     [HttpPut("{id:int}/confirm")]
     public async Task<ActionResult<TutorBookingDto>> Confirm(int id)
     {
-        try { return Ok(await _service.ConfirmBookingAsync(User.GetUserId(), id)); }
+        TutorBookingDto dto;
+        try { dto = await _service.ConfirmBookingAsync(User.GetUserId(), id); }
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+        await StartAutoMaterialAsync(User.GetUserId(), id);
+        return Ok(dto);
+    }
+
+    /// <summary>
+    /// Lot 9.6 : si le tuteur l'a activé (désactivé par défaut), le support de
+    /// séance WinAI est généré juste après l'acceptation, en arrière-plan pour
+    /// ne pas retarder la réponse. Même chemin que la génération manuelle :
+    /// droit du plan et débit des tokens réels sur le budget du tuteur, qui en
+    /// est l'initiateur. Un échec (budget épuisé, WinAI indisponible) n'affecte
+    /// jamais l'acceptation : le tuteur peut générer à la main ensuite.
+    /// </summary>
+    private async Task StartAutoMaterialAsync(int tutorUserId, int bookingId)
+    {
+        var materials = HttpContext?.RequestServices?.GetService<ITutorSessionMaterialService>();
+        var scopes = HttpContext?.RequestServices?.GetService<IServiceScopeFactory>();
+        if (materials == null || scopes == null) return;
+        try
+        {
+            if (!(await materials.GetSettingsAsync(tutorUserId)).AutoGenerateOnAccept) return;
+        }
+        catch (InvalidOperationException) { return; }
+
+        var authorization = HttpContext!.Request.Headers["Authorization"].ToString();
+        var logger = HttpContext.RequestServices.GetService<ILogger<TutorBookingController>>();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = scopes.CreateScope();
+                var service = scope.ServiceProvider.GetRequiredService<ITutorSessionMaterialService>();
+                var (refusal, _) = await service.GenerateAsync(tutorUserId, bookingId, null, authorization, automatic: true);
+                if (refusal != null) logger?.LogInformation("Support automatique de la séance #{Booking} non généré (plan ou budget).", bookingId);
+            }
+            catch (Exception ex)
+            {
+                logger?.LogWarning(ex, "Support automatique de la séance #{Booking} : échec de la génération.", bookingId);
+            }
+        });
     }
 
     /// <summary>Le répétiteur refuse une demande en attente  remboursement déclenché.</summary>

@@ -56,6 +56,7 @@ public static class EntitlementCatalog
     public const string AiQuizGeneration = "ai.feature.quiz_generation";
     public const string AiCorrectionAssist = "ai.feature.correction_assist";
     public const string AiCourseBuilder = "ai.feature.course_builder";
+    public const string AiSessionMaterial = "ai.feature.session_material";
     public const string AiParentBonusPerChild = "ai.parent_bonus_per_child";
     public const string AiParentBonusShares = "ai.parent_bonus_shares";
 
@@ -129,6 +130,12 @@ public static class EntitlementCatalog
         // TeacherCourseController generate-syllabus (débit) et import-syllabus (droit seul)
         new(AiCourseBuilder, EntitlementType.Boolean, "", "false", "Création de formation assistée",
             "Génération et import de syllabus de formation.", T, Group: "WinAI"),
+        // TutorSessionMaterialController generate (lot 9.6, suivi 17.5). Ouvert
+        // par défaut sur tous les plans professeur : le support fait partie du
+        // service de tutorat payé par la famille ; le coût est débité sur le
+        // budget de tokens du tuteur, et l'admin peut fermer le droit par plan.
+        new(AiSessionMaterial, EntitlementType.Boolean, "", "true", "Support de séance WinAI",
+            "Cours, quiz et exercices générés pour chaque séance de tutorat, à partir des sujets de la réservation.", T, Group: "WinAI"),
         // EntitlementService (bonus parent → enfants couverts)
         new(AiParentBonusPerChild, EntitlementType.Integer, "tokens", "0", "Bonus WinAI par enfant",
             "Usage WinAI ajouté à chaque enfant couvert.", P, ShowOnPricing: false, Group: "WinAI"),
