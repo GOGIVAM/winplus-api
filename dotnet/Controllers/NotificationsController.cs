@@ -131,6 +131,26 @@ public class NotificationsController : ControllerBase
     }
 
     /// <summary>
+    /// Nombre de notifications non lues de l'utilisateur connecté, calculé en
+    /// base sur TOUTES ses notifications (et non sur la page chargée par le
+    /// client). Source de vérité des badges web et mobile.
+    /// </summary>
+    [HttpGet("unread-count")]
+    public async Task<IActionResult> GetUnreadCount()
+    {
+        try
+        {
+            var userId = User.GetUserId();
+            return Ok(new { unread = await UnreadCountAsync(userId), success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error counting unread notifications");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
     /// Notifications paginées de l'utilisateur, non lues en premier
     /// </summary>
     [HttpGet]
@@ -144,13 +164,18 @@ public class NotificationsController : ControllerBase
 
             var userId = User.GetUserId();
 
-            var query = _db.Notifications.Where(n => n.UserId == userId);
+            var query = _db.Notifications.AsNoTracking().Where(n => n.UserId == userId);
             var total = await query.CountAsync();
             var unread = await query.CountAsync(n => !n.IsRead);
 
             var notifications = await query
                 .OrderBy(n => n.IsRead)
                 .ThenByDescending(n => n.CreatedAt)
+                // Départage stable : sans lui, deux notifications créées au
+                // même instant (alerte administrateur, envoi groupé) peuvent
+                // changer de page d'un appel à l'autre, d'où des doublons ou
+                // des manques à la pagination.
+                .ThenByDescending(n => n.Id)
                 .Skip((page - 1) * limit)
                 .Take(limit)
                 .Select(n => new
@@ -186,7 +211,8 @@ public class NotificationsController : ControllerBase
     }
 
     /// <summary>
-    /// Marque une notification comme lue
+    /// Marque une notification comme lue. Renvoie le nouveau nombre de non
+    /// lues pour que le client resynchronise son badge sans second appel.
     /// </summary>
     [HttpPut("{id}/read")]
     public async Task<IActionResult> MarkAsRead(int id)
@@ -207,7 +233,7 @@ public class NotificationsController : ControllerBase
                 await _db.SaveChangesAsync();
             }
 
-            return Ok(new { success = true });
+            return Ok(new { success = true, unread = await UnreadCountAsync(userId) });
         }
         catch (Exception ex)
         {
@@ -217,7 +243,8 @@ public class NotificationsController : ControllerBase
     }
 
     /// <summary>
-    /// Marque toutes les notifications de l'utilisateur comme lues
+    /// Marque toutes les notifications de l'utilisateur comme lues (toutes,
+    /// pas seulement la page affichée).
     /// </summary>
     [HttpPut("read-all")]
     public async Task<IActionResult> MarkAllAsRead()
@@ -226,14 +253,27 @@ public class NotificationsController : ControllerBase
         {
             var userId = User.GetUserId();
             var now = DateTime.UtcNow;
+            int marked;
 
-            await _db.Notifications
-                .Where(n => n.UserId == userId && !n.IsRead)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(n => n.IsRead, true)
-                    .SetProperty(n => n.ReadAt, now));
+            if (_db.Database.IsRelational())
+            {
+                marked = await _db.Notifications
+                    .Where(n => n.UserId == userId && !n.IsRead)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(n => n.IsRead, true)
+                        .SetProperty(n => n.ReadAt, now));
+            }
+            else
+            {
+                // Fournisseur non relationnel (tests InMemory) : ExecuteUpdate
+                // n'y existe pas, même effet par suivi des entités.
+                var unread = await _db.Notifications.Where(n => n.UserId == userId && !n.IsRead).ToListAsync();
+                foreach (var n in unread) { n.IsRead = true; n.ReadAt = now; }
+                await _db.SaveChangesAsync();
+                marked = unread.Count;
+            }
 
-            return Ok(new { success = true });
+            return Ok(new { success = true, marked, unread = await UnreadCountAsync(userId) });
         }
         catch (Exception ex)
         {
@@ -252,14 +292,16 @@ public class NotificationsController : ControllerBase
         try
         {
             var userId = User.GetUserId();
-            var deleted = await _db.Notifications
-                .Where(n => n.Id == id && n.UserId == userId)
-                .ExecuteDeleteAsync();
+            var notification = await _db.Notifications
+                .FirstOrDefaultAsync(n => n.Id == id && n.UserId == userId);
 
-            if (deleted == 0)
+            if (notification == null)
                 return NotFound(new { success = false, error = "Notification not found" });
 
-            return Ok(new { success = true });
+            _db.Notifications.Remove(notification);
+            await _db.SaveChangesAsync();
+
+            return Ok(new { success = true, unread = await UnreadCountAsync(userId) });
         }
         catch (Exception ex)
         {
@@ -267,4 +309,7 @@ public class NotificationsController : ControllerBase
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }
+
+    private Task<int> UnreadCountAsync(int userId) =>
+        _db.Notifications.AsNoTracking().CountAsync(n => n.UserId == userId && !n.IsRead);
 }
