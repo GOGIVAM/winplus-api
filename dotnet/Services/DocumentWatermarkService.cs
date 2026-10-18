@@ -43,6 +43,16 @@ public interface IDocumentWatermarkService
     /// aperçu ne livre jamais le document entier.
     /// </summary>
     Task<byte[]> StampPreviewAsync(Stream sourcePdf, string label, int pages, CancellationToken ct = default);
+
+    /// <summary>
+    /// Copie des <paramref name="pages"/> premières pages de
+    /// <paramref name="sourcePdf"/>, SANS filigrane : c'est la forme mise en
+    /// cache par <see cref="IPreviewPdfCache"/>, commune à tous les
+    /// utilisateurs ; le filigrane nominatif est posé ensuite, à chaque
+    /// appel, par <see cref="StampAsync"/>. Ne doit jamais être servie telle
+    /// quelle. Même garde-fou que <see cref="StampPreviewAsync"/>.
+    /// </summary>
+    Task<byte[]> ExtractFirstPagesAsync(Stream sourcePdf, int pages, CancellationToken ct = default);
 }
 
 /// <summary>Le document est trop court pour un aperçu partiel.</summary>
@@ -64,6 +74,47 @@ public sealed class DocumentWatermarkService : IDocumentWatermarkService
         return StampCoreAsync(sourcePdf, label, pages, ct);
     }
 
+    public async Task<byte[]> ExtractFirstPagesAsync(Stream sourcePdf, int pages, CancellationToken ct = default)
+    {
+        if (pages < 1) throw new PdfPreviewUnavailableException("Aucune page d'aperçu demandée.");
+        var workDir = Path.Combine(Path.GetTempPath(), "winplus-watermark", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workDir);
+        var sourcePath = Path.Combine(workDir, "source.pdf");
+        var outputPath = Path.Combine(workDir, "output.pdf");
+        try
+        {
+            await using (var file = File.Create(sourcePath))
+                await sourcePdf.CopyToAsync(file, ct);
+            await Task.Run(() => TakeFirstPages(sourcePath, pages, workDir).Save(outputPath), ct);
+            return await File.ReadAllBytesAsync(outputPath, ct);
+        }
+        finally
+        {
+            try { Directory.Delete(workDir, recursive: true); }
+            catch { /* nettoyage au mieux : répertoire temporaire du système */ }
+        }
+    }
+
+    /// <summary>
+    /// Opération qpdf limitée aux <paramref name="n"/> premières pages.
+    /// Garde-fou : la page n+1 doit exister, sinon l'aperçu serait le
+    /// document complet (qpdf échoue sur une page hors du document).
+    /// </summary>
+    private static DocumentOperation TakeFirstPages(string sourcePath, int n, string workDir)
+    {
+        var probePath = Path.Combine(workDir, "probe.pdf");
+        try
+        {
+            DocumentOperation.LoadFile(sourcePath).TakePages((n + 1).ToString(CultureInfo.InvariantCulture)).Save(probePath);
+        }
+        catch (Exception ex)
+        {
+            throw new PdfPreviewUnavailableException("Document trop court pour un aperçu partiel.", ex);
+        }
+        return DocumentOperation.LoadFile(sourcePath)
+            .TakePages(n == 1 ? "1" : $"1-{n.ToString(CultureInfo.InvariantCulture)}");
+    }
+
     private async Task<byte[]> StampCoreAsync(Stream sourcePdf, string label, int? previewPages, CancellationToken ct)
     {
         var workDir = Path.Combine(Path.GetTempPath(), "winplus-watermark", Guid.NewGuid().ToString("N"));
@@ -83,23 +134,9 @@ public sealed class DocumentWatermarkService : IDocumentWatermarkService
             {
                 WriteOverlay(overlayPath, safeLabel);
 
-                var operation = DocumentOperation.LoadFile(sourcePath);
-                if (previewPages is int n)
-                {
-                    // Garde-fou : la page n+1 doit exister, sinon l'aperçu
-                    // serait le document complet. qpdf échoue sur une page
-                    // hors du document.
-                    var probePath = Path.Combine(workDir, "probe.pdf");
-                    try
-                    {
-                        DocumentOperation.LoadFile(sourcePath).TakePages((n + 1).ToString(CultureInfo.InvariantCulture)).Save(probePath);
-                    }
-                    catch (Exception ex)
-                    {
-                        throw new PdfPreviewUnavailableException("Document trop court pour un aperçu partiel.", ex);
-                    }
-                    operation = operation.TakePages(n == 1 ? "1" : $"1-{n.ToString(CultureInfo.InvariantCulture)}");
-                }
+                var operation = previewPages is int n
+                    ? TakeFirstPages(sourcePath, n, workDir)
+                    : DocumentOperation.LoadFile(sourcePath);
 
                 operation
                     .OverlayFile(new DocumentOperation.LayerConfiguration

@@ -29,6 +29,7 @@ public class SubjectsController : ControllerBase
     private readonly ICatalogCommissionService _commission;
 
     private readonly ICatalogRemovalService _catalogRemoval;
+    private readonly IPreviewPdfCache _previewCache;
 
     public SubjectsController(
         ISubjectService subjectService,
@@ -42,9 +43,11 @@ public class SubjectsController : ControllerBase
         IWalletService wallet,
         INtfyService ntfy,
         ICatalogCommissionService commission,
-        ICatalogRemovalService catalogRemoval)
+        ICatalogRemovalService catalogRemoval,
+        IPreviewPdfCache previewCache)
     {
         _catalogRemoval = catalogRemoval;
+        _previewCache = previewCache;
         _subjectService = subjectService;
         _context = context;
         _logger = logger;
@@ -1086,29 +1089,39 @@ public class SubjectsController : ControllerBase
             var s3Key = ExtractS3Key(doc!.StorageUrl, bucket);
 
             using var s3 = _storage.CreateS3Client();
-            using var obj = await s3.GetObjectAsync(bucket, s3Key, HttpContext.RequestAborted);
 
             // Le filigrane est obligatoire : si l'incrustation échoue, on
             // refuse la consultation plutôt que de servir le fichier d'origine.
             var label = await BuildWatermarkLabelAsync(userId);
             if (doc.PreviewPages is int allowed)
             {
-                // Lot 9.7b (catalog.preview_pages) : aperçu découpé ici. Le
-                // PDF renvoyé ne contient que les premières pages ; il reste
+                // Lot 9.7b (catalog.preview_pages) : aperçu découpé. Le PDF
+                // renvoyé ne contient que les premières pages ; il reste
                 // toujours au moins une page réservée à l'achat ou à
                 // l'abonnement (un document d'une page n'a pas d'aperçu).
-                using var buffer = new MemoryStream();
-                await obj.ResponseStream.CopyToAsync(buffer, HttpContext.RequestAborted);
-                var bytes = buffer.ToArray();
-                totalPages = PdfPageCounter.Count(bytes);
-                var pages = CatalogPreview.ServedPages(allowed, totalPages);
-                if (pages <= 0)
-                    return StatusCode(403, new { error = "Ce document est trop court pour un aperçu. Achetez-le ou abonnez-vous pour le lire.", code = "preview_unavailable" });
-                stamped = await _watermark.StampPreviewAsync(new MemoryStream(bytes), label, pages, HttpContext.RequestAborted);
-                servedPreviewPages = pages;
+                // Le découpage (sans filigrane) est mis en cache par version
+                // du fichier : seule une requête de métadonnées part vers S3
+                // quand l'aperçu est déjà prêt. Le filigrane nominatif est
+                // posé ensuite, pour l'utilisateur courant, à chaque appel.
+                var meta = await s3.GetObjectMetadataAsync(bucket, s3Key, HttpContext.RequestAborted);
+                var version = !string.IsNullOrWhiteSpace(meta.ETag)
+                    ? meta.ETag.Trim('"')
+                    : meta.LastModified.ToUniversalTime().Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var key = new PreviewPdfKey(id, docKind.ToString(), s3Key, $"{version}:{meta.ContentLength}", allowed);
+                var cut = await _previewCache.GetOrCreateAsync(key, async ct =>
+                {
+                    using var obj = await s3.GetObjectAsync(bucket, s3Key, ct);
+                    using var buffer = new MemoryStream();
+                    await obj.ResponseStream.CopyToAsync(buffer, ct);
+                    return buffer.ToArray();
+                }, HttpContext.RequestAborted);
+                totalPages = cut.TotalPages;
+                stamped = await _watermark.StampAsync(new MemoryStream(cut.Bytes), label, HttpContext.RequestAborted);
+                servedPreviewPages = cut.ServedPages;
             }
             else
             {
+                using var obj = await s3.GetObjectAsync(bucket, s3Key, HttpContext.RequestAborted);
                 stamped = await _watermark.StampAsync(obj.ResponseStream, label, HttpContext.RequestAborted);
             }
         }

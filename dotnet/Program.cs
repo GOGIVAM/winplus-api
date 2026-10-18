@@ -409,6 +409,10 @@ builder.Services.AddSingleton<IStorageService, StorageService>();
 // Filigrane nominatif incrusté dans les épreuves, corrigés et livres servis à
 // la visionneuse (Module 44) : sans état, réutilise QuestPDF/qpdf.
 builder.Services.AddSingleton<IDocumentWatermarkService, DocumentWatermarkService>();
+// Aperçu catalog.preview_pages : PDF découpé (avant filigrane) mis en cache,
+// durée et taille bornées (section Catalog:PreviewCache, valeurs par défaut sinon).
+builder.Services.AddSingleton(sp => PreviewPdfCacheOptions.FromConfiguration(sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddSingleton<IPreviewPdfCache, PreviewPdfCache>();
 builder.Services.AddScoped<IFileUploadService, FileUploadService>();
 builder.Services.AddScoped<IReviewRepository, ReviewRepository>();
 builder.Services.AddScoped<IReviewService, ReviewService>();
