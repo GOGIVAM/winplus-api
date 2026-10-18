@@ -24,7 +24,12 @@ public class TestimonialsController : ControllerBase
     }
 
     /// <summary>
-    /// Récupère les témoignages avec limite optionnelle
+    /// Témoignages publics : uniquement des avis réels laissés en base, avec un
+    /// commentaire écrit (avis sur un contenu, sur une formation, sur une séance
+    /// de cours particulier non retirée par la modération). Aucune liste de
+    /// secours : sans avis réel, la réponse est vide et les pages masquent la
+    /// section. L'auteur est affiché « Prénom N. » ; l'adresse e-mail n'est
+    /// jamais exposée (cet endpoint est anonyme).
     /// GET /api/testimonials?limit=5
     /// </summary>
     [HttpGet]
@@ -34,28 +39,56 @@ public class TestimonialsController : ControllerBase
     {
         try
         {
+            limit = Math.Clamp(limit, 1, 20);
             _logger.LogInformation("Récupération des {Limit} témoignages", limit);
 
-            var testimonials = await _context.Reviews
+            var subjectReviews = await _context.Reviews
                 .AsNoTracking()
-                .Include(r => r.User)
-                .Include(r => r.Subject)
-                .Where(r => !r.IsDeleted && r.User != null)
+                .Where(r => !r.IsDeleted && r.User != null && !r.User.IsDeleted
+                         && r.Comment != null && r.Comment.Trim() != "")
+                .OrderByDescending(r => r.CreatedAt)
+                .Take(limit)
+                .Select(r => new TestimonialRow("subject", r.Id, r.User!.FirstName, r.User.LastName,
+                    r.Subject != null ? r.Subject.Title : null, r.Comment!, r.Rating, r.CreatedAt, r.IsVerifiedPurchase))
+                .ToListAsync();
+
+            var courseReviews = await _context.CourseReviews
+                .AsNoTracking()
+                .Where(r => !r.User.IsDeleted && r.Comment != null && r.Comment.Trim() != "")
+                .OrderByDescending(r => r.CreatedAt)
+                .Take(limit)
+                .Select(r => new TestimonialRow("course", r.Id, r.User.FirstName, r.User.LastName,
+                    r.Course.Title, r.Comment!, r.Rating, r.CreatedAt, r.IsVerified))
+                .ToListAsync();
+
+            // Avis de séance : seulement ceux qui sont visibles sur le profil du
+            // tuteur (ni retirés par la modération, ni en attente de décision).
+            var tutorReviews = await _context.TutorReviews
+                .AsNoTracking()
+                .Where(r => !r.IsHiddenByModeration && !(r.IsReported && r.ModerationDecision == null)
+                         && r.Student != null && !r.Student.IsDeleted
+                         && r.Comment != null && r.Comment.Trim() != "")
+                .OrderByDescending(r => r.CreatedAt)
+                .Take(limit)
+                .Select(r => new TestimonialRow("tutor", r.Id, r.Student!.FirstName, r.Student.LastName,
+                    "Cours particulier", r.Comment!, r.Rating, r.CreatedAt, true))
+                .ToListAsync();
+
+            var testimonials = subjectReviews.Concat(courseReviews).Concat(tutorReviews)
                 .OrderByDescending(r => r.CreatedAt)
                 .Take(limit)
                 .Select(r => new
                 {
-                    id = r.Id,
-                    author = (r.User!.FirstName + " " + r.User.LastName).Trim(),
-                    email = r.User!.Email,
-                    title = r.Title ?? "Avis utilisateur",
-                    content = r.Comment,
-                    rating = r.Rating,
+                    id = $"{r.Source}-{r.Id}",
+                    source = r.Source,
+                    author = DisplayName(r.FirstName, r.LastName),
+                    title = r.Context,
+                    content = r.Comment.Trim(),
+                    rating = Math.Clamp(r.Rating, 1, 5),
                     createdAt = r.CreatedAt,
-                    subject = r.Subject != null ? r.Subject.Title : "Cours",
-                    isVerifiedPurchase = r.IsVerifiedPurchase
+                    isVerifiedPurchase = r.Verified
                 })
-                .ToListAsync();
+                .ToList();
 
             return Ok(new { data = testimonials, success = true });
         }
@@ -64,6 +97,20 @@ public class TestimonialsController : ControllerBase
             _logger.LogError(ex, "Erreur lors de la récupération des témoignages");
             return StatusCode(500, new { success = false, error = "Erreur serveur" });
         }
+    }
+
+    private sealed record TestimonialRow(string Source, int Id, string? FirstName, string? LastName,
+        string? Context, string Comment, int Rating, DateTime CreatedAt, bool Verified);
+
+    /// <summary>« Prénom N. » : jamais le nom complet ni l'e-mail sur une page publique.</summary>
+    [NonAction]
+    public static string DisplayName(string? firstName, string? lastName)
+    {
+        var first = (firstName ?? "").Trim();
+        var last = (lastName ?? "").Trim();
+        if (first.Length == 0 && last.Length == 0) return "Utilisateur WinPlus";
+        if (first.Length == 0) return char.ToUpperInvariant(last[0]) + ".";
+        return last.Length == 0 ? first : $"{first} {char.ToUpperInvariant(last[0])}.";
     }
 
     /// <summary>
