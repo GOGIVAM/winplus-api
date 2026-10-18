@@ -31,7 +31,7 @@ public interface IForumService
 
     // ── Module 42 : fils suivis (le service frontal les attendait déjà) ──
     /// <summary>Fils triés/filtrés pour le fil d'actualité du forum. `userId` null pour un visiteur anonyme (isFollowed non calculé, followedOnly ignoré).</summary>
-    Task<ForumThreadListResponse> GetFeedAsync(int? userId, string? category, int page, int pageSize, string sort, bool followedOnly);
+    Task<ForumThreadListResponse> GetFeedAsync(int? userId, string? category, int page, int pageSize, string sort, bool followedOnly, string? search = null);
     Task<List<int>> GetFollowedThreadIdsAsync(int userId);
     Task FollowThreadAsync(int userId, int threadId);
     Task UnfollowThreadAsync(int userId, int threadId);
@@ -397,7 +397,7 @@ public class ForumService : IForumService
     }
 
     public async Task<ForumThreadListResponse> GetFeedAsync(
-        int? userId, string? category, int page, int pageSize, string sort, bool followedOnly)
+        int? userId, string? category, int page, int pageSize, string sort, bool followedOnly, string? search = null)
     {
         if (page < 1) page = 1;
         if (pageSize < 1) pageSize = 20;
@@ -407,6 +407,12 @@ public class ForumService : IForumService
 
         if (!string.IsNullOrWhiteSpace(category) && category != "all")
             query = query.Where(t => t.Category == category);
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = $"%{search.Trim()}%";
+            query = query.Where(t => EF.Functions.ILike(t.Title, term) || EF.Functions.ILike(t.Content, term));
+        }
 
         // Un visiteur anonyme ne peut rien suivre : le filtre est ignoré pour lui
         // plutôt que de renvoyer une liste vide qui ressemblerait à une erreur.

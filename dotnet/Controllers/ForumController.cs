@@ -360,6 +360,7 @@ public class ForumController : ControllerBase
     [ProducesResponseType(typeof(ForumThreadListResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetFeed(
         [FromQuery] string? category,
+        [FromQuery] string? q,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] string sort = "recent",
@@ -368,7 +369,7 @@ public class ForumController : ControllerBase
         try
         {
             int? userId = (User?.Identity?.IsAuthenticated == true) ? User.GetUserId() : null;
-            var result = await _forumService.GetFeedAsync(userId, category, page, pageSize, sort, followed);
+            var result = await _forumService.GetFeedAsync(userId, category, page, pageSize, sort, followed, q);
             return Ok(result);
         }
         catch (Exception ex)
