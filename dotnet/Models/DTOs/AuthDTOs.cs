@@ -8,6 +8,8 @@ public class SignUpRequestDto
     public string? LastName { get; set; }
     public string? Phone { get; set; }
     public string? Role { get; set; }
+    /// <summary>Lot 10.3 : source d'acquisition captée par le web (facultative, selon le consentement).</summary>
+    public Backend.Services.Marketing.AttributionDto? Attribution { get; set; }
 }
 
 public class SignUpResponse

@@ -44,6 +44,7 @@ public class PaymentService : IPaymentService
     private readonly ILogger<PaymentService> _logger;
     private readonly IWalletService _wallet;
     private readonly IPromoCodeService _promoCodes;
+    private readonly Backend.Services.Marketing.IConversionTracker? _conversions;
 
     public PaymentService(
         IPaymentRepository repository,
@@ -57,8 +58,10 @@ public class PaymentService : IPaymentService
         ApplicationDbContext db,
         ILogger<PaymentService> logger,
         IWalletService wallet,
-        IPromoCodeService promoCodes)
+        IPromoCodeService promoCodes,
+        Backend.Services.Marketing.IConversionTracker? conversions = null)
     {
+        _conversions = conversions;
         _wallet = wallet;
         _subscriptionActivation = subscriptionActivation;
         _repository = repository;
@@ -408,6 +411,13 @@ public class PaymentService : IPaymentService
                 "Paiement {PaymentId} confirmé mais application du code promo de la commande {OrderId} en échec",
                 payment.Id, payment.OrderId);
         }
+
+        // Lot 10.3 : conversion serveur (GA4, export Google Ads). Écriture en
+        // base seulement, l'envoi réseau est fait en arrière-plan ; ne lève
+        // jamais et ne fait rien sans consentement. Les deux chemins de
+        // confirmation passent ici, l'index unique évite tout doublon.
+        if (_conversions != null)
+            await _conversions.RecordOrderPurchaseAsync(payment.OrderId);
     }
 
     /// <summary>
@@ -589,6 +599,14 @@ public class PaymentService : IPaymentService
             {
                 _logger.LogWarning(ex, "Impossible de synchroniser le statut NotchPay pour {Ref}", payment.NotchpayReference);
             }
+        }
+
+        // Lot 10.3 : le numéro de commande sert de transaction_id à l'achat
+        // de secours envoyé par le web, identique à la conversion serveur.
+        if (payment.Order == null)
+        {
+            try { await _db.Entry(payment).Reference(p => p.Order).LoadAsync(); }
+            catch (Exception ex) { _logger.LogDebug(ex, "Commande du paiement {PaymentId} non chargée", payment.Id); }
         }
 
         return MapToStatusResponse(payment);

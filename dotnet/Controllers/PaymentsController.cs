@@ -22,6 +22,7 @@ public class PaymentsController : ControllerBase
     private readonly IMemoryCache _cache;
     private readonly IWithdrawalService _withdrawals;
     private readonly ITutorEngagementService _tutorEngagementService;
+    private readonly Backend.Services.Marketing.IConversionTracker? _conversions;
 
     public PaymentsController(
         IPaymentService paymentService,
@@ -31,8 +32,10 @@ public class PaymentsController : ControllerBase
         ILogger<PaymentsController> logger,
         IMemoryCache cache,
         IWithdrawalService withdrawals,
-        ITutorEngagementService tutorEngagementService)
+        ITutorEngagementService tutorEngagementService,
+        Backend.Services.Marketing.IConversionTracker? conversions = null)
     {
+        _conversions = conversions;
         _withdrawals = withdrawals;
         _tutorEngagementService = tutorEngagementService;
         _paymentService = paymentService;
@@ -219,6 +222,12 @@ public class PaymentsController : ControllerBase
             // du "WP-" utilisé par le checkout catalogue.
             var handledAsBooking = await _tutorBookingService.TryHandleNotchPayWebhookAsync(
                 eventId, webhookData.Event ?? "unknown", webhookData.Transaction);
+            // Lot 10.3 : conversion serveur d'une réservation payée (sans
+            // effet si non payée, sans consentement ou déjà enregistrée ;
+            // écriture en base seulement, ne lève jamais). Les commandes
+            // catalogue et abonnement sont comptées dans PaymentService.
+            if (handledAsBooking && _conversions != null && webhookData.Transaction.Reference is { Length: > 0 } bookingRef)
+                await _conversions.RecordTutorBookingPurchaseAsync(bookingRef);
             // Module 18 : les inscriptions à une session payante portent leur
             // propre paiement (référence "SESS-"), hors du module Order/Payment,
             // exactement comme les réservations Répétiteur ci-dessus.

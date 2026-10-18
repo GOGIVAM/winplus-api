@@ -65,6 +65,14 @@ public class Order
     /// </summary>
     public string? PromoCode { get; set; }
 
+    /// <summary>
+    /// Lot 10.3 : source d'acquisition au moment de la commande (gclid, utm,
+    /// consentement). Envoyée par le web, ou reprise de la dernière source
+    /// connue du compte. Jamais renvoyée par l'API.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public MarketingAttribution? Attribution { get; set; }
+
     // Navigation properties
     public User? User { get; set; }
 

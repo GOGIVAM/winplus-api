@@ -558,6 +558,18 @@ builder.Services.AddHttpClient("NotchPayClient", (sp, client) =>
 
 builder.Services.AddScoped<INotchPayService, NotchPayService>();
 
+// Lot 10.3 : attribution d'acquisition et conversions serveur (GA4 Measurement
+// Protocol). Variables GA4_MEASUREMENT_ID et GA4_API_SECRET : sans elles,
+// aucune conversion n'est envoyée et le service d'envoi reste inactif.
+builder.Services.AddSingleton(Backend.Services.Marketing.MarketingConfig.From(builder.Configuration));
+builder.Services.AddSingleton<Backend.Services.Marketing.ConversionSignal>();
+builder.Services.AddHttpClient(Backend.Services.Marketing.Ga4MeasurementProtocolDestination.HttpClientName,
+    client => client.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddScoped<Backend.Services.Marketing.IConversionDestination, Backend.Services.Marketing.Ga4MeasurementProtocolDestination>();
+builder.Services.AddScoped<Backend.Services.Marketing.IAttributionService, Backend.Services.Marketing.AttributionService>();
+builder.Services.AddSingleton<Backend.Services.Marketing.IConversionTracker, Backend.Services.Marketing.ConversionTracker>();
+builder.Services.AddHostedService<Backend.Services.Marketing.ConversionDispatchService>();
+
 // Forum
 builder.Services.AddScoped<IForumService, ForumService>();
 // Module 22 : point unique de lecture des préférences de notification

@@ -18,13 +18,16 @@ public class AuthController : ControllerBase
     private readonly ICartService _cartService;
     private readonly ILogger<AuthController> _logger;
     private readonly ApplicationDbContext _dbContext;
+    private readonly Backend.Services.Marketing.IAttributionService? _attribution;
 
     public AuthController(
         ICustomAuthService customAuthService,
         ICartService cartService,
         ILogger<AuthController> logger,
-        ApplicationDbContext dbContext)
+        ApplicationDbContext dbContext,
+        Backend.Services.Marketing.IAttributionService? attribution = null)
     {
+        _attribution = attribution;
         _customAuthService = customAuthService;
         _cartService = cartService;
         _logger = logger;
@@ -99,6 +102,10 @@ public class AuthController : ControllerBase
                 result.User?.IsEmailVerified,
                 DateTime.UtcNow
             );
+
+            // Lot 10.3 : première source du compte (sans effet sans consentement).
+            if (_attribution != null && request.Attribution != null && result.User?.Id is int newUserId)
+                await _attribution.RecordForUserAsync(newUserId, request.Attribution, HttpContext.RequestAborted);
 
             return Ok(new SignUpResponse
             {

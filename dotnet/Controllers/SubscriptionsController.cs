@@ -44,6 +44,8 @@ public class SubscriptionsController : ControllerBase
     private readonly IAiQuotaService _aiQuota;
     private readonly SubscriptionLifecycleService _lifecycle;
     private readonly IEntitlementService _entitlements;
+    private readonly Backend.Services.Marketing.IAttributionService? _attribution;
+    private readonly Backend.Services.Marketing.IConversionTracker? _conversions;
 
     public SubscriptionsController(
         ApplicationDbContext db,
@@ -51,8 +53,12 @@ public class SubscriptionsController : ControllerBase
         IPaymentService paymentService,
         IAiQuotaService aiQuota,
         SubscriptionLifecycleService lifecycle,
-        IEntitlementService entitlements)
+        IEntitlementService entitlements,
+        Backend.Services.Marketing.IAttributionService? attribution = null,
+        Backend.Services.Marketing.IConversionTracker? conversions = null)
     {
+        _attribution = attribution;
+        _conversions = conversions;
         _db = db;
         _logger = logger;
         _paymentService = paymentService;
@@ -165,6 +171,18 @@ public class SubscriptionsController : ControllerBase
             }
 
             var result = await _lifecycle.PurchaseAsync(userId, req, HttpContext.RequestAborted);
+
+            // Lot 10.3 : attribution figée sur la commande d'abonnement ; une
+            // activation immédiate payée par le solde est une conversion (le
+            // paiement Mobile Money, lui, est compté à sa confirmation).
+            if (result.OrderId is int subOrderId)
+            {
+                if (_attribution != null)
+                    await _attribution.ApplyToOrderAsync(subOrderId, userId, req.Attribution, HttpContext.RequestAborted);
+                if (_conversions != null && result.Status == "activated" && result.AmountTtc > 0)
+                    await _conversions.RecordOrderPurchaseAsync(subOrderId);
+            }
+
             if (result.Status != "payment_pending")
                 return Ok(new { status = result.Status, subscriptionId = result.SubscriptionId, orderId = result.OrderId, amount = result.AmountTtc, currency = "XAF", quote = result.Quote, message = result.Message });
 

@@ -1937,5 +1937,8 @@ modelBuilder.Entity<Exam>(entity =>
 
         // ── Lot 9.6 : supports de séance WinAI (voir ApplicationDbContext.TutorSessionMaterials.cs) ──
         OnModelCreatingTutorSessionMaterials(modelBuilder);
+
+        // ── Lot 10.3 : attribution et conversions (voir ApplicationDbContext.Marketing.cs) ──
+        OnModelCreatingMarketing(modelBuilder);
     }
 }

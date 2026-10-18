@@ -147,6 +147,17 @@ public class User
     public string? EmailChangeToken { get; set; } // Verification token for email change
     public DateTime? EmailChangeTokenExpiry { get; set; } // Expiry of verification token
     
+    /// <summary>
+    /// Lot 10.3 : première et dernière source d'acquisition connues (gclid,
+    /// utm, consentement), selon le consentement du visiteur. Jamais renvoyées
+    /// par l'API.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public MarketingAttribution? FirstTouch { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public MarketingAttribution? LastTouch { get; set; }
+
     // Navigation properties
     public ICollection<Enrollment> Enrollments { get; set; } = new List<Enrollment>();
     

@@ -22,7 +22,9 @@ public record CreateOrderRequest(
     string PaymentMethod,
     string? ReferralCode = null,
     /// <summary>Code promo validé au panier (Module 34) ; revalidé et recalculé côté serveur, jamais pris tel quel.</summary>
-    string? PromoCode = null
+    string? PromoCode = null,
+    /// <summary>Lot 10.3 : source d'acquisition captée par le web (facultative, selon le consentement).</summary>
+    Backend.Services.Marketing.AttributionDto? Attribution = null
 );
 
 [ApiController]
@@ -37,6 +39,7 @@ public class OrdersController : ControllerBase
     private readonly IAffiliateService _affiliate;
     private readonly IWalletService _wallet;
     private readonly IPaymentService _payments;
+    private readonly Backend.Services.Marketing.IAttributionService? _attribution;
 
     public OrdersController(
         IOrderService orderService,
@@ -46,8 +49,10 @@ public class OrdersController : ControllerBase
         ITeacherService teacherService,
         IAffiliateService affiliate,
         IWalletService wallet,
-        IPaymentService payments)
+        IPaymentService payments,
+        Backend.Services.Marketing.IAttributionService? attribution = null)
     {
+        _attribution = attribution;
         _wallet = wallet;
         _payments = payments;
         _orderService = orderService;
@@ -440,6 +445,9 @@ public class OrdersController : ControllerBase
         {
             var userId = User.GetUserId();
             var order = await _orderService.CreateOrderAsync(userId, request.PaymentMethod, request.ReferralCode, request.PromoCode);
+            // Lot 10.3 : attribution figée sur la commande (ne lève jamais).
+            if (_attribution != null)
+                await _attribution.ApplyToOrderAsync(order.Id, userId, request.Attribution, HttpContext.RequestAborted);
             return Ok(order);
         }
         // Contenu supprimé, retiré de la vente ou non publié : erreur de

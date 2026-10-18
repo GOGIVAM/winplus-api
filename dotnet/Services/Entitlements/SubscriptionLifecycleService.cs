@@ -47,6 +47,8 @@ public sealed class SubscriptionPurchaseRequest
     public string? Phone { get; set; }
     public string? PromoCode { get; set; }
     public bool AutoRenew { get; set; }
+    /// <summary>Lot 10.3 : source d'acquisition captée par le web (facultative, selon le consentement).</summary>
+    public Backend.Services.Marketing.AttributionDto? Attribution { get; set; }
 }
 
 public sealed record SubscriptionPurchaseResult(
