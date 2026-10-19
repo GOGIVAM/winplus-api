@@ -1940,5 +1940,8 @@ modelBuilder.Entity<Exam>(entity =>
 
         // ── Lot 10.3 : attribution et conversions (voir ApplicationDbContext.Marketing.cs) ──
         OnModelCreatingMarketing(modelBuilder);
+
+        // ── Espace institution, phase 2 : annonces (voir ApplicationDbContext.InstitutionAnnouncements.cs) ──
+        OnModelCreatingInstitutionAnnouncements(modelBuilder);
     }
 }
