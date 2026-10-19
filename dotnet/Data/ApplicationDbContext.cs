@@ -1949,5 +1949,8 @@ modelBuilder.Entity<Exam>(entity =>
 
         // ── Espace institution, phase 2 : bulletins (voir ApplicationDbContext.InstitutionBulletins.cs) ──
         OnModelCreatingInstitutionBulletins(modelBuilder);
+
+        // ── Espace institution, phase 2 : examens blancs (voir ApplicationDbContext.InstitutionMockExams.cs) ──
+        OnModelCreatingInstitutionMockExams(modelBuilder);
     }
 }
