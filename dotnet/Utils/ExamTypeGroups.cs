@@ -24,6 +24,22 @@ public static class ExamTypeGroups
         ["proba"] = new[] { "probatoire" },
     };
 
+    /// <summary>
+    /// Lot 10.4 : examens dont le nom n'est pas en tête du libellé saisi
+    /// (« Épreuve de Français – Probatoire séries F… », « QCM – Examen
+    /// national d'aptitude à la formation médicale »). Le type demandé
+    /// correspond si la forme normalisée du libellé complet contient l'un de
+    /// ces fragments. L'examen national d'aptitude à la formation médicale est
+    /// le concours d'entrée en médecine présenté sur la page FMSB.
+    /// </summary>
+    private static readonly Dictionary<string, string[]> Fragments = new()
+    {
+        ["fmsb"] = new[] { "fmsb", "formation-medicale", "examen-national-d'aptitude", "examen-national-d'entree" },
+        ["probatoire"] = new[] { "probatoire" },
+        ["proba"] = new[] { "probatoire" },
+        ["bac"] = new[] { "baccalaureat" },
+    };
+
     /// <summary>Nom de l'école ou de l'examen : le début du libellé, avant le premier séparateur.</summary>
     public static string Head(string? examType)
     {
@@ -57,7 +73,9 @@ public static class ExamTypeGroups
         var req = Key(requested);
         if (req.Length == 0 || string.IsNullOrWhiteSpace(examType)) return false;
         var group = GroupKey(examType);
-        if (group == req || Key(examType) == req) return true;
-        return Aliases.TryGetValue(req, out var names) && names.Contains(group);
+        var full = Key(examType);
+        if (group == req || full == req) return true;
+        if (Aliases.TryGetValue(req, out var names) && names.Contains(group)) return true;
+        return Fragments.TryGetValue(req, out var parts) && parts.Any(p => full.Contains(p, StringComparison.Ordinal));
     }
 }
