@@ -85,10 +85,13 @@ public class TutorAssignmentService : ITutorAssignmentService
         _db.TutorAssignments.Add(assignment);
         await _db.SaveChangesAsync();
 
-        await _ntfy.PublishAsync($"winplus-user-{tutor.UserId}", "Nouvelle attribution",
+        // Lot 10.6 : notifications dans la langue du destinataire (User.Locale).
+        await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{tutor.UserId}", new("Nouvelle attribution", "New assignment"),
             assignerType == TutorPayerTypes.Institution
-                ? $"Une institution te propose de suivre {studentIds.Count} élève(s){(assignment.GroupName != null ? $" ({assignment.GroupName})" : "")}. Accepte ou refuse depuis tes demandes."
-                : $"Un parent te propose de suivre {(studentIds.Count > 1 ? $"ses {studentIds.Count} enfants" : "son enfant")}. Accepte ou refuse depuis tes demandes.",
+                ? new($"Une institution te propose de suivre {studentIds.Count} élève(s){(assignment.GroupName != null ? $" ({assignment.GroupName})" : "")}. Accepte ou refuse depuis tes demandes.",
+                      $"A school is asking you to tutor {studentIds.Count} student(s){(assignment.GroupName != null ? $" ({assignment.GroupName})" : "")}. Accept or decline from your requests.")
+                : new($"Un parent te propose de suivre {(studentIds.Count > 1 ? $"ses {studentIds.Count} enfants" : "son enfant")}. Accepte ou refuse depuis tes demandes.",
+                      $"A parent is asking you to tutor {(studentIds.Count > 1 ? $"their {studentIds.Count} children" : "their child")}. Accept or decline from your requests."),
             userId: tutor.UserId, type: "TutorAssignment");
 
         return (await MapAsync(new[] { await WithDetails().FirstAsync(a => a.Id == assignment.Id) }))[0];
@@ -139,15 +142,19 @@ public class TutorAssignmentService : ITutorAssignmentService
         await _db.SaveChangesAsync();
 
         var accepted = status == TutorAssignmentStatuses.Active;
-        await _ntfy.PublishAsync($"winplus-user-{a.AssignedByUserId}", accepted ? "Attribution acceptée" : "Attribution refusée",
+        await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{a.AssignedByUserId}",
+            accepted ? new("Attribution acceptée", "Assignment accepted") : new("Attribution refusée", "Assignment declined"),
             accepted
-                ? "Le répétiteur a accepté de suivre tes élèves. Tu peux réserver une séance en un clic depuis Mes attributions."
-                : "Le répétiteur a décliné l'attribution. Tu peux en choisir un autre.",
+                ? new("Le répétiteur a accepté de suivre tes élèves. Tu peux réserver une séance en un clic depuis Mes attributions.",
+                      "The tutor has agreed to tutor your students. You can book a session in one click from My assignments.")
+                : new("Le répétiteur a décliné l'attribution. Tu peux en choisir un autre.",
+                      "The tutor has declined the assignment. You can choose another one."),
             userId: a.AssignedByUserId, type: "TutorAssignment");
         if (accepted)
             foreach (var b in a.Beneficiaries)
-                await _ntfy.PublishAsync($"winplus-user-{b.StudentUserId}", "Un répétiteur t'a été attribué",
-                    $"{TutorName(a)} te suit désormais{(a.Subject != null ? $" en {a.Subject}" : "")}. Il apparaît en premier dans ta recherche de répétiteurs.",
+                await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{b.StudentUserId}", new("Un répétiteur t'a été attribué", "A tutor has been assigned to you"),
+                    new($"{TutorName(a)} te suit désormais{(a.Subject != null ? $" en {a.Subject}" : "")}. Il apparaît en premier dans ta recherche de répétiteurs.",
+                        $"{TutorName(a)} is now your tutor{(a.Subject != null ? $" in {a.Subject}" : "")}. They appear first in your tutor search."),
                     userId: b.StudentUserId, type: "TutorAssignment");
 
         return (await MapAsync(new[] { a }))[0];
@@ -174,8 +181,9 @@ public class TutorAssignmentService : ITutorAssignmentService
 
         var notified = isTutor ? a.AssignedByUserId : a.TutorProfile?.UserId;
         if (notified is int n)
-            await _ntfy.PublishAsync($"winplus-user-{n}", "Attribution terminée",
-                "Une attribution de répétiteur a pris fin. Les séances déjà réservées ne sont pas modifiées.", userId: n, type: "TutorAssignment");
+            await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{n}", new("Attribution terminée", "Assignment ended"),
+                new("Une attribution de répétiteur a pris fin. Les séances déjà réservées ne sont pas modifiées.",
+                    "A tutor assignment has ended. Sessions already booked are not affected."), userId: n, type: "TutorAssignment");
         return (await MapAsync(new[] { a }))[0];
     }
 

@@ -163,8 +163,9 @@ public class InstitutionMockExamsController : ControllerBase
             await _db.SaveChangesAsync();
 
             var people = await ParticipantsAsync(groupIds);
-            Notify(people.Select(p => p.UserId).ToList(), $"Examen blanc · {title}",
-                $"Ouvert du {exam.OpensAt.ToLocalTime():dd/MM à HH\\hmm} au {exam.ClosesAt.ToLocalTime():dd/MM à HH\\hmm}, durée {exam.DurationMinutes} min. Retrouve-le dans Mes devoirs.",
+            Notify(people.Select(p => p.UserId).ToList(), new($"Examen blanc · {title}", $"Mock exam · {title}"),
+                new($"Ouvert du {exam.OpensAt.ToLocalTime():dd/MM à HH\\hmm} au {exam.ClosesAt.ToLocalTime():dd/MM à HH\\hmm}, durée {exam.DurationMinutes} min. Retrouve-le dans Mes devoirs.",
+                    $"Open from {exam.OpensAt.ToLocalTime():dd/MM 'at' HH:mm} to {exam.ClosesAt.ToLocalTime():dd/MM 'at' HH:mm}, {exam.DurationMinutes} min long. Find it in My homework."),
                 exam.Id);
             return Ok(new { data = new { exam.Id, students = people.Count }, success = true });
         }
@@ -246,8 +247,9 @@ public class InstitutionMockExamsController : ControllerBase
         await _db.SaveChangesAsync();
 
         var people = await ParticipantsAsync(e.GroupIdList());
-        Notify(people.Select(p => p.UserId).ToList(), $"Résultats · {e.Title}",
-            "Les résultats de l'examen blanc sont disponibles : ta note et ton classement t'attendent dans Mes devoirs.", e.Id);
+        Notify(people.Select(p => p.UserId).ToList(), new($"Résultats · {e.Title}", $"Results · {e.Title}"),
+            new("Les résultats de l'examen blanc sont disponibles : ta note et ton classement t'attendent dans Mes devoirs.",
+                "The mock exam results are available: your mark and your ranking are waiting for you in My homework."), e.Id);
         return Ok(new { success = true });
     }
 
@@ -318,7 +320,7 @@ public class InstitutionMockExamsController : ControllerBase
         }
     }
 
-    private void Notify(IReadOnlyList<int> userIds, string title, string message, int examId)
+    private void Notify(IReadOnlyList<int> userIds, LocalizedText title, LocalizedText message, int examId)
     {
         if (userIds.Count == 0) return;
         var scopes = _scopes;
@@ -327,11 +329,13 @@ public class InstitutionMockExamsController : ControllerBase
         {
             using var scope = scopes.CreateScope();
             var ntfy = scope.ServiceProvider.GetRequiredService<INtfyService>();
+            var db = scope.ServiceProvider.GetService<ApplicationDbContext>();
             foreach (var id in userIds)
             {
                 try
                 {
-                    await ntfy.PublishAsync($"winplus-user-{id}", title, message, userId: id,
+                    // Lot 10.6 : dans la langue de l'élève (User.Locale).
+                    await ntfy.PublishLocalizedAsync(db, $"winplus-user-{id}", title, message, userId: id,
                         type: "InstitutionMockExam", relatedEntityType: "InstitutionMockExam", relatedEntityId: examId);
                 }
                 catch (Exception ex) { logger.LogWarning(ex, "Examen blanc {ExamId} non notifié à {UserId}", examId, id); }

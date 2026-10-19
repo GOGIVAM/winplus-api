@@ -637,10 +637,12 @@ public class InstitutionNetworkController : ControllerBase
         // requête à chaque appel, non thread-safe pour des accès concurrents.
         foreach (var userId in recipients.Distinct())
         {
-            await _ntfy.PublishAsync(
+            // Lot 10.6 : dans la langue du destinataire (User.Locale).
+            await _ntfy.PublishLocalizedAsync(_db,
                 topic: $"winplus-user-{userId}",
-                title: "Demande de contact enseignant",
-                message: $"{teacherName} souhaite pouvoir vous contacter. Votre établissement a validé la demande, elle attend votre réponse.",
+                title: new("Demande de contact enseignant", "Teacher contact request"),
+                message: new($"{teacherName} souhaite pouvoir vous contacter. Votre établissement a validé la demande, elle attend votre réponse.",
+                             $"{teacherName} would like to be able to contact you. Your school has approved the request and it is waiting for your answer."),
                 userId: userId,
                 type: "access_request",
                 relatedEntityType: "TeacherStudentAccessRequest",
@@ -676,14 +678,20 @@ public class InstitutionNetworkController : ControllerBase
                 .ToListAsync());
         }
 
-        var title = accepted ? "Demande de contact acceptée" : "Demande de contact refusée";
+        // Lot 10.6 : dans la langue de chaque destinataire (User.Locale).
+        var institutionNameEn = request.Institution?.Name ?? "the school";
+        var title = accepted
+            ? new LocalizedText("Demande de contact acceptée", "Contact request accepted")
+            : new LocalizedText("Demande de contact refusée", "Contact request declined");
         var message = accepted
-            ? $"L'accès de contact entre l'enseignant et {studentName} ({institutionName}) a été accepté."
-            : $"La demande de contact concernant {studentName} ({institutionName}) a été refusée.";
+            ? new LocalizedText($"L'accès de contact entre l'enseignant et {studentName} ({institutionName}) a été accepté.",
+                $"Contact between the teacher and {studentName} ({institutionNameEn}) has been accepted.")
+            : new LocalizedText($"La demande de contact concernant {studentName} ({institutionName}) a été refusée.",
+                $"The contact request about {studentName} ({institutionNameEn}) has been declined.");
 
         foreach (var userId in recipients.Distinct())
         {
-            await _ntfy.PublishAsync(
+            await _ntfy.PublishLocalizedAsync(_db,
                 topic: $"winplus-user-{userId}",
                 title: title,
                 message: message,

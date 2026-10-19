@@ -1,3 +1,4 @@
+using Backend.Services;
 using Backend.Data;
 using Backend.Extensions;
 using Backend.Models.Entities;
@@ -167,12 +168,17 @@ public class InstitutionAnnouncementsController : ControllerBase
         {
             using var scope = scopes.CreateScope();
             var ntfy = scope.ServiceProvider.GetRequiredService<Backend.Services.INtfyService>();
+            var db = scope.ServiceProvider.GetService<ApplicationDbContext>();
             foreach (var id in userIds)
             {
                 try
                 {
-                    await ntfy.PublishAsync($"winplus-user-{id}", $"{institutionName} : {title}",
-                        "Nouvelle annonce de votre établissement. Ouvrez WinPlus pour la lire.",
+                    // Lot 10.6 : libellé dans la langue du destinataire ; le titre
+                    // rédigé par l'établissement est repris tel quel.
+                    await ntfy.PublishLocalizedAsync(db, $"winplus-user-{id}",
+                        new($"{institutionName} : {title}", $"{institutionName}: {title}"),
+                        new("Nouvelle annonce de votre établissement. Ouvrez WinPlus pour la lire.",
+                            "New announcement from your school. Open WinPlus to read it."),
                         priority: priority, userId: id, type: "InstitutionAnnouncement",
                         relatedEntityType: "InstitutionAnnouncement", relatedEntityId: announcementId);
                 }

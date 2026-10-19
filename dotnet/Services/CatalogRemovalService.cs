@@ -103,9 +103,13 @@ public class CatalogRemovalService : ICatalogRemovalService
                     await _wallet.ReverseAsync(commissionEntry.Id, $"Commission annulée, contenu retiré : « {subject.Title} »");
 
                 refunded.Add(item.BuyerId!.Value);
-                await _ntfy.PublishAsync($"winplus-user-{item.BuyerId}", "Contenu retiré de la vente",
-                    $"« {subject.Title} » n'est plus disponible sur WinPlus. Le montant payé ({refundXaf:0} XAF) " +
-                    "a été crédité sur votre portefeuille WinPlus.",
+                // Lot 10.6 : dans la langue de l'acheteur (User.Locale).
+                await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{item.BuyerId}",
+                    new("Contenu retiré de la vente", "Content withdrawn from sale"),
+                    new($"« {subject.Title} » n'est plus disponible sur WinPlus. Le montant payé ({refundXaf:0} XAF) " +
+                        "a été crédité sur votre portefeuille WinPlus.",
+                        $"\"{subject.Title}\" is no longer available on WinPlus. The amount you paid ({refundXaf:0} XAF) " +
+                        "has been credited to your WinPlus wallet."),
                     userId: item.BuyerId, type: "ContentRemoved", relatedEntityType: "subject", relatedEntityId: subjectId);
             }
             catch (Exception ex)

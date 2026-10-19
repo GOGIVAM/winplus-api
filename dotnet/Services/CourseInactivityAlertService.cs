@@ -93,9 +93,11 @@ public sealed class CourseInactivityAlertService : BackgroundService
 
                 if (inactiveCount > 0)
                 {
-                    await ntfy.PublishAsync($"winplus-user-{course.InstructorId}",
-                        "Élèves inactifs",
-                        $"{inactiveCount} élève{(inactiveCount > 1 ? "s sont inactifs" : " est inactif")} depuis {course.InactivityThresholdDays} jours sur « {course.Title} ».",
+                    // Lot 10.6 : dans la langue du professeur (User.Locale).
+                    await ntfy.PublishLocalizedAsync(db, $"winplus-user-{course.InstructorId}",
+                        new("Élèves inactifs", "Inactive students"),
+                        new($"{inactiveCount} élève{(inactiveCount > 1 ? "s sont inactifs" : " est inactif")} depuis {course.InactivityThresholdDays} jours sur « {course.Title} ».",
+                            $"{inactiveCount} student{(inactiveCount > 1 ? "s have" : " has")} been inactive for {course.InactivityThresholdDays} days on \"{course.Title}\"."),
                         userId: course.InstructorId, type: "CourseInactivity");
                 }
 

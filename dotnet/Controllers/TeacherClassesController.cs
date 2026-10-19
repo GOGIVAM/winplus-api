@@ -407,8 +407,10 @@ public class TeacherClassesController : ControllerBase
 
                 var teacherName = await _db.Users.Where(u => u.Id == teacherId)
                     .Select(u => $"{u.FirstName} {u.LastName}".Trim()).FirstOrDefaultAsync();
-                await _ntfy.PublishAsync($"winplus-user-{studentId.Value}", "Ajouté(e) à une classe",
-                    $"{teacherName ?? "Ton professeur"} t'a ajouté(e) à la classe « {klass.Name} ».",
+                // Lot 10.6 : dans la langue de l'élève (User.Locale).
+                await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{studentId.Value}", new("Ajouté(e) à une classe", "Added to a class"),
+                    new($"{teacherName ?? "Ton professeur"} t'a ajouté(e) à la classe « {klass.Name} ».",
+                        $"{teacherName ?? "Your teacher"} has added you to the class \"{klass.Name}\"."),
                     userId: studentId.Value, type: "TeacherClass");
             }
 

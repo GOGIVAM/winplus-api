@@ -96,12 +96,17 @@ public sealed class TutorInPersonRequestCloser
         var money = refunded > 0
             ? $" {refunded:0} XAF ont été crédités sur le portefeuille WinPlus du payeur (remboursement intégral)."
             : "";
-        await NotifyAsync(recipients, "Demande de séance refusée",
-            $"Le présentiel de ce répétiteur n'est plus disponible pour le moment : la demande de séance du {b.SessionDate:dd/MM/yyyy} est refusée.{money} Tu peux réserver une séance en ligne ou choisir un autre répétiteur.",
+        var moneyEn = refunded > 0
+            ? $" {refunded:0} XAF have been credited to the payer's WinPlus wallet (full refund)."
+            : "";
+        await NotifyAsync(recipients, new("Demande de séance refusée", "Session request declined"),
+            new($"Le présentiel de ce répétiteur n'est plus disponible pour le moment : la demande de séance du {b.SessionDate:dd/MM/yyyy} est refusée.{money} Tu peux réserver une séance en ligne ou choisir un autre répétiteur.",
+                $"This tutor's in-person sessions are not available for now: the session request for {b.SessionDate:dd/MM/yyyy} is declined.{moneyEn} You can book an online session or choose another tutor."),
             "TutorBooking", b.Id);
         if (b.TutorProfile?.UserId is int tutor)
-            await NotifyAsync(new[] { tutor }, "Demande présentielle refusée d'office",
-                $"Ton présentiel n'est pas disponible : la demande du {b.SessionDate:dd/MM/yyyy} a été refusée et le payeur remboursé intégralement, sans frais pour toi.",
+            await NotifyAsync(new[] { tutor }, new("Demande présentielle refusée d'office", "In-person request automatically declined"),
+                new($"Ton présentiel n'est pas disponible : la demande du {b.SessionDate:dd/MM/yyyy} a été refusée et le payeur remboursé intégralement, sans frais pour toi.",
+                    $"Your in-person sessions are not available: the request for {b.SessionDate:dd/MM/yyyy} has been declined and the payer fully refunded, at no cost to you."),
                 "TutorBooking", b.Id);
         return refunded;
     }
@@ -143,12 +148,17 @@ public sealed class TutorInPersonRequestCloser
         var money = total > 0
             ? $" {total:0} XAF ont été crédités sur le portefeuille WinPlus du payeur (remboursement intégral)."
             : "";
-        await NotifyAsync(recipients, "Engagement mensuel refusé",
-            $"Le présentiel de ce répétiteur n'est plus disponible pour le moment : l'engagement du {e.StartDate:dd/MM/yyyy} au {e.EndDate:dd/MM/yyyy} est refusé.{money} Tu peux réserver en ligne ou choisir un autre répétiteur.",
+        var moneyEn = total > 0
+            ? $" {total:0} XAF have been credited to the payer's WinPlus wallet (full refund)."
+            : "";
+        await NotifyAsync(recipients, new("Engagement mensuel refusé", "Monthly commitment declined"),
+            new($"Le présentiel de ce répétiteur n'est plus disponible pour le moment : l'engagement du {e.StartDate:dd/MM/yyyy} au {e.EndDate:dd/MM/yyyy} est refusé.{money} Tu peux réserver en ligne ou choisir un autre répétiteur.",
+                $"This tutor's in-person sessions are not available for now: the commitment from {e.StartDate:dd/MM/yyyy} to {e.EndDate:dd/MM/yyyy} is declined.{moneyEn} You can book online or choose another tutor."),
             "TutorEngagement", e.Id);
         if (e.TutorProfile?.UserId is int tutor)
-            await NotifyAsync(new[] { tutor }, "Engagement présentiel refusé d'office",
-                $"Ton présentiel n'est pas disponible : la demande d'engagement du {e.StartDate:dd/MM/yyyy} a été refusée et le payeur remboursé intégralement, sans frais pour toi.",
+            await NotifyAsync(new[] { tutor }, new("Engagement présentiel refusé d'office", "In-person commitment automatically declined"),
+                new($"Ton présentiel n'est pas disponible : la demande d'engagement du {e.StartDate:dd/MM/yyyy} a été refusée et le payeur remboursé intégralement, sans frais pour toi.",
+                    $"Your in-person sessions are not available: the commitment request starting {e.StartDate:dd/MM/yyyy} has been declined and the payer fully refunded, at no cost to you."),
                 "TutorEngagement", e.Id);
         return total;
     }
@@ -164,13 +174,14 @@ public sealed class TutorInPersonRequestCloser
         if (entry.State == EntityState.Unchanged) await entry.ReloadAsync();
     }
 
-    private async Task NotifyAsync(IEnumerable<int> userIds, string title, string message, string entityType, int entityId)
+    /// <summary>Lot 10.6 : chaque destinataire dans sa langue (User.Locale).</summary>
+    private async Task NotifyAsync(IEnumerable<int> userIds, LocalizedText title, LocalizedText message, string entityType, int entityId)
     {
         foreach (var id in userIds.Distinct())
         {
             try
             {
-                await _ntfy.PublishAsync($"winplus-user-{id}", title, message, priority: "high", userId: id, type: "TutorBooking",
+                await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{id}", title, message, priority: "high", userId: id, type: "TutorBooking",
                     relatedEntityType: entityType, relatedEntityId: entityId);
             }
             catch (Exception ex)

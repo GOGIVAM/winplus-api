@@ -222,12 +222,15 @@ public class ForumController : ControllerBase
             // accès concurrents sur une même instance. En fire-and-forget, le
             // DbContext pouvait en plus être détruit avant la fin de l'appel,
             // faisant échouer PublishAsync silencieusement (perte de notification).
+            // Lot 10.6 : chaque destinataire dans sa langue (User.Locale).
+            var localeDb = HttpContext?.RequestServices.GetService<Backend.Data.ApplicationDbContext>();
             foreach (var recipientId in notifyIds)
             {
-                await _ntfyService.PublishAsync(
+                await _ntfyService.PublishLocalizedAsync(localeDb,
                     topic: $"winplus-user-{recipientId}",
-                    title: "Nouvelle réponse sur un fil suivi",
-                    message: "Une nouvelle réponse a été ajoutée à un fil que vous suivez.",
+                    title: new("Nouvelle réponse sur un fil suivi", "New reply in a thread you follow"),
+                    message: new("Une nouvelle réponse a été ajoutée à un fil que vous suivez.",
+                                 "A new reply has been added to a thread you follow."),
                     priority: "default",
                     tags: new[] { "speech_balloon" },
                     userId: recipientId,

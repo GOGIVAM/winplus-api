@@ -119,10 +119,12 @@ public class GoalsController : ControllerBase
             await _db.SaveChangesAsync();
 
             var parentName = await DisplayNameAsync(parentId);
-            await _ntfy.PublishAsync(
+            // Lot 10.6 : notifications dans la langue du destinataire (User.Locale).
+            await _ntfy.PublishLocalizedAsync(_db,
                 topic: $"winplus-user-{request.ChildId}",
-                title: "Nouvel objectif proposé",
-                message: $"{parentName} vous propose un nouvel objectif : « {goal.Title} ». Acceptez, modifiez ou refusez-le.",
+                title: new("Nouvel objectif proposé", "New goal suggested"),
+                message: new($"{parentName} vous propose un nouvel objectif : « {goal.Title} ». Acceptez, modifiez ou refusez-le.",
+                             $"{parentName} suggests a new goal for you: \"{goal.Title}\". Accept, edit or decline it."),
                 userId: request.ChildId,
                 type: "goal",
                 relatedEntityType: "Goal",
@@ -162,10 +164,11 @@ public class GoalsController : ControllerBase
             if (goal.ProposedByUserId is int parentId)
             {
                 var childName = await DisplayNameAsync(studentId);
-                await _ntfy.PublishAsync(
+                await _ntfy.PublishLocalizedAsync(_db,
                     topic: $"winplus-user-{parentId}",
-                    title: "Objectif accepté",
-                    message: $"{childName} a accepté l'objectif « {goal.Title} ».",
+                    title: new("Objectif accepté", "Goal accepted"),
+                    message: new($"{childName} a accepté l'objectif « {goal.Title} ».",
+                                 $"{childName} has accepted the goal \"{goal.Title}\"."),
                     userId: parentId,
                     type: "goal",
                     relatedEntityType: "Goal",
@@ -206,10 +209,11 @@ public class GoalsController : ControllerBase
             if (goal.ProposedByUserId is int parentId)
             {
                 var childName = await DisplayNameAsync(studentId);
-                await _ntfy.PublishAsync(
+                await _ntfy.PublishLocalizedAsync(_db,
                     topic: $"winplus-user-{parentId}",
-                    title: "Objectif refusé",
-                    message: $"{childName} a refusé l'objectif « {goal.Title} ».",
+                    title: new("Objectif refusé", "Goal declined"),
+                    message: new($"{childName} a refusé l'objectif « {goal.Title} ».",
+                                 $"{childName} has declined the goal \"{goal.Title}\"."),
                     userId: parentId,
                     type: "goal",
                     relatedEntityType: "Goal",
@@ -262,10 +266,11 @@ public class GoalsController : ControllerBase
             if (goal.ProposedByUserId is int parentId)
             {
                 var childName = await DisplayNameAsync(studentId);
-                await _ntfy.PublishAsync(
+                await _ntfy.PublishLocalizedAsync(_db,
                     topic: $"winplus-user-{parentId}",
-                    title: "Objectif modifié",
-                    message: $"{childName} a modifié l'objectif proposé et l'a activé : « {request.Title.Trim()} ».",
+                    title: new("Objectif modifié", "Goal edited"),
+                    message: new($"{childName} a modifié l'objectif proposé et l'a activé : « {request.Title.Trim()} ».",
+                                 $"{childName} has edited the suggested goal and activated it: \"{request.Title.Trim()}\"."),
                     userId: parentId,
                     type: "goal",
                     relatedEntityType: "Goal",

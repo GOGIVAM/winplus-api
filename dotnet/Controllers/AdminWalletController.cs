@@ -262,8 +262,10 @@ public partial class AdminWalletController : ControllerBase
                     after: new { amountXaf = request.AmountXaf, entryId = entry.Id }, reason: reason);
             try
             {
-                await _ntfy.PublishAsync($"winplus-user-{beneficiary.Id}", "Crédit sur ton portefeuille",
-                    $"{request.AmountXaf:0} FCFA ont été crédités sur ton portefeuille WinPlus. Motif : {reason}",
+                // Lot 10.6 : dans la langue du bénéficiaire (User.Locale) ; le motif saisi par l'admin est repris tel quel.
+                await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{beneficiary.Id}", new("Crédit sur ton portefeuille", "Credit to your wallet"),
+                    new($"{request.AmountXaf:0} FCFA ont été crédités sur ton portefeuille WinPlus. Motif : {reason}",
+                        $"{request.AmountXaf:0} FCFA have been credited to your WinPlus wallet. Reason: {reason}"),
                     userId: beneficiary.Id, type: "Wallet");
             }
             catch (Exception ex) { _logger.LogWarning(ex, "Notification de crédit manuel non envoyée"); }

@@ -101,10 +101,13 @@ public class AdminTutorReviewsController : ControllerBase
         {
             try
             {
-                await _ntfy.PublishAsync($"winplus-user-{review.ReportedByUserId}", "Signalement d'avis traité",
+                // Lot 10.6 : dans la langue de l'auteur du signalement (User.Locale).
+                await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{review.ReportedByUserId}", new("Signalement d'avis traité", "Review report handled"),
                     decision == "remove"
-                        ? "L'avis que tu as signalé a été retiré après examen par l'équipe WinPlus."
-                        : "L'avis que tu as signalé a été examiné par l'équipe WinPlus et reste en ligne.",
+                        ? new("L'avis que tu as signalé a été retiré après examen par l'équipe WinPlus.",
+                              "The review you reported has been removed after review by the WinPlus team.")
+                        : new("L'avis que tu as signalé a été examiné par l'équipe WinPlus et reste en ligne.",
+                              "The review you reported has been examined by the WinPlus team and stays online."),
                     userId: review.ReportedByUserId, type: "TutorReview", relatedEntityType: "TutorReview", relatedEntityId: id);
             }
             catch { /* la décision est enregistrée ; la notification n'est qu'informative */ }

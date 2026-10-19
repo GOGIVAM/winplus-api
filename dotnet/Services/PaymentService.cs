@@ -253,10 +253,12 @@ public class PaymentService : IPaymentService
             // faisant échouer silencieusement PublishAsync (ObjectDisposedException
             // avalée par son propre try/catch) et perdant la notification la plus
             // critique commercialement, de façon intermittente et non reproductible.
-            await _ntfy.PublishAsync(
+            // Lot 10.6 : dans la langue du compte (User.Locale).
+            await _ntfy.PublishLocalizedAsync(_db,
                 topic: $"winplus-user-{payment.UserId}",
-                title: "Paiement reçu ✓",
-                message: $"Votre paiement de {payment.Amount} XAF a été confirmé.",
+                title: new("Paiement reçu ✓", "Payment received ✓"),
+                message: new($"Votre paiement de {payment.Amount} XAF a été confirmé.",
+                             $"Your payment of {payment.Amount} XAF has been confirmed."),
                 priority: "high",
                 tags: new[] { "white_check_mark", "moneybag" },
                 userId: payment.UserId,
@@ -267,10 +269,11 @@ public class PaymentService : IPaymentService
         }
         else if (payment.Status == "failed")
         {
-            await _ntfy.PublishAsync(
+            await _ntfy.PublishLocalizedAsync(_db,
                 topic: $"winplus-user-{payment.UserId}",
-                title: "Paiement échoué",
-                message: "Votre paiement n'a pas pu être traité. Veuillez réessayer.",
+                title: new("Paiement échoué", "Payment failed"),
+                message: new("Votre paiement n'a pas pu être traité. Veuillez réessayer.",
+                             "Your payment could not be processed. Please try again."),
                 priority: "high",
                 tags: new[] { "x", "credit_card" },
                 userId: payment.UserId,

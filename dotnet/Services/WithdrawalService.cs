@@ -386,8 +386,9 @@ public class WithdrawalService : IWithdrawalService
         });
 
         if (notify && done != null)
-            await SafeUserAsync(done.UserId, "Retrait effectué",
-                $"Ton retrait de {done.AmountXaf:0} FCFA a été envoyé vers {WithdrawalLabels.MaskPhone(done.Phone)}.", done.Id);
+            await SafeUserAsync(done.UserId, new("Retrait effectué", "Withdrawal completed"),
+                new($"Ton retrait de {done.AmountXaf:0} FCFA a été envoyé vers {WithdrawalLabels.MaskPhone(done.Phone)}.",
+                    $"Your withdrawal of {done.AmountXaf:0} FCFA has been sent to {WithdrawalLabels.MaskPhone(done.Phone)}."), done.Id);
     }
 
     /// <summary>Échec ou annulation : statut terminal et contre-passation de la réservation, une seule fois.</summary>
@@ -418,8 +419,9 @@ public class WithdrawalService : IWithdrawalService
 
         if (failed != null)
         {
-            await SafeUserAsync(failed.UserId, "Retrait échoué",
-                $"Ton retrait de {failed.AmountXaf:0} FCFA n'a pas abouti ({failed.FailureReason}). Le montant a été remis sur ton solde.", failed.Id);
+            await SafeUserAsync(failed.UserId, new("Retrait échoué", "Withdrawal failed"),
+                new($"Ton retrait de {failed.AmountXaf:0} FCFA n'a pas abouti ({failed.FailureReason}). Le montant a été remis sur ton solde.",
+                    $"Your withdrawal of {failed.AmountXaf:0} FCFA did not go through ({failed.FailureReason}). The amount has been returned to your balance."), failed.Id);
             await SafeAdminAsync("Retrait échoué",
                 $"Retrait #{failed.Id} de {failed.AmountXaf:0} FCFA (utilisateur #{failed.UserId}) : {failed.FailureReason}. Fonds restitués automatiquement.", failed.Id);
         }
@@ -532,20 +534,23 @@ public class WithdrawalService : IWithdrawalService
         });
 
         var done = await _db.Withdrawals.AsNoTracking().FirstAsync(x => x.Id == withdrawalId);
-        await SafeUserAsync(done.UserId, success ? "Retrait effectué" : "Retrait échoué",
+        await SafeUserAsync(done.UserId, success ? new("Retrait effectué", "Withdrawal completed") : new("Retrait échoué", "Withdrawal failed"),
             success
-                ? $"Ton retrait de {done.AmountXaf:0} FCFA a été envoyé vers {WithdrawalLabels.MaskPhone(done.Phone)}."
-                : $"Ton retrait de {done.AmountXaf:0} FCFA n'a pas abouti. Le montant a été remis sur ton solde.", done.Id);
+                ? new($"Ton retrait de {done.AmountXaf:0} FCFA a été envoyé vers {WithdrawalLabels.MaskPhone(done.Phone)}.",
+                      $"Your withdrawal of {done.AmountXaf:0} FCFA has been sent to {WithdrawalLabels.MaskPhone(done.Phone)}.")
+                : new($"Ton retrait de {done.AmountXaf:0} FCFA n'a pas abouti. Le montant a été remis sur ton solde.",
+                      $"Your withdrawal of {done.AmountXaf:0} FCFA did not go through. The amount has been returned to your balance."), done.Id);
         return done;
     }
 
     // ── Notifications ───────────────────────────────────────────────────
 
-    private async Task SafeUserAsync(int userId, string title, string message, int withdrawalId)
+    /// <summary>Lot 10.6 : dans la langue du titulaire (User.Locale).</summary>
+    private async Task SafeUserAsync(int userId, LocalizedText title, LocalizedText message, int withdrawalId)
     {
         try
         {
-            await _ntfy.PublishAsync($"winplus-user-{userId}", title, message, priority: "high",
+            await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{userId}", title, message, priority: "high",
                 userId: userId, type: "Withdrawal", relatedEntityType: "Withdrawal", relatedEntityId: withdrawalId);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Notification du retrait {Id} non envoyée", withdrawalId); }

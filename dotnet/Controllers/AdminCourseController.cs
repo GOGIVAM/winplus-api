@@ -147,8 +147,9 @@ public class AdminCourseController : ControllerBase
                 new { status = before }, new { status = course.Status });
             await _db.SaveChangesAsync();
 
-            await NotifyInstructorAsync(course, "Formation publiée",
-                $"Ta formation « {course.Title} » a été validée et est maintenant publiée.");
+            await NotifyInstructorAsync(course, new("Formation publiée", "Course published"),
+                new($"Ta formation « {course.Title} » a été validée et est maintenant publiée.",
+                    $"Your course \"{course.Title}\" has been approved and is now published."));
 
             _logger.LogInformation("Admin {AdminId} approved course {CourseId}", User.GetUserId(), id);
             return Ok(new { message = "Formation publiée", courseId = id });
@@ -182,8 +183,9 @@ public class AdminCourseController : ControllerBase
                 new { status = before }, new { status = course.Status }, reason);
             await _db.SaveChangesAsync();
 
-            await NotifyInstructorAsync(course, "Formation à revoir",
-                $"Ta formation « {course.Title} » n'a pas été validée. Motif : {reason}. Corrige-la puis soumets-la à nouveau.");
+            await NotifyInstructorAsync(course, new("Formation à revoir", "Course needs changes"),
+                new($"Ta formation « {course.Title} » n'a pas été validée. Motif : {reason}. Corrige-la puis soumets-la à nouveau.",
+                    $"Your course \"{course.Title}\" has not been approved. Reason: {reason}. Correct it and submit it again."));
 
             _logger.LogInformation("Admin {AdminId} rejected course {CourseId}: {Reason}", User.GetUserId(), id, reason);
             return Ok(new { message = "Formation rejetée", courseId = id, reason });
@@ -288,11 +290,12 @@ public class AdminCourseController : ControllerBase
         }
     }
 
-    private async Task NotifyInstructorAsync(Course course, string title, string message)
+    private async Task NotifyInstructorAsync(Course course, LocalizedText title, LocalizedText message)
     {
         try
         {
-            await _ntfy.PublishAsync($"winplus-user-{course.InstructorId}", title, message,
+            // Lot 10.6 : dans la langue du formateur (User.Locale).
+            await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{course.InstructorId}", title, message,
                 userId: course.InstructorId, type: "Course", relatedEntityType: "Course", relatedEntityId: course.Id);
         }
         catch (Exception ex)

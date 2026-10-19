@@ -88,8 +88,10 @@ public class TutorReviewService : ITutorReviewService
 
         var tutorUserId = booking.TutorProfile?.UserId;
         if (tutorUserId.HasValue)
-            await _ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Nouvel avis reçu",
-                $"{review.Rating}/5 pour ta séance du {booking.SessionDate:dd/MM/yyyy}.", userId: tutorUserId.Value, type: "TutorReview");
+            // Lot 10.6 : dans la langue du répétiteur (User.Locale).
+            await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{tutorUserId.Value}", new("Nouvel avis reçu", "New review received"),
+                new($"{review.Rating}/5 pour ta séance du {booking.SessionDate:dd/MM/yyyy}.",
+                    $"{review.Rating}/5 for your session on {booking.SessionDate:dd/MM/yyyy}."), userId: tutorUserId.Value, type: "TutorReview");
 
         return await MapToDtoAsync(review);
     }

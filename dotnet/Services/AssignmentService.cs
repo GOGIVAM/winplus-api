@@ -65,12 +65,17 @@ public class AssignmentService : IAssignmentService
                 var dueInfo = assignment.DueDate.HasValue
                     ? $" à rendre pour le {assignment.DueDate.Value:dd/MM/yyyy}"
                     : "";
+                var dueInfoEn = assignment.DueDate.HasValue
+                    ? $", due on {assignment.DueDate.Value:dd/MM/yyyy}"
+                    : "";
                 foreach (var studentId in studentIds)
                 {
-                    await _ntfy.PublishAsync(
+                    // Lot 10.6 : dans la langue de l'élève (User.Locale).
+                    await _ntfy.PublishLocalizedAsync(_context,
                         $"winplus-user-{studentId}",
-                        "Nouveau devoir",
-                        $"« {assignment.Title} » a été donné à ta classe « {klass.Name} »{dueInfo}.",
+                        new("Nouveau devoir", "New homework"),
+                        new($"« {assignment.Title} » a été donné à ta classe « {klass.Name} »{dueInfo}.",
+                            $"\"{assignment.Title}\" has been set for your class \"{klass.Name}\"{dueInfoEn}."),
                         userId: studentId,
                         type: "Assignment",
                         relatedEntityType: "Assignment",
@@ -179,10 +184,11 @@ public class AssignmentService : IAssignmentService
         try
         {
             var student = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == studentId);
-            await _ntfy.PublishAsync(
+            await _ntfy.PublishLocalizedAsync(_context,
                 $"winplus-user-{assignment.TeacherId}",
-                "Nouvelle copie à corriger",
-                $"{FullName(student)} a soumis sa copie pour « {assignment.Title} ».",
+                new("Nouvelle copie à corriger", "New work to mark"),
+                new($"{FullName(student)} a soumis sa copie pour « {assignment.Title} ».",
+                    $"{FullName(student)} has handed in their work for \"{assignment.Title}\"."),
                 userId: assignment.TeacherId,
                 type: "Submission",
                 relatedEntityType: "Submission",
@@ -300,10 +306,11 @@ public class AssignmentService : IAssignmentService
             // que de risquer de ne jamais renotifier une note corrigée après coup.
             try
             {
-                await _ntfy.PublishAsync(
+                await _ntfy.PublishLocalizedAsync(_context,
                     $"winplus-user-{s.StudentId}",
-                    wasAlreadyCorrected ? "Correction mise à jour" : "Copie corrigée",
-                    $"Ta copie pour « {s.Assignment!.Title} » a été corrigée : {s.Score}/{s.Assignment!.MaxScore}.",
+                    wasAlreadyCorrected ? new("Correction mise à jour", "Marking updated") : new("Copie corrigée", "Work marked"),
+                    new($"Ta copie pour « {s.Assignment!.Title} » a été corrigée : {s.Score}/{s.Assignment!.MaxScore}.",
+                        $"Your work for \"{s.Assignment!.Title}\" has been marked: {s.Score}/{s.Assignment!.MaxScore}."),
                     userId: s.StudentId,
                     type: "Submission",
                     relatedEntityType: "Submission",

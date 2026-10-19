@@ -509,7 +509,7 @@ public class TutorBookingService : ITutorBookingService
         var decision = await _refunds.RefundAsync(booking, isTutor ? TutorRefundCause.TutorCancelled : TutorRefundCause.PayerCancelled);
         await SyncWalletAsync(booking.Id);
         if (decision != null)
-            await NotifyRefundAsync(booking, decision, "annulée");
+            await NotifyRefundAsync(booking, decision, new("annulée", "cancelled"));
         if (booking.TutorEngagementId is int engagementId)
             await TutorEngagementService.RefreshStatusAsync(_context, engagementId);
 
@@ -521,19 +521,21 @@ public class TutorBookingService : ITutorBookingService
         if (isTutor) notified.Add(booking.PayerUserId ?? booking.StudentUserId);
         notified.Remove(userId);
         foreach (var id in notified)
-            await _ntfy.PublishAsync($"winplus-user-{id}", "Séance annulée",
-                $"Une séance du {booking.SessionDate:dd/MM/yyyy} a été annulée.", userId: id, type: "TutorBooking");
+            await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{id}", new("Séance annulée", "Session cancelled"),
+                new($"Une séance du {booking.SessionDate:dd/MM/yyyy} a été annulée.",
+                    $"A session on {booking.SessionDate:dd/MM/yyyy} has been cancelled."), userId: id, type: "TutorBooking");
 
         return MapToDto(booking);
     }
 
     /// <summary>Prévient les participants (et le payeur s'il n'en fait pas partie) d'un événement de la séance (lot 9.3).</summary>
-    private async Task NotifyParticipantsAndPayerAsync(TutorBooking booking, string title, string message, bool includePayer = true)
+    private async Task NotifyParticipantsAndPayerAsync(TutorBooking booking, LocalizedText title, LocalizedText message, bool includePayer = true)
     {
         var ids = new HashSet<int>(ParticipantIds(booking));
         if (includePayer) ids.Add(booking.PayerUserId ?? booking.StudentUserId);
+        // Lot 10.6 : chaque destinataire dans sa langue (User.Locale).
         foreach (var id in ids)
-            await _ntfy.PublishAsync($"winplus-user-{id}", title, message, userId: id, type: "TutorBooking");
+            await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{id}", title, message, userId: id, type: "TutorBooking");
     }
 
     /// <summary>Lot 9.4 : le tuteur accepte ou refuse l'engagement mensuel entier, jamais une de ses séances isolément.</summary>
@@ -564,8 +566,9 @@ public class TutorBookingService : ITutorBookingService
         booking.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
-        await NotifyParticipantsAndPayerAsync(booking, "Séance confirmée !",
-            $"Le répétiteur a accepté la séance du {booking.SessionDate:dd/MM/yyyy}.");
+        await NotifyParticipantsAndPayerAsync(booking, new("Séance confirmée !", "Session confirmed!"),
+            new($"Le répétiteur a accepté la séance du {booking.SessionDate:dd/MM/yyyy}.",
+                $"The tutor has accepted the session on {booking.SessionDate:dd/MM/yyyy}."));
         return MapToDto(booking);
     }
 
@@ -581,7 +584,7 @@ public class TutorBookingService : ITutorBookingService
         booking.UpdatedAt = DateTime.UtcNow;
         var decision = await _refunds.RefundAsync(booking, TutorRefundCause.TutorDeclined);
         if (decision != null)
-            await NotifyRefundAsync(booking, decision, "refusée par le répétiteur");
+            await NotifyRefundAsync(booking, decision, new("refusée par le répétiteur", "declined by the tutor"));
         return MapToDto(booking);
     }
 
@@ -600,8 +603,9 @@ public class TutorBookingService : ITutorBookingService
         booking.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
-        await NotifyParticipantsAndPayerAsync(booking, "Comment s'est passée la séance ?",
-            $"Laisse un avis pour ce répétiteur. Tu as {_policy.DisputeWindowHours} h pour contester la séance si elle ne s'est pas bien passée ; ensuite le paiement est versé au répétiteur.");
+        await NotifyParticipantsAndPayerAsync(booking, new("Comment s'est passée la séance ?", "How did the session go?"),
+            new($"Laisse un avis pour ce répétiteur. Tu as {_policy.DisputeWindowHours} h pour contester la séance si elle ne s'est pas bien passée ; ensuite le paiement est versé au répétiteur.",
+                $"Leave a review for this tutor. You have {_policy.DisputeWindowHours} h to dispute the session if it did not go well; after that, the payment is released to the tutor."));
         return MapToDto(booking);
     }
 
@@ -628,8 +632,9 @@ public class TutorBookingService : ITutorBookingService
 
         var tutorUserId = booking.TutorProfile?.UserId;
         if (tutorUserId.HasValue)
-            await _ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Séance contestée",
-                $"L'élève conteste la séance du {booking.SessionDate:dd/MM/yyyy}. Le support WinPlus va examiner le dossier.",
+            await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{tutorUserId.Value}", new("Séance contestée", "Session disputed"),
+                new($"L'élève conteste la séance du {booking.SessionDate:dd/MM/yyyy}. Le support WinPlus va examiner le dossier.",
+                    $"The student is disputing the session on {booking.SessionDate:dd/MM/yyyy}. WinPlus support will review the case."),
                 priority: "high", userId: tutorUserId.Value, type: "TutorBooking");
         await _ntfy.PublishAdminAsync("Litige cours particulier",
             $"Réservation #{booking.Id} contestée par le compte #{studentUserId} (payeur {booking.PayerType ?? "student"} #{booking.PayerUserId ?? booking.StudentUserId})  motif : {reason}", tags: new[] { "warning" });
@@ -684,31 +689,42 @@ public class TutorBookingService : ITutorBookingService
     /// admin « remboursement manuel requis » : seul un échec technique du
     /// crédit alerte l'admin (TutorRefundService).
     /// </summary>
-    private async Task NotifyRefundAsync(TutorBooking booking, TutorRefundDecision decision, string reasonLabel)
+    private async Task NotifyRefundAsync(TutorBooking booking, TutorRefundDecision decision, LocalizedText reason)
     {
         var payerId = booking.PayerUserId ?? booking.StudentUserId;
         var date = $"{booking.SessionDate:dd/MM/yyyy}";
-        string message;
+        var reasonLabel = reason.Fr;
+        var reasonEn = reason.En;
+        // Lot 10.6 : texte dans les deux langues, choisi selon le destinataire.
+        LocalizedText message;
         if (decision.RefundXaf <= 0)
             message = decision.RefundPercent == 0
-                ? $"Ta séance du {date} a été {reasonLabel}. Politique d'annulation du répétiteur : aucun remboursement pour une annulation aussi tardive."
-                : $"Ta séance du {date} a été {reasonLabel}. Après déduction des frais Mobile Money ({decision.FeeRetainedXaf:0} XAF), il ne reste rien à rembourser.";
+                ? new($"Ta séance du {date} a été {reasonLabel}. Politique d'annulation du répétiteur : aucun remboursement pour une annulation aussi tardive.",
+                      $"Your session on {date} was {reasonEn}. Tutor's cancellation policy: no refund for such a late cancellation.")
+                : new($"Ta séance du {date} a été {reasonLabel}. Après déduction des frais Mobile Money ({decision.FeeRetainedXaf:0} XAF), il ne reste rien à rembourser.",
+                      $"Your session on {date} was {reasonEn}. After deducting the Mobile Money fees ({decision.FeeRetainedXaf:0} XAF), there is nothing left to refund.");
         else if (decision.FeeBorneBy == TutorFeeBearer.Payer)
-            message = $"Ta séance du {date} a été {reasonLabel}. {decision.RefundXaf:0} XAF ont été crédités sur ton portefeuille WinPlus " +
-                      $"({decision.RefundPercent} % selon la politique du répétiteur, moins {decision.FeeRetainedXaf:0} XAF de frais Mobile Money).";
+            message = new($"Ta séance du {date} a été {reasonLabel}. {decision.RefundXaf:0} XAF ont été crédités sur ton portefeuille WinPlus " +
+                          $"({decision.RefundPercent} % selon la politique du répétiteur, moins {decision.FeeRetainedXaf:0} XAF de frais Mobile Money).",
+                          $"Your session on {date} was {reasonEn}. {decision.RefundXaf:0} XAF have been credited to your WinPlus wallet " +
+                          $"({decision.RefundPercent}% under the tutor's policy, minus {decision.FeeRetainedXaf:0} XAF in Mobile Money fees).");
         else if (decision.Cause == TutorRefundCause.PayerCancelled && decision.RefundPercent < 100)
-            message = $"Ta séance du {date} a été {reasonLabel}. {decision.RefundXaf:0} XAF ont été crédités sur ton portefeuille WinPlus ({decision.RefundPercent} % selon la politique du répétiteur).";
+            message = new($"Ta séance du {date} a été {reasonLabel}. {decision.RefundXaf:0} XAF ont été crédités sur ton portefeuille WinPlus ({decision.RefundPercent} % selon la politique du répétiteur).",
+                          $"Your session on {date} was {reasonEn}. {decision.RefundXaf:0} XAF have been credited to your WinPlus wallet ({decision.RefundPercent}% under the tutor's policy).");
         else
-            message = $"Ta séance du {date} a été {reasonLabel}. {decision.RefundXaf:0} XAF ont été crédités sur ton portefeuille WinPlus (remboursement intégral).";
+            message = new($"Ta séance du {date} a été {reasonLabel}. {decision.RefundXaf:0} XAF ont été crédités sur ton portefeuille WinPlus (remboursement intégral).",
+                          $"Your session on {date} was {reasonEn}. {decision.RefundXaf:0} XAF have been credited to your WinPlus wallet (full refund).");
 
-        await _ntfy.PublishAsync($"winplus-user-{payerId}", "Réservation " + reasonLabel,
+        await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{payerId}", new("Réservation " + reasonLabel, "Booking " + reasonEn),
             message, userId: payerId, type: "TutorBooking");
 
         var tutorUserId = booking.TutorProfile?.UserId;
         if (tutorUserId.HasValue && booking.TutorFeeChargedXaf is > 0)
-            await _ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Frais Mobile Money retenus",
-                $"La séance du {date} a été {reasonLabel} de ton fait : l'élève est remboursé intégralement et les frais Mobile Money " +
-                $"({booking.TutorFeeChargedXaf:0} XAF) ont été retenus sur ton solde, comme le prévoit la politique de tutorat.",
+            await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{tutorUserId.Value}", new("Frais Mobile Money retenus", "Mobile Money fees withheld"),
+                new($"La séance du {date} a été {reasonLabel} de ton fait : l'élève est remboursé intégralement et les frais Mobile Money " +
+                    $"({booking.TutorFeeChargedXaf:0} XAF) ont été retenus sur ton solde, comme le prévoit la politique de tutorat.",
+                    $"The session on {date} was {reasonEn} on your side: the student gets a full refund and the Mobile Money fees " +
+                    $"({booking.TutorFeeChargedXaf:0} XAF) have been withheld from your balance, as set out in the tutoring policy."),
                 userId: tutorUserId.Value, type: "TutorBooking");
     }
 
@@ -843,7 +859,7 @@ public class TutorBookingService : ITutorBookingService
                 var lateDecision = await _refunds.RefundAsync(booking, TutorRefundCause.PayerCancelled, overridePercent: 100);
                 await SyncWalletAsync(booking.Id);
                 if (lateDecision != null)
-                    await NotifyRefundAsync(booking, lateDecision, "annulée avant la réception du paiement");
+                    await NotifyRefundAsync(booking, lateDecision, new("annulée avant la réception du paiement", "cancelled before the payment was received"));
                 return true;
             }
 
@@ -930,15 +946,17 @@ public class TutorBookingService : ITutorBookingService
             if (b.Status != "cancelled" || b.RefundedAt != null) continue;
             var decision = await _refunds.RefundAsync(b, TutorRefundCause.PayerCancelled, overridePercent: 100);
             await SyncWalletAsync(b.Id);
-            if (decision != null) await NotifyRefundAsync(b, decision, "annulée avant la réception du paiement");
+            if (decision != null) await NotifyRefundAsync(b, decision, new("annulée avant la réception du paiement", "cancelled before the payment was received"));
         }
 
         foreach (var b in list.Where(b => !paidMeanwhile.Contains(b.Id)))
         {
             var payerId = b.BookedByUserId ?? b.PayerUserId ?? b.StudentUserId;
-            await SafePublishAsync(payerId, "Paiement non confirmé - séance annulée",
-                $"Le paiement Mobile Money de ta séance du {b.SessionDate:dd/MM/yyyy} n'a pas été confirmé dans les 2 h : la demande est annulée et le créneau libéré. " +
-                "Si ton compte Mobile Money a quand même été débité, le montant sera crédité sur ton portefeuille WinPlus.");
+            await SafePublishAsync(payerId, new("Paiement non confirmé - séance annulée", "Payment not confirmed - session cancelled"),
+                new($"Le paiement Mobile Money de ta séance du {b.SessionDate:dd/MM/yyyy} n'a pas été confirmé dans les 2 h : la demande est annulée et le créneau libéré. " +
+                    "Si ton compte Mobile Money a quand même été débité, le montant sera crédité sur ton portefeuille WinPlus.",
+                    $"The Mobile Money payment for your session on {b.SessionDate:dd/MM/yyyy} was not confirmed within 2 h: the request is cancelled and the slot freed. " +
+                    "If your Mobile Money account was debited anyway, the amount will be credited to your WinPlus wallet."));
         }
         return list.Count;
     }
@@ -982,21 +1000,25 @@ public class TutorBookingService : ITutorBookingService
 
             var date = $"{booking.SessionDate:dd/MM/yyyy}";
             if (booking.TutorProfile?.UserId is int tutorUserId)
-                await SafePublishAsync(tutorUserId, "Séance marquée effectuée automatiquement",
-                    $"Ta séance du {date} n'avait pas été marquée effectuée 24 h après sa fin : elle l'a été automatiquement. " +
-                    $"Sans contestation dans les {_policy.DisputeWindowHours} h, ta part sera versée sur ton solde WinPlus.");
+                await SafePublishAsync(tutorUserId, new("Séance marquée effectuée automatiquement", "Session automatically marked as done"),
+                    new($"Ta séance du {date} n'avait pas été marquée effectuée 24 h après sa fin : elle l'a été automatiquement. " +
+                        $"Sans contestation dans les {_policy.DisputeWindowHours} h, ta part sera versée sur ton solde WinPlus.",
+                        $"Your session on {date} had not been marked as done 24 h after it ended, so it was marked automatically. " +
+                        $"If there is no dispute within {_policy.DisputeWindowHours} h, your share will be paid into your WinPlus balance."));
             var ids = new HashSet<int>(ParticipantIds(booking)) { booking.PayerUserId ?? booking.StudentUserId };
             foreach (var id in ids)
-                await SafePublishAsync(id, "Séance considérée comme effectuée",
-                    $"La séance du {date} est considérée comme effectuée. Si elle n'a pas eu lieu ou s'est mal passée, tu as {_policy.DisputeWindowHours} h pour la contester ; " +
-                    "ensuite le paiement est versé au répétiteur.");
+                await SafePublishAsync(id, new("Séance considérée comme effectuée", "Session considered done"),
+                    new($"La séance du {date} est considérée comme effectuée. Si elle n'a pas eu lieu ou s'est mal passée, tu as {_policy.DisputeWindowHours} h pour la contester ; " +
+                        "ensuite le paiement est versé au répétiteur.",
+                        $"The session on {date} is considered done. If it did not take place or went badly, you have {_policy.DisputeWindowHours} h to dispute it; " +
+                        "after that, the payment is released to the tutor."));
         }
         return done;
     }
 
-    private async Task SafePublishAsync(int userId, string title, string message)
+    private async Task SafePublishAsync(int userId, LocalizedText title, LocalizedText message)
     {
-        try { await _ntfy.PublishAsync($"winplus-user-{userId}", title, message, userId: userId, type: "TutorBooking"); }
+        try { await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{userId}", title, message, userId: userId, type: "TutorBooking"); }
         catch (Exception ex) { _logger.LogWarning(ex, "Notification de séance non envoyée au compte {User}", userId); }
     }
 
@@ -1007,20 +1029,24 @@ public class TutorBookingService : ITutorBookingService
             await _context.Entry(booking).Reference(b => b.TutorProfile).LoadAsync();
         var tutorUserId = booking.TutorProfile?.UserId;
         var topicsText = booking.Topics.Count > 0 ? $" Sujets : {string.Join(", ", booking.Topics.Select(t => t.Label))}." : "";
+        var topicsTextEn = booking.Topics.Count > 0 ? $" Topics: {string.Join(", ", booking.Topics.Select(t => t.Label))}." : "";
         if (tutorUserId.HasValue)
-            await _ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Nouvelle demande de réservation",
-                $"Séance du {booking.SessionDate:dd/MM/yyyy} de {booking.StartTime:hh\\:mm} à {booking.EndTime:hh\\:mm}{(booking.Subject != null ? $" ({booking.Subject})" : "")}.{topicsText} Réponds avant expiration du délai.",
+            await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{tutorUserId.Value}", new("Nouvelle demande de réservation", "New booking request"),
+                new($"Séance du {booking.SessionDate:dd/MM/yyyy} de {booking.StartTime:hh\\:mm} à {booking.EndTime:hh\\:mm}{(booking.Subject != null ? $" ({booking.Subject})" : "")}.{topicsText} Réponds avant expiration du délai.",
+                    $"Session on {booking.SessionDate:dd/MM/yyyy} from {booking.StartTime:hh\\:mm} to {booking.EndTime:hh\\:mm}{(booking.Subject != null ? $" ({booking.Subject})" : "")}.{topicsTextEn} Reply before the deadline."),
                 priority: "high", userId: tutorUserId.Value, type: "TutorBooking");
         var payerId = booking.PayerUserId ?? booking.StudentUserId;
-        await _ntfy.PublishAsync($"winplus-user-{payerId}", "Paiement reçu — en attente du répétiteur",
-            $"Ta demande du {booking.SessionDate:dd/MM/yyyy} est payée et en attente d'acceptation par le répétiteur.",
+        await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{payerId}", new("Paiement reçu — en attente du répétiteur", "Payment received, waiting for the tutor"),
+            new($"Ta demande du {booking.SessionDate:dd/MM/yyyy} est payée et en attente d'acceptation par le répétiteur.",
+                $"Your request for {booking.SessionDate:dd/MM/yyyy} is paid and waiting for the tutor to accept it."),
             userId: payerId, type: "TutorBooking");
 
         // Lot 9.3 : chaque élève pour qui la séance a été réservée (par un
         // parent, une institution, un membre du groupe) en est prévenu.
         foreach (var participantId in ParticipantIds(booking).Where(id => id != payerId && id != booking.BookedByUserId).Distinct())
-            await _ntfy.PublishAsync($"winplus-user-{participantId}", "Une séance a été réservée pour toi",
-                $"Séance du {booking.SessionDate:dd/MM/yyyy} de {booking.StartTime:hh\\:mm} à {booking.EndTime:hh\\:mm}, en attente d'acceptation du répétiteur. Retrouve-la dans Mes séances.",
+            await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{participantId}", new("Une séance a été réservée pour toi", "A session has been booked for you"),
+                new($"Séance du {booking.SessionDate:dd/MM/yyyy} de {booking.StartTime:hh\\:mm} à {booking.EndTime:hh\\:mm}, en attente d'acceptation du répétiteur. Retrouve-la dans Mes séances.",
+                    $"Session on {booking.SessionDate:dd/MM/yyyy} from {booking.StartTime:hh\\:mm} to {booking.EndTime:hh\\:mm}, waiting for the tutor to accept. Find it in My sessions."),
                 userId: participantId, type: "TutorBooking");
     }
 
@@ -1308,14 +1334,23 @@ public class TutorBookingService : ITutorBookingService
             "refunded_partial" => $"un remboursement partiel ({booking.RefundAmountXaf ?? refundAmount:0} XAF crédités sur le portefeuille WinPlus du payeur)",
             _ => "la libération des fonds au répétiteur",
         };
-        var payerId = booking.PayerUserId ?? booking.StudentUserId;
-        await _ntfy.PublishAsync($"winplus-user-{payerId}", "Décision sur ton litige",
+        var decisionLabelEn = resolution switch
+        {
+            "refunded_full" => $"a full refund ({booking.RefundAmountXaf ?? booking.PriceXaf:0} XAF credited to the payer's WinPlus wallet)",
+            "refunded_partial" => $"a partial refund ({booking.RefundAmountXaf ?? refundAmount:0} XAF credited to the payer's WinPlus wallet)",
+            _ => "release of the funds to the tutor",
+        };
+        var decisionMessage = new LocalizedText(
             $"Le support WinPlus a tranché : {decisionLabel} pour la séance du {booking.SessionDate:dd/MM/yyyy}.",
+            $"WinPlus support has decided: {decisionLabelEn} for the session on {booking.SessionDate:dd/MM/yyyy}.");
+        var payerId = booking.PayerUserId ?? booking.StudentUserId;
+        await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{payerId}", new("Décision sur ton litige", "Decision on your dispute"),
+            decisionMessage,
             userId: payerId, type: "TutorBooking");
         var tutorUserId = booking.TutorProfile?.UserId;
         if (tutorUserId.HasValue)
-            await _ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Décision sur le litige",
-                $"Le support WinPlus a tranché : {decisionLabel} pour la séance du {booking.SessionDate:dd/MM/yyyy}.",
+            await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{tutorUserId.Value}", new("Décision sur le litige", "Decision on the dispute"),
+                decisionMessage,
                 userId: tutorUserId.Value, type: "TutorBooking");
 
         return MapToDto(booking);

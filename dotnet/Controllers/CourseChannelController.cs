@@ -164,8 +164,10 @@ public class CourseChannelController : ControllerBase
                 _db.WinAIInteractionLogs.Add(log);
                 await _db.SaveChangesAsync();
 
-                await _ntfy.PublishAsync($"winplus-user-{course.InstructorId}", "Question signalée dans le canal",
-                    $"WinAI n'est pas assez confiant pour répondre dans « {course.Title} »  ta réponse est attendue.",
+                // Lot 10.6 : dans la langue du formateur (User.Locale).
+                await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{course.InstructorId}", new("Question signalée dans le canal", "Question flagged in the channel"),
+                    new($"WinAI n'est pas assez confiant pour répondre dans « {course.Title} »  ta réponse est attendue.",
+                        $"WinAI is not confident enough to answer in \"{course.Title}\": your answer is needed."),
                     priority: "high", userId: course.InstructorId, type: "CourseChannel");
                 return;
             }

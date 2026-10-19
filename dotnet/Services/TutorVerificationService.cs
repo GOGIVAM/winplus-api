@@ -141,8 +141,9 @@ public class TutorVerificationService : ITutorVerificationService
         await _db.TutorProfiles.FirstOrDefaultAsync(p => p.UserId == tutorUserId)
         ?? throw new InvalidOperationException("Active d'abord ton profil répétiteur pour demander une vérification.");
 
-    private Task NotifyTutorAsync(int tutorUserId, string title, string message, string? entityType = null, int? entityId = null) =>
-        _ntfy.PublishAsync($"winplus-user-{tutorUserId}", title, message, userId: tutorUserId, type: "TutorVerification",
+    /// <summary>Lot 10.6 : dans la langue du répétiteur (User.Locale).</summary>
+    private Task NotifyTutorAsync(int tutorUserId, LocalizedText title, LocalizedText message, string? entityType = null, int? entityId = null) =>
+        _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{tutorUserId}", title, message, userId: tutorUserId, type: "TutorVerification",
             relatedEntityType: entityType, relatedEntityId: entityId);
 
     // ═════════════════════════════════════════════════════════════════════
@@ -181,19 +182,23 @@ public class TutorVerificationService : ITutorVerificationService
 
         if (verified && !wasVerified)
         {
-            await NotifyTutorAsync(profile.UserId, "Vérifié pour le présentiel",
+            await NotifyTutorAsync(profile.UserId, new("Vérifié pour le présentiel", "Verified for in-person sessions"),
                 TutorInPersonPolicy.IsSuspended(profile)
-                    ? "Ton profil est vérifié, mais ton présentiel reste suspendu jusqu'à l'examen en cours par l'équipe WinPlus."
+                    ? new("Ton profil est vérifié, mais ton présentiel reste suspendu jusqu'à l'examen en cours par l'équipe WinPlus.",
+                          "Your profile is verified, but your in-person sessions remain suspended until the WinPlus team finishes its current review.")
                     : profile.OffersAtStudentHome || profile.OffersAtTutorHome || profile.OffersNeutralPlace
                         // 17.17 : les choix présentiels enregistrés avant la vérification redeviennent actifs d'eux-mêmes.
-                        ? "Ton profil est vérifié : les modes présentiels que tu avais choisis sont maintenant actifs et proposés aux familles."
-                        : "Ton profil est vérifié : tu peux maintenant proposer des séances à domicile, chez toi ou en lieu neutre depuis tes réglages.");
+                        ? new("Ton profil est vérifié : les modes présentiels que tu avais choisis sont maintenant actifs et proposés aux familles.",
+                              "Your profile is verified: the in-person options you had chosen are now active and offered to families.")
+                        : new("Ton profil est vérifié : tu peux maintenant proposer des séances à domicile, chez toi ou en lieu neutre depuis tes réglages.",
+                              "Your profile is verified: you can now offer sessions at the student's home, at your home or in a neutral place from your settings."));
         }
         else if (!verified && wasVerified)
         {
             var upcoming = await UpcomingInPersonQuery(_db).CountAsync(b => b.TutorProfileId == profile.Id);
-            await NotifyTutorAsync(profile.UserId, "Vérification pour le présentiel retirée",
-                $"{reason ?? "Ta vérification n'est plus valide."} Tes séances en ligne restent possibles ; tu peux te faire vérifier par une autre voie.");
+            await NotifyTutorAsync(profile.UserId, new("Vérification pour le présentiel retirée", "In-person verification withdrawn"),
+                new($"{reason ?? "Ta vérification n'est plus valide."} Tes séances en ligne restent possibles ; tu peux te faire vérifier par une autre voie.",
+                    $"{reason ?? "Your verification is no longer valid."} Your online sessions remain available; you can get verified another way."));
             await _ntfy.PublishAdminAsync("Répétiteur plus vérifié pour le présentiel",
                 $"Profil répétiteur #{profile.Id} : vérification retirée ({reason ?? "voie retirée"}). {upcoming} séance(s) présentielle(s) à venir déjà réservée(s), non annulée(s).",
                 priority: "default", tags: new[] { "warning" }, relatedEntityType: "TutorProfile", relatedEntityId: profile.Id);
@@ -604,8 +609,9 @@ public class TutorVerificationService : ITutorVerificationService
             $"{institutionName} : vérifié par {endorsement.VerifierName} le {endorsement.VerifiedOn:dd/MM/yyyy}.", endorsement.Id);
         await _db.SaveChangesAsync();
         await RecomputeAsync(profile.Id, institutionUserId, "institution", $"Caution de {institutionName}.");
-        await NotifyTutorAsync(profile.UserId, "Caution de ton établissement",
-            $"{institutionName} a confirmé t'avoir vérifié : le badge « Caution : {institutionName} » apparaît sur ton profil.", "TutorInstitutionEndorsement", endorsement.Id);
+        await NotifyTutorAsync(profile.UserId, new("Caution de ton établissement", "Endorsement from your school"),
+            new($"{institutionName} a confirmé t'avoir vérifié : le badge « Caution : {institutionName} » apparaît sur ton profil.",
+                $"{institutionName} has confirmed it verified you: the \"Caution : {institutionName}\" badge now appears on your profile."), "TutorInstitutionEndorsement", endorsement.Id);
 
         var saved = await _db.TutorInstitutionEndorsements.AsNoTracking()
             .Include(e => e.Institution).Include(e => e.TutorProfile).ThenInclude(p => p!.User)
@@ -647,8 +653,9 @@ public class TutorVerificationService : ITutorVerificationService
             $"Caution de {endorsement.Institution?.Name} retirée.");
         var tutorUserId = endorsement.TutorProfile?.UserId
             ?? await _db.TutorProfiles.Where(p => p.Id == endorsement.TutorProfileId).Select(p => p.UserId).FirstAsync();
-        await NotifyTutorAsync(tutorUserId, "Caution retirée",
-            $"{endorsement.Institution?.Name} ne cautionne plus ton profil ({endorsement.RevocationReason}).", "TutorInstitutionEndorsement", endorsement.Id);
+        await NotifyTutorAsync(tutorUserId, new("Caution retirée", "Endorsement withdrawn"),
+            new($"{endorsement.Institution?.Name} ne cautionne plus ton profil ({endorsement.RevocationReason}).",
+                $"{endorsement.Institution?.Name} no longer endorses your profile ({endorsement.RevocationReason})."), "TutorInstitutionEndorsement", endorsement.Id);
     }
 
     public async Task OnAffiliationEndedAsync(int institutionId, int teacherUserId, int actorUserId, string actorRole)
@@ -770,8 +777,9 @@ public class TutorVerificationService : ITutorVerificationService
         }
         else
         {
-            await NotifyTutorAsync(tutorUserId, "Pièce d'identité non validée",
-                $"Motif : {check.RejectionReason}. Tu peux déposer de nouveaux documents depuis ta page de vérification.", "TutorIdentityCheck", check.Id);
+            await NotifyTutorAsync(tutorUserId, new("Pièce d'identité non validée", "ID document not approved"),
+                new($"Motif : {check.RejectionReason}. Tu peux déposer de nouveaux documents depuis ta page de vérification.",
+                    $"Reason: {check.RejectionReason}. You can upload new documents from your verification page."), "TutorIdentityCheck", check.Id);
         }
 
         var reloaded = await _db.TutorIdentityChecks.AsNoTracking().Include(c => c.TutorProfile).ThenInclude(p => p!.User).FirstAsync(c => c.Id == checkId);
@@ -904,8 +912,10 @@ public class TutorVerificationService : ITutorVerificationService
         await _db.SaveChangesAsync();
 
         var where = i.Format == TutorInterviewFormats.Video ? $"en visio : {i.MeetingUrl}" : $"lieu : {i.Location}";
-        await NotifyTutorAsync(i.TutorProfile!.UserId, "Entretien de vérification planifié",
-            $"Ton entretien est prévu le {scheduledUtc:dd/MM/yyyy à HH:mm} (UTC), {where}. Prépare ta pièce d'identité : elle sera jointe au dossier avec un selfie.",
+        var whereEn = i.Format == TutorInterviewFormats.Video ? $"by video: {i.MeetingUrl}" : $"place: {i.Location}";
+        await NotifyTutorAsync(i.TutorProfile!.UserId, new("Entretien de vérification planifié", "Verification interview scheduled"),
+            new($"Ton entretien est prévu le {scheduledUtc:dd/MM/yyyy à HH:mm} (UTC), {where}. Prépare ta pièce d'identité : elle sera jointe au dossier avec un selfie.",
+                $"Your interview is scheduled for {scheduledUtc:dd/MM/yyyy 'at' HH:mm} (UTC), {whereEn}. Have your ID document ready: it will be added to your file with a selfie."),
             "TutorVerificationInterview", i.Id);
         return await GetInterviewAsync(i.Id);
     }
@@ -963,19 +973,21 @@ public class TutorVerificationService : ITutorVerificationService
         if (outcome == TutorInterviewStatuses.Passed)
         {
             if (!verified)
-                await NotifyTutorAsync(tutorUserId, "Entretien réussi",
-                    "Ton entretien est validé. Il reste à valider ta pièce d'identité et ton selfie : sans eux, le présentiel n'est pas ouvert.",
+                await NotifyTutorAsync(tutorUserId, new("Entretien réussi", "Interview passed"),
+                    new("Ton entretien est validé. Il reste à valider ta pièce d'identité et ton selfie : sans eux, le présentiel n'est pas ouvert.",
+                        "Your interview is approved. Your ID document and selfie still need to be approved: without them, in-person sessions are not open."),
                     "TutorVerificationInterview", i.Id);
         }
         else
         {
             var title = outcome switch
             {
-                TutorInterviewStatuses.Failed => "Entretien non concluant",
-                TutorInterviewStatuses.NoShow => "Entretien manqué",
-                _ => "Entretien annulé",
+                TutorInterviewStatuses.Failed => new LocalizedText("Entretien non concluant", "Interview not successful"),
+                TutorInterviewStatuses.NoShow => new LocalizedText("Entretien manqué", "Interview missed"),
+                _ => new LocalizedText("Entretien annulé", "Interview cancelled"),
             };
-            await NotifyTutorAsync(tutorUserId, title, $"Motif : {i.OutcomeReason}. Tu peux demander un nouvel entretien ou choisir une autre voie de vérification.",
+            await NotifyTutorAsync(tutorUserId, title, new($"Motif : {i.OutcomeReason}. Tu peux demander un nouvel entretien ou choisir une autre voie de vérification.",
+                    $"Reason: {i.OutcomeReason}. You can request a new interview or choose another way to get verified."),
                 "TutorVerificationInterview", i.Id);
         }
         return await GetInterviewAsync(i.Id);

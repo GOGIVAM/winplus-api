@@ -84,11 +84,12 @@ public sealed class ParentAdvisorThresholdService : BackgroundService
         [JsonPropertyName("alerts")] public List<ThresholdAlertDto> Alerts { get; set; } = new();
     }
 
-    private static readonly Dictionary<string, string> AlertTitles = new(StringComparer.OrdinalIgnoreCase)
+    // Lot 10.6 : titres dans les deux langues, choisis selon la langue du parent.
+    private static readonly Dictionary<string, LocalizedText> AlertTitles = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["BaisseScoreSeuil"] = "Baisse de score observée",
-        ["DevoirRetardProlonge"] = "Devoir en retard",
-        ["ExamenImminentSansRevision"] = "Examen proche  pas de révision récente",
+        ["BaisseScoreSeuil"] = new("Baisse de score observée", "Drop in scores observed"),
+        ["DevoirRetardProlonge"] = new("Devoir en retard", "Overdue homework"),
+        ["ExamenImminentSansRevision"] = new("Examen proche  pas de révision récente", "Exam coming up, no recent revision"),
     };
 
     /// <returns>false si WinAI n'a pas pu être interrogé (nouvel essai plus tôt).</returns>
@@ -198,11 +199,12 @@ public sealed class ParentAdvisorThresholdService : BackgroundService
 
             // Lot 1, Module 22 : canal de notification déjà fiabilisé (préférences
             // utilisateur, persistance in-app + push), réutilisé tel quel.
-            var title = AlertTitles.TryGetValue(alert.Type, out var t) ? t : "Signal WinAI";
-            await ntfy.PublishAsync(
+            var title = AlertTitles.TryGetValue(alert.Type, out var t) ? t : new LocalizedText("Signal WinAI", "WinAI alert");
+            // Le texte de l'alerte est rédigé par WinAI : transmis tel quel.
+            await ntfy.PublishLocalizedAsync(db,
                 $"winplus-user-{alert.ParentId}",
                 title,
-                alert.Content,
+                new LocalizedText(alert.Content, alert.Content),
                 priority: alert.Severity == "High" ? "high" : "default",
                 userId: alert.ParentId,
                 type: "ParentAdvisor",

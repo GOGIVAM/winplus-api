@@ -112,8 +112,9 @@ public class CourseGamificationService : ICourseGamificationService
 
         foreach (var badge in newBadges)
         {
-            await _ntfy.PublishAsync($"winplus-user-{userId}", "Badge débloqué !",
-                BadgeLabel(badge), userId: userId, type: "CourseGamification");
+            // Lot 10.6 : dans la langue de l'élève (User.Locale).
+            await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{userId}", new("Badge débloqué !", "Badge unlocked!"),
+                BadgeLabelLocalized(badge), userId: userId, type: "CourseGamification");
         }
 
         // Certificat automatique à 100% (US-3C)  le générer ici (déclenché par
@@ -180,4 +181,14 @@ public class CourseGamificationService : ICourseGamificationService
         "completed" => "Formation complétée",
         _ => badgeType,
     };
+
+    /// <summary>Lot 10.6 : libellé du badge dans les deux langues (notifications).</summary>
+    public static LocalizedText BadgeLabelLocalized(string badgeType) => new(BadgeLabel(badgeType), badgeType switch
+    {
+        "first_quiz" => "First quiz passed",
+        "halfway" => "Course 50% done",
+        "perfect_score" => "Perfect score",
+        "completed" => "Course completed",
+        _ => badgeType,
+    });
 }

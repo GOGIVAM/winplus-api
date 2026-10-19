@@ -60,9 +60,14 @@ public class ScheduledMessageDeliveryService : BackgroundService
         foreach (var msg in due)
         {
             msg.ScheduledNotificationSent = true;
-            var preview = msg.Type == "text" ? Truncate(msg.Content, 80) : "📎 Pièce jointe";
-            await ntfy.PublishAsync($"winplus-user-{msg.ToUserId}", "Nouveau message",
-                preview ?? "Nouveau message", userId: msg.ToUserId, type: "DirectMessage");
+            // Lot 10.6 : libellés dans la langue du destinataire ; le contenu du
+            // message, écrit par l'expéditeur, est transmis tel quel.
+            var text = msg.Type == "text" ? Truncate(msg.Content, 80) : null;
+            var preview = msg.Type != "text" ? new LocalizedText("📎 Pièce jointe", "📎 Attachment")
+                : text != null ? new LocalizedText(text, text)
+                : new LocalizedText("Nouveau message", "New message");
+            await ntfy.PublishLocalizedAsync(db, $"winplus-user-{msg.ToUserId}", new("Nouveau message", "New message"),
+                preview, userId: msg.ToUserId, type: "DirectMessage");
         }
 
         await db.SaveChangesAsync(ct);

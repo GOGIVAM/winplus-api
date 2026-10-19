@@ -348,19 +348,22 @@ public class QuizService : IQuizService
                 var student = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
                 if (hasOpenQuestions)
                 {
-                    await _ntfy.PublishAsync(
+                    // Lot 10.6 : dans la langue du destinataire (User.Locale).
+                    await _ntfy.PublishLocalizedAsync(_context,
                         $"winplus-user-{assignment.TeacherId}",
-                        "Nouvelle copie à corriger",
-                        $"{(student == null ? "Un élève" : $"{student.FirstName} {student.LastName}".Trim())} a répondu à « {assignment.Title} » (questions ouvertes à valider).",
+                        new("Nouvelle copie à corriger", "New work to mark"),
+                        new($"{(student == null ? "Un élève" : $"{student.FirstName} {student.LastName}".Trim())} a répondu à « {assignment.Title} » (questions ouvertes à valider).",
+                            $"{(student == null ? "A student" : $"{student.FirstName} {student.LastName}".Trim())} has answered \"{assignment.Title}\" (open questions to review)."),
                         userId: assignment.TeacherId, type: "Submission",
                         relatedEntityType: "Submission", relatedEntityId: submission.Id);
                 }
                 else
                 {
-                    await _ntfy.PublishAsync(
+                    await _ntfy.PublishLocalizedAsync(_context,
                         $"winplus-user-{userId}",
-                        "Quiz corrigé",
-                        $"Ta réponse à « {assignment.Title} » a été corrigée automatiquement : {scaledScore}/{assignment.MaxScore}.",
+                        new("Quiz corrigé", "Quiz marked"),
+                        new($"Ta réponse à « {assignment.Title} » a été corrigée automatiquement : {scaledScore}/{assignment.MaxScore}.",
+                            $"Your answer to \"{assignment.Title}\" has been marked automatically: {scaledScore}/{assignment.MaxScore}."),
                         userId: userId, type: "Submission",
                         relatedEntityType: "Submission", relatedEntityId: submission.Id);
                 }

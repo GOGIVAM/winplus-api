@@ -264,13 +264,18 @@ public class InstitutionWalletHolderService : IInstitutionWalletHolderService
 
     private async Task NotifyAsync(string institutionName, int? oldHolder, int newHolder, decimal amount)
     {
-        var message = $"Le portefeuille de l'institution « {institutionName} » est désormais porté par un autre compte titulaire"
-                      + (amount > 0 ? $" ({amount:0} FCFA transférés)." : ".");
+        // Lot 10.6 : dans la langue de chaque destinataire (User.Locale).
+        var message = new LocalizedText(
+            $"Le portefeuille de l'institution « {institutionName} » est désormais porté par un autre compte titulaire"
+                + (amount > 0 ? $" ({amount:0} FCFA transférés)." : "."),
+            $"The wallet of the school \"{institutionName}\" is now held by another account holder"
+                + (amount > 0 ? $" ({amount:0} FCFA transferred)." : "."));
         foreach (var id in new[] { oldHolder, (int?)newHolder }.Where(i => i != null).Select(i => i!.Value).Distinct())
         {
             try
             {
-                await _ntfy.PublishAsync($"winplus-user-{id}", "Titulaire du portefeuille modifié", message,
+                await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{id}",
+                    new("Titulaire du portefeuille modifié", "Wallet holder changed"), message,
                     userId: id, type: "Wallet", relatedEntityType: "Institution");
             }
             catch (Exception ex) { _logger.LogWarning(ex, "Notification du changement de titulaire non envoyée au compte {UserId}", id); }

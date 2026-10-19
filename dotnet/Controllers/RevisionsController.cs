@@ -432,13 +432,16 @@ public class RevisionsController : ControllerBase
             var revision = await _revisionService.GenerateAIRevisionAsync(request.ChildId, request.Subject, request.Topic, request.Difficulty);
             served = true;
 
+            // Lot 10.6 : dans la langue de l'élève (User.Locale).
             var message = request.NotifyWithParentName
-                ? $"Ton parent t'a préparé une fiche de révision sur {revision.Subject}."
-                : $"Une fiche de révision est disponible sur {revision.Subject}.";
+                ? new LocalizedText($"Ton parent t'a préparé une fiche de révision sur {revision.Subject}.",
+                    $"Your parent has prepared a revision sheet on {revision.Subject} for you.")
+                : new LocalizedText($"Une fiche de révision est disponible sur {revision.Subject}.",
+                    $"A revision sheet on {revision.Subject} is available.");
 
-            await _ntfy.PublishAsync(
+            await _ntfy.PublishLocalizedAsync(_context,
                 topic: $"winplus-user-{request.ChildId}",
-                title: "Nouvelle fiche de révision",
+                title: new("Nouvelle fiche de révision", "New revision sheet"),
                 message: message,
                 tags: new[] { "bookmark_tabs" },
                 userId: request.ChildId,

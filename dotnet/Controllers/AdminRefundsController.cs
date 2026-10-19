@@ -551,39 +551,56 @@ public class AdminRefundsController : ControllerBase
         if (buyerId == null) return;
         try
         {
-            string title, message;
+            // Lot 10.6 : texte dans les deux langues, choisi selon l'acheteur.
+            LocalizedText title, message;
             if (approved && credit != null)
             {
-                title = "Remboursement accepté";
+                title = new("Remboursement accepté", "Refund accepted");
                 var parts = new List<string>();
+                var partsEn = new List<string>();
                 if (credit.RefundXaf > 0)
+                {
                     parts.Add($"{credit.RefundXaf:0} XAF ont été crédités sur ton portefeuille WinPlus"
                         + (credit.FeeXaf > 0 ? $" (frais Mobile Money de {credit.FeeXaf:0} XAF déduits)" : ""));
+                    partsEn.Add($"{credit.RefundXaf:0} XAF have been credited to your WinPlus wallet"
+                        + (credit.FeeXaf > 0 ? $" (Mobile Money fees of {credit.FeeXaf:0} XAF deducted)" : ""));
+                }
                 if (credit.BalancePartXaf > 0)
+                {
                     parts.Add($"{credit.BalancePartXaf:0} XAF payés avec ton solde y ont été restitués");
-                message = $"Ta demande de remboursement pour la commande {orderNumber} a été acceptée. "
+                    partsEn.Add($"{credit.BalancePartXaf:0} XAF paid from your balance have been returned to it");
+                }
+                message = new($"Ta demande de remboursement pour la commande {orderNumber} a été acceptée. "
                     + (parts.Count > 0 ? string.Join(" ; ", parts) + ". " : "")
-                    + "L'accès au contenu de cette commande est retiré.";
+                    + "L'accès au contenu de cette commande est retiré.",
+                    $"Your refund request for order {orderNumber} has been accepted. "
+                    + (partsEn.Count > 0 ? string.Join("; ", partsEn) + ". " : "")
+                    + "Access to the content of this order has been removed.");
             }
             else if (approved)
             {
-                title = "Remboursement accepté";
+                title = new("Remboursement accepté", "Refund accepted");
                 // Commande payée sur le solde WinPlus (professeur) : le débit
                 // est contre-passé dans le journal (lot 2), le montant est donc
                 // effectivement recrédité.
                 message = string.Equals(paymentMethod, "balance", StringComparison.OrdinalIgnoreCase)
-                    ? $"Ta demande de remboursement pour la commande {orderNumber} a été acceptée. {amount:0} XAF ont été recrédités sur ton solde WinPlus. L'accès au contenu de cette commande est retiré."
-                    : $"Ta demande de remboursement pour la commande {orderNumber} a été acceptée. L'accès au contenu de cette commande est retiré. Le reversement de {amount:0} XAF est traité séparément par le support WinPlus.";
+                    ? new($"Ta demande de remboursement pour la commande {orderNumber} a été acceptée. {amount:0} XAF ont été recrédités sur ton solde WinPlus. L'accès au contenu de cette commande est retiré.",
+                          $"Your refund request for order {orderNumber} has been accepted. {amount:0} XAF have been credited back to your WinPlus balance. Access to the content of this order has been removed.")
+                    : new($"Ta demande de remboursement pour la commande {orderNumber} a été acceptée. L'accès au contenu de cette commande est retiré. Le reversement de {amount:0} XAF est traité séparément par le support WinPlus.",
+                          $"Your refund request for order {orderNumber} has been accepted. Access to the content of this order has been removed. The repayment of {amount:0} XAF is handled separately by WinPlus support.");
             }
             else
             {
-                title = "Remboursement refusé";
-                message = $"Ta demande de remboursement pour la commande {orderNumber} n'a pas été acceptée"
+                title = new("Remboursement refusé", "Refund declined");
+                message = new($"Ta demande de remboursement pour la commande {orderNumber} n'a pas été acceptée"
                     + (string.IsNullOrWhiteSpace(reason) ? "" : $" : {reason.Trim()}")
-                    + ". Tu conserves l'accès au contenu acheté.";
+                    + ". Tu conserves l'accès au contenu acheté.",
+                    $"Your refund request for order {orderNumber} has not been accepted"
+                    + (string.IsNullOrWhiteSpace(reason) ? "" : $": {reason.Trim()}")
+                    + ". You keep access to the content you bought.");
             }
 
-            await _ntfy.PublishAsync($"winplus-user-{buyerId}", title, message,
+            await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{buyerId}", title, message,
                 userId: buyerId, type: "Order", relatedEntityType: "Order", relatedEntityId: orderId);
         }
         catch (Exception ex)

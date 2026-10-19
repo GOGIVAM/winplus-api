@@ -219,9 +219,12 @@ public class TutorReportService : ITutorReportService
                 : $"{upcoming.Count} séance(s) présentielle(s) à venir déjà réservée(s), NON annulée(s) : "
                   + string.Join(", ", upcoming.Take(10).Select(b => $"#{b.BookingId} le {b.SessionDate:dd/MM}")) + (upcoming.Count > 10 ? "…" : "") + ". À examiner."),
             priority: "urgent", tags: new[] { "rotating_light" }, relatedEntityType: "TutorProfile", relatedEntityId: tutorProfileId);
-        await _ntfy.PublishAsync($"winplus-user-{profile.UserId}", "Présentiel suspendu",
-            "Suite à plusieurs signalements, tes séances présentielles sont suspendues le temps qu'un membre de l'équipe WinPlus examine la situation. Tes séances en ligne restent possibles."
-            + (refused > 0 ? $" Tes {refused} demande(s) présentielle(s) en attente ont été refusées et les payeurs remboursés intégralement, sans frais pour toi." : ""),
+        // Lot 10.6 : dans la langue du répétiteur (User.Locale).
+        await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{profile.UserId}", new("Présentiel suspendu", "In-person sessions suspended"),
+            new("Suite à plusieurs signalements, tes séances présentielles sont suspendues le temps qu'un membre de l'équipe WinPlus examine la situation. Tes séances en ligne restent possibles."
+                + (refused > 0 ? $" Tes {refused} demande(s) présentielle(s) en attente ont été refusées et les payeurs remboursés intégralement, sans frais pour toi." : ""),
+                "Following several reports, your in-person sessions are suspended while a member of the WinPlus team reviews the situation. Your online sessions remain available."
+                + (refused > 0 ? $" Your {refused} pending in-person request(s) have been declined and the payers fully refunded, at no cost to you." : "")),
             userId: profile.UserId, type: "TutorVerification", relatedEntityType: "TutorProfile", relatedEntityId: tutorProfileId);
         _logger.LogWarning("Présentiel suspendu pour le profil répétiteur {ProfileId} : {Reason}", tutorProfileId, reason);
     }
@@ -403,10 +406,12 @@ public class TutorReportService : ITutorReportService
         });
         await _db.SaveChangesAsync();
 
-        await _ntfy.PublishAsync($"winplus-user-{profile.UserId}", "Présentiel rétabli",
+        await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{profile.UserId}", new("Présentiel rétabli", "In-person sessions restored"),
             TutorInPersonPolicy.IsVerified(profile)
-                ? "L'équipe WinPlus a examiné les signalements : tes séances présentielles sont de nouveau possibles."
-                : "L'équipe WinPlus a levé la suspension. Fais vérifier ton profil pour proposer des séances présentielles.",
+                ? new("L'équipe WinPlus a examiné les signalements : tes séances présentielles sont de nouveau possibles.",
+                      "The WinPlus team has reviewed the reports: your in-person sessions are available again.")
+                : new("L'équipe WinPlus a levé la suspension. Fais vérifier ton profil pour proposer des séances présentielles.",
+                      "The WinPlus team has lifted the suspension. Get your profile verified to offer in-person sessions."),
             userId: profile.UserId, type: "TutorVerification", relatedEntityType: "TutorProfile", relatedEntityId: tutorProfileId);
         return await GetSafetyFileAsync(tutorProfileId);
     }

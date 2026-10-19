@@ -105,8 +105,11 @@ public class TeachingSessionService : ITeachingSessionService
             // Awaité : en fire-and-forget, le DbContext scope requête pouvait être
             // détruit avant la fin de l'appel, faisant échouer PublishAsync
             // silencieusement (perte de la notification d'annulation).
-            await _ntfy.PublishAsync($"winplus-user-{enrollment.StudentId}", "Session annulée",
-                $"La session « {session.Title} » du {session.StartDate:dd/MM/yyyy HH:mm} a été annulée par le professeur.",
+            // Lot 10.6 : dans la langue de l'élève (User.Locale).
+            await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{enrollment.StudentId}",
+                new("Session annulée", "Session cancelled"),
+                new($"La session « {session.Title} » du {session.StartDate:dd/MM/yyyy HH:mm} a été annulée par le professeur.",
+                    $"The session \"{session.Title}\" on {session.StartDate:dd/MM/yyyy HH:mm} has been cancelled by the teacher."),
                 userId: enrollment.StudentId, type: "SessionCancelled");
 
             if (enrollment.Student?.Email is { Length: > 0 } email)
@@ -229,13 +232,17 @@ public class TeachingSessionService : ITeachingSessionService
             enrollment.PaymentStatus = "paid";
             await _context.SaveChangesAsync();
 
-            await _ntfy.PublishAsync($"winplus-user-{enrollment.StudentId}", "Inscription confirmée",
-                $"Ton inscription à la session « {enrollment.Session?.Title} » est confirmée.",
+            await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{enrollment.StudentId}",
+                new("Inscription confirmée", "Registration confirmed"),
+                new($"Ton inscription à la session « {enrollment.Session?.Title} » est confirmée.",
+                    $"Your registration for the session \"{enrollment.Session?.Title}\" is confirmed."),
                 userId: enrollment.StudentId, type: "SessionEnrollment");
 
             if (enrollment.Session != null)
-                await _ntfy.PublishAsync($"winplus-user-{enrollment.Session.CreatedBy}", "Nouvelle inscription payante",
-                    $"Un élève s'est inscrit et a payé pour « {enrollment.Session.Title} ».",
+                await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{enrollment.Session.CreatedBy}",
+                    new("Nouvelle inscription payante", "New paid registration"),
+                    new($"Un élève s'est inscrit et a payé pour « {enrollment.Session.Title} ».",
+                        $"A student has registered and paid for \"{enrollment.Session.Title}\"."),
                     userId: enrollment.Session.CreatedBy, type: "SessionEnrollment");
         }
         else if (!wasAlreadyFinal && mapped == "failed")

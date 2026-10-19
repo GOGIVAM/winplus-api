@@ -406,9 +406,11 @@ public class TutorSessionMaterialService : ITutorSessionMaterialService
         {
             try
             {
-                await _ntfy.PublishAsync($"winplus-user-{id}",
-                    firstShare ? "Support de séance disponible" : "Support de séance mis à jour",
-                    $"Le tuteur a partagé le support de la séance du {when} : cours, quiz et exercices dans l'application.",
+                // Lot 10.6 : dans la langue du destinataire (User.Locale).
+                await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{id}",
+                    firstShare ? new("Support de séance disponible", "Session material available") : new("Support de séance mis à jour", "Session material updated"),
+                    new($"Le tuteur a partagé le support de la séance du {when} : cours, quiz et exercices dans l'application.",
+                        $"The tutor has shared the material for the session on {when}: lesson, quiz and exercises in the app."),
                     userId: id, type: "TutorBooking");
             }
             catch (Exception ex) { _logger.LogWarning(ex, "Notification du support #{Booking} vers {User} impossible", b.Id, id); }
@@ -469,12 +471,15 @@ public class TutorSessionMaterialService : ITutorSessionMaterialService
         // Remontée au tuteur.
         if (b.TutorProfile?.UserId is int tutorId)
         {
-            var name = DisplayName(await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == studentUserId)) ?? "Un élève";
+            var student = DisplayName(await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == studentUserId));
+            var name = student ?? "Un élève";
             var detail = content.Quiz.Count > 0 ? $"quiz {score}/{content.Quiz.Count}" : "exercices rendus";
+            var detailEn = content.Quiz.Count > 0 ? $"quiz {score}/{content.Quiz.Count}" : "exercises handed in";
             try
             {
-                await _ntfy.PublishAsync($"winplus-user-{tutorId}", "Support de séance : réponses reçues",
-                    $"{name} a répondu au support de la séance du {b.SessionDate:dd/MM/yyyy} ({detail}).",
+                await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{tutorId}", new("Support de séance : réponses reçues", "Session material: answers received"),
+                    new($"{name} a répondu au support de la séance du {b.SessionDate:dd/MM/yyyy} ({detail}).",
+                        $"{student ?? "A student"} has answered the material for the session on {b.SessionDate:dd/MM/yyyy} ({detailEn})."),
                     userId: tutorId, type: "TutorBooking");
             }
             catch (Exception ex) { _logger.LogWarning(ex, "Notification du tuteur (support #{Booking}) impossible", b.Id); }

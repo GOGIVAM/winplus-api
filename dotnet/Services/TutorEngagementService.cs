@@ -747,8 +747,9 @@ public class TutorEngagementService : ITutorEngagementService
         }
         await _context.SaveChangesAsync();
 
-        await NotifyPayerSideAsync(e, "Engagement mensuel confirmé !",
-            $"Le répétiteur a accepté l'engagement du {e.StartDate:dd/MM/yyyy} au {e.EndDate:dd/MM/yyyy} : {e.Sessions.Count(s => s.Status == "confirmed")} séances réservées.");
+        await NotifyPayerSideAsync(e, new("Engagement mensuel confirmé !", "Monthly commitment confirmed!"),
+            new($"Le répétiteur a accepté l'engagement du {e.StartDate:dd/MM/yyyy} au {e.EndDate:dd/MM/yyyy} : {e.Sessions.Count(s => s.Status == "confirmed")} séances réservées.",
+                $"The tutor has accepted the commitment from {e.StartDate:dd/MM/yyyy} to {e.EndDate:dd/MM/yyyy}: {e.Sessions.Count(s => s.Status == "confirmed")} sessions booked."));
         return await GetByIdAsync(tutorUserId, e.Id);
     }
 
@@ -761,9 +762,10 @@ public class TutorEngagementService : ITutorEngagementService
 
         var total = await CloseRequestAsync(e, TutorEngagementStatuses.Rejected, "rejected", TutorRefundCause.TutorDeclined,
             string.IsNullOrWhiteSpace(reason) ? "Refusé par le répétiteur." : Truncate(reason, 300));
-        await NotifyPayerSideAsync(e, "Engagement mensuel refusé",
-            $"Le répétiteur a refusé l'engagement du {e.StartDate:dd/MM/yyyy}. {total:0} XAF ont été crédités sur le portefeuille WinPlus du payeur (remboursement intégral).");
-        await NotifyTutorFeesAsync(e, "refusé");
+        await NotifyPayerSideAsync(e, new("Engagement mensuel refusé", "Monthly commitment declined"),
+            new($"Le répétiteur a refusé l'engagement du {e.StartDate:dd/MM/yyyy}. {total:0} XAF ont été crédités sur le portefeuille WinPlus du payeur (remboursement intégral).",
+                $"The tutor has declined the commitment starting {e.StartDate:dd/MM/yyyy}. {total:0} XAF have been credited to the payer's WinPlus wallet (full refund)."));
+        await NotifyTutorFeesAsync(e, new("refusé", "declined"));
         return await GetByIdAsync(tutorUserId, e.Id);
     }
 
@@ -859,10 +861,13 @@ public class TutorEngagementService : ITutorEngagementService
         await _context.SaveChangesAsync();
 
         var who = isTutor ? "par le répétiteur" : "par le payeur";
-        await NotifyPayerSideAsync(e, "Engagement mensuel annulé",
-            $"L'engagement du {e.StartDate:dd/MM/yyyy} a été annulé {who} : {count} séance(s) à venir annulée(s), {refunded:0} XAF crédités sur le portefeuille WinPlus du payeur."
-            + (isTutor ? " Remboursement intégral." : " Remboursement selon la politique d'annulation du répétiteur, séance par séance."), includeTutor: !isTutor);
-        if (isTutor) await NotifyTutorFeesAsync(e, "annulé");
+        var whoEn = isTutor ? "by the tutor" : "by the payer";
+        await NotifyPayerSideAsync(e, new("Engagement mensuel annulé", "Monthly commitment cancelled"),
+            new($"L'engagement du {e.StartDate:dd/MM/yyyy} a été annulé {who} : {count} séance(s) à venir annulée(s), {refunded:0} XAF crédités sur le portefeuille WinPlus du payeur."
+                + (isTutor ? " Remboursement intégral." : " Remboursement selon la politique d'annulation du répétiteur, séance par séance."),
+                $"The commitment starting {e.StartDate:dd/MM/yyyy} has been cancelled {whoEn}: {count} upcoming session(s) cancelled, {refunded:0} XAF credited to the payer's WinPlus wallet."
+                + (isTutor ? " Full refund." : " Refund under the tutor's cancellation policy, session by session.")), includeTutor: !isTutor);
+        if (isTutor) await NotifyTutorFeesAsync(e, new("annulé", "cancelled"));
         return await GetByIdAsync(userId, e.Id);
     }
 
@@ -1088,10 +1093,11 @@ public class TutorEngagementService : ITutorEngagementService
                 var total = await CloseRequestAsync(e, TutorEngagementStatuses.Expired, "expired", TutorRefundCause.TutorNoResponse,
                     "Le répétiteur n'a pas répondu dans son délai.");
                 done++;
-                await NotifyPayerSideAsync(e, "Demande d'engagement expirée - remboursement effectué",
-                    $"Le répétiteur n'a pas répondu à temps pour l'engagement du {e.StartDate:dd/MM/yyyy}. {total:0} XAF ont été crédités sur le portefeuille WinPlus du payeur (remboursement intégral).",
+                await NotifyPayerSideAsync(e, new("Demande d'engagement expirée - remboursement effectué", "Commitment request expired - refund made"),
+                    new($"Le répétiteur n'a pas répondu à temps pour l'engagement du {e.StartDate:dd/MM/yyyy}. {total:0} XAF ont été crédités sur le portefeuille WinPlus du payeur (remboursement intégral).",
+                        $"The tutor did not reply in time for the commitment starting {e.StartDate:dd/MM/yyyy}. {total:0} XAF have been credited to the payer's WinPlus wallet (full refund)."),
                     includeTutor: true);
-                await NotifyTutorFeesAsync(e, "expiré");
+                await NotifyTutorFeesAsync(e, new("expiré", "expired"));
             }
             catch (Exception ex)
             {
@@ -1134,17 +1140,23 @@ public class TutorEngagementService : ITutorEngagementService
 
             var next = TutorMonthlyPlan.NextStartDate(e.StartDate);
             string amount = "";
+            string amountEn = "";
             try
             {
                 var q = await GetQuoteAsync(RenewalRequest(e, e.TutorProfile!.UserId, e.PaymentMethod, null, false));
                 amount = $" Montant du mois suivant : {q.TotalXaf:0} XAF" + (q.IsAvailable ? "." : " (certains créneaux ne sont plus libres : vérifie avant de renouveler).");
+                amountEn = $" Amount for next month: {q.TotalXaf:0} XAF" + (q.IsAvailable ? "." : " (some slots are no longer free: check before renewing).");
             }
             catch (Exception ex) { _logger.LogWarning(ex, "Devis de renouvellement indisponible (engagement {Id})", e.Id); }
 
             var message = e.AutoRenew
-                ? $"Ton engagement mensuel avec {DisplayName(e.TutorProfile?.User)} se termine le {e.EndDate:dd/MM/yyyy}. Le renouvellement automatique sera tenté le {TutorMonthlyPlan.AutoRenewAt(e.StartDate):dd/MM/yyyy} sur ton solde WinPlus, pour les mêmes créneaux à partir du {next:dd/MM/yyyy}.{amount} Vérifie que ton solde est suffisant."
-                : $"Ton engagement mensuel avec {DisplayName(e.TutorProfile?.User)} se termine le {e.EndDate:dd/MM/yyyy}. Renouvelle-le avec les mêmes créneaux à partir du {next:dd/MM/yyyy} depuis la page de l'engagement.{amount}";
-            await NotifyPayerOnlyAsync(e, "Ton engagement mensuel arrive à échéance", message);
+                ? new LocalizedText(
+                    $"Ton engagement mensuel avec {DisplayName(e.TutorProfile?.User)} se termine le {e.EndDate:dd/MM/yyyy}. Le renouvellement automatique sera tenté le {TutorMonthlyPlan.AutoRenewAt(e.StartDate):dd/MM/yyyy} sur ton solde WinPlus, pour les mêmes créneaux à partir du {next:dd/MM/yyyy}.{amount} Vérifie que ton solde est suffisant.",
+                    $"Your monthly commitment with {DisplayName(e.TutorProfile?.User)} ends on {e.EndDate:dd/MM/yyyy}. Automatic renewal will be attempted on {TutorMonthlyPlan.AutoRenewAt(e.StartDate):dd/MM/yyyy} from your WinPlus balance, for the same slots from {next:dd/MM/yyyy}.{amountEn} Check that your balance is sufficient.")
+                : new LocalizedText(
+                    $"Ton engagement mensuel avec {DisplayName(e.TutorProfile?.User)} se termine le {e.EndDate:dd/MM/yyyy}. Renouvelle-le avec les mêmes créneaux à partir du {next:dd/MM/yyyy} depuis la page de l'engagement.{amount}",
+                    $"Your monthly commitment with {DisplayName(e.TutorProfile?.User)} ends on {e.EndDate:dd/MM/yyyy}. Renew it with the same slots from {next:dd/MM/yyyy} on the commitment page.{amountEn}");
+            await NotifyPayerOnlyAsync(e, new("Ton engagement mensuel arrive à échéance", "Your monthly commitment is ending soon"), message);
         }
         return sent;
     }
@@ -1198,8 +1210,9 @@ public class TutorEngagementService : ITutorEngagementService
             if (created != null)
             {
                 renewed++;
-                await NotifyPayerOnlyAsync(e, "Engagement mensuel renouvelé",
-                    $"Ton engagement a été renouvelé automatiquement à partir du {created.Engagement.StartDate:dd/MM/yyyy} : {created.Engagement.TotalXaf:0} XAF débités de ton solde. Le répétiteur doit encore accepter ; sinon tu seras remboursé intégralement.");
+                await NotifyPayerOnlyAsync(e, new("Engagement mensuel renouvelé", "Monthly commitment renewed"),
+                    new($"Ton engagement a été renouvelé automatiquement à partir du {created.Engagement.StartDate:dd/MM/yyyy} : {created.Engagement.TotalXaf:0} XAF débités de ton solde. Le répétiteur doit encore accepter ; sinon tu seras remboursé intégralement.",
+                        $"Your commitment has been renewed automatically from {created.Engagement.StartDate:dd/MM/yyyy}: {created.Engagement.TotalXaf:0} XAF debited from your balance. The tutor still has to accept; otherwise you will get a full refund."));
                 continue;
             }
 
@@ -1207,8 +1220,9 @@ public class TutorEngagementService : ITutorEngagementService
             tracked.AutoRenewFailureReason = Truncate(failure ?? "Renouvellement impossible.", 300);
             tracked.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
-            await NotifyPayerOnlyAsync(e, "Renouvellement automatique impossible",
-                $"Ton engagement mensuel n'a pas pu être renouvelé automatiquement : {tracked.AutoRenewFailureReason} Tu peux le renouveler manuellement depuis la page de l'engagement avant le {TutorMonthlyPlan.NextStartDate(e.StartDate):dd/MM/yyyy}.");
+            await NotifyPayerOnlyAsync(e, new("Renouvellement automatique impossible", "Automatic renewal not possible"),
+                new($"Ton engagement mensuel n'a pas pu être renouvelé automatiquement : {tracked.AutoRenewFailureReason} Tu peux le renouveler manuellement depuis la page de l'engagement avant le {TutorMonthlyPlan.NextStartDate(e.StartDate):dd/MM/yyyy}.",
+                    $"Your monthly commitment could not be renewed automatically: {tracked.AutoRenewFailureReason} You can renew it manually on the commitment page before {TutorMonthlyPlan.NextStartDate(e.StartDate):dd/MM/yyyy}."));
         }
         return renewed;
     }
@@ -1219,42 +1233,48 @@ public class TutorEngagementService : ITutorEngagementService
     {
         var tutorUserId = profile.UserId;
         var slots = string.Join(", ", e.Slots.Select(s => $"{DayName(s.DayOfWeek)} {TutorPricing.Hhmm(s.StartTime)} ({s.DurationMinutes} min)"));
-        await SafePublishAsync(tutorUserId, "Nouvelle demande d'engagement mensuel",
-            $"{e.Sessions.Count} séances du {e.StartDate:dd/MM/yyyy} au {e.EndDate:dd/MM/yyyy} : {slots}. Accepte ou refuse l'engagement entier avant {e.ResponseDeadlineAt:dd/MM/yyyy HH:mm} (UTC).",
+        var slotsEn = string.Join(", ", e.Slots.Select(s => $"{DayNameEn(s.DayOfWeek)} {TutorPricing.Hhmm(s.StartTime)} ({s.DurationMinutes} min)"));
+        await SafePublishAsync(tutorUserId, new("Nouvelle demande d'engagement mensuel", "New monthly commitment request"),
+            new($"{e.Sessions.Count} séances du {e.StartDate:dd/MM/yyyy} au {e.EndDate:dd/MM/yyyy} : {slots}. Accepte ou refuse l'engagement entier avant {e.ResponseDeadlineAt:dd/MM/yyyy HH:mm} (UTC).",
+                $"{e.Sessions.Count} sessions from {e.StartDate:dd/MM/yyyy} to {e.EndDate:dd/MM/yyyy}: {slotsEn}. Accept or decline the whole commitment before {e.ResponseDeadlineAt:dd/MM/yyyy HH:mm} (UTC)."),
             e.Id, priority: "high");
-        await NotifyPayerOnlyAsync(e, "Paiement reçu - en attente du répétiteur",
-            $"L'engagement du {e.StartDate:dd/MM/yyyy} est payé ({e.TotalXaf:0} XAF) et en attente d'acceptation par le répétiteur. S'il refuse ou ne répond pas, tu es remboursé intégralement.");
+        await NotifyPayerOnlyAsync(e, new("Paiement reçu - en attente du répétiteur", "Payment received - waiting for the tutor"),
+            new($"L'engagement du {e.StartDate:dd/MM/yyyy} est payé ({e.TotalXaf:0} XAF) et en attente d'acceptation par le répétiteur. S'il refuse ou ne répond pas, tu es remboursé intégralement.",
+                $"The commitment starting {e.StartDate:dd/MM/yyyy} is paid ({e.TotalXaf:0} XAF) and waiting for the tutor to accept it. If the tutor declines or does not reply, you get a full refund."));
         foreach (var id in ParticipantIds(e).Where(id => id != e.PayerUserId && id != e.BookedByUserId).Distinct())
-            await SafePublishAsync(id, "Un engagement mensuel a été réservé pour toi",
-                $"{e.Sessions.Count} séances du {e.StartDate:dd/MM/yyyy} au {e.EndDate:dd/MM/yyyy}, en attente d'acceptation du répétiteur. Retrouve-les dans Mes séances.", e.Id);
+            await SafePublishAsync(id, new("Un engagement mensuel a été réservé pour toi", "A monthly commitment has been booked for you"),
+                new($"{e.Sessions.Count} séances du {e.StartDate:dd/MM/yyyy} au {e.EndDate:dd/MM/yyyy}, en attente d'acceptation du répétiteur. Retrouve-les dans Mes séances.",
+                    $"{e.Sessions.Count} sessions from {e.StartDate:dd/MM/yyyy} to {e.EndDate:dd/MM/yyyy}, waiting for the tutor to accept. Find them in My sessions."), e.Id);
     }
 
-    private async Task NotifyPayerOnlyAsync(TutorEngagement e, string title, string message)
+    private async Task NotifyPayerOnlyAsync(TutorEngagement e, LocalizedText title, LocalizedText message)
     {
         var ids = new HashSet<int> { e.PayerUserId, e.BookedByUserId };
         foreach (var id in ids) await SafePublishAsync(id, title, message, e.Id);
     }
 
-    private async Task NotifyPayerSideAsync(TutorEngagement e, string title, string message, bool includeTutor = false)
+    private async Task NotifyPayerSideAsync(TutorEngagement e, LocalizedText title, LocalizedText message, bool includeTutor = false)
     {
         var ids = new HashSet<int>(ParticipantIds(e)) { e.PayerUserId, e.BookedByUserId };
         if (includeTutor && e.TutorProfile?.UserId is int t) ids.Add(t);
         foreach (var id in ids) await SafePublishAsync(id, title, message, e.Id);
     }
 
-    private async Task NotifyTutorFeesAsync(TutorEngagement e, string verb)
+    private async Task NotifyTutorFeesAsync(TutorEngagement e, LocalizedText verb)
     {
         var fees = e.Sessions.Sum(s => s.TutorFeeChargedXaf ?? 0m);
         if (fees > 0 && e.TutorProfile?.UserId is int t)
-            await SafePublishAsync(t, "Frais Mobile Money retenus",
-                $"L'engagement du {e.StartDate:dd/MM/yyyy} a été {verb} de ton fait : le payeur est remboursé intégralement et les frais Mobile Money ({fees:0} XAF) ont été retenus sur ton solde, comme le prévoit la politique de tutorat.", e.Id);
+            await SafePublishAsync(t, new("Frais Mobile Money retenus", "Mobile Money fees withheld"),
+                new($"L'engagement du {e.StartDate:dd/MM/yyyy} a été {verb.Fr} de ton fait : le payeur est remboursé intégralement et les frais Mobile Money ({fees:0} XAF) ont été retenus sur ton solde, comme le prévoit la politique de tutorat.",
+                    $"The commitment starting {e.StartDate:dd/MM/yyyy} was {verb.En} on your side: the payer gets a full refund and the Mobile Money fees ({fees:0} XAF) have been withheld from your balance, as set out in the tutoring policy."), e.Id);
     }
 
-    private async Task SafePublishAsync(int userId, string title, string message, int engagementId, string priority = "default")
+    /// <summary>Lot 10.6 : notification dans la langue du destinataire (User.Locale).</summary>
+    private async Task SafePublishAsync(int userId, LocalizedText title, LocalizedText message, int engagementId, string priority = "default")
     {
         try
         {
-            await _ntfy.PublishAsync($"winplus-user-{userId}", title, message, priority: priority, userId: userId, type: "TutorBooking",
+            await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{userId}", title, message, priority: priority, userId: userId, type: "TutorBooking",
                 relatedEntityType: "TutorEngagement", relatedEntityId: engagementId);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Notification d'engagement {Id} non envoyée au compte {User}", engagementId, userId); }
@@ -1262,6 +1282,8 @@ public class TutorEngagementService : ITutorEngagementService
 
     private static readonly string[] Days = { "dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi" };
     private static string DayName(int d) => d is >= 0 and <= 6 ? Days[d] : "?";
+    private static readonly string[] DaysEn = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
+    private static string DayNameEn(int d) => d is >= 0 and <= 6 ? DaysEn[d] : "?";
 
     // ── Outils ──────────────────────────────────────────────────────────
 

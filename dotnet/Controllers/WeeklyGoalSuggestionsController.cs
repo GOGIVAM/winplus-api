@@ -1,3 +1,4 @@
+using Backend.Services;
 using Backend.Data;
 using Backend.Extensions;
 using Microsoft.AspNetCore.Authorization;
@@ -159,32 +160,36 @@ public class WeeklyGoalSuggestionsController : ControllerBase
         }
 
         // 2. Repli déterministe, mêmes champs.
+        // Lot 10.6 : dans la langue du compte (User.Locale) ; le français reste le texte historique.
+        var en = NotificationLocales.IsEnglish(await NotificationLocales.ForUserAsync(_db, userId, ct));
+        string L(string fr, string english) => en ? english : fr;
+
         var isExamYear = level != null && Regex.IsMatch(
             level, "terminale|tle|3e|3eme|3ème|bac|bepc|concours", RegexOptions.IgnoreCase);
 
-        var weakHead = string.Join(" et ", weak.Take(2));
+        var weakHead = string.Join(en ? " and " : " et ", weak.Take(2));
         var weakList = string.Join(", ", weak.Take(3));
 
         var suggestions = new List<Suggestion>
         {
             new(
-                isExamYear ? "Rythme examen" : "Rythme régulier",
+                isExamYear ? L("Rythme examen", "Exam pace") : L("Rythme régulier", "Steady pace"),
                 isExamYear
-                    ? "Année d'examen : volume soutenu et révisions quotidiennes."
-                    : "Un socle tenable sur toute l'année, sans surcharge.",
+                    ? L("Année d'examen : volume soutenu et révisions quotidiennes.", "Exam year: a sustained workload and daily revision.")
+                    : L("Un socle tenable sur toute l'année, sans surcharge.", "A base you can keep up all year, without overload."),
                 isExamYear ? 12 : 7, isExamYear ? 5 : 3, isExamYear ? 4 : 2),
             new(
-                weak.Count > 0 ? "Rattrapage ciblé" : "Consolidation",
+                weak.Count > 0 ? L("Rattrapage ciblé", "Targeted catch-up") : L("Consolidation", "Consolidation"),
                 weak.Count > 0
-                    ? "Concentré sur " + weakHead + ", vos matières les plus fragiles."
-                    : "Entretenir les acquis avec deux séances de quiz par semaine.",
+                    ? L("Concentré sur " + weakHead + ", vos matières les plus fragiles.", "Focused on " + weakHead + ", your weakest subjects.")
+                    : L("Entretenir les acquis avec deux séances de quiz par semaine.", "Keep up what you know with two quiz sessions a week."),
                 weak.Count > 0 ? 10 : 5, weak.Count > 0 ? 6 : 2, 3),
             quizDone == 0
-                ? new("Reprise en douceur",
-                      "Aucun quiz cette semaine : repartir petit vaut mieux que ne pas repartir.",
+                ? new(L("Reprise en douceur", "Gentle restart"),
+                      L("Aucun quiz cette semaine : repartir petit vaut mieux que ne pas repartir.", "No quiz this week: starting small is better than not starting again."),
                       3, 1, 1)
-                : new("Palier suivant",
-                      quizDone + " quiz déjà passés cette semaine : monter d'un cran reste atteignable.",
+                : new(L("Palier suivant", "Next step"),
+                      L(quizDone + " quiz déjà passés cette semaine : monter d'un cran reste atteignable.", quizDone + " quizzes already taken this week: stepping up a notch is within reach."),
                       9, quizDone + 2, 3),
         };
 
@@ -200,9 +205,12 @@ public class WeeklyGoalSuggestionsController : ControllerBase
                 done,
                 suggestions,
                 insight = weak.Count > 0
-                    ? "Vos résultats les plus faibles sont en " + weakList
-                      + ". Un objectif qui y consacre deux séances par semaine est le plus rentable."
-                    : "Aucune matière en difficulté marquée : un objectif de maintien suffit cette semaine.",
+                    ? L("Vos résultats les plus faibles sont en " + weakList
+                        + ". Un objectif qui y consacre deux séances par semaine est le plus rentable.",
+                        "Your weakest results are in " + weakList
+                        + ". A goal that spends two sessions a week on them pays off the most.")
+                    : L("Aucune matière en difficulté marquée : un objectif de maintien suffit cette semaine.",
+                        "No subject is clearly struggling: a maintenance goal is enough this week."),
             },
         });
     }

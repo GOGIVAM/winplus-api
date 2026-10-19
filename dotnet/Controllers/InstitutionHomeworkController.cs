@@ -223,16 +223,19 @@ public class InstitutionHomeworkController : ControllerBase
         var scopes = _scopes;
         var logger = _logger;
         var dueText = due != null ? $" À rendre avant le {due.Value.ToLocalTime():dd/MM à HH\\hmm}." : string.Empty;
+        var dueTextEn = due != null ? $" Due before {due.Value.ToLocalTime():dd/MM 'at' HH:mm}." : string.Empty;
         _ = Task.Run(async () =>
         {
             using var scope = scopes.CreateScope();
             var ntfy = scope.ServiceProvider.GetRequiredService<INtfyService>();
+            var db = scope.ServiceProvider.GetService<ApplicationDbContext>();
             foreach (var id in userIds)
             {
                 try
                 {
-                    await ntfy.PublishAsync($"winplus-user-{id}", $"Nouveau devoir · {groupName}",
-                        $"« {title} » t'attend dans Mes devoirs.{dueText}",
+                    // Lot 10.6 : dans la langue de l'élève (User.Locale).
+                    await ntfy.PublishLocalizedAsync(db, $"winplus-user-{id}", new($"Nouveau devoir · {groupName}", $"New homework · {groupName}"),
+                        new($"« {title} » t'attend dans Mes devoirs.{dueText}", $"\"{title}\" is waiting for you in My homework.{dueTextEn}"),
                         userId: id, type: "InstitutionHomework", relatedEntityType: "InstitutionHomework", relatedEntityId: homeworkId);
                 }
                 catch (Exception ex) { logger.LogWarning(ex, "Devoir {HomeworkId} non notifié à {UserId}", homeworkId, id); }

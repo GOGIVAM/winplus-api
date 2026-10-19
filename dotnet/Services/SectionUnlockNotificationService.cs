@@ -79,8 +79,11 @@ public sealed class SectionUnlockNotificationService : BackgroundService
                         UserId = enrollment.UserId,
                         SectionId = section.Id,
                     });
-                    await ntfy.PublishAsync($"winplus-user-{enrollment.UserId}", "Nouvelle section débloquée !",
-                        $"« {section.Title} » est maintenant disponible.", userId: enrollment.UserId, type: "CourseSection");
+                    // Lot 10.6 : dans la langue de l'élève (User.Locale).
+                    await ntfy.PublishLocalizedAsync(db, $"winplus-user-{enrollment.UserId}",
+                        new("Nouvelle section débloquée !", "New section unlocked!"),
+                        new($"« {section.Title} » est maintenant disponible.", $"\"{section.Title}\" is now available."),
+                        userId: enrollment.UserId, type: "CourseSection");
                 }
             }
             await db.SaveChangesAsync(ct);

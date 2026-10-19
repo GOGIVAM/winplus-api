@@ -330,18 +330,24 @@ public class InstitutionBulletinsController : ControllerBase
         {
             using var scope = scopes.CreateScope();
             var ntfy = scope.ServiceProvider.GetRequiredService<INtfyService>();
-            async Task Send(int userId, string title, string message)
+            var db = scope.ServiceProvider.GetService<ApplicationDbContext>();
+            // Lot 10.6 : dans la langue de chaque destinataire (User.Locale).
+            async Task Send(int userId, LocalizedText title, LocalizedText message)
             {
                 try
                 {
-                    await ntfy.PublishAsync($"winplus-user-{userId}", title, message, userId: userId,
+                    await ntfy.PublishLocalizedAsync(db, $"winplus-user-{userId}", title, message, userId: userId,
                         type: "InstitutionBulletin", relatedEntityType: "InstitutionBulletin", relatedEntityId: bulletinId);
                 }
                 catch (Exception ex) { logger.LogWarning(ex, "Bulletin {BulletinId} non notifié à {UserId}", bulletinId, userId); }
             }
-            await Send(studentId, $"Ton bulletin · {label}", $"{institutionName} a partagé ton bulletin. Ouvre WinPlus pour le consulter.");
+            await Send(studentId, new($"Ton bulletin · {label}", $"Your report card · {label}"),
+                new($"{institutionName} a partagé ton bulletin. Ouvre WinPlus pour le consulter.",
+                    $"{institutionName} has shared your report card. Open WinPlus to view it."));
             foreach (var p in parentIds)
-                await Send(p, $"Bulletin de {studentName} · {label}", $"{institutionName} a partagé le bulletin de {studentName}. Ouvrez votre espace parent pour le consulter.");
+                await Send(p, new($"Bulletin de {studentName} · {label}", $"{studentName}'s report card · {label}"),
+                    new($"{institutionName} a partagé le bulletin de {studentName}. Ouvrez votre espace parent pour le consulter.",
+                        $"{institutionName} has shared {studentName}'s report card. Open your parent space to view it."));
         });
     }
 

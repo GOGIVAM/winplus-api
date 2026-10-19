@@ -121,17 +121,22 @@ public class TutorBookingLifecycleService : BackgroundService
             }
 
             var payerId = booking.PayerUserId ?? booking.StudentUserId;
-            await ntfy.PublishAsync($"winplus-user-{payerId}", "Demande expirée — remboursement effectué",
+            // Lot 10.6 : dans la langue du destinataire (User.Locale).
+            await ntfy.PublishLocalizedAsync(db, $"winplus-user-{payerId}", new("Demande expirée — remboursement effectué", "Request expired, refund made"),
                 decision is { RefundXaf: > 0 }
-                    ? $"Le répétiteur n'a pas répondu à temps pour ta séance du {booking.SessionDate:dd/MM/yyyy}. {decision.RefundXaf:0} XAF ont été crédités sur ton portefeuille WinPlus (remboursement intégral)."
-                    : $"Le répétiteur n'a pas répondu à temps pour ta séance du {booking.SessionDate:dd/MM/yyyy}. La demande est annulée.",
+                    ? new($"Le répétiteur n'a pas répondu à temps pour ta séance du {booking.SessionDate:dd/MM/yyyy}. {decision.RefundXaf:0} XAF ont été crédités sur ton portefeuille WinPlus (remboursement intégral).",
+                          $"The tutor did not reply in time for your session on {booking.SessionDate:dd/MM/yyyy}. {decision.RefundXaf:0} XAF have been credited to your WinPlus wallet (full refund).")
+                    : new($"Le répétiteur n'a pas répondu à temps pour ta séance du {booking.SessionDate:dd/MM/yyyy}. La demande est annulée.",
+                          $"The tutor did not reply in time for your session on {booking.SessionDate:dd/MM/yyyy}. The request is cancelled."),
                 userId: payerId, type: "TutorBooking");
             var tutorUserId = booking.TutorProfile?.UserId;
             if (tutorUserId.HasValue)
-                await ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Demande expirée",
+                await ntfy.PublishLocalizedAsync(db, $"winplus-user-{tutorUserId.Value}", new("Demande expirée", "Request expired"),
                     booking.TutorFeeChargedXaf is > 0
-                        ? $"Tu n'as pas répondu à temps à la demande du {booking.SessionDate:dd/MM/yyyy} : elle a été annulée et les frais Mobile Money ({booking.TutorFeeChargedXaf:0} XAF) ont été retenus sur ton solde."
-                        : $"Tu n'as pas répondu à temps à la demande du {booking.SessionDate:dd/MM/yyyy} : elle a été annulée.",
+                        ? new($"Tu n'as pas répondu à temps à la demande du {booking.SessionDate:dd/MM/yyyy} : elle a été annulée et les frais Mobile Money ({booking.TutorFeeChargedXaf:0} XAF) ont été retenus sur ton solde.",
+                              $"You did not reply in time to the request for {booking.SessionDate:dd/MM/yyyy}: it has been cancelled and the Mobile Money fees ({booking.TutorFeeChargedXaf:0} XAF) have been withheld from your balance.")
+                        : new($"Tu n'as pas répondu à temps à la demande du {booking.SessionDate:dd/MM/yyyy} : elle a été annulée.",
+                              $"You did not reply in time to the request for {booking.SessionDate:dd/MM/yyyy}: it has been cancelled."),
                     userId: tutorUserId.Value, type: "TutorBooking");
         }
 
@@ -160,11 +165,12 @@ public class TutorBookingLifecycleService : BackgroundService
 
             var tutorUserId = booking.TutorProfile?.UserId;
             if (tutorUserId.HasValue)
-                await ntfy.PublishAsync($"winplus-user-{tutorUserId.Value}", "Fonds libérés",
-                    $"Ta part de la séance du {booking.SessionDate:dd/MM/yyyy} ({booking.PriceXaf:0} XAF payés, commission déduite) est maintenant disponible dans ton solde WinPlus.",
+                await ntfy.PublishLocalizedAsync(db, $"winplus-user-{tutorUserId.Value}", new("Fonds libérés", "Funds released"),
+                    new($"Ta part de la séance du {booking.SessionDate:dd/MM/yyyy} ({booking.PriceXaf:0} XAF payés, commission déduite) est maintenant disponible dans ton solde WinPlus.",
+                        $"Your share of the session on {booking.SessionDate:dd/MM/yyyy} ({booking.PriceXaf:0} XAF paid, commission deducted) is now available in your WinPlus balance."),
                     userId: tutorUserId.Value, type: "TutorBooking");
-            await ntfy.PublishAsync($"winplus-user-{booking.StudentUserId}", "Comment s'est passée ta séance ?",
-                "Laisse un avis pour aider les autres élèves.", userId: booking.StudentUserId, type: "TutorBooking");
+            await ntfy.PublishLocalizedAsync(db, $"winplus-user-{booking.StudentUserId}", new("Comment s'est passée ta séance ?", "How did your session go?"),
+                new("Laisse un avis pour aider les autres élèves.", "Leave a review to help other students."), userId: booking.StudentUserId, type: "TutorBooking");
         }
 
         await db.SaveChangesAsync(ct);

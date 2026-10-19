@@ -492,10 +492,12 @@ public class ParentCreditsController : ControllerBase
                 try { await _wallet.SyncOrderAsync(order.Id); }
                 catch (Exception ex) { _logger.LogError(ex, "Écritures de vente de la commande {OrderId} non posées (réconciliation à venir)", order.Id); }
 
-                await _ntfy.PublishAsync(
+                // Lot 10.6 : dans la langue de l'élève (User.Locale).
+                await _ntfy.PublishLocalizedAsync(_db,
                     topic: $"winplus-user-{request.ChildId}",
-                    title: "Nouveau contenu disponible",
-                    message: $"Un parent vient de vous offrir « {subject.Title} ».",
+                    title: new("Nouveau contenu disponible", "New content available"),
+                    message: new($"Un parent vient de vous offrir « {subject.Title} ».",
+                                 $"A parent has just given you \"{subject.Title}\"."),
                     tags: new[] { "gift" },
                     userId: request.ChildId,
                     type: "content",
@@ -669,10 +671,11 @@ public class ParentCreditsController : ControllerBase
         try { await _wallet.SyncOrderAsync(order.Id); }
         catch (Exception ex) { _logger.LogError(ex, "Écritures de la commande {OrderId} non posées (réconciliation à venir)", order.Id); }
 
-        await _ntfy.PublishAsync(
+        await _ntfy.PublishLocalizedAsync(_db,
             topic: $"winplus-user-{childId}",
-            title: "Nouvelle formation disponible",
-            message: $"Un parent vient de vous offrir la formation « {course.Title} ».",
+            title: new("Nouvelle formation disponible", "New course available"),
+            message: new($"Un parent vient de vous offrir la formation « {course.Title} ».",
+                         $"A parent has just given you the course \"{course.Title}\"."),
             tags: new[] { "gift" },
             userId: childId,
             type: "content",

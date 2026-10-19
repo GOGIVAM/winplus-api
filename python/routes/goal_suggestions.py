@@ -81,7 +81,11 @@ def _is_exam_year(level: Optional[str]) -> bool:
 
 
 def _rule_based(req: GoalSuggestionRequest) -> GoalSuggestionResponse:
-    """Base déterministe : toujours renvoyée si le modèle n'est pas joignable."""
+    """Base déterministe : toujours renvoyée si le modèle n'est pas joignable.
+    Lot 10.6 : en anglais pour un compte anglais (X-User-Locale), texte
+    français historique sinon."""
+    if is_english():
+        return _rule_based_en(req)
     exam = _is_exam_year(req.level)
     weak = [s for s in req.weak_subjects if s][:3]
     done_quiz = int(req.done_this_week.get("quiz") or 0)
@@ -130,6 +134,60 @@ def _rule_based(req: GoalSuggestionRequest) -> GoalSuggestionResponse:
         )
     else:
         insight = "Aucune matière en difficulté marquée : un objectif de maintien suffit cette semaine."
+
+    return GoalSuggestionResponse(suggestions=suggestions, insight=insight)
+
+
+def _rule_based_en(req: GoalSuggestionRequest) -> GoalSuggestionResponse:
+    """Même base déterministe que _rule_based (mêmes chiffres), textes en anglais."""
+    exam = _is_exam_year(req.level)
+    weak = [s for s in req.weak_subjects if s][:3]
+    done_quiz = int(req.done_this_week.get("quiz") or 0)
+
+    suggestions = [
+        GoalSuggestion(
+            title="Exam pace" if exam else "Steady pace",
+            reason=(
+                "Exam year: a sustained workload and daily revision."
+                if exam
+                else "A base you can keep up all year, without overload."
+            ),
+            studyHoursTarget=12 if exam else 7,
+            quizTarget=5 if exam else 3,
+            downloadsTarget=4 if exam else 2,
+        ),
+        GoalSuggestion(
+            title="Targeted catch-up" if weak else "Consolidation",
+            reason=(
+                "Focused on " + " and ".join(weak[:2]) + ", your weakest subjects."
+                if weak
+                else "Keep up what you know with two quiz sessions a week."
+            ),
+            studyHoursTarget=10 if weak else 5,
+            quizTarget=6 if weak else 2,
+            downloadsTarget=3,
+        ),
+        GoalSuggestion(
+            title="Gentle restart" if done_quiz == 0 else "Next step",
+            reason=(
+                "No quiz this week: starting small is better than not starting again."
+                if done_quiz == 0
+                else f"{done_quiz} quizzes already taken this week: stepping up a notch is within reach."
+            ),
+            studyHoursTarget=3 if done_quiz == 0 else 9,
+            quizTarget=1 if done_quiz == 0 else done_quiz + 2,
+            downloadsTarget=1 if done_quiz == 0 else 3,
+        ),
+    ]
+
+    if weak:
+        insight = (
+            "Your weakest results are in "
+            + ", ".join(weak)
+            + ". A goal that spends two sessions a week on them pays off the most."
+        )
+    else:
+        insight = "No subject is clearly struggling: a maintenance goal is enough this week."
 
     return GoalSuggestionResponse(suggestions=suggestions, insight=insight)
 

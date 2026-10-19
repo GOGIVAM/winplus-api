@@ -57,12 +57,13 @@ public class AdminController : ControllerBase
         BadRequest(new { code = "reason_required", error = $"Un motif d'au moins {AdminUsersController.MinReasonLength} caractères est obligatoire pour cette action." });
 
     /// <summary>Notification in-app + ntfy à l'auteur d'un contenu (décision de modération).</summary>
-    private async Task NotifyAuthorAsync(int? authorId, int subjectId, string title, string message)
+    private async Task NotifyAuthorAsync(int? authorId, int subjectId, LocalizedText title, LocalizedText message)
     {
         if (authorId == null) return;
         try
         {
-            await _ntfy.PublishAsync($"winplus-user-{authorId}", title, message,
+            // Lot 10.6 : dans la langue de l'auteur (User.Locale).
+            await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{authorId}", title, message,
                 userId: authorId, type: "Content", relatedEntityType: "subject", relatedEntityId: subjectId);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Notification à l'auteur non envoyée (contenu {SubjectId})", subjectId); }
@@ -604,8 +605,9 @@ public class AdminController : ControllerBase
             this.AuditAdd(_audit, Backend.Models.Entities.AdminAuditActions.ContentApproved, "Subject", id, subject.Title,
                 new { isPublished = false }, new { isPublished = true });
             await _db.SaveChangesAsync();
-            await NotifyAuthorAsync(subject.AuthorUserId, id, "Contenu publié",
-                $"Ton contenu « {subject.Title} » a été validé et est maintenant publié.");
+            await NotifyAuthorAsync(subject.AuthorUserId, id, new("Contenu publié", "Content published"),
+                new($"Ton contenu « {subject.Title} » a été validé et est maintenant publié.",
+                    $"Your content \"{subject.Title}\" has been approved and is now published."));
             _logger.LogInformation("Subject {Id} approved by admin", id);
             return Ok(new { success = true });
         }
@@ -639,8 +641,9 @@ public class AdminController : ControllerBase
             this.AuditAdd(_audit, Backend.Models.Entities.AdminAuditActions.ContentRejected, "Subject", id, subject.Title,
                 new { status = "pending" }, new { status = "rejected" }, reason);
             await _db.SaveChangesAsync();
-            await NotifyAuthorAsync(subject.AuthorUserId, id, "Contenu non validé",
-                $"Ton contenu « {subject.Title} » n'a pas été validé. Motif : {reason}");
+            await NotifyAuthorAsync(subject.AuthorUserId, id, new("Contenu non validé", "Content not approved"),
+                new($"Ton contenu « {subject.Title} » n'a pas été validé. Motif : {reason}",
+                    $"Your content \"{subject.Title}\" has not been approved. Reason: {reason}"));
             _logger.LogInformation("Subject {Id} rejected: {Reason}", id, reason);
             return Ok(new { success = true });
         }

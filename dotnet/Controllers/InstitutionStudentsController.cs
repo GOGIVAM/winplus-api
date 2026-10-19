@@ -1,3 +1,4 @@
+using Backend.Services;
 using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -64,13 +65,17 @@ public class InstitutionStudentsController : ControllerBase
         {
             using var scope = scopes.CreateScope();
             var ntfy = scope.ServiceProvider.GetRequiredService<Backend.Services.INtfyService>();
+            var db = scope.ServiceProvider.GetService<ApplicationDbContext>();
             foreach (var id in studentIds)
             {
                 try
                 {
-                    await ntfy.PublishAsync($"winplus-user-{id}", "Rattachement à un établissement",
-                        $"L'établissement « {institutionName} » t'a ajouté(e) à ses élèves. Confirme ou refuse ce rattachement dans Mon réseau : " +
-                        "tant que tu ne l'as pas accepté, l'établissement ne peut ni réserver, ni payer, ni attribuer de cours particulier pour toi.",
+                    // Lot 10.6 : dans la langue de l'élève (User.Locale).
+                    await ntfy.PublishLocalizedAsync(db, $"winplus-user-{id}", new("Rattachement à un établissement", "Linked to a school"),
+                        new($"L'établissement « {institutionName} » t'a ajouté(e) à ses élèves. Confirme ou refuse ce rattachement dans Mon réseau : " +
+                            "tant que tu ne l'as pas accepté, l'établissement ne peut ni réserver, ni payer, ni attribuer de cours particulier pour toi.",
+                            $"The school \"{institutionName}\" has added you to its students. Confirm or decline this link in My network: " +
+                            "until you accept it, the school cannot book, pay for or assign private lessons for you."),
                         userId: id, type: "InstitutionAttachment", relatedEntityType: "Institution");
                 }
                 catch (Exception ex) { logger.LogWarning(ex, "Notification de rattachement non envoyée à l'élève {StudentId}", id); }
