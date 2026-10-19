@@ -53,7 +53,11 @@ public class InstitutionMobileController : ControllerBase
                     name = g.Name,
                     description = g.Description,
                     level = g.Subject ?? "",
-                    memberCount = g.Members.Count(m => m.UserId != userId),
+                    // Les enseignants affectés (rôle « teacher ») ne sont pas des élèves.
+                    memberCount = g.Members.Count(m => m.UserId != userId && m.Role != "teacher"),
+                    teachers = g.Members.Where(m => m.Role == "teacher" && m.User != null)
+                        .Select(m => new { id = m.UserId, firstName = m.User!.FirstName, lastName = m.User.LastName })
+                        .ToList(),
                 })
                 .ToListAsync();
 
@@ -129,7 +133,7 @@ public class InstitutionMobileController : ControllerBase
 
             var rows = await _db.StudyGroupMembers
                 .AsNoTracking()
-                .Where(m => m.StudyGroupId == id && m.UserId != userId)
+                .Where(m => m.StudyGroupId == id && m.UserId != userId && m.Role != "teacher")
                 .Select(m => new
                 {
                     id = m.UserId,
