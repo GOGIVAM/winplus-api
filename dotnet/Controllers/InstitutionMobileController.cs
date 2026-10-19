@@ -127,20 +127,40 @@ public class InstitutionMobileController : ControllerBase
             var group = await _db.StudyGroups.AsNoTracking().FirstOrDefaultAsync(g => g.Id == id && g.OwnerId == userId);
             if (group == null) return NotFound(new { error = "Groupe introuvable" });
 
-            var members = await _db.StudyGroupMembers
+            var rows = await _db.StudyGroupMembers
                 .AsNoTracking()
                 .Where(m => m.StudyGroupId == id && m.UserId != userId)
-                .Include(m => m.User)
                 .Select(m => new
                 {
                     id = m.UserId,
                     firstName = m.User != null ? m.User.FirstName : null,
                     lastName = m.User != null ? m.User.LastName : null,
                     email = m.User != null ? m.User.Email : null,
-                    averageScore = 0.0,
-                    activityScore = 0,
+                    lastLoginAt = m.User != null ? m.User.LastLoginAt : null,
                 })
                 .ToListAsync();
+
+            // Moyenne réelle des quiz terminés et nombre de quiz des 7 derniers
+            // jours (l'ancienne réponse renvoyait 0 en dur pour tout le monde).
+            var memberIds = rows.Select(r => r.id).ToList();
+            var weekAgo = DateTime.UtcNow.AddDays(-7);
+            var attempts = await _db.QuizAttempts.AsNoTracking()
+                .Where(a => memberIds.Contains(a.UserId) && a.IsCompleted)
+                .Select(a => new { a.UserId, a.Score, a.CompletedAt })
+                .ToListAsync();
+            var byUser = attempts.GroupBy(a => a.UserId).ToDictionary(g => g.Key, g => g.ToList());
+
+            var members = rows.Select(r =>
+            {
+                byUser.TryGetValue(r.id, out var list);
+                return new
+                {
+                    r.id, r.firstName, r.lastName, r.email, r.lastLoginAt,
+                    averageScore = list == null || list.Count == 0 ? (double?)null : Math.Round((double)list.Average(a => a.Score), 1),
+                    activityScore = list?.Count(a => a.CompletedAt >= weekAgo) ?? 0,
+                    quizCount = list?.Count ?? 0,
+                };
+            }).OrderBy(m => m.lastName).ThenBy(m => m.firstName).ToList();
 
             return Ok(members);
         }
@@ -161,8 +181,17 @@ public class InstitutionMobileController : ControllerBase
             var group = await _db.StudyGroups.FirstOrDefaultAsync(g => g.Id == id && g.OwnerId == userId);
             if (group == null) return NotFound(new { error = "Groupe introuvable" });
 
-            var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == req.Email);
-            if (user == null) return NotFound(new { error = "Utilisateur introuvable" });
+            // Seuls les élèves rattachés à l'établissement du compte peuvent être
+            // ajoutés : avant, n'importe quel compte WinPlus l'était par son
+            // e-mail, et la réponse révélait si l'adresse existait.
+            var email = (req.Email ?? string.Empty).Trim().ToLower();
+            var ownerInstitutionId = await _db.Users.AsNoTracking()
+                .Where(u => u.Id == userId).Select(u => u.InstitutionId).FirstOrDefaultAsync();
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email);
+            var isOwnStudent = user != null && ownerInstitutionId != null && await _db.InstitutionStudents
+                .AnyAsync(s => s.InstitutionId == ownerInstitutionId && s.StudentId == user.Id);
+            if (user == null || !isOwnStudent)
+                return NotFound(new { error = "Aucun élève de votre établissement avec cette adresse. Importez-le d'abord dans l'annuaire." });
 
             var already = await _db.StudyGroupMembers.AnyAsync(m => m.StudyGroupId == id && m.UserId == user.Id);
             if (already) return Conflict(new { error = "Déjà membre du groupe" });
