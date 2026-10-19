@@ -609,7 +609,9 @@ builder.Services.AddHostedService<MonthlyPortfolioService>();
 builder.Services.AddHostedService<YearlyAlbumSchedulerService>();
 
 // Background services for institution features
-builder.Services.AddHostedService<MonthlyInstitutionReportService>();
+// Instance unique : tâche du 1er du mois ET envoi à la demande (InstitutionMonthlyReportController).
+builder.Services.AddSingleton<MonthlyInstitutionReportService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MonthlyInstitutionReportService>());
 
 // Background services for tutor (Répétiteur) features
 builder.Services.AddHostedService<TutorCoachingReportService>();

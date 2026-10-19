@@ -76,6 +76,23 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
         }
     }
 
+    /// <summary>
+    /// Envoi à la demande depuis l'espace institution : le mois en cours
+    /// jusqu'à aujourd'hui. Renvoie false si le compte n'a pas d'e-mail vérifié.
+    /// </summary>
+    public async Task<bool> SendNowAsync(int institutionUserId, CancellationToken ct = default)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var email = scope.ServiceProvider.GetRequiredService<IEmailService>();
+        var inst = await db.Users.FirstOrDefaultAsync(u => u.Id == institutionUserId, ct);
+        if (inst == null || string.IsNullOrWhiteSpace(inst.Email)) return false;
+        var now = DateTime.UtcNow;
+        var start = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        await SendMonthlyReportAsync(inst.Id, inst.Email, inst.FirstName ?? "Directeur", db, email, ct, start, now);
+        return true;
+    }
+
     private static TimeSpan ComputeDelayUntilFirstOfMonth()
     {
         var now = DateTime.UtcNow;
@@ -131,41 +148,68 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
         string directorName,
         ApplicationDbContext db,
         IEmailService emailService,
-        CancellationToken ct)
+        CancellationToken ct,
+        DateTime? periodStart = null,
+        DateTime? periodEnd = null)
     {
         var now = DateTime.UtcNow;
-        var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(-1);
-        var monthEnd = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var monthStart = periodStart ?? new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(-1);
+        var monthEnd = periodEnd ?? new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         var monthLabel = monthStart.ToString("MMMM yyyy", new System.Globalization.CultureInfo("fr-FR"));
+        if (periodEnd != null) monthLabel += $" (au {monthEnd:dd/MM})";
 
-        // Find students linked to this institution via InstitutionId FK on User (if exists)
-        // Fallback: query all students supervised by this org user
-        List<int> studentIds;
-        try
-        {
-            studentIds = await db.Users
-                .Where(u => u.Role == "student" && !u.IsDeleted && EF.Property<int?>(u, "InstitutionId") == institutionUserId)
-                .Select(u => u.Id)
-                .ToListAsync(ct);
-        }
-        catch
-        {
-            // InstitutionId column may not exist  skip detailed stats
-            studentIds = new List<int>();
-        }
+        // Établissement du compte (User.InstitutionId) et ses élèves : ceux de
+        // InstitutionStudents ayant accepté le rattachement. L'ancienne requête
+        // comparait User.InstitutionId des élèves à l'id du COMPTE institution
+        // (et non de l'établissement) : aucun élève n'était jamais trouvé.
+        var institutionId = await db.Users.Where(u => u.Id == institutionUserId)
+            .Select(u => u.InstitutionId).FirstOrDefaultAsync(ct);
+        var institutionName = institutionId == null ? directorName
+            : await db.Institutions.Where(i => i.Id == institutionId).Select(i => i.Name).FirstOrDefaultAsync(ct) ?? directorName;
+        var studentIds = institutionId == null ? new List<int>() : await db.InstitutionStudents.AsNoTracking()
+            .Where(s => s.InstitutionId == institutionId && s.IsActive
+                        && s.ConfirmationStatus == Backend.Models.Entities.InstitutionAttachmentStatuses.Accepted)
+            .Select(s => s.StudentId).Distinct().ToListAsync(ct);
 
-        // Monthly scores
-        var monthScores = await db.DailyScores
-            .Where(s => studentIds.Contains(s.UserId) && s.CreatedAt >= monthStart && s.CreatedAt < monthEnd)
+        // Chiffres du mois, à partir des quiz terminés.
+        var attempts = await db.QuizAttempts.AsNoTracking()
+            .Where(a => studentIds.Contains(a.UserId) && a.IsCompleted && a.CompletedAt >= monthStart && a.CompletedAt < monthEnd)
+            .Select(a => new { a.UserId, a.Score })
             .ToListAsync(ct);
-
-        var avgScore = monthScores.Any() ? Math.Round(monthScores.Average(s => (double)s.AverageScore), 1) : 0.0;
-        var activeStudents = monthScores.Select(s => s.UserId).Distinct().Count();
-        var passRate = monthScores.Any()
-            ? Math.Round(monthScores.GroupBy(s => s.UserId)
-                .Count(g => g.Average(s => (double)s.AverageScore) >= 50) / (double)Math.Max(studentIds.Count, 1) * 100, 1)
+        var avgScore = attempts.Count > 0 ? Math.Round(attempts.Average(a => (double)a.Score), 1) : 0.0;
+        var activeStudents = attempts.Select(a => a.UserId).Distinct().Count();
+        var passRate = studentIds.Count > 0
+            ? Math.Round(attempts.GroupBy(a => a.UserId).Count(g => g.Average(a => (double)a.Score) >= 50) * 100.0 / studentIds.Count, 1)
             : 0.0;
-        var totalQuizzes = monthScores.Sum(s => s.QuizCount);
+        var totalQuizzes = attempts.Count;
+
+        // Activité de l'établissement sur le mois (phase 2).
+        int homeworkGiven = 0, announcementsSent = 0, bulletinsShared = 0;
+        double homeworkDoneRate = 0;
+        if (institutionId != null)
+        {
+            var homework = await db.InstitutionHomework.AsNoTracking()
+                .Where(h => h.InstitutionId == institutionId && !h.IsDeleted && h.CreatedAt >= monthStart && h.CreatedAt < monthEnd)
+                .Select(h => new { h.QuizId, h.CreatedAt, h.StudyGroupId }).ToListAsync(ct);
+            homeworkGiven = homework.Count;
+            if (homework.Count > 0)
+            {
+                int expected = 0, done = 0;
+                foreach (var h in homework)
+                {
+                    var members = await db.StudyGroupMembers.AsNoTracking()
+                        .Where(m => m.StudyGroupId == h.StudyGroupId && m.Role != "teacher").Select(m => m.UserId).ToListAsync(ct);
+                    expected += members.Count;
+                    done += await db.QuizAttempts.AsNoTracking()
+                        .Where(a => a.QuizId == h.QuizId && a.IsCompleted && a.CompletedAt >= h.CreatedAt && members.Contains(a.UserId))
+                        .Select(a => a.UserId).Distinct().CountAsync(ct);
+                }
+                homeworkDoneRate = expected == 0 ? 0 : Math.Round(done * 100.0 / expected, 1);
+            }
+            announcementsSent = await db.InstitutionAnnouncements.CountAsync(a => a.InstitutionId == institutionId && !a.IsDeleted && a.CreatedAt >= monthStart && a.CreatedAt < monthEnd, ct);
+            bulletinsShared = await db.InstitutionBulletins.CountAsync(b => b.InstitutionId == institutionId && !b.IsDeleted && b.SharedAt >= monthStart && b.SharedAt < monthEnd, ct);
+        }
+        var inactiveStudents = Math.Max(0, studentIds.Count - activeStudents);
 
         // Build AI narrative via Python (optional  fire-and-forget)
         string aiNarrative;
@@ -181,9 +225,9 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
             var pyClient = _httpFactory.CreateClient("FastApiClient");
             var payload = new
             {
-                institution_id = institutionUserId,
+                institution_id = institutionId ?? institutionUserId,
                 student_ids = studentIds,
-                institution_name = directorName,
+                institution_name = institutionName,
             };
             // Module 23 : tâche de fond sans jeton utilisateur. L'appel partait
             // sans Authorization, Python (require_role) répondait 401, et le
@@ -231,7 +275,8 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
         // Build HTML email body
         var body = BuildReportHtml(
             directorName, monthLabel, studentIds.Count,
-            activeStudents, avgScore, passRate, totalQuizzes, aiNarrative);
+            activeStudents, avgScore, passRate, totalQuizzes, aiNarrative,
+            institutionName, homeworkGiven, homeworkDoneRate, announcementsSent, bulletinsShared, inactiveStudents);
 
         await emailService.SendGenericEmailAsync(
             to: institutionEmail,
@@ -252,11 +297,20 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
         double avgScore,
         double passRate,
         int totalQuizzes,
-        string aiNarrative)
+        string aiNarrative,
+        string institutionName,
+        int homeworkGiven,
+        double homeworkDoneRate,
+        int announcementsSent,
+        int bulletinsShared,
+        int inactiveStudents)
     {
         var engagementRate = totalStudents > 0
             ? Math.Round((double)activeStudents / totalStudents * 100, 1) : 0;
         var aiNarrativeHtml = aiNarrative.Replace("\n", "<br/>");
+        var inactiveLine = inactiveStudents > 0
+            ? $"<strong>{inactiveStudents}</strong> élève(s) n'ont fait aucun quiz sur la période : pensez à les relancer."
+            : "Tous vos élèves ont été actifs sur la période.";
 
         return $@"<!DOCTYPE html>
 <html lang=""fr"">
@@ -265,18 +319,18 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
   <style>
     body {{ font-family: 'Segoe UI', Arial, sans-serif; background: #f8fafc; margin: 0; padding: 0; }}
     .wrap {{ max-width: 600px; margin: 0 auto; background: #fff; border-radius: 12px; overflow: hidden; }}
-    .header {{ background: #0f766e; padding: 28px 32px; }}
+    .header {{ background: #0F2A35; padding: 28px 32px; }}
     .header h1 {{ color: #fff; font-size: 22px; margin: 0 0 4px; }}
-    .header p {{ color: #99f6e4; font-size: 14px; margin: 0; }}
+    .header p {{ color: #86D8CF; font-size: 14px; margin: 0; }}
     .body {{ padding: 28px 32px; }}
     .kpi-row {{ display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }}
-    .kpi {{ flex: 1; min-width: 120px; background: #f0fdfa; border: 1px solid #99f6e4;
+    .kpi {{ flex: 1; min-width: 120px; background: #EBF8F6; border: 1px solid #ADE3DC;
              border-radius: 8px; padding: 14px 16px; text-align: center; }}
-    .kpi .value {{ font-size: 26px; font-weight: 800; color: #0f766e; line-height: 1; }}
+    .kpi .value {{ font-size: 26px; font-weight: 800; color: #1E8077; line-height: 1; }}
     .kpi .label {{ font-size: 11px; color: #6b7280; margin-top: 4px; }}
     .section {{ margin-bottom: 20px; }}
     .section h3 {{ font-size: 15px; font-weight: 700; color: #1f2937; margin: 0 0 10px; }}
-    .ai-box {{ background: #1e293b; border-radius: 8px; padding: 16px 20px; color: #e2e8f0; font-size: 13px; line-height: 1.6; }}
+    .ai-box {{ background: #0F2A35; border-radius: 8px; padding: 16px 20px; color: #e2e8f0; font-size: 13px; line-height: 1.6; }}
     .footer {{ background: #f8fafc; padding: 16px 32px; text-align: center; font-size: 12px; color: #9ca3af; }}
     .badge {{ display: inline-block; background: #dcfce7; color: #166534; border-radius: 999px;
                padding: 2px 10px; font-size: 12px; font-weight: 600; margin-left: 6px; }}
@@ -290,7 +344,7 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
   </div>
   <div class=""body"">
     <p style=""font-size:15px;color:#374151"">Bonjour <strong>{directorName}</strong>,</p>
-    <p style=""font-size:13px;color:#6b7280;margin-top:4px"">Voici le bilan de pilotage pédagogique de votre établissement pour {monthLabel}.</p>
+    <p style=""font-size:13px;color:#6b7280;margin-top:4px"">Voici le bilan de pilotage pédagogique de <strong>{System.Net.WebUtility.HtmlEncode(institutionName)}</strong> pour {monthLabel}.</p>
 
     <div class=""kpi-row"">
       <div class=""kpi""><div class=""value"">{totalStudents}</div><div class=""label"">Étudiants inscrits</div></div>
@@ -302,17 +356,28 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
     </div>
 
     <div class=""section"">
+      <h3>Vie de l'établissement</h3>
+      <div class=""kpi-row"">
+        <div class=""kpi""><div class=""value"">{homeworkGiven}</div><div class=""label"">Devoirs donnés</div></div>
+        <div class=""kpi""><div class=""value"">{homeworkDoneRate}%</div><div class=""label"">Devoirs faits</div></div>
+        <div class=""kpi""><div class=""value"">{announcementsSent}</div><div class=""label"">Annonces</div></div>
+        <div class=""kpi""><div class=""value"">{bulletinsShared}</div><div class=""label"">Bulletins partagés</div></div>
+      </div>
+      <p style=""font-size:13px;color:#374151;margin:0"">{inactiveLine}</p>
+    </div>
+
+    <div class=""section"">
       <h3>Plan d'action WinAI</h3>
       <div class=""ai-box"">{aiNarrativeHtml}</div>
     </div>
 
     <p style=""font-size:12px;color:#9ca3af"">
       Pour consulter l'analyse complète, connectez-vous à votre espace institution sur
-      <a href=""https://winplus.cm/organisation"" style=""color:#0f766e"">WinPlus</a>.
+      <a href=""https://winplus.cm/organisation"" style=""color:#1E8077"">WinPlus</a>.
     </p>
   </div>
   <div class=""footer"">
-    WinPlus · Plateforme éducative · <a href=""https://winplus.cm"" style=""color:#0f766e"">winplus.cm</a>
+    WinPlus · Plateforme éducative · <a href=""https://winplus.cm"" style=""color:#1E8077"">winplus.cm</a>
     <br/>Ce rapport est généré automatiquement le 1er de chaque mois.
   </div>
 </div>
