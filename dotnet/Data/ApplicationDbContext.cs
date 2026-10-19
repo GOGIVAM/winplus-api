@@ -1946,5 +1946,8 @@ modelBuilder.Entity<Exam>(entity =>
 
         // ── Espace institution, phase 2 : devoirs par classe (voir ApplicationDbContext.InstitutionHomework.cs) ──
         OnModelCreatingInstitutionHomework(modelBuilder);
+
+        // ── Espace institution, phase 2 : bulletins (voir ApplicationDbContext.InstitutionBulletins.cs) ──
+        OnModelCreatingInstitutionBulletins(modelBuilder);
     }
 }
