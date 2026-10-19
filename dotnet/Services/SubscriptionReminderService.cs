@@ -70,7 +70,8 @@ public class SubscriptionReminderService : BackgroundService
             if (await emailService.SendSubscriptionExpiryReminderAsync(
                     sub.User.Email,
                     firstName ?? "",
-                    sub.EndDate!.Value))
+                    sub.EndDate!.Value,
+                    sub.User.Locale))
                 sent++;
         }
 

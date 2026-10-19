@@ -63,7 +63,7 @@ def _process_video(request: IngestRequest) -> tuple[List[Chunk], List[str]]:
     chunks: List[Chunk] = []
 
     try:
-        segments = transcribe_video(request.file_path)
+        segments = transcribe_video(request.file_path, language=request.language)
     except Exception as e:
         return [], [f"Échec transcription Whisper locale ({e})"]
 

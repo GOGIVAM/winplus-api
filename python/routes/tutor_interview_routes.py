@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from auth import require_user_or_service, UserTokenData
 from routes.teacher_extra_routes import _deepseek_json
+from services.language import in_language, language_directive, is_english
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +249,7 @@ async def tutor_interview_guide(body: GuideRequest, current_user: UserTokenData 
         '"pedagogie": [...], "situations": [...], "securite": [...]}. '
         "4 questions de fond précises sur les programmes camerounais des niveaux cités (une par matière principale "
         "au moins), 3 de pédagogie, 3 mises en situation concrètes, 4 sur la sécurité avec des mineurs. "
-        "En français, vouvoiement, sans données personnelles."
+        + ("En anglais, registre formel, sans données personnelles." if is_english() else "En français, vouvoiement, sans données personnelles.")
     )
     system = ("Tu es WinAI, assistant des agents WinPlus qui vérifient les répétiteurs. Tu proposes des questions "
               "d'entretien justes, vérifiables et bienveillantes. Tu ne décides jamais à la place de l'agent.")

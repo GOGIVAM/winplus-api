@@ -92,6 +92,9 @@ class IngestRequest(BaseModel):
     # subject_id/course_id sont absents  jamais fourni directement par
     # l'appelant (un utilisateur ne doit pas pouvoir usurper owner_user_id).
     owner_user_id: Optional[int] = None
+    # Lot 10.6 : langue parlée des vidéos pour la transcription Whisper
+    # ("fr" | "en"). Absente ou inconnue : français.
+    language: Optional[str] = None
 
 
 class IngestResult(BaseModel):

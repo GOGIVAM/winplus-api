@@ -8,13 +8,13 @@ public interface IEmailService
 {
     Task<bool> SendEmailVerificationAsync(string email, string firstName, string verificationCode, string locale = "fr");
     Task<bool> SendPasswordResetAsync(string email, string firstName, string resetToken, string locale = "fr");
-    Task<bool> SendPasswordChangedAsync(string email, string firstName);
-    Task<bool> SendNewDeviceLoginAsync(string email, string firstName, string deviceName, string ipAddress);
-    Task<bool> SendTwoFactorCodeAsync(string email, string firstName, string code);
+    Task<bool> SendPasswordChangedAsync(string email, string firstName, string locale = "fr");
+    Task<bool> SendNewDeviceLoginAsync(string email, string firstName, string deviceName, string ipAddress, string locale = "fr");
+    Task<bool> SendTwoFactorCodeAsync(string email, string firstName, string code, string locale = "fr");
     Task<bool> SendEmailChangeVerificationAsync(string email, string firstName, string verificationCode, string locale = "fr");
-    Task<bool> SendPaymentConfirmationAsync(string email, string firstName, decimal amount, string reference, DateTime completedAt, IEnumerable<(string Title, int SubjectId)>? items = null);
-    Task<bool> SendSubscriptionExpiryReminderAsync(string email, string firstName, DateTime expiryDate);
-    Task<bool> SendPeriodicConfirmationAsync(string email, string firstName, string code);
+    Task<bool> SendPaymentConfirmationAsync(string email, string firstName, decimal amount, string reference, DateTime completedAt, IEnumerable<(string Title, int SubjectId)>? items = null, string locale = "fr");
+    Task<bool> SendSubscriptionExpiryReminderAsync(string email, string firstName, DateTime expiryDate, string locale = "fr");
+    Task<bool> SendPeriodicConfirmationAsync(string email, string firstName, string code, string locale = "fr");
     /// <summary>
     /// Envoi d'un e-mail libre. La catégorie est obligatoire : elle décide si les
     /// préférences de notification du destinataire s'appliquent (tout sauf
@@ -61,7 +61,7 @@ public class EmailService : IEmailService
     // ─────────────────────────────────────────────────────────────────────────
     public async Task<bool> SendEmailVerificationAsync(string email, string firstName, string verificationCode, string locale = "fr")
     {
-        var isEn = locale == "en";
+        var isEn = IsEn(locale);
         var body = isEn ? $@"
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 8px 32px;"">
@@ -109,7 +109,7 @@ public class EmailService : IEmailService
         var html = Wrapper(
             isEn ? "Email verification" : "Vérification d'email",
             isEn ? "Verify your email address" : "Vérifie ton adresse email",
-            body, _logoUrl);
+            body, _logoUrl, locale: locale);
         return await SendGenericEmailAsync(email, isEn ? "Your WinPlus verification code" : "Ton code de vérification WinPlus", html, NotificationCategory.Transactional);
     }
 
@@ -118,7 +118,7 @@ public class EmailService : IEmailService
     // ─────────────────────────────────────────────────────────────────────────
     public async Task<bool> SendPasswordResetAsync(string email, string firstName, string resetToken, string locale = "fr")
     {
-        var isEn = locale == "en";
+        var isEn = IsEn(locale);
         // Jeton en segment de chemin, pas en query string : il ne fuite ainsi ni
         // dans les journaux d'accès ni dans l'en-tête Referer des pages tierces.
         var resetUrl = $"{_frontendUrl}/reset-password/{Uri.EscapeDataString(resetToken)}";
@@ -175,47 +175,49 @@ public class EmailService : IEmailService
         var html = Wrapper(
             isEn ? "Account security" : "Sécurité du compte",
             isEn ? "Reset your password" : "Réinitialise ton mot de passe",
-            body, _logoUrl);
+            body, _logoUrl, locale: locale);
         return await SendGenericEmailAsync(email, isEn ? "Reset your WinPlus password" : "Réinitialisation de votre mot de passe WinPlus", html, NotificationCategory.Transactional);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     //  EMAIL : Mot de passe modifié
     // ─────────────────────────────────────────────────────────────────────────
-    public async Task<bool> SendPasswordChangedAsync(string email, string firstName)
+    public async Task<bool> SendPasswordChangedAsync(string email, string firstName, string locale = "fr")
     {
+        var isEn = IsEn(locale);
         var body = $@"
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 4px 28px;"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
-            Bonjour <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, le mot de passe de votre compte WinPlus a bien été modifié avec succès.
+            {(isEn ? "Hello" : "Bonjour")} <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, {(isEn ? "the password of your WinPlus account has been changed successfully." : "le mot de passe de votre compte WinPlus a bien été modifié avec succès.")}
           </p>
         </td></tr>
       </table>
 
-      {WarningBox("Ce n'était pas vous&nbsp;?", "Contactez immédiatement notre support pour sécuriser votre compte.")}
+      {(isEn ? WarningBox("Wasn't you?", "Contact our support right away to secure your account.") : WarningBox("Ce n'était pas vous&nbsp;?", "Contactez immédiatement notre support pour sécuriser votre compte."))}
 
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:24px 0 0;"">
-          {Button("Contacter le support", "https://winplus.cm/support")}
+          {(isEn ? Button("Contact support", "https://winplus.cm/en/support") : Button("Contacter le support", "https://winplus.cm/support"))}
         </td></tr>
       </table>";
 
-        var html = Wrapper("Sécurité du compte", "Mot de passe modifié", body, _logoUrl);
-        return await SendGenericEmailAsync(email, "Votre mot de passe WinPlus a été modifié", html, NotificationCategory.Transactional);
+        var html = Wrapper(isEn ? "Account security" : "Sécurité du compte", isEn ? "Password changed" : "Mot de passe modifié", body, _logoUrl, locale: locale);
+        return await SendGenericEmailAsync(email, isEn ? "Your WinPlus password has been changed" : "Votre mot de passe WinPlus a été modifié", html, NotificationCategory.Transactional);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     //  EMAIL : Nouvelle connexion détectée
     // ─────────────────────────────────────────────────────────────────────────
-    public async Task<bool> SendNewDeviceLoginAsync(string email, string firstName, string deviceName, string ipAddress)
+    public async Task<bool> SendNewDeviceLoginAsync(string email, string firstName, string deviceName, string ipAddress, string locale = "fr")
     {
-        var time = DateTime.UtcNow.ToString("dd/MM/yyyy à HH:mm") + " UTC";
+        var isEn = IsEn(locale);
+        var time = DateTime.UtcNow.ToString(isEn ? "dd/MM/yyyy 'at' HH:mm" : "dd/MM/yyyy à HH:mm") + " UTC";
         var body = $@"
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 4px 28px;"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
-            Bonjour <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, une connexion a été effectuée depuis un nouvel appareil sur votre compte WinPlus.
+            {(isEn ? "Hello" : "Bonjour")} <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, {(isEn ? "someone signed in to your WinPlus account from a new device." : "une connexion a été effectuée depuis un nouvel appareil sur votre compte WinPlus.")}
           </p>
         </td></tr>
       </table>
@@ -224,11 +226,11 @@ public class EmailService : IEmailService
         <tr><td style=""background-color:#FBF8F2;border:1px solid #E8E0CE;border-radius:14px;padding:8px 22px;margin:0 0 28px;"">
           <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
             <tr>
-              <td style=""padding:12px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;border-bottom:1px solid #E8E0CE;"">Appareil</td>
+              <td style=""padding:12px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;border-bottom:1px solid #E8E0CE;"">{(isEn ? "Device" : "Appareil")}</td>
               <td style=""padding:12px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;font-weight:600;color:#0F2A35;text-align:right;border-bottom:1px solid #E8E0CE;"">{EscapeHtml(deviceName)}</td>
             </tr>
             <tr>
-              <td style=""padding:12px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;border-bottom:1px solid #E8E0CE;"">Adresse IP</td>
+              <td style=""padding:12px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;border-bottom:1px solid #E8E0CE;"">{(isEn ? "IP address" : "Adresse IP")}</td>
               <td style=""padding:12px 0;font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-size:13px;font-weight:600;color:#0F2A35;text-align:right;border-bottom:1px solid #E8E0CE;"">{EscapeHtml(ipAddress)}</td>
             </tr>
             <tr>
@@ -242,26 +244,28 @@ public class EmailService : IEmailService
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:28px 0 0;"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;line-height:1.6;color:#4E7280;text-align:center;"">
-            <strong style=""color:#1F4A5A;"">C'était vous&nbsp;?</strong> Aucune action requise.<br>
-            <strong style=""color:#1F4A5A;"">Ce n'était pas vous&nbsp;?</strong> Changez immédiatement votre mot de passe.
+            {(isEn ? @"<strong style=""color:#1F4A5A;"">Was it you?</strong> No action needed.<br>
+            <strong style=""color:#1F4A5A;"">Wasn't you?</strong> Change your password right away." : @"<strong style=""color:#1F4A5A;"">C'était vous&nbsp;?</strong> Aucune action requise.<br>
+            <strong style=""color:#1F4A5A;"">Ce n'était pas vous&nbsp;?</strong> Changez immédiatement votre mot de passe.")}
           </p>
         </td></tr>
       </table>";
 
-        var html = Wrapper("Sécurité du compte", "Nouvelle connexion détectée", body, _logoUrl);
-        return await SendGenericEmailAsync(email, "Nouvelle connexion sur votre compte WinPlus", html, NotificationCategory.Transactional);
+        var html = Wrapper(isEn ? "Account security" : "Sécurité du compte", isEn ? "New sign-in detected" : "Nouvelle connexion détectée", body, _logoUrl, locale: locale);
+        return await SendGenericEmailAsync(email, isEn ? "New sign-in to your WinPlus account" : "Nouvelle connexion sur votre compte WinPlus", html, NotificationCategory.Transactional);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     //  EMAIL : Code 2FA (code à 6 chiffres)
     // ─────────────────────────────────────────────────────────────────────────
-    public async Task<bool> SendTwoFactorCodeAsync(string email, string firstName, string code)
+    public async Task<bool> SendTwoFactorCodeAsync(string email, string firstName, string code, string locale = "fr")
     {
+        var isEn = IsEn(locale);
         var body = $@"
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 8px 32px;"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
-            Salut <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, voici ton code de double authentification. Saisis-le pour finaliser ta connexion.
+            {(isEn ? "Hi" : "Salut")} <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, {(isEn ? "here is your two-factor authentication code. Enter it to finish signing in." : "voici ton code de double authentification. Saisis-le pour finaliser ta connexion.")}
           </p>
         </td></tr>
       </table>
@@ -271,17 +275,17 @@ public class EmailService : IEmailService
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 0 32px;"">
           <span style=""font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">
-            Ce code expire dans <span style=""font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-weight:600;color:#1F4A5A;"">5 minutes</span>.
+            {(isEn ? "This code expires in" : "Ce code expire dans")} <span style=""font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-weight:600;color:#1F4A5A;"">5 minutes</span>.
           </span>
         </td></tr>
       </table>
 
       {Divider()}
 
-      {InfoBox("Tu n'as pas tenté de te connecter&nbsp;? Ignore cet e-mail et vérifie la sécurité de ton compte.")}";
+      {InfoBox(isEn ? "Didn't try to sign in? Ignore this email and check your account security." : "Tu n'as pas tenté de te connecter&nbsp;? Ignore cet e-mail et vérifie la sécurité de ton compte.")}";
 
-        var html = Wrapper("Double authentification", "Ton code de connexion", body, _logoUrl);
-        return await SendGenericEmailAsync(email, "Ton code de connexion WinPlus", html, NotificationCategory.Transactional);
+        var html = Wrapper(isEn ? "Two-factor authentication" : "Double authentification", isEn ? "Your sign-in code" : "Ton code de connexion", body, _logoUrl, locale: locale);
+        return await SendGenericEmailAsync(email, isEn ? "Your WinPlus sign-in code" : "Ton code de connexion WinPlus", html, NotificationCategory.Transactional);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -289,7 +293,7 @@ public class EmailService : IEmailService
     // ─────────────────────────────────────────────────────────────────────────
     public async Task<bool> SendEmailChangeVerificationAsync(string email, string firstName, string verificationCode, string locale = "fr")
     {
-        var isEn = locale == "en";
+        var isEn = IsEn(locale);
         var body = isEn ? $@"
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 8px 32px;"">
@@ -337,31 +341,32 @@ public class EmailService : IEmailService
         var html = Wrapper(
             isEn ? "Email change" : "Changement d'email",
             isEn ? "Confirm your new address" : "Confirme ta nouvelle adresse",
-            body, _logoUrl);
+            body, _logoUrl, locale: locale);
         return await SendGenericEmailAsync(email, isEn ? "Verify your new WinPlus email" : "Vérification de votre nouvel e-mail WinPlus", html, NotificationCategory.Transactional);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     //  EMAIL : Confirmation de paiement
     // ─────────────────────────────────────────────────────────────────────────
-    public async Task<bool> SendPaymentConfirmationAsync(string email, string firstName, decimal amount, string reference, DateTime completedAt, IEnumerable<(string Title, int SubjectId)>? items = null)
+    public async Task<bool> SendPaymentConfirmationAsync(string email, string firstName, decimal amount, string reference, DateTime completedAt, IEnumerable<(string Title, int SubjectId)>? items = null, string locale = "fr")
     {
+        var isEn = IsEn(locale);
         var formattedAmount = amount.ToString("N0").Replace(",", " ");
-        var formattedDate   = completedAt.ToString("dd/MM/yyyy à HH:mm") + " UTC";
+        var formattedDate   = completedAt.ToString(isEn ? "dd/MM/yyyy 'at' HH:mm" : "dd/MM/yyyy à HH:mm") + " UTC";
 
         // ── Liste des épreuves achetées ──────────────────────────────────────
         var itemsList = items?.ToList() ?? new List<(string Title, int SubjectId)>();
         var itemsHtml = new StringBuilder();
         if (itemsList.Count > 0)
         {
-            itemsHtml.Append(@"<table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
+            itemsHtml.Append($@"<table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td style=""padding:0 0 8px;"">
-          <p style=""margin:0;font-family:Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:0.09em;color:#4E7280;text-transform:uppercase;"">Épreuves achetées</p>
+          <p style=""margin:0;font-family:Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:0.09em;color:#4E7280;text-transform:uppercase;"">{(isEn ? "Papers purchased" : "Épreuves achetées")}</p>
         </td></tr>
       </table>");
             foreach (var (title, subjectId) in itemsList)
             {
-                var subjectUrl = $"https://winplus.cm/catalog/{subjectId}";
+                var subjectUrl = isEn ? $"https://winplus.cm/en/catalog/{subjectId}" : $"https://winplus.cm/catalog/{subjectId}";
                 itemsHtml.Append($@"
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"" style=""margin-bottom:8px;"">
         <tr>
@@ -369,7 +374,7 @@ public class EmailService : IEmailService
             <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0""><tr>
               <td style=""font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:14px;font-weight:600;color:#0F2A35;vertical-align:middle;"">{EscapeHtml(title)}</td>
               <td align=""right"" style=""white-space:nowrap;padding-left:12px;vertical-align:middle;"">
-                <a href=""{subjectUrl}"" style=""display:inline-block;padding:7px 16px;background-color:#0F2A35;color:#6BCFC6;font-family:'Bricolage Grotesque',-apple-system,Arial,sans-serif;font-size:12px;font-weight:700;text-decoration:none;border-radius:8px;"">Télécharger</a>
+                <a href=""{subjectUrl}"" style=""display:inline-block;padding:7px 16px;background-color:#0F2A35;color:#6BCFC6;font-family:'Bricolage Grotesque',-apple-system,Arial,sans-serif;font-size:12px;font-weight:700;text-decoration:none;border-radius:8px;"">{(isEn ? "Download" : "Télécharger")}</a>
               </td>
             </tr></table>
           </td>
@@ -383,17 +388,17 @@ public class EmailService : IEmailService
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 4px 28px;"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
-            Bonjour <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, votre paiement a bien été reçu et validé. {(itemsList.Count > 0 ? "Vos épreuves sont maintenant disponibles au téléchargement." : "Vos cours sont maintenant accessibles.")}
+            {(isEn ? "Hello" : "Bonjour")} <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, {(isEn ? "your payment has been received and confirmed." : "votre paiement a bien été reçu et validé.")} {(isEn ? (itemsList.Count > 0 ? "Your papers are now ready to download." : "Your courses are now available.") : (itemsList.Count > 0 ? "Vos épreuves sont maintenant disponibles au téléchargement." : "Vos cours sont maintenant accessibles."))}
           </p>
         </td></tr>
       </table>
 
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td style=""background-color:#EBF8F6;border:1px solid #D6F1ED;border-radius:16px;padding:24px;margin:0 0 28px;"">
-          <p style=""margin:0 0 16px;font-family:Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:0.09em;color:#1E8077;text-transform:uppercase;"">Reçu de paiement</p>
+          <p style=""margin:0 0 16px;font-family:Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:0.09em;color:#1E8077;text-transform:uppercase;"">{(isEn ? "Payment receipt" : "Reçu de paiement")}</p>
           <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
             <tr>
-              <td style=""padding:10px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;border-bottom:1px solid #D6F1ED;"">Référence</td>
+              <td style=""padding:10px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;border-bottom:1px solid #D6F1ED;"">{(isEn ? "Reference" : "Référence")}</td>
               <td style=""padding:10px 0;font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-size:13px;font-weight:600;color:#0F2A35;text-align:right;border-bottom:1px solid #D6F1ED;"">{EscapeHtml(reference)}</td>
             </tr>
             <tr>
@@ -401,13 +406,13 @@ public class EmailService : IEmailService
               <td style=""padding:10px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;font-weight:600;color:#0F2A35;text-align:right;border-bottom:1px solid #D6F1ED;"">{formattedDate}</td>
             </tr>
             <tr>
-              <td style=""padding:10px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">Statut</td>
+              <td style=""padding:10px 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">{(isEn ? "Status" : "Statut")}</td>
               <td style=""padding:10px 0;text-align:right;"">
-                <span style=""display:inline-block;background-color:#0F2A35;color:#6BCFC6;padding:4px 12px;border-radius:99px;font-family:Arial,sans-serif;font-size:11px;font-weight:700;"">Confirmé</span>
+                <span style=""display:inline-block;background-color:#0F2A35;color:#6BCFC6;padding:4px 12px;border-radius:99px;font-family:Arial,sans-serif;font-size:11px;font-weight:700;"">{(isEn ? "Confirmed" : "Confirmé")}</span>
               </td>
             </tr>
             <tr>
-              <td style=""padding:16px 0 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">Montant total</td>
+              <td style=""padding:16px 0 0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;"">{(isEn ? "Total amount" : "Montant total")}</td>
               <td style=""padding:16px 0 0;text-align:right;font-family:'Bricolage Grotesque',-apple-system,'Helvetica Neue',Arial,sans-serif;font-size:26px;font-weight:700;color:#0F2A35;"">{formattedAmount} <span style=""font-size:14px;color:#259A8E;"">XAF</span></td>
             </tr>
           </table>
@@ -420,52 +425,53 @@ public class EmailService : IEmailService
 
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 0 8px;"">
-          <p style=""margin:0 0 16px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;text-align:center;"">Retrouvez toutes vos épreuves dans votre espace personnel.</p>
-          {Button("Accéder à mes épreuves", "https://winplus.cm/dashboard")}
+          <p style=""margin:0 0 16px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#4E7280;text-align:center;"">{(isEn ? "Find all your papers in your personal space." : "Retrouvez toutes vos épreuves dans votre espace personnel.")}</p>
+          {(isEn ? Button("Go to my papers", "https://winplus.cm/dashboard") : Button("Accéder à mes épreuves", "https://winplus.cm/dashboard"))}
         </td></tr>
       </table>";
 
-        var html = Wrapper("Paiement", "Paiement confirmé", body, _logoUrl, "#1F9D6E");
-        return await SendGenericEmailAsync(email, $"Reçu de paiement  {formattedAmount} XAF", html, NotificationCategory.Transactional);
+        var html = Wrapper(isEn ? "Payment" : "Paiement", isEn ? "Payment confirmed" : "Paiement confirmé", body, _logoUrl, "#1F9D6E", locale);
+        return await SendGenericEmailAsync(email, isEn ? $"Payment receipt: {formattedAmount} XAF" : $"Reçu de paiement  {formattedAmount} XAF", html, NotificationCategory.Transactional);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     //  EMAIL : Rappel expiration abonnement
     // ─────────────────────────────────────────────────────────────────────────
-    public async Task<bool> SendSubscriptionExpiryReminderAsync(string email, string firstName, DateTime expiryDate)
+    public async Task<bool> SendSubscriptionExpiryReminderAsync(string email, string firstName, DateTime expiryDate, string locale = "fr")
     {
-        var formattedDate = expiryDate.ToString("dd MMMM yyyy", new System.Globalization.CultureInfo("fr-FR"));
+        var isEn = IsEn(locale);
+        var formattedDate = expiryDate.ToString("dd MMMM yyyy", new System.Globalization.CultureInfo(isEn ? "en-GB" : "fr-FR"));
 
         var body = $@"
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 4px 24px;"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
-            Bonjour <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, votre abonnement WinPlus arrive à expiration dans <strong style=""color:#1F4A5A;"">3 jours</strong>, le <strong style=""color:#1F4A5A;"">{formattedDate}</strong>. Renouvelez-le pour continuer à accéder à vos cours sans interruption.
+            {(isEn ? $@"Hello <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, your WinPlus subscription expires in <strong style=""color:#1F4A5A;"">3 days</strong>, on <strong style=""color:#1F4A5A;"">{formattedDate}</strong>. Renew it to keep access to your courses without interruption." : $@"Bonjour <strong style=""color:#1F4A5A;"">{EscapeHtml(firstName)}</strong>, votre abonnement WinPlus arrive à expiration dans <strong style=""color:#1F4A5A;"">3 jours</strong>, le <strong style=""color:#1F4A5A;"">{formattedDate}</strong>. Renouvelez-le pour continuer à accéder à vos cours sans interruption.")}
           </p>
         </td></tr>
       </table>
 
-      {WarningBox("Plus que 3 jours", "Renouvelez avant la suspension de votre accès.")}
+      {(isEn ? WarningBox("Only 3 days left", "Renew before your access is suspended.") : WarningBox("Plus que 3 jours", "Renouvelez avant la suspension de votre accès."))}
 
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:24px 0 28px;"">
-          {Button("Renouveler mon abonnement", "https://winplus.cm/pricing")}
+          {(isEn ? Button("Renew my subscription", "https://winplus.cm/en/pricing") : Button("Renouveler mon abonnement", "https://winplus.cm/pricing"))}
         </td></tr>
       </table>
 
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:13px;color:#97AAB2;text-align:center;"">
-            Besoin d'aide&nbsp;? <a href=""https://winplus.cm/support"" style=""color:#259A8E;font-weight:600;"">Contactez notre support</a>.
+            {(isEn ? @"Need help? <a href=""https://winplus.cm/en/support"" style=""color:#259A8E;font-weight:600;"">Contact our support</a>." : @"Besoin d'aide&nbsp;? <a href=""https://winplus.cm/support"" style=""color:#259A8E;font-weight:600;"">Contactez notre support</a>.")}
           </p>
         </td></tr>
       </table>";
 
-        var html = Wrapper("Abonnement", "Ton abonnement expire bientôt", body, _logoUrl);
+        var html = Wrapper(isEn ? "Subscription" : "Abonnement", isEn ? "Your subscription expires soon" : "Ton abonnement expire bientôt", body, _logoUrl, locale: locale);
         // Partie 12.3 : rappel (pas une transaction) soumis à la préférence
         // « Notifications par e-mail ». HYPOTHÈSE À VALIDER : catégorie General
         // (canal e-mail seul), comme les rapports parent/institution.
-        return await SendGenericEmailAsync(email, "Votre abonnement WinPlus expire dans 3 jours", html, NotificationCategory.General);
+        return await SendGenericEmailAsync(email, isEn ? "Your WinPlus subscription expires in 3 days" : "Votre abonnement WinPlus expire dans 3 jours", html, NotificationCategory.General);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -523,33 +529,36 @@ public class EmailService : IEmailService
     // ─────────────────────────────────────────────────────────────────────────
     //  EMAIL : Reconfirmation périodique mobile (style WhatsApp  tous les 30-45 jours)
     // ─────────────────────────────────────────────────────────────────────────
-    public async Task<bool> SendPeriodicConfirmationAsync(string email, string firstName, string code)
+    public async Task<bool> SendPeriodicConfirmationAsync(string email, string firstName, string code, string locale = "fr")
     {
+        var isEn = IsEn(locale);
         var body = $@"
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 8px 24px;"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
-            Bonjour <strong>{EscapeHtml(firstName)}</strong>,<br>
+            {(isEn ? $@"Hello <strong>{EscapeHtml(firstName)}</strong>,<br>
+            to secure your WinPlus access, enter this code in the app.<br>
+            It expires in <strong>10 minutes</strong>." : $@"Bonjour <strong>{EscapeHtml(firstName)}</strong>,<br>
             pour sécuriser ton accès WinPlus, saisis ce code dans l'application.<br>
-            Il expire dans <strong>10 minutes</strong>.
+            Il expire dans <strong>10 minutes</strong>.")}
           </p>
         </td></tr>
       </table>
 
       {OtpBlock(code)}
 
-      {InfoBox("Si tu n'as pas ouvert l'application WinPlus, ignore cet email. Ton compte est en sécurité.")}
+      {InfoBox(isEn ? "If you didn't open the WinPlus app, ignore this email. Your account is safe." : "Si tu n'as pas ouvert l'application WinPlus, ignore cet email. Ton compte est en sécurité.")}
 
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"" style=""margin-top:24px;"">
         <tr><td style=""padding-top:16px;border-top:1px solid #E8E0CE;"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:12px;line-height:1.6;color:#97AAB2;text-align:center;"">
-            Cette vérification est requise périodiquement pour maintenir la sécurité de ton compte.
+            {(isEn ? "This check is required periodically to keep your account secure." : "Cette vérification est requise périodiquement pour maintenir la sécurité de ton compte.")}
           </p>
         </td></tr>
       </table>";
 
-        var html = Wrapper("Vérification de sécurité", "Confirme ton identité", body, _logoUrl);
-        return await SendGenericEmailAsync(email, "Ton code de confirmation WinPlus", html, NotificationCategory.Transactional);
+        var html = Wrapper(isEn ? "Security check" : "Vérification de sécurité", isEn ? "Confirm it's you" : "Confirme ton identité", body, _logoUrl, locale: locale);
+        return await SendGenericEmailAsync(email, isEn ? "Your WinPlus confirmation code" : "Ton code de confirmation WinPlus", html, NotificationCategory.Transactional);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -659,10 +668,16 @@ public class EmailService : IEmailService
     ///  – pied de page avec liens, support@winplus.cm
     ///  – entièrement responsive (petits écrans / mobile)
     /// </summary>
-    private static string Wrapper(string eyebrow, string headline, string bodyHtml, string logoUrl, string accentColor = "#259A8E")
+    /// <summary>Lot 10.6 : "en" (ou "en-GB"...) donne l'anglais, tout le reste le français.</summary>
+    private static bool IsEn(string? locale) =>
+        !string.IsNullOrWhiteSpace(locale) && locale.Trim().StartsWith("en", StringComparison.OrdinalIgnoreCase);
+
+    private static string Wrapper(string eyebrow, string headline, string bodyHtml, string logoUrl, string accentColor = "#259A8E", string locale = "fr")
     {
+        // Lot 10.6 : langue du destinataire (User.Locale). Le français reste le texte historique.
+        var isEn = IsEn(locale);
         return $@"<!DOCTYPE html>
-<html lang=""fr"" xmlns=""http://www.w3.org/1999/xhtml"">
+<html lang=""{(isEn ? "en" : "fr")}"" xmlns=""http://www.w3.org/1999/xhtml"">
 <head>
 <meta charset=""UTF-8"">
 <meta name=""viewport"" content=""width=device-width, initial-scale=1.0"">
@@ -733,15 +748,15 @@ public class EmailService : IEmailService
           <tr>
             <td align=""center"" style=""padding:32px 24px 8px;"">
               <p style=""margin:0 0 6px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:12px;color:#97AAB2;"">
-                Besoin d'aide&nbsp;? <a href=""mailto:support@winplus.cm"" style=""color:#3471A0;font-weight:500;"">support@winplus.cm</a>
+                {(isEn ? "Need help?" : "Besoin d'aide&nbsp;?")} <a href=""mailto:support@winplus.cm"" style=""color:#3471A0;font-weight:500;"">support@winplus.cm</a>
               </p>
               <p style=""margin:0 0 14px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:12px;color:#97AAB2;"">
-                <a href=""https://winplus.cm/privacy"" style=""color:#97AAB2;text-decoration:underline;"">Confidentialité</a>
+                <a href=""{(isEn ? "https://winplus.cm/en/privacy" : "https://winplus.cm/privacy")}"" style=""color:#97AAB2;text-decoration:underline;"">{(isEn ? "Privacy" : "Confidentialité")}</a>
                 &nbsp;·&nbsp;
                 <a href=""https://winplus.cm"" style=""color:#97AAB2;text-decoration:underline;"">winplus.cm</a>
               </p>
               <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:11px;color:#C8D2D6;"">
-                © {DateTime.UtcNow.Year} WinPlus. Tous droits réservés.
+                © {DateTime.UtcNow.Year} WinPlus. {(isEn ? "All rights reserved." : "Tous droits réservés.")}
               </p>
             </td>
           </tr>

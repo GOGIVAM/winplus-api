@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from auth import require_role, UserTokenData
 from database import Database, QuizAttempt, User, ExamCoachPlanAI, ParentAlertDB, ParentStudentLink
 from services.deepseek_client import get_deepseek_client
+from services.language import in_language, language_directive, is_english
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +164,7 @@ def _winai_message(alert_type: str, child_name: str, stat_value: float | int | N
             system_prompt=(
                 "Tu es WinAI, assistant pédagogique bienveillant de WinPlus. "
                 "Tu t'adresses aux parents avec empathie, chaleur et encouragement. "
-                "Réponds toujours en français, en 1-2 phrases concises. "
+                f"Réponds toujours {in_language()}, en 1-2 phrases concises. "
                 "IMPORTANT : n'utilise JAMAIS de vocabulaire clinique ou diagnostique "
                 "(interdits : dépression, anxiété diagnostiquée, trouble, burnout, diagnostic). "
                 "Ce sont des signaux comportementaux observés, pas un diagnostic médical. "

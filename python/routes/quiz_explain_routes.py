@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from auth import verify_token, UserTokenData
 from database import Database, QuizExplanation
 from services.deepseek_client import get_deepseek_client
+from services.language import in_language, language_directive, is_english
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,8 @@ async def explain_error(
         )
 
     cache_key = hashlib.sha256(
-        f"{body.question_text}{body.wrong_answer}{body.correct_answer}".encode()
+        (f"{body.question_text}{body.wrong_answer}{body.correct_answer}"
+         + ("|en" if is_english() else "")).encode()
     ).hexdigest()
 
     subject_label = body.subject or "cette matière"
@@ -83,7 +85,7 @@ async def explain_error(
         f"Un étudiant camerounais préparant {level_label} en {subject_label} "
         f"a répondu « {body.wrong_answer} » à la question : « {body.question_text} ». "
         f"La bonne réponse est « {body.correct_answer} ». "
-        "Explique en 3-5 phrases maximum, en français simple et encourageant, "
+        f"Explique en 3-5 phrases maximum, {in_language()} simple et encourageant, "
         "pourquoi sa réponse est incorrecte et pourquoi la bonne réponse est juste. "
         "Sois concis et pédagogique. "
         "Ne commence pas par « La réponse est... »  commence par expliquer le concept."

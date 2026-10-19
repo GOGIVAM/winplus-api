@@ -113,6 +113,21 @@ async def winai_token_usage_header(request, call_next):
     return response
 
 
+# Lot 10.6 : langue du profil (fr par défaut, en accepté) transmise par .NET
+# dans l'en-tête X-User-Locale, lue par les prompts hors chat via
+# services.language.resolve_language().
+from services.language import begin_request_language, end_request_language, USER_LOCALE_HEADER, in_language
+
+
+@app.middleware("http")
+async def winai_request_language(request, call_next):
+    lang_token = begin_request_language(request.headers.get(USER_LOCALE_HEADER))
+    try:
+        return await call_next(request)
+    finally:
+        end_request_language(lang_token)
+
+
 # ==================== RATE LIMITING ====================
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
@@ -599,7 +614,7 @@ async def generate_adaptive_quiz(
 
         prompt = (
             f"Tu es un professeur expert en \"{subject_label}\".\n"
-            f"Génère {body.count} questions QCM en français calibrées pour un étudiant avec des {weak_context}.\n\n"
+            f"Génère {body.count} questions QCM {in_language(body.language)} calibrées pour un étudiant avec des {weak_context}.\n\n"
             f"PROFIL DE L'ÉLÈVE\n{profile_block}\n\n"
             f"{LEVEL_RULES[mode]}\n\n"
             "Le champ \"difficulty\" doit refléter la difficulté réelle de chaque "

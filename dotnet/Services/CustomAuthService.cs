@@ -19,7 +19,7 @@ namespace Backend.Services;
 /// </summary>
 public interface ICustomAuthService
 {
-    Task<AuthResult> SignUpAsync(string email, string password, string firstName, string lastName, string? phone = null, string? role = null);
+    Task<AuthResult> SignUpAsync(string email, string password, string firstName, string lastName, string? phone = null, string? role = null, string? locale = null);
     Task<AuthResult> SignInAsync(string email, string password, HttpRequest request, bool rememberMe = false);
     Task<AuthResult> VerifyEmailAsync(int userId, string verificationCode);
     Task<AuthResult> ResendVerificationCodeAsync(string email);
@@ -112,7 +112,8 @@ public class CustomAuthService : ICustomAuthService
         string firstName,
         string lastName,
         string? phone = null,
-        string? role = null)
+        string? role = null,
+        string? locale = null)
     {
         try
         {
@@ -195,7 +196,9 @@ public class CustomAuthService : ICustomAuthService
                 IsActive = true,
                 IsEmailVerified = false,
                 CreatedAt = DateTime.UtcNow,
-                Role = normalizedRole
+                Role = normalizedRole,
+                // Lot 10.6 : e-mails et WinAI dans la langue du site à l'inscription.
+                Locale = AiLocaleHeaderHandler.Normalize(locale)
             };
 
             _dbContext.Users.Add(user);
@@ -767,7 +770,7 @@ public class CustomAuthService : ICustomAuthService
             await _dbContext.SaveChangesAsync();
 
             // Send confirmation email
-            await _emailService.SendPasswordChangedAsync(user.Email, user.FirstName ?? "");
+            await _emailService.SendPasswordChangedAsync(user.Email, user.FirstName ?? "", user.Locale);
 
             _logger.LogInformation("Password reset successful for user: {UserId}", user.Id);
 
@@ -964,7 +967,7 @@ public class CustomAuthService : ICustomAuthService
             await _dbContext.SaveChangesAsync();
 
             // Send confirmation email
-            await _emailService.SendPasswordChangedAsync(user.Email, user.FirstName ?? "");
+            await _emailService.SendPasswordChangedAsync(user.Email, user.FirstName ?? "", user.Locale);
 
             _logger.LogInformation("Password changed for user: {UserId}", userId);
             return true;
@@ -1009,7 +1012,7 @@ public class CustomAuthService : ICustomAuthService
             _dbContext.EmailVerificationTokens.Add(token);
             await _dbContext.SaveChangesAsync();
 
-            await _emailService.SendPeriodicConfirmationAsync(user.Email, user.FirstName ?? "", code);
+            await _emailService.SendPeriodicConfirmationAsync(user.Email, user.FirstName ?? "", code, user.Locale);
 
             _logger.LogInformation("[PeriodicConfirm] Code envoyé  userId={UserId} email={Email}", userId, user.Email);
 

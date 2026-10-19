@@ -10,6 +10,8 @@ public class SignUpRequestDto
     public string? Role { get; set; }
     /// <summary>Lot 10.3 : source d'acquisition captée par le web (facultative, selon le consentement).</summary>
     public Backend.Services.Marketing.AttributionDto? Attribution { get; set; }
+    /// <summary>Lot 10.6 : langue du site au moment de l'inscription ("fr" ou "en", facultative).</summary>
+    public string? Locale { get; set; }
 }
 
 public class SignUpResponse

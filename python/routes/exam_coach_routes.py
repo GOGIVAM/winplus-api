@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from auth import verify_token, UserTokenData
 from database import Database, ExamCoachPlanAI, QuizAttempt, DailyScore, LearningHistory, Enrollment, Subject
 from services.deepseek_client import get_deepseek_client
+from services.language import in_language, language_directive, is_english
 from services.user_performance_analyzer import UserPerformanceAnalyzer
 from models.nlp_analyzer import NLPAnalyzer
 from models.recommender import Recommender
@@ -430,7 +431,7 @@ async def get_today_session(
                 f"Message motivant court (2-3 phrases max) pour un étudiant camerounais "
                 f"qui prépare {exam_type} dans {days_remaining} jours. "
                 f"Aujourd'hui il révise {focus_area} ({activity_type}). "
-                f"Message encourageant et personnalisé, en français."
+                f"Message encourageant et personnalisé, {in_language()}."
             )
             result = client.chat(
                 messages=[{'role': 'user', 'content': prompt}],
@@ -673,7 +674,7 @@ async def get_micro_intervention(
                 f"Sa tendance de notes est : {last_score_trend}. "
                 f"Génère exactement 2 phrases : une d'encouragement bienveillant, "
                 f"une action concrète à faire maintenant (ex: 'Commence par 25 minutes de {suggested_subject}'). "
-                f"Ton, chaleureux, en français, sans jugement."
+                f"Ton, chaleureux, {in_language()}, sans jugement."
             )
             result = client.chat(
                 messages=[{'role': 'user', 'content': prompt}],

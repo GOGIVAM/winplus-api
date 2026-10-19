@@ -508,6 +508,8 @@ public class PaymentService : IPaymentService
             // Résoudre email + prénom
             string? recipientEmail = null;
             string firstName = "là";
+            // Lot 10.6 : langue du compte ; un invité reçoit le français.
+            string locale = "fr";
 
             if (payment.UserId.HasValue)
             {
@@ -516,6 +518,7 @@ public class PaymentService : IPaymentService
                 {
                     recipientEmail = user.Email;
                     firstName = user.FirstName ?? user.Email?.Split('@')[0] ?? "là";
+                    locale = user.Locale;
                 }
             }
             else
@@ -550,7 +553,7 @@ public class PaymentService : IPaymentService
             var completedAt = payment.CompletedAt ?? DateTime.UtcNow;
 
             await _email.SendPaymentConfirmationAsync(
-                recipientEmail, firstName, payment.Amount, reference, completedAt, items);
+                recipientEmail, firstName, payment.Amount, reference, completedAt, items, locale);
 
             _logger.LogInformation("Email de confirmation envoyé à {Email} pour paiement {PaymentId}", recipientEmail, payment.Id);
         }

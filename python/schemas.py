@@ -352,6 +352,9 @@ class AdaptiveQuizRequest(BaseModel):
     strong_topics: List[str] = Field(default_factory=list)
     #  remediation | consolidation | stretch
     mode: str = "consolidation"
+    # Lot 10.6 : langue des questions ("fr" | "en"). Absent : en-tête
+    # X-User-Locale, sinon français.
+    language: Optional[str] = None
 
 
 class AdaptiveQuizQuestion(BaseModel):

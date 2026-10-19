@@ -27,8 +27,16 @@ import os
 from auth import verify_token, require_role, UserTokenData
 from database import Database, DailyScore, Enrollment, Subject, User, ChatMessage, LearningHistory
 from services.deepseek_client import get_deepseek_client
+from services.language import in_language, language_directive, is_english
 
 logger = logging.getLogger(__name__)
+
+
+def _moderation_language() -> str:
+    """Lot 10.6 : en français, texte historique inchangé ; pour un auteur
+    dont le profil est en anglais, le message peut être dans l'une ou
+    l'autre langue."""
+    return "(rédigé en anglais ou en français)" if is_english() else "en français"
 admin_router = APIRouter()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -254,7 +262,7 @@ async def detect_anomalies(
             f"La plateforme éducative WinPlus a détecté ces signaux statistiques :\n"
             f"{json.dumps(signals, ensure_ascii=False, indent=2)}\n\n"
             "Génère une anomalie JSON pour chaque signal (EXACTEMENT un objet par signal) :\n"
-            '[{"type":"account_spike","severity":"high","description":"Description analytique précise en français","action_suggestion":"Action recommandée"}]\n'
+            '[{"type":"account_spike","severity":"high","description":"Description analytique précise ' + in_language() + '","action_suggestion":"Action recommandée"}]\n'
             "Les types existants : account_spike, enrollment_drop, nocturnal_spike, score_drop, topic_concentration."
         )
         system = (
@@ -677,7 +685,7 @@ async def moderate_content(
             }
 
         prompt = (
-            f"Classifie ce message de forum éducatif en français :\n"
+            f"Classifie ce message de forum éducatif {_moderation_language()} :\n"
             f"---\n{body.content_text[:1000]}\n---\n\n"
             "Retourne UN objet JSON strict :\n"
             '{"verdict": "safe", "confidence": 0.95, "reason": "Contenu académique pertinent."}\n'
@@ -747,7 +755,7 @@ async def moderate_message(
 ):
     """Modération WinAI d'un message privé (sans stockage en base)."""
     prompt = (
-        f"Classifie ce message privé d'une plateforme éducative en français :\n"
+        f"Classifie ce message privé d'une plateforme éducative {_moderation_language()} :\n"
         f"---\n{body.content[:800]}\n---\n\n"
         "Retourne UN objet JSON strict :\n"
         '{"verdict": "safe", "confidence": 0.95, "reason": "Message respectueux."}\n'

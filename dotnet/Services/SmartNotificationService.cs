@@ -1,5 +1,7 @@
 ﻿using System.Net.Http.Json;
 using System.Text.Json;
+using Backend.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Services;
 
@@ -28,14 +30,17 @@ public class SmartNotificationService : ISmartNotificationService
     private readonly ILogger<SmartNotificationService> _logger;
     private readonly IConfiguration _configuration;
     private readonly IServiceTokenProvider _serviceToken;
+    private readonly ApplicationDbContext? _db;
 
     public SmartNotificationService(
         INtfyService ntfy,
         IHttpClientFactory httpClientFactory,
         ILogger<SmartNotificationService> logger,
         IConfiguration configuration,
-        IServiceTokenProvider serviceToken)
+        IServiceTokenProvider serviceToken,
+        ApplicationDbContext? db = null)
     {
+        _db = db;
         _ntfy = ntfy;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
@@ -77,6 +82,10 @@ public class SmartNotificationService : ISmartNotificationService
                 Content = JsonContent.Create(payload),
             };
             request.Headers.TryAddWithoutValidation("Authorization", _serviceToken.CreateAuthorizationHeader(ServiceScopes.Notification));
+            // Lot 10.6 : appel hors requête HTTP, la langue du destinataire est
+            // lue ici pour que WinAI rédige la notification dans sa langue.
+            var locale = await ResolveLocaleAsync(userId);
+            if (locale != null) request.Headers.TryAddWithoutValidation(AiLocaleHeaderHandler.HeaderName, locale);
             var response = await httpClient.SendAsync(request);
 
             if (response.IsSuccessStatusCode)
@@ -109,5 +118,20 @@ public class SmartNotificationService : ISmartNotificationService
         }
 
         await _ntfy.PublishAsync(topic, title, body, priority, tags, userId, type);
+    }
+
+    private async Task<string?> ResolveLocaleAsync(int userId)
+    {
+        if (_db == null) return null;
+        try
+        {
+            var stored = await _db.Users.AsNoTracking().Where(u => u.Id == userId).Select(u => u.Locale).FirstOrDefaultAsync();
+            return stored == null ? null : AiLocaleHeaderHandler.Normalize(stored);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[SmartNotif] Langue de l'utilisateur {UserId} illisible, français par défaut", userId);
+            return null;
+        }
     }
 }

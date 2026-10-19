@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from auth import verify_token, UserTokenData
 from database import Database, StudySession, Subject, Enrollment, QuizAttempt, DailyScore
 from services.deepseek_client import get_deepseek_client
+from services.language import in_language, language_directive, is_english
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ async def generate_session(
             f"Génère un briefing de révision de 3-4 phrases qui: "
             f"(1) rappelle les 2-3 concepts clés du sujet, "
             f"(2) mentionne les points importants à l'examen. "
-            f"Sois direct, motivant, en français."
+            f"Sois direct, motivant, {in_language()}."
         )
         briefing_result = client.chat(
             messages=[{'role': 'user', 'content': briefing_prompt}],
@@ -103,6 +104,7 @@ async def generate_session(
             f'[{{"q":"question","options":["A)...","B)...","C)...","D)..."],"correct":0,"explanation":"..."}},...] '
             f"correct est l'index (0-3) de la bonne réponse. "
             f"Réponds UNIQUEMENT avec le tableau JSON, sans texte autour."
+            f"{language_directive()}"
         )
         quiz_result = client.chat(
             messages=[{'role': 'user', 'content': quiz_prompt}],
@@ -123,7 +125,7 @@ async def generate_session(
         synthesis_prompt_text = (
             f"À la fin de la session d'étude sur {subject_name}, "
             f"génère une synthèse de 3 points clés à retenir, "
-            f"adaptée à un niveau {level}, en français."
+            f"adaptée à un niveau {level}, {in_language()}."
         )
 
         return {

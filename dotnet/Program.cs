@@ -496,6 +496,11 @@ builder.Services.AddScoped<IRepository<Announcement>, GenericRepository<Announce
 builder.Services.AddScoped<IRepository<Institution>, GenericRepository<Institution>>();
 builder.Services.AddScoped<IRepository<PricingPlan>, GenericRepository<PricingPlan>>();
 
+// Lot 10.6 : langue du profil (User.Locale) transmise au service IA dans
+// X-User-Locale. Le handler ne touche que les requêtes vers l'hôte du service IA.
+builder.Services.AddTransient<Backend.Services.AiLocaleHeaderHandler>();
+builder.Services.ConfigureHttpClientDefaults(http => http.AddHttpMessageHandler<Backend.Services.AiLocaleHeaderHandler>());
+
 // Configure HttpClient for FastAPI AI Service
 // Note: FastApiClient service reads AIService:TimeoutSeconds from config and overrides this value.
 // The circuit breaker is implemented in FastApiClient.cs and activated via AIService:EnableCircuitBreaker.

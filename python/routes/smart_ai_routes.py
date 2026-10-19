@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timedelta
 
 from services.deepseek_client import get_deepseek_client
+from services.language import in_language, language_directive, is_english
 from services.prompt_builder import _VARK_INSTRUCTIONS
 from auth import verify_token, require_user_or_service, UserTokenData
 from database import Database, User, QuizAttempt, DailyScore, Subject, DownloadHistory, Goal, QuizMistake, ChatbotContext, Enrollment
@@ -192,6 +193,7 @@ async def generate_notification(
         f'  "title": (max 60 caractères, accrocheur, personnel, commence par le prénom si possible)\n'
         f'  "body": (max 120 caractères, 1-2 phrases, ton chaleureux, info utile + invitation à agir)\n'
         f"Réponds en JSON pur, sans markdown."
+        f"{language_directive()}"
     )
 
     try:
@@ -243,7 +245,7 @@ async def summarize_notifications(
         f"Tu es WinAI, l'assistant pédagogique de WinPlus.\n"
         f"Voici {len(texts_sample)} notifications non lues d'un utilisateur :\n\n"
         f"{texts_joined}\n\n"
-        f"Résume les points importants en 3 à 5 bullet-points courts en français.\n"
+        f"Résume les points importants en 3 à 5 bullet-points courts {in_language()}.\n"
         f"Format de chaque bullet : '• [point important]'\n"
         f"Sois concis, orienté action, ne répète pas les notifications mot pour mot.\n"
         f"Réponds UNIQUEMENT par les bullet-points, sans introduction ni conclusion."
@@ -334,6 +336,7 @@ async def content_fit_analysis(
         '  "warning": null,  // null ou phrase d\'avertissement si contenu redondant/inadapté\n'
         '  "cta": "Très recommandé pour toi"  // parmi : "Très recommandé pour toi" | "Recommandé" | "Optionnel" | "Déjà couvert"\n'
         "}"
+        f"{language_directive()}"
     )
 
     try:
@@ -481,6 +484,7 @@ async def generate_revision_content(
         '  "difficulty": "easy" | "medium" | "hard",\n'
         '  "estimated_duration_minutes": 15\n'
         "}"
+        f"{language_directive()}"
     )
 
     import json as _json
@@ -650,6 +654,7 @@ async def generate_quiz_content(
         f'"correctAnswer":"B) ...","explanation":"..."}}]}} '
         f"correctAnswer doit correspondre EXACTEMENT à une des chaînes de options. "
         f"Réponds UNIQUEMENT avec cet objet JSON, sans texte autour ni balises de code."
+        f"{language_directive()}"
     )
     system = (
         "Tu es WinAI, expert en évaluation pédagogique pour les examens camerounais. "

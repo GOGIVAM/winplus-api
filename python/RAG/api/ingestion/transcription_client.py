@@ -10,11 +10,12 @@ import logging
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 from groq import Groq
 
 from RAG.api import config
+from services.language import normalize_language
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,10 @@ def extract_audio(video_path: str) -> str:
     return audio_path
 
 
-def transcribe_video(video_path: str) -> List[TranscriptSegment]:
+def transcribe_video(video_path: str, language: Optional[str] = None) -> List[TranscriptSegment]:
+    """Lot 10.6 : langue parlée "fr" (défaut) ou "en", fournie explicitement par
+    l'appelant (champ language de IngestRequest). Pas de repli sur la langue du
+    profil : celle de l'enseignant ne dit rien de la langue de la vidéo."""
     audio_path = extract_audio(video_path)
     client = _get_client()
 
@@ -59,7 +63,7 @@ def transcribe_video(video_path: str) -> List[TranscriptSegment]:
             # les segments horodatés (vérifié sur la doc officielle Groq) 
             # or c'est précisément ce dont on a besoin pour citer "à 12:34".
             timestamp_granularities=["segment"],
-            language="fr",
+            language=normalize_language(language),
         )
 
     segments = getattr(response, "segments", None) or []

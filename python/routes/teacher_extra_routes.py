@@ -41,6 +41,7 @@ from database import (
     DownloadHistory, TeacherClassStudent, TeacherClass,
 )
 from services.deepseek_client import get_deepseek_client
+from services.language import in_language, language_directive, is_english
 # Module 16 (14.2, décision du 2026-10-08) : réutilise TEL QUEL la brique de
 # lecture de profil déjà exposée pour la génération auto-personnalisée de
 # l'élève (style d'apprentissage VARK + matières inscrites), plutôt que d'en
@@ -340,7 +341,7 @@ async def generate_description(
     )
     system = (
         "Tu es WinAI, rédacteur de fiches pédagogiques pour WinPlus. "
-        "Réponds en français, 2-3 phrases, sans guillemets."
+        f"Réponds {in_language()}, 2-3 phrases, sans guillemets."
     )
 
     description = _deepseek_text(prompt, system, max_tokens=150)
@@ -483,7 +484,7 @@ async def get_class_analysis(
         )
         ai_system = (
             "Tu es WinAI, assistant pédagogique pour enseignants. "
-            "Génère des insights concrets et actionnables en français. "
+            f"Génère des insights concrets et actionnables {in_language()}. "
             "Réponds uniquement avec du JSON valide."
         )
         ai_res = _deepseek_json(ai_prompt, ai_system, max_tokens=400)
@@ -1905,7 +1906,7 @@ async def generate_session_material(
         '"groupNote":"..."}\n'
         f"Contraintes : {budget['sections']} sections de cours, exactement {budget['quiz']} questions de quiz "
         f"(4 options, une seule correcte), {budget['exercises']} exercices de difficulté croissante avec indices et corrigé détaillé. "
-        "Tout porte sur les sujets indiqués, au programme camerounais, en français clair. "
+        f"Tout porte sur les sujets indiqués, au programme camerounais, {in_language()} clair. "
         + ("Le champ groupNote explique en 1 à 2 phrases comment le support s'adapte au groupe. " if is_group else "Laisse groupNote vide. ")
         + "N'invente ni référence de manuel ni source externe. Réponds uniquement avec l'objet JSON."
     )

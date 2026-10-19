@@ -73,7 +73,8 @@ public class AuthController : ControllerBase
                 request.FirstName ?? "",
                 request.LastName ?? "",
                 request.Phone,
-                request.Role);
+                request.Role,
+                request.Locale);
 
             if (!result.Success)
             {

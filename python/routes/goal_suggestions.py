@@ -46,6 +46,7 @@ from auth import verify_token, UserTokenData
 # est désormais fait au chargement du module, pour qu'une erreur de ce type
 # fasse échouer le démarrage au lieu de disparaître silencieusement.
 from services.deepseek_client import get_deepseek_client
+from services.language import in_language, language_directive, is_english
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +156,7 @@ async def goal_suggestions(
     try:
         prompt = (
             "Réécris chaque justification en une phrase courte, adressée à l'élève, "
-            "en français, ton direct et bienveillant. Ne change aucun chiffre. "
+            f"{in_language()}, ton direct et bienveillant. Ne change aucun chiffre. "
             "Réponds par une liste JSON de trois chaînes, sans autre texte.\n\n"
             f"Niveau : {req.level or 'non précisé'}\n"
             f"Matières fragiles : {', '.join(req.weak_subjects) or 'aucune'}\n"

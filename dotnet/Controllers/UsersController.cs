@@ -174,7 +174,9 @@ public class UsersController : ControllerBase
             if (request.Bio != null) user.Bio = request.Bio;
             if (request.Level != null) user.Level = request.Level;
             if (request.City != null) user.City = request.City;
-            if (request.Locale is "fr" or "en") user.Locale = request.Locale;
+            // Lot 10.6 : "EN", "en-GB"... sont acceptés et ramenés à "en" ou "fr".
+            if (!string.IsNullOrWhiteSpace(request.Locale) && request.Locale.Trim().ToLowerInvariant().Split('-', '_')[0] is "fr" or "en")
+                user.Locale = Backend.Services.AiLocaleHeaderHandler.Normalize(request.Locale);
             if (request.Specialization != null) user.Specialization = request.Specialization;
             if (request.TargetExam != null) user.TargetExam = request.TargetExam;
             if (request.TeachingSubjects != null) user.TeachingSubjects = request.TeachingSubjects;

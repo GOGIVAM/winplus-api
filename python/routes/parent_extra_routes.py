@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from auth import verify_token, require_role, UserTokenData
 from database import Database, QuizAttempt, DailyScore, User, ParentStudentLink
 from services.deepseek_client import get_deepseek_client
+from services.language import in_language, language_directive, is_english
 from services.parent_child_context import compute_child_context
 
 logger = logging.getLogger(__name__)
@@ -148,7 +149,7 @@ async def get_children_insights(
                 }],
                 system_prompt=(
                     "Tu es WinAI, conseiller pédagogique familial bienveillant. "
-                    "Réponds en français avec un JSON valide uniquement."
+                    f"Réponds {in_language()} avec un JSON valide uniquement."
                 ),
                 max_tokens=200,
                 temperature=0.7,
