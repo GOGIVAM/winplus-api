@@ -69,6 +69,28 @@ public class Institution
     /// </summary>
     public int? WalletOwnerUserId { get; set; }
 
+    // ── Profil pédagogique (onboarding, Migrations/SQL_InstitutionOnboarding.sql) ──
+
+    /// <summary>Cycles enseignés : primaire, secondaire, superieur, concours (séparés par des virgules).</summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(100)]
+    public string? Cycles { get; set; }
+
+    /// <summary>Sous-système : fr, en ou bilingue.</summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(20)]
+    public string? Subsystem { get; set; }
+
+    /// <summary>Enseignement : general, technique ou both.</summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(20)]
+    public string? Teaching { get; set; }
+
+    public int? StudentsEstimate { get; set; }
+
+    /// <summary>Priorités choisies à l'onboarding (séparées par des virgules).</summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(200)]
+    public string? Goals { get; set; }
+
+    public DateTime? OnboardedAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
     public bool IsDeleted { get; set; } = false;
