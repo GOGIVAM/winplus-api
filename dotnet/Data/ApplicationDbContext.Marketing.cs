@@ -13,6 +13,7 @@ public partial class ApplicationDbContext
 {
     public DbSet<ConversionEvent> ConversionEvents => Set<ConversionEvent>();
     public DbSet<ConversionDelivery> ConversionDeliveries => Set<ConversionDelivery>();
+    public DbSet<UtmLink> UtmLinks => Set<UtmLink>();
 
     private void OnModelCreatingMarketing(ModelBuilder modelBuilder)
     {
@@ -36,6 +37,14 @@ public partial class ApplicationDbContext
             entity.Property(e => e.Wbraid).HasMaxLength(255);
             entity.Property(e => e.GaClientId).HasMaxLength(100);
             entity.Property(e => e.GaSessionId).HasMaxLength(50);
+            entity.Property(e => e.Fbc).HasMaxLength(300);
+            entity.Property(e => e.Fbp).HasMaxLength(100);
+            entity.Property(e => e.ClientIp).HasMaxLength(64);
+            entity.Property(e => e.ClientUserAgent).HasMaxLength(500);
+            entity.Property(e => e.LandingPage).HasMaxLength(300);
+            entity.Property(e => e.UtmSource).HasMaxLength(150);
+            entity.Property(e => e.UtmMedium).HasMaxLength(150);
+            entity.Property(e => e.UtmCampaign).HasMaxLength(150);
             entity.HasIndex(e => new { e.EventName, e.TransactionId }).IsUnique();
             entity.HasIndex(e => e.OccurredAt);
         });
@@ -54,6 +63,21 @@ public partial class ApplicationDbContext
                 .HasForeignKey(e => e.ConversionEventId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
+
+        // Lot 10.3 bis : historique du générateur de liens UTM (Migrations/SQL_AddUtmLinks.sql).
+        modelBuilder.Entity<UtmLink>(entity =>
+        {
+            entity.ToTable("UtmLinks");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Url).IsRequired().HasMaxLength(1000);
+            entity.Property(e => e.Destination).IsRequired().HasMaxLength(300);
+            entity.Property(e => e.UtmSource).IsRequired().HasMaxLength(150);
+            entity.Property(e => e.UtmMedium).IsRequired().HasMaxLength(150);
+            entity.Property(e => e.UtmCampaign).IsRequired().HasMaxLength(150);
+            entity.Property(e => e.UtmContent).HasMaxLength(150);
+            entity.Property(e => e.Label).HasMaxLength(150);
+            entity.HasIndex(e => e.CreatedAt);
+        });
     }
 
     private static void ConfigureAttribution<TOwner>(OwnedNavigationBuilder<TOwner, MarketingAttribution> b)
@@ -71,5 +95,11 @@ public partial class ApplicationDbContext
         b.Property(a => a.LandingPage).HasMaxLength(300);
         b.Property(a => a.GaClientId).HasMaxLength(100);
         b.Property(a => a.GaSessionId).HasMaxLength(50);
+        // Lot 10.3 bis (Meta), colonnes posées par Migrations/SQL_AddMetaConversions.sql.
+        b.Property(a => a.Fbclid).HasMaxLength(255);
+        b.Property(a => a.Fbc).HasMaxLength(300);
+        b.Property(a => a.Fbp).HasMaxLength(100);
+        b.Property(a => a.ClientIp).HasMaxLength(64);
+        b.Property(a => a.ClientUserAgent).HasMaxLength(500);
     }
 }

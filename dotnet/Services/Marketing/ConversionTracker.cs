@@ -146,6 +146,15 @@ public sealed class ConversionRecorder
             Wbraid = attribution.ConsentAds ? attribution.Wbraid : null,
             GaClientId = attribution.ConsentAnalytics ? attribution.GaClientId : null,
             GaSessionId = attribution.ConsentAnalytics ? attribution.GaSessionId : null,
+            // Lot 10.3 bis (Meta) : seulement avec le consentement publicité.
+            Fbc = AttributionRules.FbcFor(attribution),
+            Fbp = attribution.ConsentAds ? attribution.Fbp : null,
+            ClientIp = attribution.ConsentAds ? attribution.ClientIp : null,
+            ClientUserAgent = attribution.ConsentAds ? attribution.ClientUserAgent : null,
+            LandingPage = attribution.LandingPage,
+            UtmSource = attribution.UtmSource,
+            UtmMedium = attribution.UtmMedium,
+            UtmCampaign = attribution.UtmCampaign,
             ConsentAnalytics = attribution.ConsentAnalytics,
             ConsentAds = attribution.ConsentAds,
             ItemsJson = itemsJson,
@@ -306,7 +315,7 @@ public sealed class ConversionDispatchService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Sans destination configurée, le service reste inactif et silencieux.
-        if (!_config.Ga4Configured) return;
+        if (!_config.AnyConfigured) return;
         try { await Task.Delay(TimeSpan.FromSeconds(20), stoppingToken); } catch (OperationCanceledException) { return; }
 
         while (!stoppingToken.IsCancellationRequested)

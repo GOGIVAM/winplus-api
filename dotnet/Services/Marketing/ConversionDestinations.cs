@@ -12,21 +12,51 @@ namespace Backend.Services.Marketing;
 /// <c>Ga4:MeasurementId</c> / <c>Ga4:ApiSecret</c> dans appsettings). Sans
 /// ces deux valeurs, aucune conversion n'est envoyée à GA4 et rien n'est
 /// journalisé.
+///
+/// Lot 10.3 bis : API Conversions Meta, variables <c>META_PIXEL_ID</c>,
+/// <c>META_CAPI_ACCESS_TOKEN</c> (secret) et, pendant les essais,
+/// <c>META_TEST_EVENT_CODE</c> (ou <c>Meta:PixelId</c>, <c>Meta:CapiAccessToken</c>,
+/// <c>Meta:TestEventCode</c>). <c>META_GRAPH_API_VERSION</c> est facultatif.
+/// Sans identifiant et jeton, rien n'est envoyé à Meta.
 /// </summary>
 public sealed class MarketingConfig
 {
+    public const string DefaultMetaGraphVersion = "v24.0";
+
     public string? Ga4MeasurementId { get; init; }
     public string? Ga4ApiSecret { get; init; }
+    public string? MetaPixelId { get; init; }
+    public string? MetaAccessToken { get; init; }
+    public string? MetaTestEventCode { get; init; }
+    public string MetaGraphVersion { get; init; } = DefaultMetaGraphVersion;
 
     public bool Ga4Configured =>
         !string.IsNullOrWhiteSpace(Ga4MeasurementId) && Ga4MeasurementId.StartsWith("G-", StringComparison.OrdinalIgnoreCase)
         && !string.IsNullOrWhiteSpace(Ga4ApiSecret);
 
-    public static MarketingConfig From(IConfiguration configuration) => new()
+    /// <summary>Identifiant d'ensemble de données (pixel) : uniquement des chiffres.</summary>
+    public bool MetaConfigured =>
+        !string.IsNullOrWhiteSpace(MetaPixelId) && MetaPixelId.Length is >= 5 and <= 25 && MetaPixelId.All(char.IsDigit)
+        && !string.IsNullOrWhiteSpace(MetaAccessToken);
+
+    public bool AnyConfigured => Ga4Configured || MetaConfigured;
+
+    public static MarketingConfig From(IConfiguration configuration)
     {
-        Ga4MeasurementId = (configuration["GA4_MEASUREMENT_ID"] ?? configuration["Ga4:MeasurementId"])?.Trim(),
-        Ga4ApiSecret = (configuration["GA4_API_SECRET"] ?? configuration["Ga4:ApiSecret"])?.Trim(),
-    };
+        var version = (configuration["META_GRAPH_API_VERSION"] ?? configuration["Meta:GraphApiVersion"])?.Trim();
+        return new()
+        {
+            Ga4MeasurementId = (configuration["GA4_MEASUREMENT_ID"] ?? configuration["Ga4:MeasurementId"])?.Trim(),
+            Ga4ApiSecret = (configuration["GA4_API_SECRET"] ?? configuration["Ga4:ApiSecret"])?.Trim(),
+            MetaPixelId = (configuration["META_PIXEL_ID"] ?? configuration["Meta:PixelId"])?.Trim(),
+            MetaAccessToken = (configuration["META_CAPI_ACCESS_TOKEN"] ?? configuration["Meta:CapiAccessToken"])?.Trim(),
+            MetaTestEventCode = NullIfEmpty((configuration["META_TEST_EVENT_CODE"] ?? configuration["Meta:TestEventCode"])?.Trim()),
+            MetaGraphVersion = version != null && System.Text.RegularExpressions.Regex.IsMatch(version, @"^v\d{1,3}\.\d$")
+                ? version : DefaultMetaGraphVersion,
+        };
+    }
+
+    private static string? NullIfEmpty(string? v) => string.IsNullOrEmpty(v) ? null : v;
 }
 
 /// <summary>Issue d'un envoi : réussi, à retenter plus tard, ou refusé définitivement.</summary>
@@ -38,9 +68,10 @@ public sealed record ConversionSendResult(ConversionSendOutcome Outcome, string?
 }
 
 /// <summary>
-/// Destination de conversions serveur (décision Q17 c) : GA4 aujourd'hui ;
-/// une API Conversions Meta s'ajoutera par une seconde implémentation, sans
-/// toucher au registre ni à la file.
+/// Destination de conversions serveur (décision Q17) : GA4
+/// (<see cref="Ga4MeasurementProtocolDestination"/>) et API Conversions Meta
+/// (<see cref="MetaConversionsApiDestination"/>), sur le même registre et la
+/// même file.
 /// </summary>
 public interface IConversionDestination
 {

@@ -29,6 +29,16 @@ public class MarketingAttribution
     /// <summary>Identifiant client GA4 (cookie _ga), requis par le Measurement Protocol.</summary>
     public string? GaClientId { get; set; }
     public string? GaSessionId { get; set; }
+    /// <summary>Identifiant de clic d'une annonce Meta (paramètre fbclid), avec le consentement publicité seulement.</summary>
+    public string? Fbclid { get; set; }
+    /// <summary>Cookie _fbc du pixel Meta (clic d'annonce), avec le consentement publicité seulement.</summary>
+    public string? Fbc { get; set; }
+    /// <summary>Cookie _fbp du pixel Meta (navigateur), avec le consentement publicité seulement.</summary>
+    public string? Fbp { get; set; }
+    /// <summary>Adresse IP de la requête, relevée par le serveur, avec le consentement publicité seulement (API Conversions Meta).</summary>
+    public string? ClientIp { get; set; }
+    /// <summary>User-agent de la requête, relevé par le serveur, avec le consentement publicité seulement (API Conversions Meta).</summary>
+    public string? ClientUserAgent { get; set; }
     public bool ConsentAnalytics { get; set; }
     public bool ConsentAds { get; set; }
     public DateTime? CapturedAt { get; set; }
@@ -62,6 +72,17 @@ public class ConversionEvent
     public string? Wbraid { get; set; }
     public string? GaClientId { get; set; }
     public string? GaSessionId { get; set; }
+    /// <summary>Lot 10.3 bis (Meta) : cookies _fbc et _fbp, IP et user-agent, avec le consentement publicité seulement.</summary>
+    public string? Fbc { get; set; }
+    public string? Fbp { get; set; }
+    public string? ClientIp { get; set; }
+    public string? ClientUserAgent { get; set; }
+    /// <summary>Chemin de la page d'arrivée (event_source_url de Meta).</summary>
+    public string? LandingPage { get; set; }
+    /// <summary>Campagne d'origine, pour la ventilation du résumé administrateur.</summary>
+    public string? UtmSource { get; set; }
+    public string? UtmMedium { get; set; }
+    public string? UtmCampaign { get; set; }
     public bool ConsentAnalytics { get; set; }
     public bool ConsentAds { get; set; }
     /// <summary>Articles au format GA4 (item_id, item_name, item_category, price, quantity), en JSON.</summary>
@@ -72,8 +93,7 @@ public class ConversionEvent
 }
 
 /// <summary>
-/// Envoi d'une conversion vers une destination (ga4 aujourd'hui, meta plus
-/// tard) : file persistée, reprise sur erreur, un seul envoi par couple
+/// Envoi d'une conversion vers une destination (ga4, meta) : file persistée, reprise sur erreur, un seul envoi par couple
 /// (conversion, destination).
 /// </summary>
 public class ConversionDelivery
@@ -97,4 +117,24 @@ public static class ConversionDeliveryStatus
     public const string Pending = "pending";
     public const string Sent = "sent";
     public const string Failed = "failed";
+}
+
+/// <summary>
+/// Lot 10.3 bis : lien de campagne créé par le générateur UTM de l'espace
+/// administrateur (historique partagé entre administrateurs).
+/// </summary>
+public class UtmLink
+{
+    public int Id { get; set; }
+    /// <summary>Lien complet, avec les paramètres utm.</summary>
+    public string Url { get; set; } = string.Empty;
+    /// <summary>Chemin de destination sur winplus.cm (sans paramètres).</summary>
+    public string Destination { get; set; } = "/";
+    public string UtmSource { get; set; } = string.Empty;
+    public string UtmMedium { get; set; } = string.Empty;
+    public string UtmCampaign { get; set; } = string.Empty;
+    public string? UtmContent { get; set; }
+    public string? Label { get; set; }
+    public int? CreatedByUserId { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

@@ -566,6 +566,11 @@ builder.Services.AddSingleton<Backend.Services.Marketing.ConversionSignal>();
 builder.Services.AddHttpClient(Backend.Services.Marketing.Ga4MeasurementProtocolDestination.HttpClientName,
     client => client.Timeout = TimeSpan.FromSeconds(10));
 builder.Services.AddScoped<Backend.Services.Marketing.IConversionDestination, Backend.Services.Marketing.Ga4MeasurementProtocolDestination>();
+// Lot 10.3 bis : API Conversions Meta (META_PIXEL_ID, META_CAPI_ACCESS_TOKEN,
+// META_TEST_EVENT_CODE facultatif). Sans identifiant et jeton, rien n'est envoyé.
+builder.Services.AddHttpClient(Backend.Services.Marketing.MetaConversionsApiDestination.HttpClientName,
+    client => client.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddScoped<Backend.Services.Marketing.IConversionDestination, Backend.Services.Marketing.MetaConversionsApiDestination>();
 builder.Services.AddScoped<Backend.Services.Marketing.IAttributionService, Backend.Services.Marketing.AttributionService>();
 builder.Services.AddSingleton<Backend.Services.Marketing.IConversionTracker, Backend.Services.Marketing.ConversionTracker>();
 builder.Services.AddHostedService<Backend.Services.Marketing.ConversionDispatchService>();
