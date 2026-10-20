@@ -44,11 +44,13 @@ public class ParentTeacherMeetingsController : ControllerBase
     public record BookRequest(int SlotId, int ChildId, string? Topic);
 
     private static string Fmt(DateTime utc) => (utc + TimeSpan.FromHours(1)).ToString("dddd d MMMM 'à' HH'h'mm", new System.Globalization.CultureInfo("fr-FR"));
+    private static string FmtEn(DateTime utc) => (utc + TimeSpan.FromHours(1)).ToString("dddd d MMMM 'at' HH:mm", new System.Globalization.CultureInfo("en-GB"));
     private static string Name(User? u) => u == null ? "" : $"{u.FirstName} {u.LastName}".Trim();
 
-    private async Task Notify(int userId, string title, string message, int meetingId)
+    /// <summary>Lot 10.6 : dans la langue du destinataire (User.Locale).</summary>
+    private async Task Notify(int userId, LocalizedText title, LocalizedText message, int meetingId)
     {
-        try { await _ntfy.PublishAsync($"winplus-user-{userId}", title, message, userId: userId, type: "ParentTeacherMeeting", relatedEntityType: "ParentTeacherMeeting", relatedEntityId: meetingId); }
+        try { await _ntfy.PublishLocalizedAsync(_db, $"winplus-user-{userId}", title, message, userId: userId, type: "ParentTeacherMeeting", relatedEntityType: "ParentTeacherMeeting", relatedEntityId: meetingId); }
         catch (Exception ex) { _logger.LogWarning(ex, "Rendez-vous {MeetingId} : notification non envoyée à {UserId}", meetingId, userId); }
     }
 
@@ -125,7 +127,9 @@ public class ParentTeacherMeetingsController : ControllerBase
         if (meeting != null) { meeting.Status = "cancelled"; meeting.CancelledBy = me; meeting.CancelledAt = DateTime.UtcNow; }
         await _db.SaveChangesAsync();
         if (meeting != null)
-            await Notify(meeting.ParentUserId, "Rendez-vous annulé", $"{Name(meeting.Teacher)} a annulé le rendez-vous du {Fmt(slot.StartsAt)}. Vous pouvez choisir un autre créneau.", meeting.Id);
+            await Notify(meeting.ParentUserId, new("Rendez-vous annulé", "Appointment cancelled"),
+                new($"{Name(meeting.Teacher)} a annulé le rendez-vous du {Fmt(slot.StartsAt)}. Vous pouvez choisir un autre créneau.",
+                    $"{Name(meeting.Teacher)} has cancelled the appointment on {FmtEn(slot.StartsAt)}. You can choose another slot."), meeting.Id);
         return Ok(new { success = true });
     }
 
@@ -198,9 +202,11 @@ public class ParentTeacherMeetingsController : ControllerBase
 
         var parent = await _db.Users.FindAsync(me);
         var child = await _db.Users.FindAsync(req.ChildId);
-        await Notify(slot.TeacherUserId, "Nouveau rendez-vous parent",
-            $"{Name(parent)} (parent de {child?.FirstName}) a réservé le {Fmt(slot.StartsAt)}" + (meeting.Topic != null ? $" : « {meeting.Topic} »." : "."), meeting.Id);
-        await Notify(me, "Rendez-vous confirmé", $"Rendez-vous avec {Name(slot.Teacher)} le {Fmt(slot.StartsAt)}.", meeting.Id);
+        await Notify(slot.TeacherUserId, new("Nouveau rendez-vous parent", "New parent appointment"),
+            new($"{Name(parent)} (parent de {child?.FirstName}) a réservé le {Fmt(slot.StartsAt)}" + (meeting.Topic != null ? $" : « {meeting.Topic} »." : "."),
+                $"{Name(parent)} (parent of {child?.FirstName}) has booked {FmtEn(slot.StartsAt)}" + (meeting.Topic != null ? $": \"{meeting.Topic}\"." : ".")), meeting.Id);
+        await Notify(me, new("Rendez-vous confirmé", "Appointment confirmed"),
+            new($"Rendez-vous avec {Name(slot.Teacher)} le {Fmt(slot.StartsAt)}.", $"Appointment with {Name(slot.Teacher)} on {FmtEn(slot.StartsAt)}."), meeting.Id);
         return Ok(new { data = new { meeting.Id }, success = true });
     }
 
@@ -236,7 +242,8 @@ public class ParentTeacherMeetingsController : ControllerBase
         await _db.SaveChangesAsync();
         var other = m.ParentUserId == me ? m.TeacherUserId : m.ParentUserId;
         var who = m.ParentUserId == me ? Name(m.Parent) : Name(m.Teacher);
-        await Notify(other, "Rendez-vous annulé", $"{who} a annulé le rendez-vous du {Fmt(m.Slot!.StartsAt)}.", m.Id);
+        await Notify(other, new("Rendez-vous annulé", "Appointment cancelled"),
+            new($"{who} a annulé le rendez-vous du {Fmt(m.Slot!.StartsAt)}.", $"{who} has cancelled the appointment on {FmtEn(m.Slot!.StartsAt)}."), m.Id);
         return Ok(new { success = true });
     }
 }

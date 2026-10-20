@@ -135,7 +135,13 @@ public class InstitutionBulletinsController : ControllerBase
         {
             _logger.LogWarning(ex, "Appréciation WinAI indisponible, repli sur l'appréciation calculée");
         }
-        if (string.IsNullOrWhiteSpace(text)) { text = FallbackAppreciation(d); source = "calculee"; }
+        // Lot 10.6 : repli dans la langue du compte de l'établissement (User.Locale).
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            var en = NotificationLocales.IsEnglish(await NotificationLocales.ForUserAsync(_db, me, ct));
+            text = en ? FallbackAppreciationEn(d) : FallbackAppreciation(d);
+            source = "calculee";
+        }
         return Ok(new { data = new { appreciation = text, source }, success = true });
     }
 
@@ -160,6 +166,30 @@ public class InstitutionBulletinsController : ControllerBase
             parts.Add("Il faut réviser plus régulièrement, un peu chaque jour.");
         else
             parts.Add("Continuez sur ce rythme.");
+        return string.Join(" ", parts);
+    }
+
+    /// <summary>Lot 10.6 : même appréciation calculée, en anglais.</summary>
+    private static string FallbackAppreciationEn(BulletinData d)
+    {
+        if (d.Average == null) return "Not enough work on WinPlus during the period to assess progress. Regular work needs to start now.";
+        var avg = d.Average.Value / 5;
+        var opening = avg >= 16 ? "An excellent period, with solid and consistent results."
+            : avg >= 14 ? "A very good period: the work is paying off."
+            : avg >= 12 ? "A satisfactory period overall."
+            : avg >= 10 ? "A borderline period: the basics are there but remain fragile."
+            : "A difficult period: results are below expectations.";
+        var best = d.Subjects.Where(s => s.Quizzes >= 2).OrderByDescending(s => s.Average).FirstOrDefault();
+        var weak = d.Subjects.Where(s => s.Quizzes >= 2).OrderBy(s => s.Average).FirstOrDefault();
+        var parts = new List<string> { opening };
+        if (best != null && weak != null && best.Subject != weak.Subject)
+            parts.Add($"Strong in {best.Subject}; {weak.Subject} needs consolidating.");
+        if (d.HomeworkGiven > 0 && d.HomeworkDone < d.HomeworkGiven)
+            parts.Add($"{d.HomeworkGiven - d.HomeworkDone} homework assignment(s) not handed in: more regularity is needed.");
+        else if (d.ActiveDays < 8)
+            parts.Add("Revision needs to be more regular, a little every day.");
+        else
+            parts.Add("Keep up this pace.");
         return string.Join(" ", parts);
     }
 

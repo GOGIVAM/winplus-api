@@ -42,7 +42,10 @@ public sealed class InstitutionDropoutAlertService : BackgroundService
         }
     }
 
-    private sealed record Candidate(int ChildId, string Type, string Severity, string Title, string Content, string DedupKey);
+    // Lot 10.6 : Title et Content restent le texte français enregistré dans
+    // ParentAlerts ; TitleEn et ContentEn servent à la notification d'un parent anglophone.
+    private sealed record Candidate(int ChildId, string Type, string Severity, string Title, string Content, string DedupKey,
+        string TitleEn, string ContentEn);
 
     public async Task RunAsync(CancellationToken ct)
     {
@@ -75,11 +78,14 @@ public sealed class InstitutionDropoutAlertService : BackgroundService
             if (lastAt >= since) continue;
             var days = (int)(now - lastAt).TotalDays;
             var first = names.TryGetValue(child, out var n) ? n.FirstName ?? "Votre enfant" : "Votre enfant";
+            var firstEn = names.TryGetValue(child, out var nEn) ? nEn.FirstName ?? "Your child" : "Your child";
             candidates.Add(new Candidate(child, "InactiviteProlongee", days >= 14 ? "High" : "Medium",
                 "Plus d'activité depuis une semaine",
                 $"{first} n'a fait aucun quiz ni session de révision depuis {days} jours. Un petit encouragement peut suffire à relancer le rythme.",
                 // Une alerte par période d'inactivité (date de la dernière activité).
-                $"inactive:{lastAt:yyyy-MM-dd}"));
+                $"inactive:{lastAt:yyyy-MM-dd}",
+                "No activity for a week",
+                $"{firstEn} has done no quiz or revision session for {days} days. A little encouragement may be enough to get going again."));
         }
 
         // ── 2. Devoirs d'établissement non faits ─────────────────────────────
@@ -99,10 +105,13 @@ public sealed class InstitutionDropoutAlertService : BackgroundService
             foreach (var child in members.Except(done))
             {
                 var first = names.TryGetValue(child, out var n) ? n.FirstName ?? "Votre enfant" : "Votre enfant";
+                var firstEn = names.TryGetValue(child, out var nEn) ? nEn.FirstName ?? "Your child" : "Your child";
                 candidates.Add(new Candidate(child, "DevoirEtablissementNonFait", "Medium",
                     "Devoir non rendu",
                     $"{first} n'a pas fait le devoir « {h.Title} » donné par son établissement (date limite : {h.DueDate:dd/MM}).",
-                    $"insthw:{h.Id}"));
+                    $"insthw:{h.Id}",
+                    "Homework not handed in",
+                    $"{firstEn} has not done the homework \"{h.Title}\" set by their school (deadline: {h.DueDate:dd/MM})."));
             }
         }
 
@@ -123,10 +132,13 @@ public sealed class InstitutionDropoutAlertService : BackgroundService
             foreach (var child in members.Except(took))
             {
                 var first = names.TryGetValue(child, out var n) ? n.FirstName ?? "Votre enfant" : "Votre enfant";
+                var firstEn = names.TryGetValue(child, out var nEn) ? nEn.FirstName ?? "Your child" : "Your child";
                 candidates.Add(new Candidate(child, "ExamenBlancManque", "High",
                     "Examen blanc manqué",
                     $"{first} n'a pas passé l'examen blanc « {e.Title} » (fermé le {e.ClosesAt:dd/MM}).",
-                    $"mock:{e.Id}"));
+                    $"mock:{e.Id}",
+                    "Mock exam missed",
+                    $"{firstEn} did not sit the mock exam \"{e.Title}\" (closed on {e.ClosesAt:dd/MM})."));
             }
         }
 
@@ -157,7 +169,8 @@ public sealed class InstitutionDropoutAlertService : BackgroundService
                 count++;
                 try
                 {
-                    await ntfy.PublishAsync($"winplus-user-{parentId}", c.Title, c.Content,
+                    // Lot 10.6 : notification dans la langue du parent (User.Locale).
+                    await ntfy.PublishLocalizedAsync(db, $"winplus-user-{parentId}", new(c.Title, c.TitleEn), new(c.Content, c.ContentEn),
                         priority: c.Severity == "High" ? "high" : "default",
                         userId: parentId, type: "ParentAdvisor", relatedEntityType: "Child", relatedEntityId: c.ChildId);
                 }
@@ -168,8 +181,9 @@ public sealed class InstitutionDropoutAlertService : BackgroundService
                 {
                     try
                     {
-                        await ntfy.PublishAsync($"winplus-user-{c.ChildId}", "On reprend ?",
-                            "Cela fait une semaine sans révision. Un quiz de 10 minutes suffit pour relancer ta série.",
+                        await ntfy.PublishLocalizedAsync(db, $"winplus-user-{c.ChildId}", new("On reprend ?", "Shall we get back to it?"),
+                            new("Cela fait une semaine sans révision. Un quiz de 10 minutes suffit pour relancer ta série.",
+                                "It has been a week without revision. A 10-minute quiz is enough to restart your streak."),
                             userId: c.ChildId, type: "StudyReminder");
                     }
                     catch (Exception ex) { _logger.LogWarning(ex, "Rappel d'inactivité non envoyé à {StudentId}", c.ChildId); }

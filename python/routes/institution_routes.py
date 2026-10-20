@@ -30,6 +30,7 @@ from sqlalchemy import func
 from auth import verify_token, require_role, require_user_or_service, UserTokenData
 from database import Database, DailyScore, Enrollment, QuizAttempt, Subject, User
 from services.deepseek_client import get_deepseek_client
+from services.language import in_language  # lot 10.6 : langue du compte (X-User-Locale)
 
 logger = logging.getLogger(__name__)
 
@@ -533,7 +534,7 @@ async def bulletin_appreciation(
         f"Devoirs faits : {body.homework_done}/{body.homework_given}. Jours actifs : {body.active_days}. "
         f"Temps d'étude : {round((body.study_minutes or 0) / 60)} h.\n"
         "Par matière :\n" + ("\n".join(lines) if lines else "- aucune note sur la période") + "\n\n"
-        "Rédige l'appréciation du conseil de classe pour ce bulletin, en français, 2 à 3 phrases, "
+        f"Rédige l'appréciation du conseil de classe pour ce bulletin, {in_language()}, 2 à 3 phrases, "
         "au vouvoiement neutre (ex. « Trimestre sérieux… »), sans nom propre, sans emoji, factuelle : "
         "souligne un point fort, nomme la matière à consolider et donne un conseil concret. "
         "Réponds en JSON : {\"appreciation\": \"...\"}"

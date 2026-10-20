@@ -158,16 +158,21 @@ public class ClassLogbookController : ControllerBase
         var scopes = _scopes;
         var logger = _logger;
         var due = e.HomeworkDue != null ? $" Pour le {e.HomeworkDue:dd/MM}." : string.Empty;
+        var dueEn = e.HomeworkDue != null ? $" Due on {e.HomeworkDue:dd/MM}." : string.Empty;
         var text = e.HomeworkText!.Length > 140 ? e.HomeworkText[..140] + "…" : e.HomeworkText;
         _ = Task.Run(async () =>
         {
             using var scope = scopes.CreateScope();
             var ntfy = scope.ServiceProvider.GetRequiredService<INtfyService>();
+            var db = scope.ServiceProvider.GetService<ApplicationDbContext>();
             foreach (var id in students)
             {
                 try
                 {
-                    await ntfy.PublishAsync($"winplus-user-{id}", $"Travail à faire · {e.Subject} ({groupName})", text + due,
+                    // Lot 10.6 : libellés dans la langue de l'élève ; le travail, écrit par l'enseignant, tel quel.
+                    await ntfy.PublishLocalizedAsync(db, $"winplus-user-{id}",
+                        new($"Travail à faire · {e.Subject} ({groupName})", $"Work to do · {e.Subject} ({groupName})"),
+                        new(text + due, text + dueEn),
                         userId: id, type: "ClassLogbook", relatedEntityType: "ClassLogbookEntry", relatedEntityId: e.Id);
                 }
                 catch (Exception ex) { logger.LogWarning(ex, "Cahier de textes : élève {UserId} non prévenu", id); }

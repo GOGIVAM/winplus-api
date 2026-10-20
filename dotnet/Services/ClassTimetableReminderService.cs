@@ -62,11 +62,14 @@ public sealed class ClassTimetableReminderService : BackgroundService
             var students = await db.StudyGroupMembers.AsNoTracking()
                 .Where(m => m.StudyGroupId == s.StudyGroupId && m.Role != "teacher").Select(m => m.UserId).ToListAsync(ct);
             var where = string.IsNullOrWhiteSpace(s.Room) ? string.Empty : $" · salle {s.Room}";
+            var whereEn = string.IsNullOrWhiteSpace(s.Room) ? string.Empty : $" · room {s.Room}";
             foreach (var id in students)
             {
                 try
                 {
-                    await ntfy.PublishAsync($"winplus-user-{id}", $"{s.Subject} à {s.StartTime}", $"Ton cours de {s.Subject} commence bientôt ({s.group}{where}).",
+                    // Lot 10.6 : dans la langue du destinataire (User.Locale).
+                    await ntfy.PublishLocalizedAsync(db, $"winplus-user-{id}", new($"{s.Subject} à {s.StartTime}", $"{s.Subject} at {s.StartTime}"),
+                        new($"Ton cours de {s.Subject} commence bientôt ({s.group}{where}).", $"Your {s.Subject} lesson starts soon ({s.group}{whereEn})."),
                         userId: id, type: "TimetableReminder", relatedEntityType: "ClassTimetableSlot", relatedEntityId: s.Id);
                 }
                 catch (Exception ex) { _logger.LogWarning(ex, "Rappel de cours non envoyé à {UserId}", id); }
@@ -75,7 +78,9 @@ public sealed class ClassTimetableReminderService : BackgroundService
             {
                 try
                 {
-                    await ntfy.PublishAsync($"winplus-user-{s.TeacherUserId}", $"Cours à {s.StartTime} · {s.group}", $"{s.Subject} avec {s.group}{where}. Pensez à remplir le cahier de textes après le cours.",
+                    await ntfy.PublishLocalizedAsync(db, $"winplus-user-{s.TeacherUserId}", new($"Cours à {s.StartTime} · {s.group}", $"Lesson at {s.StartTime} · {s.group}"),
+                        new($"{s.Subject} avec {s.group}{where}. Pensez à remplir le cahier de textes après le cours.",
+                            $"{s.Subject} with {s.group}{whereEn}. Remember to fill in the class logbook after the lesson."),
                         userId: s.TeacherUserId, type: "TimetableReminder", relatedEntityType: "ClassTimetableSlot", relatedEntityId: s.Id);
                 }
                 catch (Exception ex) { _logger.LogWarning(ex, "Rappel de cours non envoyé à l'enseignant {UserId}", s.TeacherUserId); }
