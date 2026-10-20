@@ -153,13 +153,14 @@ public class NotchPayService : INotchPayService
         return await ExecuteWithRetryAsync(async () =>
         {
             var json = JsonSerializer.Serialize(initPayload, serializeOptions);
-            _logger.LogInformation("NotchPay step1 → channel={Channel} phone={Phone} amount={Amount} json={Json}",
-                channel, e164Phone, (int)Math.Round(amount), json);
+            // Pas de nom, d'e-mail ni de numéro complet dans les journaux.
+            _logger.LogInformation("NotchPay step1 → ref={Ref} channel={Channel} phone={Phone} amount={Amount}",
+                reference, channel, MaskPhone(e164Phone), (int)Math.Round(amount));
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             var response = await _httpClient.PostAsync("/payments", content);
             var responseBody = await response.Content.ReadAsStringAsync();
-            _logger.LogInformation("NotchPay step1 ← status={Status} body={Body}", response.StatusCode, responseBody);
+            _logger.LogInformation("NotchPay step1 ← ref={Ref} status={Status}", reference, response.StatusCode);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -176,13 +177,13 @@ public class NotchPayService : INotchPayService
             var paymentRef = initResult.Transaction?.Reference ?? reference;
             var chargePayload = new { channel = channel, data = new { phone = e164Phone } };
             var chargeJson = JsonSerializer.Serialize(chargePayload, serializeOptions);
-            _logger.LogInformation("NotchPay step2 → ref={Ref} channel={Channel} phone={Phone} json={Json}",
-                paymentRef, channel, e164Phone, chargeJson);
+            _logger.LogInformation("NotchPay step2 → ref={Ref} channel={Channel} phone={Phone}",
+                paymentRef, channel, MaskPhone(e164Phone));
             var chargeContent = new StringContent(chargeJson, Encoding.UTF8, "application/json");
 
             var chargeResponse = await _httpClient.PostAsync($"/payments/{Uri.EscapeDataString(paymentRef)}", chargeContent);
             var chargeBody = await chargeResponse.Content.ReadAsStringAsync();
-            _logger.LogInformation("NotchPay step2 ← status={Status} body={Body}", chargeResponse.StatusCode, chargeBody);
+            _logger.LogInformation("NotchPay step2 ← ref={Ref} status={Status}", paymentRef, chargeResponse.StatusCode);
 
             if (!chargeResponse.IsSuccessStatusCode)
             {
@@ -335,6 +336,13 @@ public class NotchPayService : INotchPayService
         {
             return null;
         }
+    }
+
+    /// <summary>+237656478741 → +237******741 : assez pour le support, rien d'exploitable.</summary>
+    internal static string MaskPhone(string? phone)
+    {
+        if (string.IsNullOrEmpty(phone) || phone.Length <= 7) return "***";
+        return phone[..4] + new string('*', phone.Length - 7) + phone[^3..];
     }
 
     private async Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> action)
