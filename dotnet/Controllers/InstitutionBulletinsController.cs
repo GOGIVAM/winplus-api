@@ -33,12 +33,134 @@ public class InstitutionBulletinsController : ControllerBase
     private readonly ApplicationDbContext _db;
     private readonly ILogger<InstitutionBulletinsController> _logger;
     private readonly IServiceScopeFactory _scopes;
+    private readonly IHttpClientFactory _http;
+    private readonly IServiceTokenProvider _serviceToken;
 
-    public InstitutionBulletinsController(ApplicationDbContext db, ILogger<InstitutionBulletinsController> logger, IServiceScopeFactory scopes)
+    public InstitutionBulletinsController(ApplicationDbContext db, ILogger<InstitutionBulletinsController> logger, IServiceScopeFactory scopes,
+        IHttpClientFactory http, IServiceTokenProvider serviceToken)
     {
         _db = db;
         _logger = logger;
         _scopes = scopes;
+        _http = http;
+        _serviceToken = serviceToken;
+    }
+
+    public record ClassPreviewRequest(int GroupId, DateTime From, DateTime To);
+    public record AppreciationRequest(int StudentId, DateTime From, DateTime To, string? PeriodLabel);
+
+    /// <summary>
+    /// Conseil de classe : les bulletins calculés de tous les élèves d'une classe
+    /// (classés par moyenne), à relire avant de les partager.
+    /// </summary>
+    [HttpPost("class-preview")]
+    public async Task<IActionResult> ClassPreview([FromBody] ClassPreviewRequest req)
+    {
+        try
+        {
+            var me = User.GetUserId();
+            if (User.GetUserRole() != "institution") return Forbid();
+            var institutionId = await MyInstitutionIdAsync(me);
+            if (institutionId == null || !await _db.StudyGroups.AnyAsync(g => g.Id == req.GroupId && g.OwnerId == me && g.IsActive))
+                return NotFound(new { error = "Classe introuvable." });
+            var p = Period(req.From, req.To);
+            if (p == null) return BadRequest(new { error = "Période invalide (400 jours au plus)." });
+
+            var members = await _db.StudyGroupMembers.AsNoTracking()
+                .Where(m => m.StudyGroupId == req.GroupId && m.Role != InstitutionTeachersController.TeacherRole && m.UserId != me)
+                .Select(m => m.UserId).ToListAsync();
+            var own = await _db.InstitutionStudents.AsNoTracking()
+                .Where(s => s.InstitutionId == institutionId && members.Contains(s.StudentId) && s.IsActive)
+                .Select(s => s.StudentId).ToListAsync();
+
+            var list = new List<BulletinData>();
+            foreach (var id in own.Take(80))
+            {
+                var d = await ComputeAsync(institutionId.Value, me, id, p.Value.from, p.Value.to);
+                if (d != null) list.Add(d);
+            }
+            return Ok(new { data = list.OrderByDescending(x => x.Average ?? -1).ThenBy(x => x.StudentName), success = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error computing class bulletins");
+            return StatusCode(500, new { success = false, error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Appréciation proposée par WinAI pour un bulletin (2 à 3 phrases), à relire.
+    /// Repli sans IA : une appréciation construite à partir des chiffres.
+    /// </summary>
+    [HttpPost("appreciation")]
+    public async Task<IActionResult> Appreciation([FromBody] AppreciationRequest req, CancellationToken ct)
+    {
+        var me = User.GetUserId();
+        if (User.GetUserRole() != "institution") return Forbid();
+        var institutionId = await MyInstitutionIdAsync(me);
+        if (institutionId == null || !await IsOwnStudentAsync(institutionId.Value, req.StudentId))
+            return NotFound(new { error = "Élève introuvable dans votre établissement." });
+        var p = Period(req.From, req.To);
+        if (p == null) return BadRequest(new { error = "Période invalide." });
+        var d = await ComputeAsync(institutionId.Value, me, req.StudentId, p.Value.from, p.Value.to);
+        if (d == null) return NotFound(new { error = "Élève introuvable." });
+
+        string? text = null;
+        var source = "winai";
+        try
+        {
+            var client = _http.CreateClient("FastApiClient");
+            using var msg = new HttpRequestMessage(HttpMethod.Post, "/api/institution/appreciation")
+            {
+                Content = System.Net.Http.Json.JsonContent.Create(new
+                {
+                    student_name = d.StudentName, period_label = req.PeriodLabel, average = d.Average, class_average = d.ClassAverage,
+                    rank = d.Rank, class_size = d.ClassSize,
+                    subjects = d.Subjects.Select(s => new { subject = s.Subject, average = s.Average, quizzes = s.Quizzes, classAverage = s.ClassAverage }),
+                    homework_given = d.HomeworkGiven, homework_done = d.HomeworkDone, active_days = d.ActiveDays, study_minutes = d.StudyMinutes,
+                }),
+            };
+            msg.Headers.TryAddWithoutValidation("Authorization", _serviceToken.CreateAuthorizationHeader(ServiceScopes.InstitutionReport));
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(25));
+            var res = await client.SendAsync(msg, cts.Token);
+            if (res.IsSuccessStatusCode)
+            {
+                var json = await res.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(cancellationToken: cts.Token);
+                if (json.TryGetProperty("appreciation", out var a) && a.ValueKind == System.Text.Json.JsonValueKind.String)
+                    text = a.GetString();
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Appréciation WinAI indisponible, repli sur l'appréciation calculée");
+        }
+        if (string.IsNullOrWhiteSpace(text)) { text = FallbackAppreciation(d); source = "calculee"; }
+        return Ok(new { data = new { appreciation = text, source }, success = true });
+    }
+
+    /// <summary>Appréciation construite à partir des chiffres (sans IA).</summary>
+    private static string FallbackAppreciation(BulletinData d)
+    {
+        if (d.Average == null) return "Pas assez de travail sur WinPlus pendant la période pour évaluer les acquis. Il faut s'y mettre régulièrement dès maintenant.";
+        var avg = d.Average.Value / 5;
+        var opening = avg >= 16 ? "Excellente période, des résultats solides et réguliers."
+            : avg >= 14 ? "Très bonne période, le travail porte ses fruits."
+            : avg >= 12 ? "Période satisfaisante dans l'ensemble."
+            : avg >= 10 ? "Période juste : les bases sont là mais restent fragiles."
+            : "Période difficile : les résultats sont en dessous des attentes.";
+        var best = d.Subjects.Where(s => s.Quizzes >= 2).OrderByDescending(s => s.Average).FirstOrDefault();
+        var weak = d.Subjects.Where(s => s.Quizzes >= 2).OrderBy(s => s.Average).FirstOrDefault();
+        var parts = new List<string> { opening };
+        if (best != null && weak != null && best.Subject != weak.Subject)
+            parts.Add($"Point fort en {best.Subject} ; la {weak.Subject} est à consolider.");
+        if (d.HomeworkGiven > 0 && d.HomeworkDone < d.HomeworkGiven)
+            parts.Add($"{d.HomeworkGiven - d.HomeworkDone} devoir(s) non rendu(s) : il faut gagner en régularité.");
+        else if (d.ActiveDays < 8)
+            parts.Add("Il faut réviser plus régulièrement, un peu chaque jour.");
+        else
+            parts.Add("Continuez sur ce rythme.");
+        return string.Join(" ", parts);
     }
 
     public record ShareBulletinRequest(int StudentId, DateTime From, DateTime To, string PeriodLabel, string? Appreciation);

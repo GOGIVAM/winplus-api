@@ -494,3 +494,52 @@ async def at_risk_students(
         }
     finally:
         session.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Conseil de classe assisté : appréciation de bulletin proposée par WinAI
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AppreciationRequest(BaseModel):
+    student_name: str
+    period_label: Optional[str] = None
+    average: Optional[float] = None          # % de réussite aux quiz (0-100)
+    class_average: Optional[float] = None
+    rank: Optional[int] = None
+    class_size: Optional[int] = None
+    subjects: Optional[List[Dict[str, Any]]] = []   # {subject, average, quizzes, classAverage}
+    homework_given: Optional[int] = 0
+    homework_done: Optional[int] = 0
+    active_days: Optional[int] = 0
+    study_minutes: Optional[int] = 0
+
+
+@institution_router.post("/institution/appreciation")
+async def bulletin_appreciation(
+    body: AppreciationRequest,
+    # Appelé par .NET (InstitutionBulletinsController) avec le jeton technique du rapport institution.
+    current_user: UserTokenData = Depends(
+        require_user_or_service("ai.institution-report", roles=("institution", "admin"))),
+):
+    """Propose une appréciation de bulletin (2 à 3 phrases), factuelle et bienveillante.
+    Renvoie {"appreciation": str|null} ; null si WinAI ne répond pas (le .NET a son repli)."""
+    on20 = lambda v: None if v is None else round(v / 5, 1)
+    lines = [f"- {s.get('subject')}: {on20(s.get('average'))}/20 (classe {on20(s.get('classAverage'))}/20, {s.get('quizzes')} quiz)"
+             for s in (body.subjects or [])[:10]]
+    prompt = (
+        f"Élève : {body.student_name}. Période : {body.period_label or 'la période'}.\n"
+        f"Moyenne générale : {on20(body.average)}/20 ; moyenne de la classe : {on20(body.class_average)}/20 ; "
+        f"rang : {body.rank or '—'} sur {body.class_size or '—'}.\n"
+        f"Devoirs faits : {body.homework_done}/{body.homework_given}. Jours actifs : {body.active_days}. "
+        f"Temps d'étude : {round((body.study_minutes or 0) / 60)} h.\n"
+        "Par matière :\n" + ("\n".join(lines) if lines else "- aucune note sur la période") + "\n\n"
+        "Rédige l'appréciation du conseil de classe pour ce bulletin, en français, 2 à 3 phrases, "
+        "au vouvoiement neutre (ex. « Trimestre sérieux… »), sans nom propre, sans emoji, factuelle : "
+        "souligne un point fort, nomme la matière à consolider et donne un conseil concret. "
+        "Réponds en JSON : {\"appreciation\": \"...\"}"
+    )
+    data = _deepseek_json(prompt, "Tu es professeur principal dans un lycée camerounais.", max_tokens=300)
+    text = (data or {}).get("appreciation") if isinstance(data, dict) else None
+    if isinstance(text, str):
+        text = text.strip().strip('"')[:600] or None
+    return {"appreciation": text}
