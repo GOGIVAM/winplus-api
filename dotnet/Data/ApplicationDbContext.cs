@@ -1958,5 +1958,8 @@ modelBuilder.Entity<Exam>(entity =>
 
         // ── Emploi du temps des classes (voir ApplicationDbContext.ClassTimetable.cs) ──
         OnModelCreatingClassTimetable(modelBuilder);
+
+        // ── Rendez-vous parent-professeur (voir ApplicationDbContext.ParentTeacherMeetings.cs) ──
+        OnModelCreatingParentTeacherMeetings(modelBuilder);
     }
 }
