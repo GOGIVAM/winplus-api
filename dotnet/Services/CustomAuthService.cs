@@ -103,7 +103,7 @@ public class CustomAuthService : ICustomAuthService
 
     private static readonly HashSet<string> AllowedSignUpRoles = new(StringComparer.OrdinalIgnoreCase)
     {
-        "student", "teacher", "parent"
+        "student", "teacher", "parent", "institution"
     };
 
     public async Task<AuthResult> SignUpAsync(
@@ -178,7 +178,7 @@ public class CustomAuthService : ICustomAuthService
             // Hash password
             var passwordHash = BC.HashPassword(password);
 
-            // Le rôle est fourni par le client (student/teacher/parent) ; on retombe
+            // Le rôle est fourni par le client (student/teacher/parent/institution) ; on retombe
             // sur "student" si absent ou hors de la liste autorisée (ex: "admin" ne
             // peut pas être auto-attribué à l'inscription).
             var normalizedRole = !string.IsNullOrWhiteSpace(role) && AllowedSignUpRoles.Contains(role)
