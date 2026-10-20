@@ -43,6 +43,54 @@ public class ConcoursEvent
     /// <summary>FAQ du concours, JSON : [{"question":"...","answer":"..."}].</summary>
     public string? FaqJson { get; set; }
 
+    // ── Lot 10.4 : contenus éditoriaux (écran admin « Contenus des concours ») ──
+    // Texte simple ou Markdown léger (titres « ## », listes « - », gras « ** »).
+    // Colonnes ajoutées par Migrations/SQL_ConcoursEventsEditorial.sql.
+
+    /// <summary>Programme officiel des épreuves.</summary>
+    public string? Programme { get; set; }
+
+    /// <summary>Conditions d'admission (diplôme, âge, nationalité...).</summary>
+    public string? AdmissionConditions { get; set; }
+
+    /// <summary>Filières, spécialités ou divisions ouvertes.</summary>
+    public string? Tracks { get; set; }
+
+    /// <summary>Épreuves et coefficients.</summary>
+    public string? Coefficients { get; set; }
+
+    /// <summary>
+    /// Source des informations officielles (programme, conditions, coefficients,
+    /// dates) : une URL par ligne, la première étant la source principale.
+    /// </summary>
+    [MaxLength(1000)]
+    public string? SourceUrl { get; set; }
+
+    /// <summary>Date de consultation de la source.</summary>
+    public DateTime? SourceCheckedAt { get; set; }
+
+    // Versions anglaises facultatives (même structure, suffixe En). Vides :
+    // la page anglaise affiche le texte français avec lang="fr".
+    [MaxLength(200)]
+    public string? NameEn { get; set; }
+
+    [MaxLength(1000)]
+    public string? NotesEn { get; set; }
+
+    [MaxLength(2000)]
+    public string? TipsEn { get; set; }
+
+    /// <summary>FAQ anglaise, même format que <see cref="FaqJson"/>.</summary>
+    public string? FaqJsonEn { get; set; }
+
+    public string? ProgrammeEn { get; set; }
+
+    public string? AdmissionConditionsEn { get; set; }
+
+    public string? TracksEn { get; set; }
+
+    public string? CoefficientsEn { get; set; }
+
     public bool IsPublished { get; set; } = true;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
