@@ -636,6 +636,8 @@ builder.Services.AddHostedService<BadgeBacklogUnlockService>();
 
 // Partie 14.1 (2026-10-08) : proactivité du conseiller parent par alertes ciblées sur seuils.
 builder.Services.AddHostedService<ParentAdvisorThresholdService>();
+// Alertes de décrochage (inactivité, devoirs d'établissement, examens blancs manqués).
+builder.Services.AddHostedService<InstitutionDropoutAlertService>();
 
 // Add health checks
 builder.Services.AddHealthChecks();
