@@ -146,7 +146,7 @@ public class NotchPayService : INotchPayService
             currency    = _config.Currency,
             customer    = new { name = customerName, email = customerEmail, phone = e164Phone },
             reference   = reference,
-            description = UssdText(description),
+            description = OperatorLabel(referencePrefix),
             callback    = _config.CallbackUrl
         };
 
@@ -338,6 +338,19 @@ public class NotchPayService : INotchPayService
         }
     }
 
+    /// <summary>
+    /// Libellé inséré par l'opérateur dans « Vous souhaitez payer 250 FCFA de … »
+    /// et « pour un achat de … auprès de … » : un groupe nominal sans accent
+    /// (les opérateurs les suppriment) et commençant par une consonne, pour
+    /// que la phrase de l'opérateur reste correcte.
+    /// </summary>
+    public static string OperatorLabel(string? referencePrefix) => referencePrefix switch
+    {
+        "TBK"  => "cours particulier WinPlus",
+        "TEN"  => "cours particuliers WinPlus",
+        "SESS" => "session de cours WinPlus",
+        _      => "contenus WinPlus",
+    };
     /// <summary>
     /// Libellé lu par l'opérateur dans le message de confirmation Mobile Money :
     /// les opérateurs suppriment les lettres accentuées (« Épreuves » devenait

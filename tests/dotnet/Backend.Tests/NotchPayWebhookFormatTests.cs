@@ -64,6 +64,15 @@ public class NotchPayWebhookFormatTests
         Assert.Equal(expected, NotchPayService.UssdText(input));
     }
 
+    [Theory]
+    [InlineData("WP", "contenus WinPlus")]
+    [InlineData("TBK", "cours particulier WinPlus")]
+    [InlineData("SESS", "session de cours WinPlus")]
+    public void OperatorLabel_FitsOperatorSentence(string prefix, string expected)
+    {
+        Assert.Equal(expected, NotchPayService.OperatorLabel(prefix));
+    }
+
     [Fact]
     public void MaskPhone_KeepsOnlyPrefixAndLastDigits()
     {
