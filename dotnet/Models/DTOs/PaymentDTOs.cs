@@ -37,6 +37,8 @@ public class InitiatePaymentResponse
 
 public class NotchPayWebhookPayload
 {
+    /// <summary>Identifiant de l'événement (evt_…), propre à chaque notification.</summary>
+    public string? Id { get; set; }
     public string? Event { get; set; }
     public NotchPayWebhookTransaction? Transaction { get; set; }
 }

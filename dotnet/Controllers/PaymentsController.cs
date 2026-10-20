@@ -203,8 +203,16 @@ public class PaymentsController : ControllerBase
             return BadRequest(new { error = "Payload invalide" });
         }
 
+        // Format actuel de NotchPay : { "type": "payment.complete", "data": { ... } }.
+        // L'ancien format { "event", "transaction" } reste accepté.
         if (webhookData?.Transaction == null)
+            webhookData = ReadDataFormatPayload(payload) ?? webhookData;
+
+        if (webhookData?.Transaction == null)
+        {
+            _logger.LogWarning("Webhook NotchPay sans transaction lisible, clés reçues : {Keys}", DescribePayloadKeys(payload));
             return BadRequest(new { error = "Transaction manquante dans le payload" });
+        }
 
         _logger.LogInformation(
             "Webhook NotchPay event={Event} ref={Ref} status={Status} operator={Op} amount={Amount}",
@@ -212,8 +220,12 @@ public class PaymentsController : ControllerBase
             webhookData.Transaction.Status, webhookData.Transaction.Operator,
             webhookData.Transaction.Amount);
 
-        var eventId = webhookData.Transaction.Reference
-            ?? $"notchpay-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+        // Un même paiement reçoit plusieurs notifications (créé, en cours, terminé) :
+        // l'anti-doublon porte sur l'événement, jamais sur la seule référence,
+        // sinon « payment.complete » était ignoré après « payment.processing ».
+        var eventId = !string.IsNullOrWhiteSpace(webhookData.Id)
+            ? webhookData.Id!
+            : $"{webhookData.Transaction.Reference ?? "sans-ref"}:{webhookData.Event ?? "unknown"}:{webhookData.Transaction.Status ?? ""}";
 
         try
         {
@@ -255,6 +267,83 @@ public class PaymentsController : ControllerBase
     /// pour toute autre notification. Tolère les deux formes observées
     /// (<c>event</c>/<c>type</c>, objet sous <c>data</c>/<c>transfer</c>/<c>transaction</c>).
     /// </summary>
+    /// <summary>
+    /// Lit le format <c>{ type|event, data: { reference, merchant_reference, status, amount, ... } }</c>.
+    /// Les réservations, sessions et engagements sont retrouvés par leur référence
+    /// marchande (TBK-, SESS-, TEN-) ; le catalogue par la référence NotchPay (trx.…).
+    /// </summary>
+    public static NotchPayWebhookPayload? ReadDataFormatPayload(string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object) return null;
+            if (data.TryGetProperty("transaction", out var nested) && nested.ValueKind == JsonValueKind.Object) data = nested;
+
+            static string? Str(JsonElement o, string name) =>
+                o.TryGetProperty(name, out var v) ? v.ValueKind switch
+                {
+                    JsonValueKind.String => v.GetString(),
+                    JsonValueKind.Number => v.GetRawText(),
+                    _ => null
+                } : null;
+
+            // Selon la documentation actuelle (developer.notchpay.co), « reference » peut porter la
+            // référence NotchPay (trx.…) ou la référence marchande, que « trxref » porte aussi.
+            var candidates = new[] { Str(data, "reference"), Str(data, "trxref"), Str(data, "merchant_reference") }
+                .Where(r => !string.IsNullOrWhiteSpace(r)).Select(r => r!).ToList();
+            var reference =
+                candidates.FirstOrDefault(r => r.StartsWith("TBK-") || r.StartsWith("SESS-") || r.StartsWith("TEN-"))
+                ?? candidates.FirstOrDefault(r => r.StartsWith("trx."))
+                ?? candidates.FirstOrDefault();
+
+            decimal? amount = decimal.TryParse(Str(data, "amount"), System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out var a) ? a : null;
+
+            string? op = Str(data, "operator");
+            if (op == null && data.TryGetProperty("payment_method", out var pm) && pm.ValueKind == JsonValueKind.Object)
+                op = Str(pm, "operator") ?? Str(pm, "channel");
+
+            return new NotchPayWebhookPayload
+            {
+                Id = Str(root, "id"),
+                Event = Str(root, "type") ?? Str(root, "event"),
+                Transaction = reference == null ? null : new NotchPayWebhookTransaction
+                {
+                    Reference = reference,
+                    // Sans statut dans data, le type d'événement le donne (payment.complete → complete).
+                    Status = Str(data, "status") ?? (Str(root, "type") ?? Str(root, "event"))?.Split('.').LastOrDefault(),
+                    Amount = amount,
+                    Currency = Str(data, "currency"),
+                    Operator = op,
+                    FailureCode = Str(data, "failure_code"),
+                    FailureMessage = Str(data, "failure_message")
+                }
+            };
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Noms des champs reçus (jamais les valeurs), pour diagnostiquer un format inattendu.</summary>
+    private static string DescribePayloadKeys(string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return doc.RootElement.ValueKind.ToString();
+            return string.Join(", ", doc.RootElement.EnumerateObject().Select(p =>
+                p.Value.ValueKind == JsonValueKind.Object
+                    ? $"{p.Name}{{{string.Join(",", p.Value.EnumerateObject().Select(c => c.Name))}}}"
+                    : p.Name));
+        }
+        catch (JsonException) { return "JSON invalide"; }
+    }
+
     private static string? TryReadTransferReference(string payload)
     {
         try

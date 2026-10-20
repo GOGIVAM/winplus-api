@@ -127,7 +127,7 @@ public class PaymentService : IPaymentService
             Currency   = "XAF",
             PaymentMethod = "notchpay",
             PhoneNumber   = request.Phone,
-            Description   = request.Description ?? $"WinPlus  Épreuves scolaires",
+            Description   = request.Description ?? "WinPlus - Epreuves scolaires",
             Status      = "pending",
             InitiatedAt = DateTime.UtcNow,
             ExpiresAt   = DateTime.UtcNow.AddHours(1)
@@ -176,6 +176,14 @@ public class PaymentService : IPaymentService
         var payment = string.IsNullOrEmpty(transaction.Reference)
             ? null
             : await _repository.GetByNotchpayReferenceAsync(transaction.Reference);
+
+        // Référence marchande « WP-{commande}-{horodatage} » : on retrouve le paiement par sa commande.
+        if (payment == null && transaction.Reference is { } wpRef)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(wpRef, @"^WP-(\d+)-");
+            if (m.Success && int.TryParse(m.Groups[1].Value, out var orderIdFromRef))
+                payment = await _repository.GetByOrderIdAsync(orderIdFromRef);
+        }
 
         if (payment == null)
         {
@@ -711,7 +719,7 @@ public class PaymentService : IPaymentService
             var channel = DetectChannelFromPhone(payment.PhoneNumber ?? "");
             var result = await _notchPay.InitiatePaymentAsync(
                 payment.PhoneNumber!, payment.Amount, payment.OrderId,
-                payment.Description ?? $"WinPlus  Épreuves scolaires", email, customerName, channel);
+                payment.Description ?? "WinPlus - Epreuves scolaires", email, customerName, channel);
 
             payment.NotchpayReference = result.Transaction?.Reference;
             payment.Status = MapNotchPayStatus(result.Transaction?.Status) ?? "pending";

@@ -146,7 +146,7 @@ public class NotchPayService : INotchPayService
             currency    = _config.Currency,
             customer    = new { name = customerName, email = customerEmail, phone = e164Phone },
             reference   = reference,
-            description = description,
+            description = UssdText(description),
             callback    = _config.CallbackUrl
         };
 
@@ -291,7 +291,7 @@ public class NotchPayService : INotchPayService
                 country = "CM",
             },
             channel = request.Channel,
-            description = request.Description,
+            description = UssdText(request.Description),
             reference = request.Reference,
         };
 
@@ -338,8 +338,32 @@ public class NotchPayService : INotchPayService
         }
     }
 
+    /// <summary>
+    /// Libellé lu par l'opérateur dans le message de confirmation Mobile Money :
+    /// les opérateurs suppriment les lettres accentuées (« Épreuves » devenait
+    /// « preuves »). On retire donc les accents, on garde lettres, chiffres et
+    /// ponctuation simple, et on limite la longueur.
+    /// </summary>
+    public static string UssdText(string? text, int max = 60)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "WinPlus";
+        var decomposed = text.Normalize(NormalizationForm.FormD);
+        var sb = new StringBuilder(decomposed.Length);
+        foreach (var ch in decomposed)
+        {
+            var cat = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch);
+            if (cat == System.Globalization.UnicodeCategory.NonSpacingMark) continue;
+            if (ch < 128 && (char.IsLetterOrDigit(ch) || " -.,:'()/+".IndexOf(ch) >= 0)) sb.Append(ch);
+            else if (ch is '\u2013' or '\u2014') sb.Append('-');
+            else sb.Append(' ');
+        }
+        var clean = System.Text.RegularExpressions.Regex.Replace(sb.ToString(), @"\s+", " ").Trim();
+        if (clean.Length == 0) return "WinPlus";
+        return clean.Length <= max ? clean : clean[..max].TrimEnd();
+    }
+
     /// <summary>+237656478741 → +237******741 : assez pour le support, rien d'exploitable.</summary>
-    internal static string MaskPhone(string? phone)
+    public static string MaskPhone(string? phone)
     {
         if (string.IsNullOrEmpty(phone) || phone.Length <= 7) return "***";
         return phone[..4] + new string('*', phone.Length - 7) + phone[^3..];
