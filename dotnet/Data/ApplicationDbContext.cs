@@ -1955,5 +1955,8 @@ modelBuilder.Entity<Exam>(entity =>
 
         // ── Cahier de textes des classes (voir ApplicationDbContext.ClassLogbook.cs) ──
         OnModelCreatingClassLogbook(modelBuilder);
+
+        // ── Emploi du temps des classes (voir ApplicationDbContext.ClassTimetable.cs) ──
+        OnModelCreatingClassTimetable(modelBuilder);
     }
 }

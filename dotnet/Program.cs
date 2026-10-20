@@ -638,6 +638,8 @@ builder.Services.AddHostedService<BadgeBacklogUnlockService>();
 builder.Services.AddHostedService<ParentAdvisorThresholdService>();
 // Alertes de décrochage (inactivité, devoirs d'établissement, examens blancs manqués).
 builder.Services.AddHostedService<InstitutionDropoutAlertService>();
+// Rappels de cours (emploi du temps des classes).
+builder.Services.AddHostedService<ClassTimetableReminderService>();
 
 // Add health checks
 builder.Services.AddHealthChecks();
