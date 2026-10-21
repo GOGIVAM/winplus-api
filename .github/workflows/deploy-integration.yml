@@ -70,4 +70,9 @@ jobs:
             sleep 3
             sudo systemctl is-active winplus-fastapi-integration
             sudo systemctl is-active winplus-backend-integration
-            curl -fsS -m 20 http://127.0.0.1:5002/health > /dev/null && echo "API d'integration en ligne"
+            # Le .NET met 10 a 20 s a demarrer : jusqu'a 90 s d'essais.
+            for i in $(seq 1 30); do
+              if curl -fsS -m 5 http://127.0.0.1:5002/health > /dev/null; then echo "API d'integration en ligne (essai $i)"; exit 0; fi
+              sleep 3
+            done
+            echo "API d'integration absente apres 90 s"; exit 1
