@@ -71,7 +71,8 @@ builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o =>
 });
 
 // Add services to the container
-builder.Services.AddControllers()
+// Contenus de la base servis dans la langue demandée (?lang=, User.Locale, Accept-Language).
+builder.Services.AddControllers(o => o.Filters.Add<Backend.Services.Translation.ContentLocalizationFilter>())
     .AddJsonOptions(options =>
     {
         // ✅ Utiliser CamelCase pour la sérialisation JSON
@@ -155,7 +156,7 @@ builder.Services.AddCors(options =>
 });
 
 // Configure Entity Framework Core with PostgreSQL
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
+builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
 {
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
         pgOptions =>
@@ -172,6 +173,9 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     // enregistrements supprimés. Supprimer les 49 avertissements parasites.
     options.ConfigureWarnings(w =>
         w.Ignore(CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning));
+    // Contenus bilingues : tout enregistrement qui modifie un texte français
+    // met sa traduction en attente (voir Services/Translation).
+    options.AddInterceptors(sp.GetRequiredService<Backend.Services.Translation.ContentTranslationSaveInterceptor>());
 });
 
 // Configure Authentication - Custom Auth
@@ -342,6 +346,15 @@ builder.Services.AddScoped<IJwtService, JwtService>();
 // Modules 23/36 : jeton technique des tâches de fond vers FastAPI (audience et
 // périmètre dédiés, même secret que les jetons utilisateurs).
 builder.Services.AddSingleton<IServiceTokenProvider, ServiceTokenProvider>();
+
+// Contenus bilingues fr/en (SQL_ContentTranslations.sql) : file, index en
+// mémoire, traduction WinAI (coût plateforme), tâche de fond et reprise horaire.
+builder.Services.AddSingleton<Backend.Services.Translation.IContentTranslationQueue, Backend.Services.Translation.ContentTranslationQueue>();
+builder.Services.AddSingleton<Backend.Services.Translation.ContentTranslationSaveInterceptor>();
+builder.Services.AddSingleton<Backend.Services.Translation.IContentTranslationIndex, Backend.Services.Translation.ContentTranslationIndex>();
+builder.Services.AddScoped<Backend.Services.Translation.IContentTextTranslator, Backend.Services.Translation.WinAiContentTranslator>();
+builder.Services.AddScoped<Backend.Services.Translation.ContentTranslationService>();
+builder.Services.AddHostedService<Backend.Services.Translation.ContentTranslationWorker>();
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IDeviceTrackingService, DeviceTrackingService>();
 builder.Services.AddScoped<ICustomAuthService, CustomAuthService>();

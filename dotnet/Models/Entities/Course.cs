@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Backend.Models.Entities;
 
-public class Course
+public class Course : ITranslatableContent
 {
     public int Id { get; set; }
     public string Title { get; set; } = string.Empty;
@@ -92,12 +92,27 @@ public class Course
     /// <summary>Score minimum (0-100) à l'examen final pour qu'il soit considéré réussi. 50 par défaut.</summary>
     public int FinalExamPassScorePercent { get; set; } = 50;
 
+    public string? TitleEn { get; set; }
+    public string? ShortDescriptionEn { get; set; }
+    public string? DescriptionEn { get; set; }
+    public List<string>? TagsEn { get; set; }
+    public List<string>? RequirementsEn { get; set; }
+    public List<string>? ObjectivesEn { get; set; }
+
+    // ── Version anglaise (SQL_ContentTranslations.sql) ──
+    // Remplie par la traduction automatique WinAI (Origin = "auto") ou saisie
+    // à la main (Origin = "human", jamais écrasée par la traduction automatique).
+    public string? TranslationOrigin { get; set; }
+    public string? TranslationState { get; set; }
+    public DateTime? TranslatedAt { get; set; }
+    public string? TranslationSourceHash { get; set; }
+
     public ICollection<CourseSection> Sections { get; set; } = new List<CourseSection>();
     public ICollection<CourseEnrollment> CourseEnrollments { get; set; } = new List<CourseEnrollment>();
     public ICollection<CourseReview> CourseReviews { get; set; } = new List<CourseReview>();
 }
 
-public class CourseSection
+public class CourseSection : ITranslatableContent
 {
     public int Id { get; set; }
     public int CourseId { get; set; }
@@ -125,10 +140,21 @@ public class CourseSection
     /// </summary>
     public int? MinScore { get; set; }
 
+    public string? TitleEn { get; set; }
+    public string? DescriptionEn { get; set; }
+
+    // ── Version anglaise (SQL_ContentTranslations.sql) ──
+    // Remplie par la traduction automatique WinAI (Origin = "auto") ou saisie
+    // à la main (Origin = "human", jamais écrasée par la traduction automatique).
+    public string? TranslationOrigin { get; set; }
+    public string? TranslationState { get; set; }
+    public DateTime? TranslatedAt { get; set; }
+    public string? TranslationSourceHash { get; set; }
+
     public ICollection<CourseLesson> Lessons { get; set; } = new List<CourseLesson>();
 }
 
-public class CourseLesson
+public class CourseLesson : ITranslatableContent
 {
     public int Id { get; set; }
     public int SectionId { get; set; }
@@ -165,6 +191,17 @@ public class CourseLesson
     /// C# mappées en JSON par ailleurs)  voir CheckpointDto.
     /// </summary>
     public string? CheckpointsJson { get; set; }
+
+    public string? TitleEn { get; set; }
+    public string? DescriptionEn { get; set; }
+
+    // ── Version anglaise (SQL_ContentTranslations.sql) ──
+    // Remplie par la traduction automatique WinAI (Origin = "auto") ou saisie
+    // à la main (Origin = "human", jamais écrasée par la traduction automatique).
+    public string? TranslationOrigin { get; set; }
+    public string? TranslationState { get; set; }
+    public DateTime? TranslatedAt { get; set; }
+    public string? TranslationSourceHash { get; set; }
 }
 
 public class CourseEnrollment

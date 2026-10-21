@@ -91,6 +91,14 @@ public class ConcoursEvent
 
     public string? CoefficientsEn { get; set; }
 
+    /// <summary>
+    /// Origine des champs *En (SQL_ContentTranslations.sql) : JSON
+    /// {"auto": {"NameEn": "<empreinte du français>"}, "human": {...}}.
+    /// Un champ listé dans "auto" a été rempli par WinAI et sera refait si le
+    /// français change ; un champ "human" n'est jamais écrasé.
+    /// </summary>
+    public string? TranslationMetaJson { get; set; }
+
     public bool IsPublished { get; set; } = true;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

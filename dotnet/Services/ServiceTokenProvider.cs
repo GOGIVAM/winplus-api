@@ -39,6 +39,7 @@ public static class ServiceScopes
     public const string Decrochage = "ai.decrochage";               // /api/winai/detection-decrochage
     public const string ParentAdvisorThresholds = "ai.parent-advisor-thresholds"; // /api/parent-advisor/threshold-alerts
     public const string ParentWeeklyTrend = "ai.parent-weekly-trend";             // /api/parent-advisor/weekly-trend
+    public const string ContentTranslation = "ai.content-translation";           // /api/winai/translate-batch
 }
 
 public class ServiceTokenProvider : IServiceTokenProvider

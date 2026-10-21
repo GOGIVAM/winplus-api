@@ -61,10 +61,19 @@ public class CourseCatalogController : ControllerBase
                 .Include(c => c.Instructor)
                 .AsQueryable();
 
+            // Catégorie et niveau reçus dans l'une ou l'autre langue.
+            var index = HttpContext?.RequestServices.GetService<Backend.Services.Translation.IContentTranslationIndex>();
+            var snapshot = index == null ? null : await index.GetAsync();
             if (!string.IsNullOrWhiteSpace(category))
-                query = query.Where(c => c.Category == category);
+            {
+                var categories = snapshot?.FrenchEquivalents(category) ?? new[] { category.Trim().ToLowerInvariant() };
+                query = query.Where(c => c.Category != null && categories.Contains(c.Category.ToLower()));
+            }
             if (!string.IsNullOrWhiteSpace(level))
-                query = query.Where(c => c.Level == level);
+            {
+                var levels = snapshot?.FrenchEquivalents(level) ?? new[] { level.Trim().ToLowerInvariant() };
+                query = query.Where(c => levels.Contains(c.Level.ToLower()));
+            }
             if (free.HasValue)
                 query = query.Where(c => c.IsFree == free.Value);
 
@@ -112,6 +121,8 @@ public class CourseCatalogController : ControllerBase
                 .Where(c => c.Status == "published" &&
                     (c.Title.ToLower().Contains(lower) ||
                      (c.ShortDescription != null && c.ShortDescription.ToLower().Contains(lower)) ||
+                     (c.TitleEn != null && c.TitleEn.ToLower().Contains(lower)) ||
+                     (c.ShortDescriptionEn != null && c.ShortDescriptionEn.ToLower().Contains(lower)) ||
                      (c.Category != null && c.Category.ToLower().Contains(lower))))
                 .Include(c => c.Instructor)
                 .OrderByDescending(c => c.EnrolledCount)

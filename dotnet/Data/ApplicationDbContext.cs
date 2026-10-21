@@ -1961,5 +1961,8 @@ modelBuilder.Entity<Exam>(entity =>
 
         // ── Rendez-vous parent-professeur (voir ApplicationDbContext.ParentTeacherMeetings.cs) ──
         OnModelCreatingParentTeacherMeetings(modelBuilder);
+
+        // ── Contenus bilingues fr/en (voir ApplicationDbContext.ContentTranslations.cs) ──
+        OnModelCreatingContentTranslations(modelBuilder);
     }
 }

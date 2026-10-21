@@ -39,6 +39,7 @@ from routes.canal_qa_routes import canal_qa_router
 from routes.winai_memory_routes import winai_memory_router
 from routes.goal_suggestions import router as goal_suggestions_router
 from routes.cover_routes import router as cover_router
+from routes.translation_routes import router as translation_router
 from RAG.router import rag_router
 import json
 from schemas import (
@@ -181,6 +182,11 @@ app.include_router(goal_suggestions_router)
 # Pochette de document générée par WinAI (image), sur action explicite du
 # backend .NET (CoverController). Préfixe /api/ai/cover porté par le routeur.
 app.include_router(cover_router)
+
+# Traduction des contenus de la base (fr -> en), appelée par la tâche de fond
+# .NET avec le jeton technique « ai.content-translation » (coût plateforme).
+# Préfixe /api/winai porté par le routeur.
+app.include_router(translation_router)
 
 
 # ==================== HEALTH CHECK (Public) ====================

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Backend.Data;
+using Backend.Services.Translation;
 using Backend.Models.Entities;
 using Backend.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -44,12 +45,18 @@ public class AdminConcoursEventsController : ControllerBase
         public bool IsPublished { get; init; }
         public DateTime CreatedAt { get; init; }
         public DateTime UpdatedAt { get; init; }
+        /// <summary>Champs *En remplis par WinAI (à relire) et champs à revoir (français modifié depuis).</summary>
+        public List<string> AutoTranslatedFields { get; init; }
+        public List<string> ReviewFields { get; init; }
 
         public AdminConcoursEventDto(ConcoursEvent e) : base(e)
         {
             IsPublished = e.IsPublished;
             CreatedAt = e.CreatedAt;
             UpdatedAt = e.UpdatedAt;
+            var meta = ConcoursTranslationMeta.Parse(e.TranslationMetaJson);
+            AutoTranslatedFields = meta.Auto.Keys.ToList();
+            ReviewFields = meta.Review.ToList();
         }
     }
 
@@ -82,7 +89,9 @@ public class AdminConcoursEventsController : ControllerBase
             return Conflict(new { success = false, error = $"Une fiche {slug} {request.Year} existe déjà." });
 
         var ev = new ConcoursEvent { CreatedAt = DateTime.UtcNow, IsPublished = request.IsPublished ?? false };
+        var enBefore = ConcoursTranslationMeta.Snapshot(ev);
         ConcoursEventValidation.Apply(ev, request);
+        ConcoursTranslationMeta.ApplyAdminWrite(ev, enBefore, request.EnAutoFields);
         ev.UpdatedAt = DateTime.UtcNow;
         _db.ConcoursEvents.Add(ev);
         await _db.SaveChangesAsync();
@@ -106,13 +115,35 @@ public class AdminConcoursEventsController : ControllerBase
             return Conflict(new { success = false, error = $"Une autre fiche {slug} {request.Year} existe déjà." });
 
         var before = new AdminConcoursEventDto(ev);
+        var enBefore = ConcoursTranslationMeta.Snapshot(ev);
         ConcoursEventValidation.Apply(ev, request);
+        // Les champs *En vides seront remplis en tâche de fond (ContentTranslationWorker).
+        ConcoursTranslationMeta.ApplyAdminWrite(ev, enBefore, request.EnAutoFields);
         if (request.IsPublished.HasValue) ev.IsPublished = request.IsPublished.Value;
         ev.UpdatedAt = DateTime.UtcNow;
         _audit.Add(User, HttpContext?.Connection?.RemoteIpAddress?.ToString(), "concours_event.update", "ConcoursEvent", ev.Id,
             $"{ev.Slug} {ev.Year}", before: before, after: new AdminConcoursEventDto(ev));
         await _db.SaveChangesAsync();
         return Ok(new { success = true, data = new AdminConcoursEventDto(ev) });
+    }
+
+    public sealed record TranslatePreviewRequest(Dictionary<string, string?>? Fields);
+
+    /// <summary>
+    /// Bouton « Traduire » : propose la version anglaise des champs français
+    /// fournis (Name, Notes, Tips, FaqJson, Programme, AdmissionConditions,
+    /// Tracks, Coefficients), sans rien enregistrer.
+    /// </summary>
+    [HttpPost("translate")]
+    public async Task<IActionResult> TranslatePreview([FromBody] TranslatePreviewRequest request,
+        [FromServices] ContentTranslationService translations)
+    {
+        var fields = request.Fields ?? new();
+        if (fields.Values.Sum(v => v?.Length ?? 0) > 60000) return BadRequest(new { success = false, error = "Texte trop long." });
+        var (data, error) = await translations.PreviewConcoursAsync(fields);
+        if (error != null && data.Values.All(v => v == null))
+            return StatusCode(503, new { success = false, error = "La traduction automatique est indisponible pour le moment. Réessayez plus tard ; à l'enregistrement, les champs anglais vides seront traduits dès que WinAI répondra." });
+        return Ok(new { success = true, data, partial = error != null });
     }
 
     [HttpPost("{id:int}/publish")]
@@ -187,6 +218,8 @@ public sealed record ConcoursEventWriteRequest
     public string? CoefficientsEn { get; init; }
     /// <summary>Création : brouillon si absent. Modification : inchangé si absent.</summary>
     public bool? IsPublished { get; init; }
+    /// <summary>Champs *En remplis par le bouton « Traduire » et non retouchés : ils restent « auto ».</summary>
+    public List<string>? EnAutoFields { get; init; }
 
     public static ConcoursEventWriteRequest From(ConcoursEvent e) => new()
     {

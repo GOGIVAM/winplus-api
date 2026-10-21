@@ -120,6 +120,8 @@ public class SubjectRepository : ISubjectRepository
                 .Where(s => s.IsPublished &&
                     (s.Title.ToLower().Contains(term) ||
                      (s.Description != null && s.Description.ToLower().Contains(term)) ||
+                     (s.TitleEn != null && s.TitleEn.ToLower().Contains(term)) ||
+                     (s.DescriptionEn != null && s.DescriptionEn.ToLower().Contains(term)) ||
                      (s.Category != null && s.Category.ToLower().Contains(term))))
                 .AsNoTracking()
                 .Include(s => s.Contents)

@@ -2,17 +2,24 @@ using Backend.Data;
 using Backend.Models.DTOs;
 using Backend.Models.Entities;
 using Microsoft.EntityFrameworkCore;
+using Backend.Services.Translation;
 
 namespace Backend.Services;
 
 public class ExamService : IExamService
 {
     private readonly ApplicationDbContext _context;
+    private readonly IContentTranslationIndex? _translations;
 
-    public ExamService(ApplicationDbContext context)
+    public ExamService(ApplicationDbContext context, IContentTranslationIndex? translations = null)
     {
         _context = context;
+        _translations = translations;
     }
+
+    /// <summary>Filtre reçu en anglais ou en français → valeurs françaises en base (minuscules).</summary>
+    private async Task<IReadOnlyList<string>> Fr(string value) =>
+        _translations == null ? new[] { value.Trim().ToLowerInvariant() } : (await _translations.GetAsync()).FrenchEquivalents(value);
 
     private IQueryable<Exam> BaseQuery()
     {
@@ -71,7 +78,8 @@ public class ExamService : IExamService
 
     public async Task<(List<ExamDto> Data, int TotalCount)> GetExamsByTypeAsync(string examType, int page, int pageSize)
     {
-        var query = BaseQuery().Where(e => e.ExamType.ToLower() == examType.ToLower());
+        var types = await Fr(examType);
+        var query = BaseQuery().Where(e => types.Contains(e.ExamType.ToLower()));
         var total = await query.CountAsync();
 
         var exams = await query
@@ -86,7 +94,8 @@ public class ExamService : IExamService
 
     public async Task<(List<ExamDto> Data, int TotalCount)> GetExamsBySubjectAsync(string category, int page, int pageSize)
     {
-        var query = BaseQuery().Where(e => e.Category.ToLower() == category.ToLower());
+        var categories = await Fr(category);
+        var query = BaseQuery().Where(e => categories.Contains(e.Category.ToLower()));
         var total = await query.CountAsync();
 
         var exams = await query
@@ -118,11 +127,18 @@ public class ExamService : IExamService
     {
         var query = BaseQuery();
 
+        // Filtres reçus dans l'une ou l'autre langue (« Mathematics » → « Mathématiques »).
         if (!string.IsNullOrWhiteSpace(filter.ExamType))
-            query = query.Where(e => e.ExamType.ToLower() == filter.ExamType.ToLower());
+        {
+            var types = await Fr(filter.ExamType);
+            query = query.Where(e => types.Contains(e.ExamType.ToLower()));
+        }
 
         if (!string.IsNullOrWhiteSpace(filter.Category))
-            query = query.Where(e => e.Category.ToLower() == filter.Category.ToLower());
+        {
+            var categories = await Fr(filter.Category);
+            query = query.Where(e => categories.Contains(e.Category.ToLower()));
+        }
 
         if (filter.Year.HasValue)
             query = query.Where(e => e.Year == filter.Year.Value);
@@ -134,10 +150,16 @@ public class ExamService : IExamService
             query = query.Where(e => e.Year <= filter.MaxYear.Value);
 
         if (!string.IsNullOrWhiteSpace(filter.Level))
-            query = query.Where(e => e.Level != null && e.Level.ToLower() == filter.Level.ToLower());
+        {
+            var levels = await Fr(filter.Level);
+            query = query.Where(e => e.Level != null && levels.Contains(e.Level.ToLower()));
+        }
 
         if (!string.IsNullOrWhiteSpace(filter.Difficulty))
-            query = query.Where(e => e.Difficulty != null && e.Difficulty.ToLower() == filter.Difficulty.ToLower());
+        {
+            var difficulties = await Fr(filter.Difficulty);
+            query = query.Where(e => e.Difficulty != null && difficulties.Contains(e.Difficulty.ToLower()));
+        }
 
         if (!string.IsNullOrWhiteSpace(filter.SearchTerm))
         {
@@ -145,6 +167,8 @@ public class ExamService : IExamService
             query = query.Where(e =>
                 e.Title.ToLower().Contains(term) ||
                 (e.Description != null && e.Description.ToLower().Contains(term)) ||
+                (e.TitleEn != null && e.TitleEn.ToLower().Contains(term)) ||
+                (e.DescriptionEn != null && e.DescriptionEn.ToLower().Contains(term)) ||
                 e.Category.ToLower().Contains(term) ||
                 e.ExamType.ToLower().Contains(term));
         }

@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 /// <summary>
 /// Subject entity - represents a course or educational subject
 /// </summary>
-public class Subject
+public class Subject : ITranslatableContent
 {
     public int Id { get; set; }
     
@@ -80,6 +80,17 @@ public class Subject
     public decimal? PlatformCommissionRate { get; set; }
 
     public DateTime? WinAiScoreEvaluatedAt { get; set; }
+
+    public string? TitleEn { get; set; }
+    public string? DescriptionEn { get; set; }
+
+    // ── Version anglaise (SQL_ContentTranslations.sql) ──
+    // Remplie par la traduction automatique WinAI (Origin = "auto") ou saisie
+    // à la main (Origin = "human", jamais écrasée par la traduction automatique).
+    public string? TranslationOrigin { get; set; }
+    public string? TranslationState { get; set; }
+    public DateTime? TranslatedAt { get; set; }
+    public string? TranslationSourceHash { get; set; }
 
     // Navigation properties
     public User? Author { get; set; }

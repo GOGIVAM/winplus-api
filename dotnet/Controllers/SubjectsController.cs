@@ -10,6 +10,7 @@ using Backend.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using Backend.Utils;
+using Backend.Services.Translation;
 
 namespace Backend.Controllers;
 
@@ -170,6 +171,17 @@ public class SubjectsController : ControllerBase
 
     private static int ClampListLimit(int limit) => limit < 1 || limit > 100 ? 20 : limit;
 
+    /// <summary>
+    /// Valeurs françaises équivalentes à un filtre reçu en anglais ou en
+    /// français (« Mathematics » retrouve « Mathématiques »), en minuscules.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> FrenchEquivalentsAsync(string value)
+    {
+        var index = HttpContext?.RequestServices.GetService<IContentTranslationIndex>();
+        if (index == null) return new[] { value.Trim().ToLowerInvariant() };
+        return (await index.GetAsync()).FrenchEquivalents(value);
+    }
+
     [HttpGet]
     [ProducesResponseType(typeof(PaginationResponse<Subject>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll(
@@ -201,19 +213,28 @@ public class SubjectsController : ControllerBase
 
             if (!string.IsNullOrWhiteSpace(q))
             {
+                // Recherche dans les deux langues (titre et description anglais).
                 var lower = q.ToLower();
                 query = query.Where(s =>
                     s.Title.ToLower().Contains(lower) ||
-                    (s.Description != null && s.Description.ToLower().Contains(lower)));
+                    (s.Description != null && s.Description.ToLower().Contains(lower)) ||
+                    (s.TitleEn != null && s.TitleEn.ToLower().Contains(lower)) ||
+                    (s.DescriptionEn != null && s.DescriptionEn.ToLower().Contains(lower)));
             }
 
             if (!string.IsNullOrWhiteSpace(category))
-                query = query.Where(s => s.Category != null && s.Category.ToLower() == category.ToLower());
+            {
+                var categories = await FrenchEquivalentsAsync(category);
+                query = query.Where(s => s.Category != null && categories.Contains(s.Category.ToLower()));
+            }
 
             if (!string.IsNullOrWhiteSpace(difficulty))
+            {
+                var difficulties = await FrenchEquivalentsAsync(difficulty);
                 query = query.Where(s => _context.Exams.Any(e =>
                     e.SubjectId == s.Id && !e.IsDeleted &&
-                    e.Difficulty != null && e.Difficulty.ToLower() == difficulty.ToLower()));
+                    e.Difficulty != null && difficulties.Contains(e.Difficulty.ToLower())));
+            }
 
             var totalCount = await query.CountAsync();
 
@@ -753,7 +774,14 @@ public class SubjectsController : ControllerBase
         try
         {
             _logger.LogInformation("Récupération des cours pour la catégorie {Category}", name);
-            var results = await _subjectService.GetSubjectsByCategoryAsync(name);
+            // Nom reçu en anglais : on cherche aussi les catégories françaises équivalentes.
+            var wanted = await FrenchEquivalentsAsync(name);
+            var dbCategories = await _context.Subjects.AsNoTracking()
+                .Where(s => !s.IsDeleted && s.Category != null).Select(s => s.Category!).Distinct().ToListAsync();
+            var names = dbCategories.Where(c => wanted.Contains(c.ToLower())).DefaultIfEmpty(name).ToList();
+            var results = Enumerable.Empty<Subject>();
+            foreach (var n in names) results = results.Concat(await _subjectService.GetSubjectsByCategoryAsync(n));
+            results = results.DistinctBy(s => s.Id).ToList();
 
             var (viewerId, viewerIsAdmin) = CurrentViewer();
             results = results.Where(s => IsVisibleToViewer(s, viewerId, viewerIsAdmin));
@@ -807,7 +835,8 @@ public class SubjectsController : ControllerBase
                 .Select(e => e.ExamType)
                 .Distinct()
                 .ToListAsync();
-            var matchingTypes = allTypes.Where(t => ExamTypeGroups.Matches(t, examType)).ToList();
+            var requestedTypes = await FrenchEquivalentsAsync(examType);
+            var matchingTypes = allTypes.Where(t => requestedTypes.Any(r => ExamTypeGroups.Matches(t, r))).ToList();
 
             var query = _context.Subjects
                 .Where(s => !s.IsDeleted && _context.Exams.Any(e =>

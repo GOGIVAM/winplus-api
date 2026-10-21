@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 namespace Backend.Models.Entities;
 
 [Table("Exams")]
-public class Exam
+public class Exam : ITranslatableContent
 {
     [Key]
     public int Id { get; set; }
@@ -69,6 +69,18 @@ public class Exam
     public int? SubjectId { get; set; }
     public DateTime? CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
+
+    [StringLength(255)]
+    public string? TitleEn { get; set; }
+    public string? DescriptionEn { get; set; }
+
+    // ── Version anglaise (SQL_ContentTranslations.sql) ──
+    // Remplie par la traduction automatique WinAI (Origin = "auto") ou saisie
+    // à la main (Origin = "human", jamais écrasée par la traduction automatique).
+    public string? TranslationOrigin { get; set; }
+    public string? TranslationState { get; set; }
+    public DateTime? TranslatedAt { get; set; }
+    public string? TranslationSourceHash { get; set; }
 
     // Relations
     [ForeignKey(nameof(SubjectId))]
