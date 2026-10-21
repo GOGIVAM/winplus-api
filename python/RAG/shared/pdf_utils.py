@@ -15,9 +15,13 @@ import fitz  # PyMuPDF
 
 # Ratio caractères-extractibles / surface-de-page en-dessous duquel un
 # document est considéré comme scanné (pas de couche texte fiable) et doit
-# être routé vers la chaîne OCR. Calibré empiriquement (Phase 0) ; à ajuster
-# sur un échantillon réel du corpus WinPlus.
-NATIVE_TEXT_RATIO_THRESHOLD = 0.015
+# être routé vers la chaîne OCR.
+# Recalibré le 2026-10-21 sur le corpus réel : une page A4 (595 x 842 pt,
+# environ 501 000 pt²) entièrement tapée fait environ 3 000 caractères, soit
+# un ratio de 0,006. L'ancien seuil (0,015) classait donc tout PDF texte
+# comme scanné : 90 épreuves et livres sur 90 partaient à l'OCR payant.
+# 0,0002 correspond à environ 100 caractères par page A4.
+NATIVE_TEXT_RATIO_THRESHOLD = 0.0002
 
 
 @dataclass
