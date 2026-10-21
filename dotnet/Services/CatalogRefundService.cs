@@ -96,10 +96,12 @@ public class CatalogRefundService : ICatalogRefundService
         // Part réglée par le solde professeur : restituée par la
         // contre-passation de son débit (WalletService.SyncOrderAsync), jamais
         // créditée une seconde fois ici.
+        // Paiement combiné du parent pour un enfant : sa part portefeuille
+        // porte deux clés (dotation, recharge), restituées de la même façon.
+        var balanceKeys = WalletService.BalancePartKeys(orderId);
         var balanceDebit = await _db.WalletTransactions.AsNoTracking()
-            .Where(t => t.IdempotencyKey == WalletService.BalancePurchaseKey(orderId))
-            .Select(t => (decimal?)t.Amount)
-            .FirstOrDefaultAsync();
+            .Where(t => balanceKeys.Contains(t.IdempotencyKey))
+            .SumAsync(t => (decimal?)t.Amount);
         var balancePart = Math.Min(total, RevenueSplit.Xaf(Math.Abs(balanceDebit ?? 0m)));
 
         var isParentWallet = string.Equals(order.PaymentMethod, "parent_wallet", StringComparison.OrdinalIgnoreCase);

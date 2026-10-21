@@ -482,6 +482,27 @@ public class WalletService : IWalletService
     public static string CatalogSaleKey(int orderItemId) => $"catalog_sale:orderitem:{orderItemId}";
     public static string CatalogCommissionKey(int orderItemId) => $"catalog_commission:orderitem:{orderItemId}";
     public static string BalancePurchaseKey(int orderId) => $"balance_purchase:order:{orderId}";
+
+    /// <summary>
+    /// Base des clés de la part portefeuille d'un paiement combiné parent
+    /// (achat du panier pour un enfant, portefeuille + Mobile Money).
+    /// <see cref="DebitParentWalletAsync"/> en dérive « :alloc » et « :perm ».
+    /// </summary>
+    public static string ParentComplementKeyBase(int orderId) => $"parent_complement:order:{orderId}";
+
+    /// <summary>
+    /// Clés de toutes les écritures qui portent la part d'une commande réglée
+    /// par le solde avant un complément Mobile Money : débit du solde
+    /// (professeur, élève) et débit du portefeuille parent (dotation, recharge).
+    /// Lues par la vérification du montant notifié, la restitution et le
+    /// calcul du remboursement.
+    /// </summary>
+    public static string[] BalancePartKeys(int orderId) => new[]
+    {
+        BalancePurchaseKey(orderId),
+        ParentComplementKeyBase(orderId) + ":alloc",
+        ParentComplementKeyBase(orderId) + ":perm",
+    };
     public static string CatalogRefundKey(int orderId) => $"catalog_refund:order:{orderId}";
     public static string CatalogRefundFeeKey(int orderId) => $"catalog_refund_fee:order:{orderId}";
     public static string TutoringKey(int bookingId) => $"tutoring:booking:{bookingId}";
@@ -560,11 +581,33 @@ public class WalletService : IWalletService
         // paiement combiné solde + Mobile Money) : restituée dès que la
         // commande n'est plus payée (remboursement approuvé, échec ou
         // expiration du complément Mobile Money, annulation).
+        // Paiement combiné du parent pour un enfant : sa part portefeuille
+        // (dotation puis recharge) porte deux clés dérivées, restituées de la
+        // même façon (voir BalancePartKeys).
         if (!paid && !IsAwaitingPayment(order.Status))
         {
-            var debit = await FindByKeyAsync(BalancePurchaseKey(order.Id));
-            if (debit != null)
-                await ReverseAsync(debit.Id, $"Part payée par le solde restituée (commande {order.OrderNumber}, {order.Status})");
+            foreach (var key in BalancePartKeys(order.Id))
+            {
+                var debit = await FindByKeyAsync(key);
+                if (debit != null)
+                    await ReverseAsync(debit.Id, $"Part payée par le solde restituée (commande {order.OrderNumber}, {order.Status})");
+            }
+        }
+
+        // Achat d'un parent pour son enfant confirmé plus tard (complément ou
+        // paiement Mobile Money) : l'inscription de l'enfant aux épreuves,
+        // condition de son accès (ContentAccessService), est créée ici, comme
+        // celle des formations ci-dessous.
+        if (paid)
+        {
+            try
+            {
+                await ChildSubjectAccess.SyncForOrderAsync(_db, orderId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Inscriptions de l'enfant aux épreuves de la commande {OrderId} non créées (réconciliation à venir)", orderId);
+            }
         }
 
         // Lot 9.7a (suivi 18.5) : remboursement approuvé par l'administration,

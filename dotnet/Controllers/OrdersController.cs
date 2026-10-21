@@ -16,7 +16,18 @@ namespace Backend.Controllers;
 /// n'est pas rejeté, ils sont simplement ignorés à la désérialisation.
 /// </summary>
 /// <summary>Paiement combiné solde + Mobile Money (TC-CAT-11, lot 2 Module 3).</summary>
-public record PayWithBalanceComplementRequest(string Operator, string Phone);
+public record PayWithBalanceComplementRequest(
+    string Operator,
+    string Phone,
+    /// <summary>Code promo validé au panier ; recalculé côté serveur.</summary>
+    string? PromoCode = null,
+    /// <summary>Lot 10.3 : source d'acquisition captée par le web (facultative).</summary>
+    Backend.Services.Marketing.AttributionDto? Attribution = null);
+
+/// <summary>Corps facultatif du paiement par solde (un appel sans corps reste accepté).</summary>
+public record PayWithBalanceRequest(
+    string? PromoCode = null,
+    Backend.Services.Marketing.AttributionDto? Attribution = null);
 
 public record CreateOrderRequest(
     string PaymentMethod,
@@ -40,6 +51,8 @@ public class OrdersController : ControllerBase
     private readonly IWalletService _wallet;
     private readonly IPaymentService _payments;
     private readonly Backend.Services.Marketing.IAttributionService? _attribution;
+    private readonly IPromoCodeService? _promoCodes;
+    private readonly Backend.Services.Marketing.IConversionTracker? _conversions;
 
     public OrdersController(
         IOrderService orderService,
@@ -50,9 +63,13 @@ public class OrdersController : ControllerBase
         IAffiliateService affiliate,
         IWalletService wallet,
         IPaymentService payments,
-        Backend.Services.Marketing.IAttributionService? attribution = null)
+        Backend.Services.Marketing.IAttributionService? attribution = null,
+        IPromoCodeService? promoCodes = null,
+        Backend.Services.Marketing.IConversionTracker? conversions = null)
     {
         _attribution = attribution;
+        _promoCodes = promoCodes;
+        _conversions = conversions;
         _wallet = wallet;
         _payments = payments;
         _orderService = orderService;
@@ -102,16 +119,74 @@ public class OrdersController : ControllerBase
     private static bool IsSerializationFailure(Exception exception) =>
         DbConcurrency.IsSerializationFailure(exception);
 
+    /// <summary>
+    /// Comptes qui paient leur propre panier avec leur solde : le professeur
+    /// (revenus, recharges) et l'élève (recharges, lot 2 Module 3). Le parent
+    /// paie pour un enfant (ParentCartCheckoutController) ; l'institution a son
+    /// propre portefeuille partagé, hors de ce parcours.
+    /// </summary>
+    private static bool CanPayOwnCartWithBalance(string? role) =>
+        string.Equals(role, "teacher", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(role, "student", StringComparison.OrdinalIgnoreCase);
+
+    private string? CurrentRole() =>
+        User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
+
+    /// <summary>Lot 10.6 : message dans la langue du compte (User.Locale).</summary>
+    private async Task<Func<string, string, string>> MessagesForAsync(int userId)
+    {
+        var en = NotificationLocales.IsEnglish(await NotificationLocales.ForUserAsync(_db, userId));
+        return (fr, english) => en ? english : fr;
+    }
+
+    private IActionResult BalanceRoleRefused(Func<string, string, string> L, string? role) =>
+        StatusCode(403, new
+        {
+            success = false,
+            code = "balance_not_available",
+            error = string.Equals(role, "parent", StringComparison.OrdinalIgnoreCase)
+                ? L("Le parent paie avec son portefeuille pour un enfant : choisissez l'enfant dans la fenêtre d'achat.",
+                    "Parents pay from their wallet for a child: choose the child in the checkout window.")
+                : L("Le paiement par solde est réservé aux comptes élève, parent et professeur.",
+                    "Paying with your balance is available to student, parent and teacher accounts."),
+        });
+
+    /// <summary>
+    /// Transaction Serializable sur PostgreSQL ; aucune sur le fournisseur
+    /// InMemory des tests (sans transaction), où le verrou du portefeuille est
+    /// un verrou de processus (WalletService.RunLockedAsync).
+    /// </summary>
+    private async Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction?> BeginSerializableAsync() =>
+        _db.Database.IsRelational()
+            ? await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable)
+            : null;
+
+    /// <summary>Hors transaction : code promo décompté, attribution figée, conversion (lot 10.3). Ne lève jamais.</summary>
+    private async Task AfterBalancePaidAsync(int userId, Order order, Backend.Services.Marketing.AttributionDto? attribution)
+    {
+        if (!string.IsNullOrEmpty(order.PromoCode) && _promoCodes != null)
+        {
+            try { await _promoCodes.ApplyPromoCodeAsync(userId, order.Id, order.PromoCode); }
+            catch (Exception ex) { _logger.LogError(ex, "Code promo de la commande {OrderId} non décompté", order.Id); }
+        }
+        if (_attribution != null)
+            await _attribution.ApplyToOrderAsync(order.Id, userId, attribution, HttpContext?.RequestAborted ?? default);
+        if (_conversions != null)
+            await _conversions.RecordOrderPurchaseAsync(order.Id);
+    }
+
     [HttpPost("pay-with-balance")]
     [Authorize]
-    public async Task<IActionResult> PayWithBalance()
+    public async Task<IActionResult> PayWithBalance(
+        [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] PayWithBalanceRequest? request = null)
     {
         try
         {
             var userId = User.GetUserId();
-            var role = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
-            if (!string.Equals(role, "teacher", StringComparison.OrdinalIgnoreCase))
-                return StatusCode(403, new { success = false, error = "Seul un compte professeur dispose d'un solde WinPlus." });
+            var L = await MessagesForAsync(userId);
+            var role = CurrentRole();
+            if (!CanPayOwnCartWithBalance(role))
+                return BalanceRoleRefused(L, role);
 
             // Module 19, double dépense : le solde était lu puis la commande
             // créée sans transaction, sans verrou et sans idempotence. Le solde
@@ -127,7 +202,7 @@ public class OrdersController : ControllerBase
             // La transaction est annulée automatiquement à la sortie du bloc
             // si elle n'a pas été validée (`await using`) : aucun chemin de
             // retour anticipé ne peut laisser un débit à moitié appliqué.
-            await using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+            await using var tx = await BeginSerializableAsync();
 
             // Lot 2 : verrou du portefeuille pris dès l'ouverture de la
             // transaction (verrou consultatif PostgreSQL, gardé jusqu'au COMMIT),
@@ -146,9 +221,19 @@ public class OrdersController : ControllerBase
                 // Décision 10.1 : total TTC, identique à Order.TotalAmount posé
                 // par CreateOrderAsync. Le contrôle de solde, la clé de doublon
                 // et le débit portent donc tous sur le même montant.
-                var serverTotal = pricing.Total;
-                if (pricing.IsEmpty || serverTotal <= 0)
-                    return BadRequest(new { success = false, error = "Panier vide." });
+                if (pricing.IsEmpty || pricing.Total <= 0)
+                    return BadRequest(new { success = false, code = "cart_empty", error = L("Panier vide.", "Your cart is empty.") });
+
+                // Code promo recalculé par la même règle que CreateOrderAsync,
+                // AVANT le débit : le solde est comparé au total remisé, celui
+                // que la commande portera. Un code devenu caduc est refusé
+                // plutôt que débité au prix plein sans que l'utilisateur le voie.
+                var promo = await CartPromo.ComputeAsync(_promoCodes, userId, pricing.Items, request?.PromoCode);
+                if (promo.Invalid)
+                    return BadRequest(new { success = false, code = "promo_invalid",
+                        error = L("Le code promo n'est plus valable : retire-le du panier pour voir le nouveau total.",
+                                  "The promo code is no longer valid: remove it from your cart to see the new total.") });
+                var serverTotal = Math.Max(0m, pricing.Total - promo.Discount);
 
                 // Idempotence : une commande identique tout juste payée est
                 // renvoyée telle quelle, au lieu d'en créer une seconde. La
@@ -188,9 +273,9 @@ public class OrdersController : ControllerBase
                     _db.CartItems.RemoveRange(cartItems);
                     await _db.SaveChangesAsync();
 
-                    await tx.CommitAsync();
+                    if (tx != null) await tx.CommitAsync();
                     _logger.LogWarning(
-                        "Double soumission détectée sur le paiement par solde du professeur {UserId} : commande {OrderId} renvoyée",
+                        "Double soumission détectée sur le paiement par solde du compte {UserId} : commande {OrderId} renvoyée",
                         userId, duplicate.Id);
 
                     return Ok(new
@@ -201,8 +286,8 @@ public class OrdersController : ControllerBase
                         // Permet au client de distinguer « déjà payé » d'un
                         // nouvel achat : sans ce message, les deux cas
                         // arrivaient sous une réponse identique.
-                        message = $"Cette commande a déjà été payée avec votre solde "
-                                + $"(commande {duplicate.OrderNumber}). Aucun second débit n'a été effectué.",
+                        message = L($"Cette commande a déjà été payée avec ton solde (commande {duplicate.OrderNumber}). Aucun second débit n'a été effectué.",
+                                    $"This order has already been paid with your balance (order {duplicate.OrderNumber}). You were not charged twice."),
                     });
                 }
 
@@ -216,7 +301,7 @@ public class OrdersController : ControllerBase
                     var available = await _wallet.GetAvailableAsync(userId);
                     if (available < serverTotal) return (Order?)null;
 
-                    var created = await _orderService.CreateOrderAsync(userId, "balance");
+                    var created = await _orderService.CreateOrderAsync(userId, "balance", null, promo.Code);
 
                     // Le statut passe par la voie contrôlée à liste blanche plutôt
                     // que par une écriture directe sur l'entité (Module 19).
@@ -233,7 +318,9 @@ public class OrdersController : ControllerBase
                     return StatusCode(402, new
                     {
                         success = false,
-                        error = $"Solde insuffisant : {balance:0} XAF disponibles, {serverTotal:0} XAF requis.",
+                        code = "insufficient_balance",
+                        error = L($"Solde insuffisant : {balance:0} XAF disponibles, {serverTotal:0} XAF requis. Choisis le paiement combiné (solde + Mobile Money).",
+                                  $"Not enough balance: {balance:0} XAF available, {serverTotal:0} XAF needed. Choose the combined payment (balance + Mobile Money)."),
                         balanceXaf = balance,
                         requiredXaf = serverTotal,
                         priceAdjustments = pricing.Adjustments,
@@ -241,7 +328,7 @@ public class OrdersController : ControllerBase
                 }
 
                 var order = paid;
-                await tx.CommitAsync();
+                if (tx != null) await tx.CommitAsync();
 
                 // Hors transaction et idempotent : crédit des auteurs des contenus.
                 try { await _wallet.SyncOrderAsync(order.Id); }
@@ -250,8 +337,9 @@ public class OrdersController : ControllerBase
                 // Hors transaction : la commission d'affiliation ne doit pas
                 // pouvoir faire échouer ni rejouer le débit déjà validé.
                 await _affiliate.RecordCommissionForOrderAsync(order.Id);
+                await AfterBalancePaidAsync(userId, order, request?.Attribution);
 
-                _logger.LogInformation("Professeur {UserId} a payé sa commande {OrderId} avec son solde WinPlus ({Amount} XAF)",
+                _logger.LogInformation("Compte {UserId} a payé sa commande {OrderId} avec son solde WinPlus ({Amount} XAF)",
                     userId, order.Id, order.TotalAmount);
 
                 return Ok(new { data = order, success = true });
@@ -322,45 +410,55 @@ public class OrdersController : ControllerBase
     public async Task<IActionResult> PayWithBalanceComplement([FromBody] PayWithBalanceComplementRequest request)
     {
         var userId = User.GetUserId();
-        var role = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
-        if (!string.Equals(role, "teacher", StringComparison.OrdinalIgnoreCase))
-            return StatusCode(403, new { success = false, error = "Seul un compte professeur dispose d'un solde WinPlus." });
+        var L = await MessagesForAsync(userId);
+        var role = CurrentRole();
+        if (!CanPayOwnCartWithBalance(role))
+            return BalanceRoleRefused(L, role);
 
         var op = (request.Operator ?? string.Empty).Trim().ToLowerInvariant();
         if (op is not ("mtn" or "orange"))
-            return BadRequest(new { success = false, error = "Opérateur invalide : MTN MoMo ou Orange Money." });
+            return BadRequest(new { success = false, code = "invalid_operator", error = L("Opérateur invalide : MTN MoMo ou Orange Money.", "Invalid operator: MTN MoMo or Orange Money.") });
         var phone = WithdrawalService.NormalizePhone(request.Phone);
         if (phone == null)
-            return BadRequest(new { success = false, error = "Numéro Mobile Money invalide : 9 chiffres commençant par 6." });
+            return BadRequest(new { success = false, code = "invalid_phone", error = L("Numéro Mobile Money invalide : 9 chiffres commençant par 6.", "Invalid Mobile Money number: 9 digits starting with 6.") });
 
         Order order;
         decimal balancePart, momoPart;
         try
         {
-            await using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+            await using var tx = await BeginSerializableAsync();
             await _wallet.RunLockedAsync(userId, () => Task.FromResult(true));
 
             var pricing = await _orderService.PriceUserCartAsync(userId);
-            var total = pricing.Total;
-            if (pricing.IsEmpty || total <= 0)
-                return BadRequest(new { success = false, error = "Panier vide." });
+            if (pricing.IsEmpty || pricing.Total <= 0)
+                return BadRequest(new { success = false, code = "cart_empty", error = L("Panier vide.", "Your cart is empty.") });
+
+            // Total remisé, identique à Order.TotalAmount (CreateOrderAsync) :
+            // la part Mobile Money attendue par le contrôle du montant notifié
+            // est total - part solde.
+            var promo = await CartPromo.ComputeAsync(_promoCodes, userId, pricing.Items, request.PromoCode);
+            if (promo.Invalid)
+                return BadRequest(new { success = false, code = "promo_invalid",
+                    error = L("Le code promo n'est plus valable : retire-le du panier pour voir le nouveau total.",
+                              "The promo code is no longer valid: remove it from your cart to see the new total.") });
+            var total = Math.Max(0m, pricing.Total - promo.Discount);
 
             var available = Math.Max(0, await _wallet.GetAvailableAsync(userId));
             if (available >= total)
-                return Conflict(new { success = false, code = "balance_sufficient", error = "Ton solde couvre tout le panier : utilise le paiement par solde.", balanceXaf = available });
+                return Conflict(new { success = false, code = "balance_sufficient", error = L("Ton solde couvre tout le panier : utilise le paiement par solde.", "Your balance covers the whole cart: pay with your balance."), balanceXaf = available });
             if (available <= 0)
-                return StatusCode(402, new { success = false, code = "no_balance", error = "Aucun solde disponible à combiner : paie en Mobile Money.", balanceXaf = 0 });
+                return StatusCode(402, new { success = false, code = "no_balance", error = L("Aucun solde disponible à combiner : paie en Mobile Money.", "No balance available to combine: pay with Mobile Money."), balanceXaf = 0 });
 
             balancePart = Math.Min(available, total - MinimumMobileMoneyXaf);
             if (balancePart <= 0)
-                return BadRequest(new { success = false, code = "complement_too_small", error = $"Le complément Mobile Money doit être d'au moins {MinimumMobileMoneyXaf:0} FCFA : paie ce panier entièrement en Mobile Money." });
+                return BadRequest(new { success = false, code = "complement_too_small", error = L($"Le complément Mobile Money doit être d'au moins {MinimumMobileMoneyXaf:0} FCFA : paie ce panier entièrement en Mobile Money.", $"The Mobile Money top-up must be at least {MinimumMobileMoneyXaf:0} FCFA: pay this cart fully with Mobile Money.") });
             balancePart = RevenueSplit.Xaf(Math.Floor(balancePart));
             momoPart = total - balancePart;
 
-            order = await _orderService.CreateOrderAsync(userId, op);
+            order = await _orderService.CreateOrderAsync(userId, op, null, promo.Code);
             await _wallet.DebitAsync(new WalletEntry(userId, WalletEntryTypes.BalancePurchase, balancePart,
                 WalletService.BalancePurchaseKey(order.Id), $"Achat panier {order.OrderNumber} (part solde)", "Order", order.Id));
-            await tx.CommitAsync();
+            if (tx != null) await tx.CommitAsync();
         }
         catch (ContentNotPurchasableException ex)
         {
@@ -376,8 +474,11 @@ public class OrdersController : ControllerBase
         }
         catch (Exception ex) when (IsSerializationFailure(ex))
         {
-            return StatusCode(409, new { success = false, error = "Un autre paiement sur ton solde est en cours. Réessaie dans un instant." });
+            return StatusCode(409, new { success = false, code = "busy", error = L("Un autre paiement sur ton solde est en cours. Réessaie dans un instant.", "Another payment from your balance is in progress. Please try again in a moment.") });
         }
+
+        if (_attribution != null)
+            await _attribution.ApplyToOrderAsync(order.Id, userId, request.Attribution, HttpContext?.RequestAborted ?? default);
 
         try
         {
@@ -419,8 +520,8 @@ public class OrdersController : ControllerBase
                 _logger.LogError(inner, "Restitution de la part solde de la commande {OrderId} à reprendre (réconciliation)", order.Id);
             }
             var message = ex is HttpRequestException
-                ? "Service de paiement temporairement indisponible. Ton solde n'a pas été débité."
-                : "Le paiement Mobile Money n'a pas pu être lancé. Ton solde n'a pas été débité.";
+                ? L("Service de paiement temporairement indisponible. Ton solde n'a pas été débité.", "The payment service is temporarily unavailable. Your balance was not charged.")
+                : L("Le paiement Mobile Money n'a pas pu être lancé. Ton solde n'a pas été débité.", "The Mobile Money payment could not be started. Your balance was not charged.");
             return StatusCode(ex is HttpRequestException ? 503 : 400, new { success = false, error = message });
         }
     }

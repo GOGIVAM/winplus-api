@@ -493,8 +493,16 @@ public class PaymentService : IPaymentService
     /// <summary>Part d'une commande réglée par le solde (paiement combiné), lue dans le journal ; 0 sinon.</summary>
     private async Task<decimal> BalancePartAsync(int orderId)
     {
-        var debit = await _wallet.FindByKeyAsync(WalletService.BalancePurchaseKey(orderId));
-        return debit == null ? 0m : -debit.Amount;
+        // Débit du solde (professeur, élève) ou, pour l'achat d'un parent pour
+        // son enfant, débit du portefeuille parent en deux écritures
+        // (dotation, recharge) : toutes sont lues (WalletService.BalancePartKeys).
+        var part = 0m;
+        foreach (var key in WalletService.BalancePartKeys(orderId))
+        {
+            var debit = await _wallet.FindByKeyAsync(key);
+            if (debit != null) part += -debit.Amount;
+        }
+        return part;
     }
 
     /// <summary>
@@ -504,9 +512,14 @@ public class PaymentService : IPaymentService
     /// </summary>
     private async Task EnsureBalancePartStillReservedAsync(int orderId)
     {
-        var debit = await _wallet.FindByKeyAsync(WalletService.BalancePurchaseKey(orderId));
-        if (debit == null) return;
-        var reversed = await _db.WalletTransactions.AsNoTracking().AnyAsync(t => t.ReversesEntryId == debit.Id);
+        var reversed = false;
+        foreach (var key in WalletService.BalancePartKeys(orderId))
+        {
+            var debit = await _wallet.FindByKeyAsync(key);
+            if (debit == null) continue;
+            if (await _db.WalletTransactions.AsNoTracking().AnyAsync(t => t.ReversesEntryId == debit.Id))
+                reversed = true;
+        }
         if (reversed)
             throw new OrderNotPayableException(
                 "Cette commande combinait ton solde et Mobile Money ; le complément n'a pas abouti et ton solde a été restitué. Repasse la commande depuis ton panier.");
