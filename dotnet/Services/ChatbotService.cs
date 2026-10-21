@@ -474,6 +474,8 @@ public class ChatbotService : IChatbotService
     {
         try
         {
+            // ChatRequest (schemas.py) borne max_tokens entre 100 et 4000 : au-delà, 422 et aucune réponse.
+            request.MaxTokens = Math.Clamp(request.MaxTokens, 100, 4000);
             var client = _httpClientFactory.CreateClient("FastApiClient");
             // Le service IA exige le jeton de l'utilisateur (comme le flux SSE, qui le relaie) :
             // sans lui, ce repli REST recevait 403 et l'élève lisait « je ne peux pas répondre ».
