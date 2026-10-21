@@ -19,6 +19,11 @@ public class PaymentExpirationService : BackgroundService
     {
         _logger.LogInformation("PaymentExpirationService démarré (intervalle: 1 heure)");
 
+        // Premier passage dès le démarrage pour les commandes déjà bloquées.
+        try { await Task.Delay(TimeSpan.FromMinutes(2), stoppingToken); await CloseStaleOrdersAsync(stoppingToken); }
+        catch (OperationCanceledException) { return; }
+        catch (Exception ex) { _logger.LogError(ex, "Erreur lors de la clôture des commandes en attente"); }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             await Task.Delay(Interval, stoppingToken);
@@ -26,6 +31,7 @@ public class PaymentExpirationService : BackgroundService
             try
             {
                 await ExpireStalePaymentsAsync(stoppingToken);
+                await CloseStaleOrdersAsync(stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -90,5 +96,63 @@ public class PaymentExpirationService : BackgroundService
         }
 
         _logger.LogInformation("{Count} paiement(s) expiré(s) après dépassement du délai d'1 heure", stalePayments.Count);
+    }
+
+    /// <summary>Délai après lequel une commande sans aucun paiement est considérée comme abandonnée.</summary>
+    private static readonly TimeSpan AbandonedOrderThreshold = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// Commandes restées « en attente » sans paiement en cours : elles gonflaient
+    /// sans fin le compteur « commandes en attente » de l'admin (28 commandes
+    /// mortes relevées le 2026-10-21, dont des paniers abandonnés depuis février).
+    ///   * dernier paiement échoué ou expiré : la commande passe en « échoué »
+    ///     (même règle que l'expiration ci-dessus ; une relance la remet en attente) ;
+    ///   * aucun paiement depuis 24 h : panier abandonné, la commande passe en « annulé ».
+    /// Une commande protégée (remboursement, déjà réglée) n'est jamais touchée.
+    /// </summary>
+    private async Task CloseStaleOrdersAsync(CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<Backend.Data.ApplicationDbContext>();
+        var orderService = scope.ServiceProvider.GetRequiredService<IOrderService>();
+        var wallet = scope.ServiceProvider.GetRequiredService<IWalletService>();
+        var abandonedBefore = DateTime.UtcNow.Subtract(AbandonedOrderThreshold);
+
+        var candidates = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync(
+            db.Orders
+                .Where(o => !o.IsDeleted && o.Status.ToLower() == "pending")
+                .Select(o => new
+                {
+                    o.Id,
+                    o.CreatedAt,
+                    LastPaymentStatus = o.Payments.OrderByDescending(p => p.InitiatedAt).Select(p => p.Status).FirstOrDefault()
+                }), ct);
+
+        var closed = 0;
+        foreach (var o in candidates)
+        {
+            if (ct.IsCancellationRequested) break;
+            var last = o.LastPaymentStatus?.ToLowerInvariant();
+            string? target = last is "failed" or "expired" or "cancelled" or "canceled"
+                ? "failed"
+                : last == null && o.CreatedAt < abandonedBefore ? "cancelled" : null;
+            if (target == null) continue;
+
+            try
+            {
+                var order = await orderService.GetOrderByIdAsync(o.Id);
+                if (order == null || OrderStatusRules.BlocksAutomaticTransition(order.Status, target)) continue;
+                await orderService.UpdateOrderStatusAsync(o.Id, target);
+                if (target == "failed") await wallet.SyncOrderAsync(o.Id);
+                closed++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Impossible de clore la commande en attente {OrderId}", o.Id);
+            }
+        }
+
+        if (closed > 0)
+            _logger.LogInformation("{Count} commande(s) en attente sans paiement en cours close(s)", closed);
     }
 }

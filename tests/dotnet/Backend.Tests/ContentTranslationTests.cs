@@ -393,6 +393,9 @@ namespace Backend.Tests
             var options = new DbContextOptionsBuilder<ApplicationDbContext>()
                 .UseInMemoryDatabase($"interceptor-{Guid.NewGuid()}")
                 .AddInterceptors(new ContentTranslationSaveInterceptor(queue))
+                // Un intercepteur neuf par test crée un fournisseur de services EF de plus ;
+                // passé vingt dans la suite, EF lève une alerte transformée en exception.
+                .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options;
             using var db = new TestApplicationDbContext(options);
 
