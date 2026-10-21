@@ -1,5 +1,5 @@
 # ==================== FASTAPI & API ====================
-fastapi==0.104.1
+fastapi==0.156.8  # 0.104 bloquait anyio<4, requis par google-genai ; valide en integration le 2026-10-21 (73 tests, chat SSE et REST)
 pydantic[email]==2.13.4
 email-validator==2.1.0
 uvicorn[standard]==0.24.0  # ASGI server
@@ -49,3 +49,19 @@ pymupdf==1.24.10  # RAG/shared/pdf_utils.py : extraction de texte natif PDF (imp
 # PyTorch CPU (pas de GPU sur EC2)
 
 torch --index-url https://download.pytorch.org/whl/cpu
+
+# ==================== RAG (base de connaissance WinAI) ====================
+# Jamais installees jusqu'ici : la base de connaissance et l'OCR des PDF
+# echouaient en production (ModuleNotFoundError). Versions validees en
+# integration le 2026-10-21, compatibles avec numpy 1.26 et fastapi 0.156.
+qdrant-client==1.19.1
+cohere==7.2.0
+mistralai==2.10.1
+groq==1.7.0
+google-genai==2.32.0
+rank-bm25==0.2.2
+rapidfuzz==3.14.6
+tiktoken==0.14.0
+opencv-python-headless==4.10.0.84  # 4.11+ exige numpy 2
+pillow==13.0.0
+websockets==16.1.1  # google-genai exige websockets<17

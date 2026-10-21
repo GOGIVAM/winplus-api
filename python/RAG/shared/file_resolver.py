@@ -76,11 +76,22 @@ def _from_url(url: str) -> Iterator[str]:
     fd, tmp_path = tempfile.mkstemp(suffix=ext, prefix="rag_dl_")
     try:
         logger.info(f"[RAG] Téléchargement de {url} vers {tmp_path}")
-        response = requests.get(url, timeout=_DOWNLOAD_TIMEOUT_SECONDS, stream=True)
-        response.raise_for_status()
-        with os.fdopen(fd, "wb") as f:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                f.write(chunk)
+        s3 = _s3_location(url)
+        if s3:
+            # Le bucket est privé : une URL S3 publique répond 403. On lit l'objet
+            # avec les identifiants AWS du service (variables AWS_* ou rôle IAM).
+            import boto3
+            bucket, region, key = s3
+            body = boto3.client("s3", region_name=region).get_object(Bucket=bucket, Key=key)["Body"]
+            with os.fdopen(fd, "wb") as f:
+                for chunk in iter(lambda: body.read(1024 * 1024), b""):
+                    f.write(chunk)
+        else:
+            response = requests.get(url, timeout=_DOWNLOAD_TIMEOUT_SECONDS, stream=True)
+            response.raise_for_status()
+            with os.fdopen(fd, "wb") as f:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    f.write(chunk)
         yield tmp_path
     finally:
         _cleanup(tmp_path)
@@ -104,3 +115,26 @@ def _from_inline_base64(request: IngestRequest) -> Iterator[str]:
         yield tmp_path
     finally:
         _cleanup(tmp_path)
+
+
+def _s3_location(url: str):
+    """(bucket, région, clé) pour une URL S3 virtual-hosted ou path-style, sinon None."""
+    from urllib.parse import unquote, urlparse
+    import re
+    parsed = urlparse(url)
+    host, path = parsed.netloc, unquote(parsed.path.lstrip("/"))
+    if not host.endswith(".amazonaws.com") or not path:
+        return None
+    m = re.match(r"^s3[.-]?([a-z0-9-]+)?\.amazonaws\.com$", host)
+    if m:
+        if "/" not in path:
+            return None
+        bucket, key = path.split("/", 1)
+        return (bucket, m.group(1) or "us-east-1", key)
+    m = re.match(r"^(.+?)\.s3[.-]([a-z0-9-]+)\.amazonaws\.com$", host)
+    if m:
+        return (m.group(1), m.group(2), path)
+    m = re.match(r"^(.+?)\.s3\.amazonaws\.com$", host)
+    if m:
+        return (m.group(1), "us-east-1", path)
+    return None
