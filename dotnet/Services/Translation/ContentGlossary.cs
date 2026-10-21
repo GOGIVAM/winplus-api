@@ -12,7 +12,7 @@ namespace Backend.Services.Translation;
 /// </summary>
 public static class ContentGlossary
 {
-    public const string Version = "g1";
+    public const string Version = "g2";
 
     public static readonly IReadOnlyList<(string Fr, string En)> Terms = new List<(string, string)>
     {
@@ -47,10 +47,26 @@ public static class ContentGlossary
         ("Baccalauréat", "Baccalaureate"),
         ("Probatoire", "Probatoire"),
         ("BEPC", "BEPC"),
-        ("Terminale", "Terminale"),
-        ("Première", "Première"),
-        ("Seconde", "Seconde"),
-        ("Troisième", "Troisième"),
+        // Lot 10.6 : classes francophones rendues par leur équivalent du
+        // sous-système anglophone, à année d'études égale (MINESEC : 4 + 3
+        // ans côté francophone, 5 + 2 ans côté anglophone).
+        ("Terminale", "Upper Sixth"),
+        ("Première", "Lower Sixth"),
+        ("Seconde", "Form 5"),
+        ("Troisième", "Form 4"),
+        ("Quatrième", "Form 3"),
+        ("Cinquième", "Form 2"),
+        ("Sixième", "Form 1"),
+        ("6ème", "Form 1"),
+        ("5ème", "Form 2"),
+        ("4ème", "Form 3"),
+        ("3ème", "Form 4"),
+        ("SIL", "Class 1"),
+        ("CP", "Class 2"),
+        ("CE1", "Class 3"),
+        ("CE2", "Class 4"),
+        ("CM1", "Class 5"),
+        ("CM2", "Class 6"),
         ("collège", "lower secondary school"),
         ("lycée", "secondary school"),
         ("enseignement supérieur", "higher education"),
@@ -66,7 +82,8 @@ public static class ContentGlossary
     /// <summary>Instructions fixes envoyées avec chaque lot (le service Python les complète).</summary>
     public const string Rules =
         "Keep proper nouns, school names, acronyms (BEPC, ENS, ENSET, FMSB, IUT, ENSP, GCE…), " +
-        "numbers, years, codes, formulas and URLs exactly as they are. Keep the Cameroonian class names " +
-        "(Terminale, Première, Seconde, Troisième) and series letters. British spelling. " +
+        "numbers, years, codes, formulas and URLs exactly as they are. Render the Cameroonian francophone class names " +
+        "by their anglophone equivalents from the glossary (Terminale = Upper Sixth, Première = Lower Sixth, Seconde = Form 5…), " +
+        "keep series letters and exam names (BEPC, Probatoire, BAC). British spelling. " +
         "Do not add or remove information.";
 }

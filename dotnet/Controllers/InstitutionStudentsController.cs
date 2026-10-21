@@ -160,7 +160,16 @@ public class InstitutionStudentsController : ControllerBase
             }
 
             if (!string.IsNullOrWhiteSpace(level) && level != "Tous")
-                query = query.Where(s => s.Level == level);
+            {
+                // Lot 10.6 : en anglais, la liste des niveaux (filters.levels)
+                // arrive traduite (« Upper Sixth ») ; le filtre retrouve la
+                // valeur française enregistrée (« Terminale »).
+                var index = HttpContext?.RequestServices.GetService<Backend.Services.Translation.IContentTranslationIndex>();
+                var wanted = index == null
+                    ? new List<string> { level.Trim().ToLowerInvariant() }
+                    : (await index.GetAsync()).FrenchEquivalents(level).ToList();
+                query = query.Where(s => s.Level != null && wanted.Contains(s.Level.ToLower()));
+            }
 
             if (!string.IsNullOrWhiteSpace(group) && group != "Tous")
                 query = query.Where(s => s.GroupName == group);
