@@ -66,7 +66,15 @@ def upsert_chunks(collection: str, chunks: List[Chunk], vectors: List[List[float
         )
         for c, v in zip(chunks, vectors)
     ]
-    client.upsert(collection_name=collection, points=points)
+    # Qdrant refuse une requête de plus de 32 Mo : un livre de plusieurs
+    # centaines de pages (vecteurs + texte parent) en faisait jusqu'à 110.
+    for start in range(0, len(points), UPSERT_BATCH_SIZE):
+        client.upsert(collection_name=collection, points=points[start:start + UPSERT_BATCH_SIZE])
+
+
+# Environ 64 points pour rester loin des 32 Mo (vecteur de 1 536 flottants
+# en JSON, plus le texte de l'extrait et de son parent).
+UPSERT_BATCH_SIZE = 64
 
 
 def build_filter(filters: Dict[str, Any]) -> Optional[qm.Filter]:
