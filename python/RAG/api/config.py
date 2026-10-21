@@ -22,7 +22,8 @@ GROQ_WHISPER_MODEL = os.getenv("RAG_API_WHISPER_MODEL", "whisper-large-v3-turbo"
 # de tokens consommés par image à tarif par token comparable), vérifié en
 # ligne (voir RAG/README.md).
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-VISION_MODEL = os.getenv("RAG_API_VISION_MODEL", "gemini-2.5-flash")
+# gemini-2.5-flash est retiré pour les nouveaux comptes (404 « no longer available », vérifié le 2026-10-21) :
+# l'alias gemini-flash-latest suit le modèle Flash courant. = os.getenv("RAG_API_VISION_MODEL", "gemini-flash-latest")
 
 # ── DeepSeek (génération  réutilise services/deepseek_client.py) ──────────
 # Pas de config séparée : le client existant est réutilisé tel quel.
