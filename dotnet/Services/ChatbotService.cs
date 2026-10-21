@@ -455,6 +455,21 @@ public class ChatbotService : IChatbotService
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
     };
 
+/// <summary>Champs refusés par FastAPI (422) : emplacement et message seulement, jamais le contenu saisi.</summary>
+    private static async Task<string> DescribeFastApiErrorAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            if (doc.RootElement.TryGetProperty("detail", out var detail) && detail.ValueKind == System.Text.Json.JsonValueKind.Array)
+                return string.Join("; ", detail.EnumerateArray().Select(e =>
+                    (e.TryGetProperty("loc", out var loc) ? string.Join(".", loc.EnumerateArray().Select(x => x.ToString())) : "?") + " : " +
+                    (e.TryGetProperty("msg", out var msg) ? msg.GetString() : "?")));
+            return doc.RootElement.TryGetProperty("detail", out var d) ? d.ToString() : "";
+        }
+        catch { return ""; }
+    }
+
     private async Task<FastApiChatResponse> CallFastApiServiceAsync(FastApiChatRequest request)
     {
         try
@@ -481,7 +496,7 @@ public class ChatbotService : IChatbotService
                 };
             }
 
-            _logger.LogError("FastApi service returned {StatusCode}", response.StatusCode);
+            _logger.LogError("FastApi service returned {StatusCode} {Detail}", response.StatusCode, await DescribeFastApiErrorAsync(response));
             return new FastApiChatResponse
             {
                 Success = false,
