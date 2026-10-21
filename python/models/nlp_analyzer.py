@@ -7,7 +7,7 @@ Utilise sentence-transformers pour les embeddings et calcule la difficulté.
 """
 
 import numpy as np
-from transformers import CamembertTokenizer, CamembertModel, pipeline
+from transformers import AutoModel, AutoTokenizer, CamembertTokenizer, CamembertModel, pipeline
 import torch
 import re
 import logging
@@ -26,13 +26,18 @@ class NLPAnalyzer:
         self.tokenizer = None
         self.model = None
         self.classifier = None
+        # Vrai après un échec du modèle demandé ET du repli : on ne retente
+        # plus à chaque appel (chaque essai coûte des centaines de Mo).
+        self.load_failed = False
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         logger.info(f"Using device: {self.device}")
         self.difficulty_keywords = self._load_difficulty_keywords()
     
+    FALLBACK_MODEL = "distilbert-base-multilingual-cased"
+
     def load_model(self):
         """Charge le modèle BERT lourd avec cache S3 si disponible."""
-        if self.model is None:
+        if self.model is None and not self.load_failed:
             logger.info(f"Chargement du modèle NLP lourd: {self.model_name}")
             
             # Chemin de cache (peut être monté depuis S3 via EFS)
@@ -63,11 +68,28 @@ class NLPAnalyzer:
                 logger.info(f"   Taille du modèle: ~{self._get_model_size():.1f} MB")
                 
             except Exception as e:
-                logger.error(f"Erreur lors du chargement du modèle: {e}")
-                # Fallback vers un modèle plus léger si échec
-                logger.warning("Tentative de fallback vers distilbert...")
-                self.model_name = "distilbert-base-multilingual-cased"
-                self.load_model()  # Retry
+                logger.error(f"Erreur lors du chargement du modèle {self.model_name}: {e}")
+                # Un seul repli, avec les classes Auto : l'ancien repli
+                # rechargeait distilbert avec CamembertTokenizer, échouait
+                # encore et se rappelait sans fin jusqu'à l'arrêt du service
+                # par le noyau (mémoire épuisée).
+                self.tokenizer = None
+                self.model = None
+                self.classifier = None
+                if self.model_name == self.FALLBACK_MODEL:
+                    self.load_failed = True
+                    return
+                logger.warning(f"Tentative de repli vers {self.FALLBACK_MODEL}...")
+                try:
+                    self.tokenizer = AutoTokenizer.from_pretrained(self.FALLBACK_MODEL, cache_dir=cache_dir)
+                    self.model = AutoModel.from_pretrained(self.FALLBACK_MODEL, cache_dir=cache_dir).to(self.device)
+                    self.model_name = self.FALLBACK_MODEL
+                    logger.info(f"✅ Modèle de repli {self.FALLBACK_MODEL} chargé sur {self.device}")
+                except Exception as fallback_error:
+                    logger.error(f"Repli {self.FALLBACK_MODEL} impossible, embeddings désactivés: {fallback_error}")
+                    self.tokenizer = None
+                    self.model = None
+                    self.load_failed = True
     
     def _get_model_size(self):
         """Estime la taille du modèle en MB."""
@@ -115,11 +137,10 @@ class NLPAnalyzer:
                 'complexity_metrics': dict
             }
         """
-        if self.model is None:
-            self.load_model()
-        
+        # Difficulté, tags et durée reposent sur des mots-clés : le modèle
+        # n'est chargé que si un embedding est demandé (étape 5).
         metadata = metadata or {}
-        
+
         # 1. Calcul de la difficulté
         difficulty_score = self._compute_difficulty(text)
         difficulty_level = self._score_to_level(difficulty_score)
@@ -260,7 +281,9 @@ class NLPAnalyzer:
         """
         if self.model is None or self.tokenizer is None:
             self.load_model()
-        
+        if self.model is None or self.tokenizer is None:
+            return None
+
         # Tokenisation
         inputs = self.tokenizer(
             text,
@@ -292,7 +315,9 @@ class NLPAnalyzer:
         # Embeddings BERT
         emb1 = self._compute_bert_embedding(text1)
         emb2 = self._compute_bert_embedding(text2)
-        
+        if emb1 is None or emb2 is None:
+            raise RuntimeError("Modèle NLP indisponible : similarité impossible")
+
         emb1 = np.array(emb1)
         emb2 = np.array(emb2)
         
@@ -307,7 +332,9 @@ class NLPAnalyzer:
         """
         if self.model is None:
             self.load_model()
-        
+        if self.model is None or self.tokenizer is None:
+            raise RuntimeError("Modèle NLP indisponible : encodage impossible")
+
         all_embeddings = []
         
         for i in range(0, len(texts), batch_size):
