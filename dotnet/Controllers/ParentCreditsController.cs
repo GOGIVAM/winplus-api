@@ -231,6 +231,8 @@ public class ParentCreditsController : ControllerBase
             static string OrderStatus(string s) => s.ToLowerInvariant() switch
             {
                 "completed" => "paid",
+                // Achat pour un enfant réglé par le portefeuille : la commande est « paid ».
+                "paid" => "paid",
                 "refunded" => "refunded",
                 "pending" => "pending",
                 "refund_requested" => "refund_requested",
@@ -262,6 +264,17 @@ public class ParentCreditsController : ControllerBase
             }).ToList();
 
             var orderIds = orders.Select(o => o.Id).ToHashSet();
+            // La part prise sur la dotation est écrite à part (source « WalletTransaction »,
+            // l'allocation) : sans ce filtre, un achat déjà listé comme commande
+            // réapparaissait en débit et comptait deux fois dans « dépensé ce mois ».
+            var orderKeyPrefixes = orderIds.SelectMany(id => new[] { $"purchase_for_child:order:{id}:", $"{WalletService.ParentComplementKeyBase(id)}:" }).ToList();
+            var allocKeys = await _db.WalletTransactions.AsNoTracking()
+                .Where(t => t.OwnerType == WalletOwnerTypes.Parent && t.OwnerId == parentId && t.EntryType == WalletEntryTypes.AllocationConsumption && t.IdempotencyKey.EndsWith(":alloc"))
+                .Select(t => new { t.Id, t.IdempotencyKey })
+                .ToListAsync();
+            var allocOfListedOrders = allocKeys
+                .Where(t => orderKeyPrefixes.Any(p => t.IdempotencyKey.StartsWith(p, StringComparison.Ordinal)))
+                .Select(t => t.Id).ToHashSet();
             var (walletRows, _) = await _wallet.GetHistoryAsync(parentId, "all", 1, limit);
             foreach (var w in walletRows)
             {
@@ -270,6 +283,7 @@ public class ParentCreditsController : ControllerBase
                 var isSpending = w.AmountXaf < 0 && (src == WalletSources.Purchase || src == WalletSources.Tutoring);
                 if (!isRecharge && !isSpending) continue;
                 if (w.SourceType == "Order" && w.SourceId is int oid && orderIds.Contains(oid)) continue;
+                if (allocOfListedOrders.Contains(w.Id)) continue;
                 items.Add(new ParentPaymentItem(isRecharge ? "recharge" : "wallet", w.Id, w.Label, Math.Abs(w.AmountXaf),
                     isRecharge ? "credit" : "debit", w.Status == WalletEntryStatus.Confirmed ? "paid" : w.Status,
                     isRecharge ? "Mobile Money" : "Solde", w.Date, null));
