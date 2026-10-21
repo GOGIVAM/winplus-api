@@ -6,6 +6,7 @@ using Backend.Services;
 using Backend.Models.Entities;
 using Backend.Extensions;
 using Backend.Models.DTOs;
+using Backend.Utils;
 
 namespace Backend.Controllers;
 
@@ -418,7 +419,7 @@ public class OrdersController : ControllerBase
         var op = (request.Operator ?? string.Empty).Trim().ToLowerInvariant();
         if (op is not ("mtn" or "orange"))
             return BadRequest(new { success = false, code = "invalid_operator", error = L("Opérateur invalide : MTN MoMo ou Orange Money.", "Invalid operator: MTN MoMo or Orange Money.") });
-        var phone = WithdrawalService.NormalizePhone(request.Phone);
+        var phone = PhoneNumbers.CameroonMobileOrNull(request.Phone);
         if (phone == null)
             return BadRequest(new { success = false, code = "invalid_phone", error = L("Numéro Mobile Money invalide : 9 chiffres commençant par 6.", "Invalid Mobile Money number: 9 digits starting with 6.") });
 

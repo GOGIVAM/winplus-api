@@ -2,6 +2,7 @@ using Backend.Data;
 using Backend.Models.DTOs;
 using Backend.Models.Entities;
 using Microsoft.EntityFrameworkCore;
+using Backend.Utils;
 
 namespace Backend.Services;
 
@@ -48,7 +49,7 @@ public class WalletTopUpService : IWalletTopUpService
         var op = (operatorCode ?? string.Empty).Trim().ToLowerInvariant();
         if (op is not ("mtn" or "orange"))
             throw new WithdrawalRejectedException(400, "invalid_operator", "Opérateur invalide : choisis MTN MoMo ou Orange Money.");
-        var normalizedPhone = WithdrawalService.NormalizePhone(phone)
+        var normalizedPhone = PhoneNumbers.CameroonMobileOrNull(phone)
             ?? throw new WithdrawalRejectedException(400, "invalid_phone", "Numéro Mobile Money invalide : 9 chiffres commençant par 6.");
         if (amount != decimal.Truncate(amount))
             throw new WithdrawalRejectedException(400, "invalid_amount", "Le montant doit être un nombre entier de FCFA.");

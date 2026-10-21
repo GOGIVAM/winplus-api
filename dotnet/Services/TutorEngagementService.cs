@@ -5,6 +5,7 @@ using Backend.Models.DTOs;
 using Backend.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using Backend.Utils;
 
 namespace Backend.Services;
 
@@ -440,10 +441,10 @@ public class TutorEngagementService : ITutorEngagementService
         if (string.IsNullOrWhiteSpace(name)) name = email.Split('@')[0];
         try
         {
-            var phone = NormalizePhoneToE164(request.Phone!);
+            var phone = PhoneNumbers.ToE164Digits(request.Phone!);
             var tutorName = $"{profile.User?.FirstName} {profile.User?.LastName}".Trim();
             var result = await _notchPay.InitiatePaymentAsync(phone, engagement.TotalXaf, engagement.Id,
-                $"WinPlus - Engagement mensuel avec {tutorName}", email, name, DetectChannelFromPhone(phone), ReferencePrefix);
+                $"WinPlus - Engagement mensuel avec {tutorName}", email, name, PhoneNumbers.CameroonMobileMoneyChannel(phone), ReferencePrefix);
             engagement.NotchpayReference = result.Transaction?.Reference;
             engagement.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
@@ -1288,22 +1289,6 @@ public class TutorEngagementService : ITutorEngagementService
     // ── Outils ──────────────────────────────────────────────────────────
 
     private static string Truncate(string value, int max) => value.Length <= max ? value : value[..max];
-
-    private static string NormalizePhoneToE164(string phone)
-    {
-        var digits = new string(phone.Where(char.IsDigit).ToArray());
-        if (digits.Length == 9) digits = "237" + digits;
-        return digits;
-    }
-
-    private static string DetectChannelFromPhone(string phone)
-    {
-        var s = phone.TrimStart('+');
-        if (s.StartsWith("237") && s.Length > 9) s = s[3..];
-        if (s.Length < 3) return "cm.mtn";
-        string[] orange = ["655", "656", "657", "658", "659", "690", "691", "692", "693", "694", "695", "696", "697", "698", "699"];
-        return Array.IndexOf(orange, s[..3]) >= 0 ? "cm.orange" : "cm.mtn";
-    }
 
     private static string? MapNotchPayStatus(string? s) => s?.ToLowerInvariant() switch
     {

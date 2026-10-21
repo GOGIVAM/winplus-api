@@ -193,6 +193,8 @@ public class CustomAuthService : ICustomAuthService
                 FirstName = firstName ?? "",
                 LastName = lastName ?? "",
                 Phone = phone,
+                // Lot 10.8 : pays déduit de l'indicatif (CEMAC), null si inconnu.
+                Country = Backend.Utils.PhoneNumbers.CountryOf(phone),
                 IsActive = true,
                 IsEmailVerified = false,
                 CreatedAt = DateTime.UtcNow,

@@ -3,6 +3,7 @@ using Backend.Models.DTOs;
 using Backend.Models.Entities;
 using Backend.Repositories;
 using Microsoft.EntityFrameworkCore;
+using Backend.Utils;
 
 namespace Backend.Services;
 
@@ -729,7 +730,7 @@ public class PaymentService : IPaymentService
             var email = user.Email ?? $"user{requestingUserId}@winplus.cm";
             var fullName = $"{user.FirstName} {user.LastName}".Trim();
             var customerName = !string.IsNullOrWhiteSpace(fullName) ? fullName : email.Split('@')[0];
-            var channel = DetectChannelFromPhone(payment.PhoneNumber ?? "");
+            var channel = PhoneNumbers.CameroonMobileMoneyChannel(payment.PhoneNumber ?? "");
             var result = await _notchPay.InitiatePaymentAsync(
                 payment.PhoneNumber!, payment.Amount, payment.OrderId,
                 payment.Description ?? "WinPlus - Epreuves scolaires", email, customerName, channel);
@@ -903,18 +904,6 @@ public class PaymentService : IPaymentService
         "orange" => "cm.orange",
         _        => "cm.mtn",
     };
-
-    private static string DetectChannelFromPhone(string phone)
-    {
-        // Strip country code if present ("237XXXXXXXXX" or "+237XXXXXXXXX")
-        var s = phone.TrimStart('+');
-        if (s.StartsWith("237") && s.Length > 9) s = s[3..];
-        if (s.Length < 3) return "cm.mtn";
-
-        var pfx = s[..3];
-        string[] orangePrefixes = ["655","656","657","658","659","690","691","692","693","694","695","696","697","698","699"];
-        return Array.IndexOf(orangePrefixes, pfx) >= 0 ? "cm.orange" : "cm.mtn";
-    }
 
     private static string? MapNotchPayStatus(string? notchpayStatus) => notchpayStatus?.ToLowerInvariant() switch
     {

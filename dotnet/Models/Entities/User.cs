@@ -65,6 +65,13 @@ public class User
     [MaxLength(100)]
     public string? City { get; set; }
 
+    /// <summary>
+    /// Lot 10.8 : pays de l'utilisateur (ISO 3166-1 alpha-2), déduit de
+    /// l'indicatif du téléphone à l'inscription ; null si inconnu.
+    /// </summary>
+    [MaxLength(2)]
+    public string? Country { get; set; }
+
     /// <summary>Langue préférée : "fr" ou "en". Pilote l'UI (web/mobile) et les emails transactionnels.</summary>
     [MaxLength(5)]
     public string Locale { get; set; } = "fr";

@@ -10,6 +10,10 @@ public class ConcoursEvent
     [Required, MaxLength(50)]
     public string Slug { get; set; } = string.Empty;
 
+    /// <summary>Lot 10.8 : pays de l'examen ou du concours (ISO 3166-1 alpha-2).</summary>
+    [Required, MaxLength(2)]
+    public string Country { get; set; } = "CM";
+
     [Required, MaxLength(200)]
     public string Name { get; set; } = string.Empty;
 

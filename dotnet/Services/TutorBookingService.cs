@@ -5,6 +5,7 @@ using Backend.Models.DTOs;
 using Backend.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using Backend.Utils;
 
 namespace Backend.Services;
 
@@ -377,8 +378,8 @@ public class TutorBookingService : ITutorBookingService
             // Le web et le mobile n'envoient pas le numéro dans le même format
             // (avec ou sans indicatif 237)  on normalise ici plutôt que
             // d'imposer une convention aux deux front-ends.
-            var e164Phone = NormalizePhoneToE164(request.Phone!);
-            var channel = DetectChannelFromPhone(e164Phone);
+            var e164Phone = PhoneNumbers.ToE164Digits(request.Phone!);
+            var channel = PhoneNumbers.CameroonMobileMoneyChannel(e164Phone);
             var tutorName = $"{tutorProfile.User?.FirstName} {tutorProfile.User?.LastName}".Trim();
             var result = await _notchPay.InitiatePaymentAsync(
                 e164Phone, price, booking.Id,
@@ -1072,25 +1073,6 @@ public class TutorBookingService : ITutorBookingService
     }
 
     public static DateOnly GetWeekStart(DateOnly date) => date.AddDays(-(((int)date.DayOfWeek + 6) % 7));
-
-    /// <summary>9 chiffres locaux → préfixe "237" ajouté ; déjà préfixé (237… ou +237…) → inchangé.</summary>
-    private static string NormalizePhoneToE164(string phone)
-    {
-        var digits = new string(phone.Where(char.IsDigit).ToArray());
-        if (digits.Length == 9) digits = "237" + digits;
-        return digits;
-    }
-
-    private static string DetectChannelFromPhone(string phone)
-    {
-        var s = phone.TrimStart('+');
-        if (s.StartsWith("237") && s.Length > 9) s = s[3..];
-        if (s.Length < 3) return "cm.mtn";
-
-        var pfx = s[..3];
-        string[] orangePrefixes = ["655", "656", "657", "658", "659", "690", "691", "692", "693", "694", "695", "696", "697", "698", "699"];
-        return Array.IndexOf(orangePrefixes, pfx) >= 0 ? "cm.orange" : "cm.mtn";
-    }
 
     private static string? MapNotchPayStatus(string? notchpayStatus) => notchpayStatus?.ToLowerInvariant() switch
     {

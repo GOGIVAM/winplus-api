@@ -2,6 +2,7 @@ using Backend.Data;
 using Backend.Models.DTOs;
 using Backend.Models.Entities;
 using Microsoft.EntityFrameworkCore;
+using Backend.Utils;
 
 namespace Backend.Services;
 
@@ -172,8 +173,8 @@ public class TeachingSessionService : ITeachingSessionService
             var email = student?.Email ?? $"user{studentId}@winplus.cm";
             var name = $"{student?.FirstName} {student?.LastName}".Trim();
             if (string.IsNullOrWhiteSpace(name)) name = email.Split('@')[0];
-            var e164Phone = NormalizePhoneToE164(request.Phone);
-            var channel = DetectChannelFromPhone(e164Phone);
+            var e164Phone = PhoneNumbers.ToE164Digits(request.Phone);
+            var channel = PhoneNumbers.CameroonMobileMoneyChannel(e164Phone);
 
             try
             {
@@ -279,24 +280,6 @@ public class TeachingSessionService : ITeachingSessionService
     {
         try { await _wallet.SyncSessionEnrollmentAsync(sessionEnrollmentId); }
         catch (Exception ex) { _logger.LogError(ex, "Écritures de l'inscription {EnrollmentId} non posées (réconciliation à venir)", sessionEnrollmentId); }
-    }
-
-    private static string NormalizePhoneToE164(string phone)
-    {
-        var digits = new string(phone.Where(char.IsDigit).ToArray());
-        if (digits.Length == 9) digits = "237" + digits;
-        return digits;
-    }
-
-    private static string DetectChannelFromPhone(string phone)
-    {
-        var s = phone.TrimStart('+');
-        if (s.StartsWith("237") && s.Length > 9) s = s[3..];
-        if (s.Length < 3) return "cm.mtn";
-
-        var pfx = s[..3];
-        string[] orangePrefixes = ["655", "656", "657", "658", "659", "690", "691", "692", "693", "694", "695", "696", "697", "698", "699"];
-        return Array.IndexOf(orangePrefixes, pfx) >= 0 ? "cm.orange" : "cm.mtn";
     }
 
     private async Task<TeachingSessionDto> MapToDtoAsync(Session s)

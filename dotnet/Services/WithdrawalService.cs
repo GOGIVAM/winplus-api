@@ -1,6 +1,7 @@
 using Backend.Data;
 using Backend.Models.Entities;
 using Microsoft.EntityFrameworkCore;
+using Backend.Utils;
 
 namespace Backend.Services;
 
@@ -99,16 +100,6 @@ public class WithdrawalService : IWithdrawalService
 
     public static string ReferenceFor(int withdrawalId) => $"WDR-{withdrawalId}";
 
-    /// <summary>9 chiffres locaux → préfixe 237 ; 237 + 9 chiffres accepté ; tout le reste refusé.</summary>
-    public static string? NormalizePhone(string? phone)
-    {
-        var digits = new string((phone ?? string.Empty).Where(char.IsDigit).ToArray());
-        if (digits.StartsWith("00237")) digits = digits[2..];
-        if (digits.Length == 9 && digits[0] == '6') return "237" + digits;
-        if (digits.Length == 12 && digits.StartsWith("2376")) return digits;
-        return null;
-    }
-
     // ── Demande ─────────────────────────────────────────────────────────
 
     public async Task<WithdrawalRequestResult> RequestAsync(int userId, string? operatorCode, string? phone, decimal amount, string? clientRequestId)
@@ -128,7 +119,7 @@ public class WithdrawalService : IWithdrawalService
         if (!Operators.Contains(op))
             throw new WithdrawalRejectedException(400, "invalid_operator", "Opérateur invalide : choisis MTN MoMo ou Orange Money.");
 
-        var normalizedPhone = NormalizePhone(phone)
+        var normalizedPhone = PhoneNumbers.CameroonMobileOrNull(phone)
             ?? throw new WithdrawalRejectedException(400, "invalid_phone", "Numéro Mobile Money invalide : 9 chiffres commençant par 6 (ex. 6XXXXXXXX).");
 
         if (amount != decimal.Truncate(amount))

@@ -93,6 +93,14 @@ public class Subject : ITranslatableContent
     [StringLength(5)]
     public string? Language { get; set; }
 
+    /// <summary>
+    /// Lot 10.8 : pays du contenu (ISO 3166-1 alpha-2). Tout le catalogue est
+    /// camerounais pour l'instant ; un pays pilote CEMAC aura ses propres
+    /// épreuves (SQL_CountryDimension.sql).
+    /// </summary>
+    [StringLength(2)]
+    public string Country { get; set; } = "CM";
+
     // ── Version anglaise (SQL_ContentTranslations.sql) ──
     // Remplie par la traduction automatique WinAI (Origin = "auto") ou saisie
     // à la main (Origin = "human", jamais écrasée par la traduction automatique).

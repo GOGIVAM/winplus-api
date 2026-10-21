@@ -27,16 +27,45 @@ public static class VatPolicy
     /// <summary>Taux de TVA (19,25 %, TVA CEMAC au Cameroun).</summary>
     public const decimal CatalogRate = 0.1925m;
 
+    /// <summary>
+    /// Lot 10.8 : taux par pays du client (ISO 3166-1 alpha-2). Seul le
+    /// Cameroun est ouvert : la TVA d'un service numérique vendu hors du
+    /// Cameroun reste à trancher avec un expert-comptable (étude 10, décision
+    /// Q9 c), et aucune vente hors Cameroun n'est faite d'ici là.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, decimal> RatesByCountry = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["CM"] = CatalogRate,
+    };
+
+    /// <summary>Pays où la vente est ouverte.</summary>
+    public static IEnumerable<string> OpenCountries => RatesByCountry.Keys;
+
+    /// <summary>Taux du pays (Cameroun si absent) ; un pays non ouvert à la vente lève une erreur plutôt qu'un taux deviné.</summary>
+    public static decimal RateFor(string? country)
+    {
+        var code = string.IsNullOrWhiteSpace(country) ? "CM" : country.Trim();
+        return RatesByCountry.TryGetValue(code, out var rate)
+            ? rate
+            : throw new NotSupportedException($"Vente non ouverte pour le pays {code} : taux de TVA non fixé.");
+    }
+
     /// <summary>Prix hors taxe déduit d'un prix TTC (XAF entier).</summary>
-    public static decimal ExclTaxFromInclTax(decimal amountInclTax)
+    public static decimal ExclTaxFromInclTax(decimal amountInclTax) => ExclTaxFromInclTax(amountInclTax, null);
+
+    /// <summary>Prix hors taxe déduit d'un prix TTC, au taux du pays du client.</summary>
+    public static decimal ExclTaxFromInclTax(decimal amountInclTax, string? country)
     {
         if (amountInclTax <= 0) return 0m;
-        return decimal.Round(amountInclTax / (1m + CatalogRate), 0, MidpointRounding.AwayFromZero);
+        return decimal.Round(amountInclTax / (1m + RateFor(country)), 0, MidpointRounding.AwayFromZero);
     }
 
     /// <summary>TVA contenue dans un prix TTC : TTC − HT déduit.</summary>
-    public static decimal TaxIncludedIn(decimal amountInclTax) =>
-        amountInclTax <= 0 ? 0m : amountInclTax - ExclTaxFromInclTax(amountInclTax);
+    public static decimal TaxIncludedIn(decimal amountInclTax) => TaxIncludedIn(amountInclTax, null);
+
+    /// <summary>TVA contenue dans un prix TTC, au taux du pays du client.</summary>
+    public static decimal TaxIncludedIn(decimal amountInclTax, string? country) =>
+        amountInclTax <= 0 ? 0m : amountInclTax - ExclTaxFromInclTax(amountInclTax, country);
 
     /// <summary>
     /// Ancienne règle (prix HT + 19,25 %), conservée pour la règle de migration

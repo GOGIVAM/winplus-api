@@ -128,6 +128,7 @@ public class SubjectsController : ControllerBase
         hasCorrection = !string.IsNullOrEmpty(exam?.CorrectionUrl),
         // Lot 10.7 : langue d'origine ("en" pour une épreuve GCE).
         language = exam?.Language ?? s.Language ?? "fr",
+        country = s.Country,
     };
 
     /// <summary>
@@ -192,6 +193,7 @@ public class SubjectsController : ControllerBase
         [FromQuery] string? difficulty = null,
         [FromQuery] bool verifiedAuthorOnly = false,
         [FromQuery] string? contentLanguage = null,
+        [FromQuery] string? country = null,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] string sortBy = "createdAt",
@@ -245,6 +247,13 @@ public class SubjectsController : ControllerBase
                 query = query.Where(s => s.Language == ContentLanguage.English);
             else if (wantedLanguage == ContentLanguage.French)
                 query = query.Where(s => s.Language == null || s.Language != ContentLanguage.English);
+
+            // Lot 10.8 : pays du contenu (« CM », « GA »…), tous les pays si absent.
+            if (!string.IsNullOrWhiteSpace(country))
+            {
+                var wantedCountry = country.Trim().ToUpperInvariant();
+                query = query.Where(s => s.Country == wantedCountry);
+            }
 
             var totalCount = await query.CountAsync();
 
