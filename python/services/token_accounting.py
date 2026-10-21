@@ -56,6 +56,9 @@ def record_usage(tokens: int) -> None:
     box = _request_usage.get()
     if box is not None and tokens and tokens > 0:
         box[0] += int(tokens)
+    # Intégration : compteur du plafond quotidien (sans effet en production).
+    from services import winai_environment
+    winai_environment.add_usage(tokens)
 
 
 def current_request_usage() -> int:

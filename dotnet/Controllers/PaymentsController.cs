@@ -23,6 +23,7 @@ public class PaymentsController : ControllerBase
     private readonly IWithdrawalService _withdrawals;
     private readonly ITutorEngagementService _tutorEngagementService;
     private readonly Backend.Services.Marketing.IConversionTracker? _conversions;
+    private readonly INotchPayEventDispatcher _dispatcher;
 
     public PaymentsController(
         IPaymentService paymentService,
@@ -33,8 +34,10 @@ public class PaymentsController : ControllerBase
         IMemoryCache cache,
         IWithdrawalService withdrawals,
         ITutorEngagementService tutorEngagementService,
+        INotchPayEventDispatcher dispatcher,
         Backend.Services.Marketing.IConversionTracker? conversions = null)
     {
+        _dispatcher = dispatcher;
         _conversions = conversions;
         _withdrawals = withdrawals;
         _tutorEngagementService = tutorEngagementService;
@@ -229,30 +232,8 @@ public class PaymentsController : ControllerBase
 
         try
         {
-            // Les réservations Répétiteur (Module 6) portent leur propre paiement,
-            // hors du module Order/Payment : référence préfixée "TBK-", distincte
-            // du "WP-" utilisé par le checkout catalogue.
-            var handledAsBooking = await _tutorBookingService.TryHandleNotchPayWebhookAsync(
-                eventId, webhookData.Event ?? "unknown", webhookData.Transaction);
-            // Lot 10.3 : conversion serveur d'une réservation payée (sans
-            // effet si non payée, sans consentement ou déjà enregistrée ;
-            // écriture en base seulement, ne lève jamais). Les commandes
-            // catalogue et abonnement sont comptées dans PaymentService.
-            if (handledAsBooking && _conversions != null && webhookData.Transaction.Reference is { Length: > 0 } bookingRef)
-                await _conversions.RecordTutorBookingPurchaseAsync(bookingRef);
-            // Module 18 : les inscriptions à une session payante portent leur
-            // propre paiement (référence "SESS-"), hors du module Order/Payment,
-            // exactement comme les réservations Répétiteur ci-dessus.
-            var handledAsSession = !handledAsBooking && await _teachingSessionService.TryHandleNotchPayWebhookAsync(
-                eventId, webhookData.Event ?? "unknown", webhookData.Transaction);
-            // Lot 9.4 : paiement unique d'un engagement mensuel (référence "TEN-").
-            var handledAsEngagement = !handledAsBooking && !handledAsSession && await _tutorEngagementService.TryHandleNotchPayWebhookAsync(
-                eventId, webhookData.Event ?? "unknown", webhookData.Transaction);
-            if (!handledAsBooking && !handledAsSession && !handledAsEngagement)
-            {
-                await _paymentService.HandleNotchPayWebhookAsync(
-                    eventId, webhookData.Event ?? "unknown", webhookData.Transaction);
-            }
+            // Aiguillage commun au webhook et aux paiements simulés de l'intégration.
+            await _dispatcher.DispatchAsync(eventId, webhookData.Event ?? "unknown", webhookData.Transaction);
             return Ok(new { received = true });
         }
         catch (Exception ex)

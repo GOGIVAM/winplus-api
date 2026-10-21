@@ -91,6 +91,10 @@ public class StorageService : IStorageService
         ?? Environment.GetEnvironmentVariable("AWS_REGION")
         ?? "us-east-1";
 
+    /// <summary>Vrai en intégration (WINPLUS_ENV=integration) ou si Storage:PreserveRemoteObjects=true.</summary>
+    public static bool PreserveRemoteObjects(IConfiguration config) =>
+        DeploymentEnvironment.IsIntegration(config) || config.GetValue("Storage:PreserveRemoteObjects", false);
+
     private string Provider => (_config["Storage:Provider"] ?? "auto").ToLowerInvariant();
     private bool AutoCreateBucket => _config.GetValue("Storage:AutoCreateBucket", false);
     private bool FallbackToLocal => _config.GetValue("Storage:FallbackToLocal", true);
@@ -316,6 +320,13 @@ public class StorageService : IStorageService
 
             if (isRemote && urlOrKey.Contains("amazonaws.com", StringComparison.OrdinalIgnoreCase))
             {
+                // Intégration : le bucket est celui de la production (épreuves
+                // réelles) ; aucun objet n'y est jamais supprimé.
+                if (PreserveRemoteObjects(_config))
+                {
+                    _logger.LogInformation("Stockage : suppression S3 ignorée en intégration ({Key})", key);
+                    return true;
+                }
                 if (!await IsS3ReadyAsync(ct)) return false;
                 using var s3 = CreateS3Client();
                 await s3.DeleteObjectAsync(Bucket, key, ct);

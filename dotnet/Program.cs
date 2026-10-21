@@ -574,7 +574,23 @@ builder.Services.AddHttpClient("NotchPayClient", (sp, client) =>
     client.Timeout = TimeSpan.FromSeconds(30);
 });
 
-builder.Services.AddScoped<INotchPayService, NotchPayService>();
+// Intégration : paiements simulés (aucun appel à NotchPay) seulement si
+// PaymentSimulationGuard l'autorise (PAYMENTS_SIMULATED=true, WINPLUS_ENV=integration,
+// frontend hors production, aucune clé secrète NotchPay). Sinon : NotchPay réel.
+builder.Services.AddSingleton<SimulatedPaymentStore>();
+var paymentSimulationRefusal = PaymentSimulationGuard.RefusalReason(builder.Configuration);
+if (paymentSimulationRefusal == null)
+{
+    builder.Services.AddScoped<INotchPayService, SimulatedNotchPayService>();
+    Console.WriteLine("[WinPlus] PAIEMENTS SIMULÉS ACTIFS (intégration) : aucun appel à NotchPay.");
+}
+else
+{
+    builder.Services.AddScoped<INotchPayService, NotchPayService>();
+    if (PaymentSimulationGuard.IsRequested(builder.Configuration))
+        Console.Error.WriteLine($"[WinPlus] ERREUR : {PaymentSimulationGuard.VariableName}=true ignoré ({paymentSimulationRefusal}). Paiements NotchPay réels.");
+}
+builder.Services.AddScoped<INotchPayEventDispatcher, NotchPayEventDispatcher>();
 
 // Lot 10.3 : attribution d'acquisition et conversions serveur (GA4 Measurement
 // Protocol). Variables GA4_MEASUREMENT_ID et GA4_API_SECRET : sans elles,

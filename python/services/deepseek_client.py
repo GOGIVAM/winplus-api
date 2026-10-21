@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Any, Generator
 from dotenv import load_dotenv
 
 from services.token_accounting import estimate_prompt_tokens, estimate_tokens, record_usage, usage_total
+from services import winai_environment as winai_env
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -56,7 +57,16 @@ class DeepSeekClient:
             Dict avec content, tokens_used, generation_time_ms
         """
         start_time = time.time()
-        
+
+        # Intégration : WinAI simulé (explicite) ou plafond quotidien atteint.
+        if winai_env.is_simulated():
+            return {
+                "success": True, "content": winai_env.simulated_content(json_mode), "tokens_used": 0,
+                "prompt_tokens": 0, "completion_tokens": 0, "usage_estimated": True,
+                "generation_time_ms": 0, "model": "winai-simulated", "finish_reason": "stop", "simulated": True,
+            }
+        winai_env.ensure_budget()
+
         # Préparer les messages avec le system prompt
         all_messages = []
         if system_prompt:
@@ -205,6 +215,12 @@ class DeepSeekClient:
         Le nombre de tokens n'est plus inclus dans chaque delta : aucun
         client ne l'utilisait, et la décision 8.3 exclut tout compteur brut.
         """
+        if winai_env.is_simulated():
+            yield "data: " + json.dumps({"delta": winai_env.simulated_content(False)}) + "\n\n"
+            yield "data: [DONE]\n\n"
+            return
+        winai_env.ensure_budget()
+
         all_messages = []
         if system_prompt:
             all_messages.append({"role": "system", "content": system_prompt})

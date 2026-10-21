@@ -49,12 +49,18 @@ public class EmailService : IEmailService
         _logoUrl   = configuration["Email:LogoUrl"]    ?? "https://winplus.cm/email/logo-winplus.png";
         _frontendUrl = (configuration["App:FrontendUrl"] ?? "https://winplus.cm").TrimEnd('/');
 
-        var apiKey = configuration["Resend:ApiKey"]
-            ?? throw new InvalidOperationException("Resend:ApiKey non configuré");
+        _routing = EmailRouting.From(configuration);
+        // Intégration : une clé Resend distincte (ou aucune, si rien ne doit partir).
+        var apiKey = configuration["Resend:ApiKey"];
+        if (string.IsNullOrWhiteSpace(apiKey) && !_routing.IsIntegration)
+            throw new InvalidOperationException("Resend:ApiKey non configuré");
 
         _httpClient = httpClientFactory.CreateClient("ResendClient");
-        _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
     }
+
+    private readonly EmailRouting _routing;
 
     // ─────────────────────────────────────────────────────────────────────────
     //  EMAIL : Vérification du compte (code à 6 chiffres)
@@ -494,6 +500,16 @@ public class EmailService : IEmailService
             }
         }
 
+        // Intégration : tout part vers EMAIL_REDIRECT_TO (destinataire d'origine
+        // dans le sujet), ou rien ne part si la variable est vide.
+        var routed = _routing.Route(to, subject);
+        if (routed == null)
+        {
+            _logger.LogInformation("Email d'intégration non envoyé (EMAIL_REDIRECT_TO vide) : {Email} (sujet: {Subject})", to, subject);
+            return true;
+        }
+        (to, subject) = routed.Value;
+
         try
         {
             var payload = new
@@ -769,5 +785,37 @@ public class EmailService : IEmailService
 
 </body>
 </html>";
+    }
+}
+/// <summary>
+/// Acheminement des e-mails selon l'environnement. Production (WINPLUS_ENV
+/// absent) : envoi normal au destinataire, EMAIL_REDIRECT_TO ignoré.
+/// Intégration (WINPLUS_ENV=integration) : les adresses anonymisées
+/// « …@integration.winplus.cm » n'existent pas ; chaque e-mail part vers
+/// EMAIL_REDIRECT_TO avec le sujet « [INTÉGRATION → destinataire] sujet »,
+/// et rien n'est envoyé si EMAIL_REDIRECT_TO est vide.
+/// </summary>
+public sealed class EmailRouting
+{
+    public const string RedirectVariable = "EMAIL_REDIRECT_TO";
+
+    public bool IsIntegration { get; }
+    public string? RedirectTo { get; }
+
+    public EmailRouting(bool isIntegration, string? redirectTo)
+    {
+        IsIntegration = isIntegration;
+        RedirectTo = string.IsNullOrWhiteSpace(redirectTo) ? null : redirectTo.Trim();
+    }
+
+    public static EmailRouting From(IConfiguration configuration) =>
+        new(DeploymentEnvironment.IsIntegration(configuration), configuration[RedirectVariable]);
+
+    /// <summary>Destinataire et sujet réels, ou null s'il ne faut rien envoyer.</summary>
+    public (string To, string Subject)? Route(string to, string subject)
+    {
+        if (!IsIntegration) return (to, subject);
+        if (RedirectTo == null) return null;
+        return (RedirectTo, $"[INTÉGRATION → {to}] {subject}");
     }
 }

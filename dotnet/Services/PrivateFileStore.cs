@@ -133,6 +133,7 @@ public class PrivateFileStore : IPrivateFileStore
         {
             if (reference.StartsWith(S3Prefix, StringComparison.Ordinal))
             {
+                if (StorageService.PreserveRemoteObjects(_config)) return true;
                 using var s3 = _storage.CreateS3Client();
                 await s3.DeleteObjectAsync(Bucket, reference[S3Prefix.Length..], ct);
                 return true;

@@ -62,6 +62,14 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Gestion du cycle de vie de l'application"""
     # Startup
+    # Intégration (WINPLUS_ENV=integration) : refus de démarrer si la base,
+    # l'index ou les dossiers de vecteurs visent la production.
+    from services.winai_environment import assert_isolation, is_integration, is_simulated
+    assert_isolation()
+    if is_integration():
+        logger.warning("WinAI INTÉGRATION : base %s, collections %s / %s%s", os.getenv("DB_NAME"),
+                       os.getenv("RAG_API_COLLECTION"), os.getenv("RAG_SH_COLLECTION"),
+                       " ; WINAI SIMULÉ" if is_simulated() else "")
     logger.info("ðŸš€ Starting FastAPI application...")
     db = Database()
     nlp_analyzer = NLPAnalyzer()
@@ -87,6 +95,7 @@ app.add_middleware(
     allow_origins=[
         "https://winplus.cm",
         "https://www.winplus.cm",
+        "https://integration.winplus.cm",
         "http://localhost:5173",
         "http://localhost:3000",
     ],
@@ -132,6 +141,11 @@ async def winai_request_language(request, call_next):
 # ==================== RATE LIMITING ====================
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
+
+
+# Intégration : plafond quotidien WinAI atteint -> 429 traduit (services/winai_environment.py).
+from services.winai_environment import register_cap_handler
+register_cap_handler(app)
 
 
 @app.exception_handler(RateLimitExceeded)

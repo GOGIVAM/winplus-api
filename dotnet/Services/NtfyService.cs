@@ -68,7 +68,10 @@ public class NtfyService : INtfyService
         _baseUrl = configuration["Ntfy:BaseUrl"] ?? "https://ntfy.sh";
         _authToken = configuration["Ntfy:AuthToken"];
         _adminTopic = configuration["Ntfy:AdminTopic"] ?? "winplus-admin";
+        _topics = NtfyTopics.From(configuration);
     }
+
+    private readonly NtfyTopics _topics;
 
     public async Task PublishAsync(string topic, string title, string message,
         string priority = "default",
@@ -166,6 +169,15 @@ public class NtfyService : INtfyService
     private async Task SendToNtfy(string topic, string title, string message,
         string priority, string[]? tags)
     {
+        // Intégration : jamais de publication sur un sujet de production (les
+        // comptes copiés ont les mêmes identifiants qu'en production).
+        var resolved = _topics.Resolve(topic);
+        if (resolved == null)
+        {
+            _logger.LogError("Notification ntfy non publiée : intégration sans NTFY_TOPIC_PREFIX (sujet {Topic})", topic);
+            return;
+        }
+        topic = resolved;
         try
         {
             var client = _httpClientFactory.CreateClient();
@@ -194,5 +206,48 @@ public class NtfyService : INtfyService
         {
             _logger.LogError(ex, "Failed to publish Ntfy notification to topic {Topic}", topic);
         }
+    }
+}
+
+/// <summary>
+/// Préfixe des sujets ntfy (NTFY_TOPIC_PREFIX, ou Ntfy:TopicPrefix). Vide en
+/// production : les sujets restent « winplus-user-{id} » et « winplus-admin ».
+/// En intégration (WINPLUS_ENV=integration), par exemple « integration- » :
+/// le même serveur ntfy sert les deux environnements sans qu'un sujet de
+/// production soit jamais publié ni écouté depuis l'intégration. Une
+/// intégration sans préfixe ne publie ni n'écoute rien (refus explicite).
+/// Le web et le mobile ne connaissent pas les sujets : ils écoutent
+/// /api/notifications/sse, que le backend relie au sujet préfixé.
+/// </summary>
+public sealed class NtfyTopics
+{
+    public const string VariableName = "NTFY_TOPIC_PREFIX";
+
+    public string Prefix { get; }
+    public bool IsIntegration { get; }
+
+    public NtfyTopics(string? prefix, bool isIntegration)
+    {
+        Prefix = Sanitize(prefix);
+        IsIntegration = isIntegration;
+    }
+
+    public static NtfyTopics From(IConfiguration configuration) =>
+        new(configuration[VariableName] ?? configuration["Ntfy:TopicPrefix"], DeploymentEnvironment.IsIntegration(configuration));
+
+    /// <summary>Sujet réellement utilisé, ou null s'il ne faut rien publier ni écouter.</summary>
+    public string? Resolve(string topic)
+    {
+        if (IsIntegration && Prefix.Length == 0) return null;
+        return Prefix.Length > 0 && topic.StartsWith(Prefix, StringComparison.Ordinal) ? topic : Prefix + topic;
+    }
+
+    public string? UserTopic(int userId) => Resolve($"winplus-user-{userId}");
+
+    private static string Sanitize(string? prefix)
+    {
+        if (string.IsNullOrWhiteSpace(prefix)) return string.Empty;
+        var chars = prefix.Trim().Where(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_').ToArray();
+        return new string(chars);
     }
 }

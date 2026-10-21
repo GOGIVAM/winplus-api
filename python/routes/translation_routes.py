@@ -40,6 +40,7 @@ from pydantic import BaseModel, Field
 
 from auth import UserTokenData, require_user_or_service
 from services.deepseek_client import get_deepseek_client
+from services import winai_environment
 
 logger = logging.getLogger(__name__)
 
@@ -241,11 +242,15 @@ def translate_batch(
         return TranslateBatchResponse(items=[])
     if len(request.items) > MAX_ITEMS or sum(len(i.text) for i in request.items) > MAX_TOTAL_CHARS:
         raise HTTPException(status_code=413, detail=f"Lot trop grand ({MAX_ITEMS} textes, {MAX_TOTAL_CHARS} caractères au plus).")
+    # Intégration : plafond quotidien propre à la traduction (WINAI_TRANSLATION_DAILY_TOKEN_CAP).
+    category = winai_environment.set_category("translation")
     try:
         translated, tokens, cached = translate_items(request.items, request.glossary, request.rules, request.target_lang)
     except RuntimeError as exc:
         logger.warning("translate-batch : %s", exc)
         raise HTTPException(status_code=503, detail="Traduction automatique indisponible.")
+    finally:
+        winai_environment.reset_category(category)
     items = [TranslatedItem(id=i.id, text=translated[i.id]) for i in request.items if i.id in translated]
     missing = [i.id for i in request.items if i.id not in translated]
     return TranslateBatchResponse(items=items, tokens_used=tokens, cached=cached, missing=missing)

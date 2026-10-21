@@ -122,6 +122,11 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None, help="Ne traiter que les N premiers éléments")
     args = parser.parse_args()
 
+    # Intégration (WINPLUS_ENV=integration) : jamais d'écriture dans l'index
+    # ni la base de production (collection, dossiers BM25/graphes, DB_NAME).
+    from services.winai_environment import assert_isolation
+    assert_isolation()
+
     db = Database()
     session = db.SessionLocal()
     try:

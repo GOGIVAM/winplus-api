@@ -42,7 +42,10 @@ public class NotificationsController : ControllerBase
         var userId = User.GetUserId();
         var ntfyBase = _configuration["Ntfy:BaseUrl"] ?? "https://ntfy.winplus.cm";
         var ntfyToken = _configuration["Ntfy:AuthToken"];
-        var sseUrl = $"{ntfyBase}/winplus-user-{userId}/sse";
+        // Préfixe d'environnement (NTFY_TOPIC_PREFIX) : l'intégration n'écoute
+        // jamais le sujet de production d'un compte copié.
+        var topic = Backend.Services.NtfyTopics.From(_configuration).UserTopic(userId);
+        var sseUrl = $"{ntfyBase}/{topic}/sse";
 
         Response.ContentType = "text/event-stream";
         Response.Headers["Cache-Control"] = "no-cache";
@@ -66,6 +69,12 @@ public class NotificationsController : ControllerBase
         try
         {
             await WriteAsync(": connected\n\n");
+            if (topic == null)
+            {
+                _logger.LogError("Flux ntfy refusé : intégration sans NTFY_TOPIC_PREFIX");
+                await WriteAsync("event: error\ndata: ntfy non configure\n\n");
+                return;
+            }
 
             using var req = new HttpRequestMessage(HttpMethod.Get, sseUrl);
             req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
