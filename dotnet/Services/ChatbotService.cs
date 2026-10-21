@@ -54,6 +54,7 @@ public class ChatbotService : IChatbotService
     private readonly ApplicationDbContext _db;
     /// <summary>Lot 9.7a (18.2) : température et longueur maximale réglables dans l'admin.</summary>
     private readonly IPlatformSettings? _platformSettings;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
 
     public ChatbotService(
         IChatbotRepository repository,
@@ -61,9 +62,11 @@ public class ChatbotService : IChatbotService
         ILogger<ChatbotService> logger,
         IConfiguration configuration,
         ApplicationDbContext db,
-        IPlatformSettings? platformSettings = null)
+        IPlatformSettings? platformSettings = null,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         _platformSettings = platformSettings;
+        _httpContextAccessor = httpContextAccessor;
         _repository = repository;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
@@ -457,7 +460,16 @@ public class ChatbotService : IChatbotService
         try
         {
             var client = _httpClientFactory.CreateClient("FastApiClient");
-            var response = await client.PostAsJsonAsync("/api/chatbot/chat", request, _fastApiJsonOptions);
+            // Le service IA exige le jeton de l'utilisateur (comme le flux SSE, qui le relaie) :
+            // sans lui, ce repli REST recevait 403 et l'élève lisait « je ne peux pas répondre ».
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/chatbot/chat")
+            {
+                Content = JsonContent.Create(request, options: _fastApiJsonOptions)
+            };
+            var incoming = _httpContextAccessor?.HttpContext?.Request.Headers["Authorization"].ToString();
+            if (!string.IsNullOrEmpty(incoming))
+                httpRequest.Headers.TryAddWithoutValidation("Authorization", incoming);
+            var response = await client.SendAsync(httpRequest);
 
             if (response.IsSuccessStatusCode)
             {
