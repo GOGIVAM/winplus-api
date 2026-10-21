@@ -28,6 +28,8 @@ public static class TranslationOrigins
 {
     public const string Auto = "auto";
     public const string Human = "human";
+    /// <summary>Lot 10.7 : contenu écrit en anglais d'origine, rien à traduire.</summary>
+    public const string Source = "source";
 }
 
 public static class TranslationStates

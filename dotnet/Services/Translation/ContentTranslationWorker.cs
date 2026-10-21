@@ -34,9 +34,10 @@ public sealed class ContentTranslationSaveInterceptor : SaveChangesInterceptor
 {
     private static readonly Dictionary<Type, string[]> SourceProps = new()
     {
-        [typeof(Subject)] = new[] { "Title", "Description", "Category", "Level", "IsPublished" },
-        [typeof(Exam)] = new[] { "Title", "Description", "ExamType", "Category", "Level", "Session", "Difficulty", "IsPublished" },
-        [typeof(Course)] = new[] { "Title", "ShortDescription", "Description", "Tags", "Requirements", "Objectives", "Category", "Level", "Status" },
+        // Lot 10.7 : changer la langue d'origine (Language) relance aussi le suivi.
+        [typeof(Subject)] = new[] { "Title", "Description", "Category", "Level", "IsPublished", "Language" },
+        [typeof(Exam)] = new[] { "Title", "Description", "ExamType", "Category", "Level", "Session", "Difficulty", "IsPublished", "Language" },
+        [typeof(Course)] = new[] { "Title", "ShortDescription", "Description", "Tags", "Requirements", "Objectives", "Category", "Level", "Status", "Language" },
         [typeof(CourseSection)] = new[] { "Title", "Description" },
         [typeof(CourseLesson)] = new[] { "Title", "Description" },
         [typeof(ConcoursEvent)] = ContentTranslationService.ConcoursFields.Select(f => f.Fr).ToArray(),
@@ -91,6 +92,8 @@ public sealed class ContentTranslationSaveInterceptor : SaveChangesInterceptor
                        && !Equals(entry.Property(p).OriginalValue, entry.Property(p).CurrentValue)
                        && !(entry.Property(p).OriginalValue is List<string> a && entry.Property(p).CurrentValue is List<string> b && a.SequenceEqual(b))));
             if (!relevant) continue;
+            // Langue d'origine précisée au dépôt, sinon déduite (GCE, Form 1-5…).
+            if (entry.State == EntityState.Added) ContentSourceLanguage.ApplyOnCreate(entry.Entity);
             if (entry.Entity is ITranslatableContent row) ContentTranslationService.MarkSourceChanged(row);
             if (entry.Entity is ConcoursEvent ev)
             {

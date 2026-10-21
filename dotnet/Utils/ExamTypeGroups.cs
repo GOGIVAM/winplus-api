@@ -22,6 +22,9 @@ public static class ExamTypeGroups
     {
         ["bac"] = new[] { "baccalaureat", "bac" },
         ["proba"] = new[] { "probatoire" },
+        // Lot 10.7 : GCE saisi « GCE Ordinary Level », « GCE O/L », « O Level »… (filtre catalogue GCE_O, GCE_A).
+        ["gce-o-level"] = new[] { "gce-ordinary-level", "gce-o", "gce_o", "o-level", "ordinary-level" },
+        ["gce-a-level"] = new[] { "gce-advanced-level", "gce-a", "gce_a", "a-level", "advanced-level" },
     };
 
     /// <summary>
@@ -38,6 +41,8 @@ public static class ExamTypeGroups
         ["probatoire"] = new[] { "probatoire" },
         ["proba"] = new[] { "probatoire" },
         ["bac"] = new[] { "baccalaureat" },
+        ["gce-o-level"] = new[] { "ordinary-level", "gce-o-level", "o-level" },
+        ["gce-a-level"] = new[] { "advanced-level", "gce-a-level", "a-level" },
     };
 
     /// <summary>Nom de l'école ou de l'examen : le début du libellé, avant le premier séparateur.</summary>

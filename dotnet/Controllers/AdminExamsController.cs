@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Models.Entities;
+using Backend.Services.Translation;
 using Backend.Services;
 
 namespace Backend.Controllers;
@@ -65,6 +66,8 @@ public class AdminExamsController : ControllerBase
         public string? ThumbnailUrl { get; set; }
         public bool? IsPublished { get; set; }
         public int? SubjectId { get; set; }
+        /// <summary>Lot 10.7 : langue d'origine ("fr" ou "en") ; absente, elle est déduite du type d'examen et du niveau.</summary>
+        public string? Language { get; set; }
     }
 
     public record BulkDto(List<int> Ids, string Action);
@@ -79,6 +82,7 @@ public class AdminExamsController : ControllerBase
         year            = e.Year,
         session         = e.Session,
         level           = e.Level,
+        language        = e.Language ?? "fr",
         durationMinutes = e.DurationMinutes,
         difficulty      = e.Difficulty,
         documentUrl     = e.DocumentUrl,
@@ -212,6 +216,7 @@ public class AdminExamsController : ControllerBase
                 Year            = dto.Year!.Value,
                 Session         = dto.Session?.Trim(),
                 Level           = dto.Level?.Trim(),
+                Language        = ContentSourceLanguage.Normalize(dto.Language),
                 DurationMinutes = dto.DurationMinutes,
                 Difficulty      = dto.Difficulty?.Trim(),
                 DocumentUrl     = dto.DocumentUrl?.Trim(),
@@ -268,6 +273,7 @@ public class AdminExamsController : ControllerBase
             if (dto.Year        != null) exam.Year        = dto.Year.Value;
             if (dto.Session     != null) exam.Session     = dto.Session.Trim();
             if (dto.Level       != null) exam.Level       = dto.Level.Trim();
+            if (ContentSourceLanguage.Normalize(dto.Language) is { } language) exam.Language = language;
             if (dto.Difficulty  != null) exam.Difficulty  = dto.Difficulty.Trim();
             var previousDocumentUrl = exam.DocumentUrl;
             if (dto.DurationMinutes != null) exam.DurationMinutes = dto.DurationMinutes;

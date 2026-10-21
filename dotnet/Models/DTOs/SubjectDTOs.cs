@@ -30,6 +30,10 @@ public class SubjectCreateRequest
     [StringLength(150)]
     public string? Level { get; set; }
 
+    /// <summary>Lot 10.7 : langue d'origine ("fr" ou "en") ; absente, elle est déduite du niveau et du titre.</summary>
+    [StringLength(5)]
+    public string? Language { get; set; }
+
     [StringLength(1000)]
     public string? ThumbnailUrl { get; set; }
 

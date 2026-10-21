@@ -74,6 +74,14 @@ public class Exam : ITranslatableContent
     public string? TitleEn { get; set; }
     public string? DescriptionEn { get; set; }
 
+    /// <summary>
+    /// Lot 10.7 : langue d'origine du contenu ("fr" ou "en", null = français).
+    /// Une épreuve GCE est écrite en anglais : elle n'est jamais traduite et
+    /// garde lang="en" sur les pages françaises (SQL_ContentSourceLanguage.sql).
+    /// </summary>
+    [StringLength(5)]
+    public string? Language { get; set; }
+
     // ── Version anglaise (SQL_ContentTranslations.sql) ──
     // Remplie par la traduction automatique WinAI (Origin = "auto") ou saisie
     // à la main (Origin = "human", jamais écrasée par la traduction automatique).

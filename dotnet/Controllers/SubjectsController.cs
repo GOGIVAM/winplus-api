@@ -126,6 +126,8 @@ public class SubjectsController : ControllerBase
         durationMinutes = exam?.DurationMinutes,
         difficulty = exam?.Difficulty,
         hasCorrection = !string.IsNullOrEmpty(exam?.CorrectionUrl),
+        // Lot 10.7 : langue d'origine ("en" pour une épreuve GCE).
+        language = exam?.Language ?? s.Language ?? "fr",
     };
 
     /// <summary>
@@ -189,6 +191,7 @@ public class SubjectsController : ControllerBase
         [FromQuery] string? category = null,
         [FromQuery] string? difficulty = null,
         [FromQuery] bool verifiedAuthorOnly = false,
+        [FromQuery] string? contentLanguage = null,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] string sortBy = "createdAt",
@@ -235,6 +238,13 @@ public class SubjectsController : ControllerBase
                     e.SubjectId == s.Id && !e.IsDeleted &&
                     e.Difficulty != null && difficulties.Contains(e.Difficulty.ToLower())));
             }
+
+            // Lot 10.7 : langue d'origine de l'épreuve (« en » : GCE), null = français.
+            var wantedLanguage = ContentSourceLanguage.Normalize(contentLanguage);
+            if (wantedLanguage == ContentLanguage.English)
+                query = query.Where(s => s.Language == ContentLanguage.English);
+            else if (wantedLanguage == ContentLanguage.French)
+                query = query.Where(s => s.Language == null || s.Language != ContentLanguage.English);
 
             var totalCount = await query.CountAsync();
 
@@ -378,6 +388,7 @@ public class SubjectsController : ControllerBase
                 Description = request.Description,
                 Category = request.Category,
                 Level = request.Level,
+                Language = ContentSourceLanguage.Normalize(request.Language),
                 ThumbnailUrl = request.ThumbnailUrl,
                 // Module 8 : le fichier est déposé AVANT cet appel, via un
                 // endpoint d'upload dédié (voir AdminUploadsController /

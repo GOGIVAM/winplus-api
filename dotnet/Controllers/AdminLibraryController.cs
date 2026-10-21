@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Models.Entities;
 using Backend.Services;
+using Backend.Services.Translation;
 
 namespace Backend.Controllers;
 
@@ -91,6 +92,8 @@ public class AdminLibraryController : ControllerBase
         public string? Title { get; set; }
         public string? Description { get; set; }
         public string? Category { get; set; }
+        /// <summary>Lot 10.7 : langue d'origine du livre ("fr" ou "en"), déduite si absente.</summary>
+        public string? Language { get; set; }
         public decimal? Price { get; set; }
         public string? DocumentUrl { get; set; }
         public string? VideoUrl { get; set; }
@@ -117,6 +120,7 @@ public class AdminLibraryController : ControllerBase
                 Title        = dto.Title!.Trim(),
                 Description  = dto.Description?.Trim(),
                 Category     = dto.Category?.Trim(),
+                Language     = ContentSourceLanguage.Normalize(dto.Language),
                 Price        = dto.Price ?? 0m,
                 ThumbnailUrl = dto.ThumbnailUrl?.Trim(),
                 IsPublished  = dto.IsPublished ?? false,

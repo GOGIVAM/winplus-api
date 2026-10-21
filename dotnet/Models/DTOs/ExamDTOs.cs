@@ -12,6 +12,8 @@ public class ExamDto
     public string? Level { get; set; }
     public string? Difficulty { get; set; }
     public int? DurationMinutes { get; set; }
+    /// <summary>Lot 10.7 : langue d'origine ("en" pour une épreuve GCE).</summary>
+    public string Language { get; set; } = "fr";
     // Module 44 (décision §11.4) : la réponse publique ne porte plus jamais
     // l'adresse du fichier de l'épreuve ni de son corrigé  seulement leur
     // disponibilité. Le document se consulte via GET /api/subjects/{id}/view.
@@ -40,6 +42,8 @@ public class CreateExamRequestDto
     public string? DocumentUrl { get; set; }
     public string? CorrectionUrl { get; set; }
     public int? SubjectId { get; set; }
+    /// <summary>Lot 10.7 : langue d'origine ("fr" ou "en") ; absente, elle est déduite du type d'examen et du niveau.</summary>
+    public string? Language { get; set; }
 }
 
 public class UpdateExamRequestDto

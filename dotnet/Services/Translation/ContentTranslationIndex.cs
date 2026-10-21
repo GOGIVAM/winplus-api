@@ -170,33 +170,57 @@ public sealed class ContentTranslationIndex : IContentTranslationIndex
     {
         var texts = new List<(string, string?)>();
 
+        // Lot 10.7 : un contenu écrit en anglais d'origine (GCE) a pour « anglais »
+        // son propre texte : le filtre le reconnaît, n'y touche pas et pose contentLang = "en".
+        static string? En(bool english, string? fr, string? en) => english ? fr : en;
+
         var subjects = await db.Subjects.AsNoTracking().Where(s => !s.IsDeleted && s.IsPublished)
-            .Select(s => new { s.Title, s.TitleEn, s.Description, s.DescriptionEn }).ToListAsync(ct);
-        foreach (var s in subjects) { texts.Add((s.Title, s.TitleEn)); if (s.Description != null) texts.Add((s.Description, s.DescriptionEn)); }
+            .Select(s => new { s.Title, s.TitleEn, s.Description, s.DescriptionEn, English = s.Language == ContentLanguage.English }).ToListAsync(ct);
+        foreach (var s in subjects)
+        {
+            texts.Add((s.Title, En(s.English, s.Title, s.TitleEn)));
+            if (s.Description != null) texts.Add((s.Description, En(s.English, s.Description, s.DescriptionEn)));
+        }
 
         var exams = await db.Exams.AsNoTracking().Where(e => !e.IsDeleted && e.IsPublished)
-            .Select(e => new { e.Title, e.TitleEn, e.Description, e.DescriptionEn }).ToListAsync(ct);
-        foreach (var e in exams) { texts.Add((e.Title, e.TitleEn)); if (e.Description != null) texts.Add((e.Description, e.DescriptionEn)); }
+            .Select(e => new { e.Title, e.TitleEn, e.Description, e.DescriptionEn, English = e.Language == ContentLanguage.English }).ToListAsync(ct);
+        foreach (var e in exams)
+        {
+            texts.Add((e.Title, En(e.English, e.Title, e.TitleEn)));
+            if (e.Description != null) texts.Add((e.Description, En(e.English, e.Description, e.DescriptionEn)));
+        }
 
         var courses = await db.Courses.AsNoTracking().Where(c => c.Status == "published")
             .Select(c => new { c.Id, c.Title, c.TitleEn, c.ShortDescription, c.ShortDescriptionEn, c.Description, c.DescriptionEn,
-                c.Tags, c.TagsEn, c.Requirements, c.RequirementsEn, c.Objectives, c.ObjectivesEn }).ToListAsync(ct);
+                c.Tags, c.TagsEn, c.Requirements, c.RequirementsEn, c.Objectives, c.ObjectivesEn,
+                English = c.Language == ContentLanguage.English }).ToListAsync(ct);
         foreach (var c in courses)
         {
-            texts.Add((c.Title, c.TitleEn));
-            if (c.ShortDescription != null) texts.Add((c.ShortDescription, c.ShortDescriptionEn));
-            if (c.Description != null) texts.Add((c.Description, c.DescriptionEn));
-            AddList(texts, c.Tags, c.TagsEn);
-            AddList(texts, c.Requirements, c.RequirementsEn);
-            AddList(texts, c.Objectives, c.ObjectivesEn);
+            texts.Add((c.Title, En(c.English, c.Title, c.TitleEn)));
+            if (c.ShortDescription != null) texts.Add((c.ShortDescription, En(c.English, c.ShortDescription, c.ShortDescriptionEn)));
+            if (c.Description != null) texts.Add((c.Description, En(c.English, c.Description, c.DescriptionEn)));
+            AddList(texts, c.Tags, c.English ? c.Tags : c.TagsEn);
+            AddList(texts, c.Requirements, c.English ? c.Requirements : c.RequirementsEn);
+            AddList(texts, c.Objectives, c.English ? c.Objectives : c.ObjectivesEn);
         }
         var courseIds = courses.Select(c => c.Id).ToList();
+        var englishCourses = courses.Where(c => c.English).Select(c => c.Id).ToHashSet();
         var sections = await db.CourseSections.AsNoTracking().Where(s => courseIds.Contains(s.CourseId))
-            .Select(s => new { s.Title, s.TitleEn, s.Description, s.DescriptionEn }).ToListAsync(ct);
-        foreach (var s in sections) { texts.Add((s.Title, s.TitleEn)); if (s.Description != null) texts.Add((s.Description, s.DescriptionEn)); }
+            .Select(s => new { s.CourseId, s.Title, s.TitleEn, s.Description, s.DescriptionEn }).ToListAsync(ct);
+        foreach (var s in sections)
+        {
+            var english = englishCourses.Contains(s.CourseId);
+            texts.Add((s.Title, En(english, s.Title, s.TitleEn)));
+            if (s.Description != null) texts.Add((s.Description, En(english, s.Description, s.DescriptionEn)));
+        }
         var lessons = await db.CourseLessons.AsNoTracking().Where(l => courseIds.Contains(l.CourseId))
-            .Select(l => new { l.Title, l.TitleEn, l.Description, l.DescriptionEn }).ToListAsync(ct);
-        foreach (var l in lessons) { texts.Add((l.Title, l.TitleEn)); if (l.Description != null) texts.Add((l.Description, l.DescriptionEn)); }
+            .Select(l => new { l.CourseId, l.Title, l.TitleEn, l.Description, l.DescriptionEn }).ToListAsync(ct);
+        foreach (var l in lessons)
+        {
+            var english = englishCourses.Contains(l.CourseId);
+            texts.Add((l.Title, En(english, l.Title, l.TitleEn)));
+            if (l.Description != null) texts.Add((l.Description, En(english, l.Description, l.DescriptionEn)));
+        }
 
         var taxonomy = await db.ContentTranslations.AsNoTracking().ToListAsync(ct);
         return ContentTranslationSnapshot.Build(texts, taxonomy);

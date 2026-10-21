@@ -111,6 +111,17 @@ public sealed class ContentTranslationService
     /// </summary>
     public static bool MarkSourceChanged(ITranslatableContent row)
     {
+        if (ContentSourceLanguage.IsEnglish(row))
+        {
+            MarkEnglishSource(row);
+            return false;
+        }
+        // Repassé en français : la traduction redevient nécessaire.
+        if (row.TranslationOrigin == TranslationOrigins.Source)
+        {
+            row.TranslationOrigin = null;
+            row.TranslationSourceHash = null;
+        }
         var hash = SourceHash(row);
         if (row.TranslationSourceHash == hash && row.TranslationState is TranslationStates.Ok) return false;
         if (row.TranslationOrigin == TranslationOrigins.Human)
@@ -121,6 +132,17 @@ public sealed class ContentTranslationService
         }
         row.TranslationState = TranslationStates.Pending;
         return true;
+    }
+
+    /// <summary>
+    /// Lot 10.7 : contenu écrit en anglais d'origine (GCE) : rien à traduire,
+    /// l'anglais est le texte lui-même (voir ContentTranslationIndex).
+    /// </summary>
+    public static void MarkEnglishSource(ITranslatableContent row)
+    {
+        row.TranslationOrigin = TranslationOrigins.Source;
+        row.TranslationState = TranslationStates.Ok;
+        row.TranslationSourceHash = SourceHash(row);
     }
 
     /// <summary>Taxonomie portée par un contenu : (type, valeur française).</summary>
@@ -229,6 +251,16 @@ public sealed class ContentTranslationService
         var (main, children, published, taxonomy) = await LoadAsync(target, ct);
         if (main == null) return new TranslationOutcome(target.Kind, target.Id, "missing", 0, "Contenu introuvable");
         if (onlyPublished && !published) return new TranslationOutcome(target.Kind, target.Id, main.TranslationState ?? "", 0, "Non publié");
+
+        if (ContentSourceLanguage.IsEnglish(main))
+        {
+            // Une formation en anglais entraîne ses chapitres et leçons.
+            MarkEnglishSource(main);
+            foreach (var child in children) MarkEnglishSource(child);
+            await _db.SaveChangesAsync(ct);
+            _index.Invalidate();
+            return new TranslationOutcome(target.Kind, target.Id, TranslationStates.Ok, 0, null, null);
+        }
 
         await EnsureTaxonomyAsync(taxonomy, ct);
 
@@ -497,21 +529,21 @@ public sealed class ContentTranslationService
     public async Task<(List<ContentRef> Refs, int Chars)> FindMissingAsync(bool includeNeverRequested, CancellationToken ct = default)
     {
         bool Wanted(string? state, string? origin) =>
-            origin != TranslationOrigins.Human
+            origin != TranslationOrigins.Human && origin != TranslationOrigins.Source
             && (state == TranslationStates.Pending || state == TranslationStates.Failed || (includeNeverRequested && state == null));
 
         var refs = new List<ContentRef>();
         var chars = 0;
 
-        var subjects = await _db.Subjects.AsNoTracking().Where(s => !s.IsDeleted && s.IsPublished)
+        var subjects = await _db.Subjects.AsNoTracking().Where(s => !s.IsDeleted && s.IsPublished && s.Language != ContentLanguage.English)
             .Select(s => new { s.Id, s.TranslationState, s.TranslationOrigin, Len = s.Title.Length + (s.Description ?? "").Length }).ToListAsync(ct);
         foreach (var s in subjects.Where(s => Wanted(s.TranslationState, s.TranslationOrigin))) { refs.Add(new(ContentKinds.Subject, s.Id)); chars += s.Len; }
 
-        var exams = await _db.Exams.AsNoTracking().Where(e => !e.IsDeleted && e.IsPublished)
+        var exams = await _db.Exams.AsNoTracking().Where(e => !e.IsDeleted && e.IsPublished && e.Language != ContentLanguage.English)
             .Select(e => new { e.Id, e.TranslationState, e.TranslationOrigin, Len = e.Title.Length + (e.Description ?? "").Length }).ToListAsync(ct);
         foreach (var e in exams.Where(e => Wanted(e.TranslationState, e.TranslationOrigin))) { refs.Add(new(ContentKinds.Exam, e.Id)); chars += e.Len; }
 
-        var courses = await _db.Courses.AsNoTracking().Where(c => c.Status == "published")
+        var courses = await _db.Courses.AsNoTracking().Where(c => c.Status == "published" && c.Language != ContentLanguage.English)
             .Select(c => new { c.Id, c.TranslationState, c.TranslationOrigin, c.Title, c.ShortDescription, c.Description, c.Tags, c.Requirements, c.Objectives })
             .ToListAsync(ct);
         var courseIds = courses.Select(c => c.Id).ToList();
