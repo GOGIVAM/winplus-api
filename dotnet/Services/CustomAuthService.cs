@@ -115,64 +115,46 @@ public class CustomAuthService : ICustomAuthService
         string? role = null,
         string? locale = null)
     {
+        // Messages dans la langue du site ou de l'application (le compte n'existe pas encore).
+        var en = AiLocaleHeaderHandler.Normalize(locale) == "en";
+        string L(string fr, string english) => en ? english : fr;
+        AuthResult Refused(string code, string field, string fr, string english) => new()
+        {
+            Success = false,
+            ErrorCode = code,
+            Message = L(fr, english),
+            Errors = new() { { field, code } },
+        };
+
         try
         {
             email = email?.Trim().ToLowerInvariant() ?? string.Empty;
             _logger.LogInformation("SignUp request for email: {Email}", email);
 
             if (_platformSettings != null && !_platformSettings.GetBool(PlatformSettingDefinitions.SignupEnabled))
-            {
-                return new AuthResult
-                {
-                    Success = false,
-                    Message = "Les inscriptions sont momentanément fermées. Réessayez plus tard.",
-                    Errors = new() { { "signup", "signup_disabled" } }
-                };
-            }
+                return Refused("signup_disabled", "signup",
+                    "Les inscriptions sont momentanément fermées. Réessayez plus tard.",
+                    "Sign-ups are temporarily closed. Please try again later.");
 
             // Validation
             if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
-            {
-                return new AuthResult
-                {
-                    Success = false,
-                    Message = "Email and password are required",
-                    Errors = new() { { "email", "Email is required" }, { "password", "Password is required" } }
-                };
-            }
+                return Refused("required", "email", "L'e-mail et le mot de passe sont obligatoires.", "Email and password are required.");
 
-            if (password.Length < 8)
-            {
-                return new AuthResult
-                {
-                    Success = false,
-                    Message = "Password must be at least 8 characters long",
-                    Errors = new() { { "password", "Password must be at least 8 characters" } }
-                };
-            }
+            // Même règle que l'écran d'inscription (web et mobile) : 8 caractères,
+            // une majuscule, une minuscule, un chiffre, un caractère spécial.
+            if (password.Length < 8 || !ValidatePasswordComplexity(password))
+                return Refused("password_weak", "password",
+                    "Le mot de passe doit contenir au moins 8 caractères, une majuscule, une minuscule, un chiffre et un caractère spécial.",
+                    "The password needs at least 8 characters, a capital letter, a lowercase letter, a number and a special character.");
 
-            // Validate password complexity
-            if (!ValidatePasswordComplexity(password))
-            {
-                return new AuthResult
-                {
-                    Success = false,
-                    Message = "Password must contain uppercase, lowercase, number, and special character",
-                    Errors = new() { { "password", "Invalid password complexity" } }
-                };
-            }
-
-            // Check if user already exists
-            var existingUser = _dbContext.Users.FirstOrDefault(u => u.Email == email);
+            // Check if user already exists (comptes anciens enregistrés avec des majuscules compris)
+            var existingUser = _dbContext.Users.FirstOrDefault(u => u.Email.ToLower() == email);
             if (existingUser != null)
             {
                 _logger.LogWarning("User already exists: {Email}", email);
-                return new AuthResult
-                {
-                    Success = false,
-                    Message = "Email is already registered",
-                    Errors = new() { { "email", "Email already registered" } }
-                };
+                return Refused("email_taken", "email",
+                    "Un compte existe déjà avec cet e-mail. Connectez-vous ou réinitialisez votre mot de passe.",
+                    "An account already exists with this email. Sign in or reset your password.");
             }
 
             // Hash password
@@ -227,9 +209,12 @@ public class CustomAuthService : ICustomAuthService
             return new AuthResult
             {
                 Success = true,
-                Message = "Registration successful. Please check your email to verify your account.",
+                Message = L("Compte créé. Saisissez le code reçu par e-mail pour l'activer.",
+                    "Account created. Enter the code sent by email to activate it."),
                 User = new UserDto
                 {
+                    // Indispensable à l'attribution de la source d'arrivée (lot 10.3).
+                    Id = user.Id,
                     Email = email,
                     FirstName = firstName,
                     LastName = lastName,
@@ -242,12 +227,10 @@ public class CustomAuthService : ICustomAuthService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during SignUp for email: {Email}", email);
-            return new AuthResult
-            {
-                Success = false,
-                Message = "An error occurred during registration",
-                Errors = new() { { "signup", ex.Message } }
-            };
+            // Le détail de l'exception reste dans le journal, jamais dans la réponse.
+            return Refused("signup_error", "signup",
+                "La création du compte n'a pas abouti. Réessayez dans un instant.",
+                "The account could not be created. Please try again in a moment.");
         }
     }
 

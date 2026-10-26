@@ -48,7 +48,12 @@ public class AuthController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
         {
-            return BadRequest(new { error = "Email and password are required" });
+            return BadRequest(new
+            {
+                error = AiLocaleHeaderHandler.Normalize(request.Locale) == "en"
+                    ? "Email and password are required." : "L'e-mail et le mot de passe sont obligatoires.",
+                code = "required",
+            });
         }
 
         try
@@ -89,7 +94,7 @@ public class AuthController : ControllerBase
                     string.Join(", ", result.Errors?.Select(x => $"{x.Key}: {x.Value}") ?? new List<string>()),
                     DateTime.UtcNow
                 );
-                return BadRequest(new { error = result.Message, details = result.Errors });
+                return BadRequest(new { error = result.Message, code = result.ErrorCode, details = result.Errors });
             }
 
             _logger.LogInformation(
@@ -132,7 +137,7 @@ public class AuthController : ControllerBase
                 ex.Message,
                 ex.StackTrace
             );
-            return StatusCode(500, new { error = "An error occurred during registration", details = ex.Message });
+            return StatusCode(500, new { error = "La création du compte n'a pas abouti. Réessayez dans un instant.", code = "signup_error" });
         }
     }
 
