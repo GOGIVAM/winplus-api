@@ -105,6 +105,29 @@ public class CoursePlayerController : ControllerBase
                 .FirstOrDefaultAsync(e => e.UserId == userId && e.CourseId == courseId);
 
             var orderedSections = course.Sections.OrderBy(s => s.Position).ToList();
+
+            // Examen final (lot 4, module 31) : jouable une fois toutes les leçons
+            // terminées ; pause de 24 h après 3 échecs (décision du 2026-10-26).
+            object? finalExam = null;
+            if (course.FinalExamQuizId is int finalQuizId)
+            {
+                var allLessons = orderedSections.SelectMany(s => s.Lessons).ToList();
+                var allDone = allLessons.Count > 0 && allLessons.All(l => progressMap.TryGetValue(l.Id, out var p) && p.IsCompleted);
+                var best = await _db.QuizAttempts.AsNoTracking()
+                    .Where(a => a.UserId == userId && a.QuizId == finalQuizId && a.Status != "PendingReview")
+                    .Select(a => (decimal?)a.Score).MaxAsync();
+                var retake = await CourseExamRetakePolicy.StatusAsync(_db, userId, finalQuizId, course.FinalExamPassScorePercent, DateTime.UtcNow);
+                finalExam = new
+                {
+                    quizId = finalQuizId,
+                    passScore = course.FinalExamPassScorePercent,
+                    available = allDone,
+                    passed = best >= course.FinalExamPassScorePercent,
+                    bestScore = best,
+                    lockedUntil = retake.LockedUntil,
+                };
+            }
+
             var access = enrollment != null
                 ? await _access.ComputeSectionAccessAsync(userId, courseId, enrollment.EnrolledAt, orderedSections)
                 : orderedSections.ToDictionary(s => s.Id, _ => (true, (string?)null));
@@ -134,11 +157,66 @@ public class CoursePlayerController : ControllerBase
                         };
                     }),
                 }),
+                finalExam,
             });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting curriculum for course {CourseId}", courseId);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Pause de révision d'un examen de formation (décision du 2026-10-26) :
+    /// date de réouverture, questions le plus souvent ratées et leçons à revoir,
+    /// pour que WinAI propose un plan, un quiz d'entraînement ou une session de travail.
+    /// </summary>
+    [HttpGet("exams/{quizId:int}/retake")]
+    public async Task<IActionResult> GetExamRetake(int courseId, int quizId)
+    {
+        try
+        {
+            var userId = User.GetUserId();
+            if (!await IsEnrolled(userId, courseId)) return Forbid();
+
+            var exam = await CourseExamRetakePolicy.FindAsync(_db, quizId);
+            if (exam == null || exam.CourseId != courseId) return NotFound(new { error = "Examen introuvable dans cette formation" });
+            var quiz = await _db.Quizzes.AsNoTracking().FirstOrDefaultAsync(q => q.Id == quizId);
+            if (quiz == null) return NotFound(new { error = "Examen introuvable" });
+
+            var status = await CourseExamRetakePolicy.StatusAsync(_db, userId, quizId, exam.PassScore, DateTime.UtcNow);
+            var weak = await CourseExamRetakePolicy.WeakPointsAsync(_db, userId, quiz);
+
+            // Leçons à revoir : celles du module de l'examen, ou toute la formation pour l'examen final.
+            var lessons = await _db.CourseLessons.AsNoTracking()
+                .Where(l => l.CourseId == courseId && l.IsPublished && l.LessonType != "quiz"
+                            && (exam.SectionId == null || l.SectionId == exam.SectionId))
+                .OrderBy(l => l.Section!.Position).ThenBy(l => l.Position)
+                .Take(8)
+                .Select(l => new { l.Id, l.Title, l.LessonType })
+                .ToListAsync();
+            var category = await _db.Courses.AsNoTracking().Where(c => c.Id == courseId).Select(c => c.Category).FirstOrDefaultAsync();
+
+            return Ok(new
+            {
+                quizId,
+                examTitle = quiz.Title,
+                courseTitle = exam.CourseTitle,
+                isFinal = exam.IsFinal,
+                subject = category,
+                passScore = status.PassScore,
+                consecutiveFailures = status.ConsecutiveFailures,
+                failuresBeforePause = CourseExamRetakePolicy.FailuresBeforePause,
+                locked = status.Locked,
+                lockedUntil = status.LockedUntil,
+                weakPoints = weak.Select(w => new { question = w.Question, explanation = w.Explanation, topic = w.Topic, missed = w.Missed }),
+                lessons,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting exam retake status {CourseId}/{QuizId}", courseId, quizId);
             return StatusCode(500, new { error = "Internal server error" });
         }
     }

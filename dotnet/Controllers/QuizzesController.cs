@@ -205,6 +205,18 @@ public class QuizzesController : ControllerBase
             try { await _dailyScore.UpsertDailyScoreAsync(userId, (decimal)result.Score); } catch { /* best-effort */ }
             return Ok(result);
         }
+        catch (CourseExamPausedException paused)
+        {
+            // 423 : l'écran affiche la pause et les propositions de WinAI
+            // (GET /api/courses/{courseId}/play/exams/{quizId}/retake).
+            return StatusCode(StatusCodes.Status423Locked, new
+            {
+                code = "exam_paused",
+                message = paused.Message,
+                lockedUntil = paused.LockedUntil,
+                courseId = paused.CourseId,
+            });
+        }
         catch (KeyNotFoundException)
         {
             return NotFound(new { message = "Quiz not found" });

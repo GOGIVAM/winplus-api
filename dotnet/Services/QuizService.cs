@@ -164,6 +164,14 @@ public class QuizService : IQuizService
         if (quiz == null)
             throw new KeyNotFoundException($"Quiz with id {quizId} not found");
 
+        // Décision du 2026-10-26 : examen de formation en pause 24 h après 3 échecs consécutifs.
+        var courseExam = await CourseExamRetakePolicy.FindAsync(_context, quizId);
+        if (courseExam != null)
+        {
+            var retake = await CourseExamRetakePolicy.StatusAsync(_context, userId, quizId, courseExam.PassScore, DateTime.UtcNow);
+            if (retake.Locked) throw new CourseExamPausedException(retake.LockedUntil!.Value, courseExam.CourseId);
+        }
+
         // Une seule tentative pour un quiz généré par WinAI pour SOI  les
         // réponses/corrections sont visibles dès la première fois, le
         // rejouer ne testerait plus rien. Les quiz admin (IsAIGenerated

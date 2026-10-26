@@ -42,7 +42,7 @@ namespace Backend.Tests
         {
             using var db = Db();
             db.Users.AddRange(
-                new User { Id = Teacher, Email = "t@r97b.local", Role = "teacher", FirstName = "Prof", LastName = "Test" },
+                new User { Id = Teacher, Email = "t@r97b.local", Role = "teacher", FirstName = "Prof", LastName = "Test", IsEmailVerified = true },
                 new User { Id = Parent, Email = "p@r97b.local", Role = "parent" },
                 new User { Id = ChildA, Email = "a@r97b.local", Role = "student", FirstName = "Ana" },
                 new User { Id = ChildB, Email = "b@r97b.local", Role = "student", FirstName = "Ben" },

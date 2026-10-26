@@ -6,6 +6,8 @@ using Backend.Extensions;
 using Backend.Models.Entities;
 using Backend.Services;
 using Backend.Services.Entitlements;
+using Backend.Services.Translation;
+using Backend.Utils;
 
 namespace Backend.Controllers;
 
@@ -319,6 +321,11 @@ public class TeacherCourseController : ControllerBase
             if (course == null) return NotFound(new { error = "Formation introuvable" });
             if (course.Status != "draft" && course.Status != "archived")
                 return BadRequest(new { error = "La formation doit être en brouillon pour être soumise" });
+
+            // Décision du 2026-10-26 : publier exige un e-mail vérifié.
+            if (await VerifiedEmailRequirement.CheckAsync(_db, teacherId, User.IsAdmin(),
+                    ContentLanguage.Parse(Request.Query[ContentLanguage.QueryParameter].FirstOrDefault()) == ContentLanguage.English) is { } unverified)
+                return unverified;
 
             var hasLessons = await _db.CourseLessons.AnyAsync(l => l.CourseId == id && l.IsPublished);
             if (!hasLessons)

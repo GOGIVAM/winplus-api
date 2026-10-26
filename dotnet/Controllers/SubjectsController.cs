@@ -391,6 +391,11 @@ public class SubjectsController : ControllerBase
             var userId = User.GetUserId();
             var isAdmin = User.IsAdmin();
 
+            // Décision du 2026-10-26 : publier exige un e-mail vérifié.
+            if (await VerifiedEmailRequirement.CheckAsync(_context, userId, isAdmin,
+                    ContentLanguage.Parse(Request.Query[ContentLanguage.QueryParameter].FirstOrDefault()) == ContentLanguage.English) is { } unverified)
+                return unverified;
+
             var subject = new Subject
             {
                 Title = request.Title.Trim(),
