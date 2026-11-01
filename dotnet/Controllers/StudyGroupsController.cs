@@ -156,7 +156,9 @@ public class StudyGroupsController : ControllerBase
 
             var members = await _db.StudyGroupMembers
                 .AsNoTracking()
-                .Where(m => m.StudyGroupId == id)
+                // Dans une classe d'établissement, l'enseignant est membre du
+                // groupe : il ne concourt pas avec les élèves.
+                .Where(m => m.StudyGroupId == id && m.Role != InstitutionTeachersController.TeacherRole)
                 .Select(m => new { m.UserId, m.User!.FirstName, m.User.LastName, m.User.AvatarUrl })
                 .ToListAsync();
             var memberIds = members.Select(m => m.UserId).ToList();
@@ -244,15 +246,11 @@ public class StudyGroupsController : ControllerBase
                 LastActivityAt = DateTime.UtcNow
             };
 
+            // Groupe et membre propriétaire dans une seule sauvegarde : un échec
+            // entre les deux laissait un groupe sans membre, compté dans la
+            // limite groups.max_owned et invisible pour son propriétaire.
+            group.Members.Add(new StudyGroupMember { UserId = userId, Role = "owner" });
             _db.StudyGroups.Add(group);
-            await _db.SaveChangesAsync();
-
-            _db.StudyGroupMembers.Add(new StudyGroupMember
-            {
-                StudyGroupId = group.Id,
-                UserId       = userId,
-                Role         = "owner"
-            });
             await _db.SaveChangesAsync();
 
             return Ok(new
@@ -295,7 +293,18 @@ public class StudyGroupsController : ControllerBase
 
             _db.StudyGroupMembers.Add(new StudyGroupMember { StudyGroupId = group.Id, UserId = userId });
             group.LastActivityAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync();
+            try
+            {
+                await _db.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                // Double envoi simultané : l'index unique (groupe, utilisateur)
+                // a refusé le doublon, l'élève est bien déjà membre.
+                if (await _db.StudyGroupMembers.AsNoTracking().AnyAsync(m => m.StudyGroupId == group.Id && m.UserId == userId))
+                    return Ok(new { data = new { id = group.Id, name = group.Name, alreadyMember = true }, success = true });
+                throw;
+            }
 
             var memberCount = await _db.StudyGroupMembers.CountAsync(m => m.StudyGroupId == group.Id);
 
