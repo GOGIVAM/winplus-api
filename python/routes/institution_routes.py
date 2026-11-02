@@ -425,12 +425,12 @@ async def at_risk_students(
         prev_avgs = {}
         for uid in all_student_ids:
             r_rows = (
-                session.query(_db.func_avg(DailyScore.AverageScore))
+                session.query(func.avg(DailyScore.AverageScore))
                 .filter(DailyScore.UserId == uid, DailyScore.Date >= recent_start)
                 .scalar()
             )
             p_rows = (
-                session.query(_db.func_avg(DailyScore.AverageScore))
+                session.query(func.avg(DailyScore.AverageScore))
                 .filter(DailyScore.UserId == uid, DailyScore.Date >= prev_start, DailyScore.Date < recent_start)
                 .scalar()
             )

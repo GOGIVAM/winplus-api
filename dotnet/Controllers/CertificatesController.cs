@@ -269,13 +269,8 @@ public class CertificatesController : ControllerBase
         }
     }
 
-    private int GetUserIdFromToken()
-    {
-        var userIdClaim = User.FindFirst("sub") ?? User.FindFirst("userId");
-        if (userIdClaim == null || !int.TryParse(userIdClaim.Value, out var userId))
-        {
-            throw new UnauthorizedAccessException("User ID not found in token");
-        }
-        return userId;
-    }
+    // Même lecture que le reste de l'API (user_id, puis NameIdentifier, puis sub). L'ancienne version ne cherchait
+    // que "sub" et "userId" : ASP.NET renomme "sub" en NameIdentifier à la lecture du jeton et "userId" n'existe pas
+    // (le claim s'appelle user_id), donc toute route de certificats répondait 500 à un utilisateur pourtant connecté.
+    private int GetUserIdFromToken() => User.GetUserId();
 }

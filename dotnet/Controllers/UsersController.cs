@@ -637,6 +637,11 @@ public class UsersController : ControllerBase
             var statistics = await _userService.GetUserStatisticsAsync(id);
             return Ok(statistics);
         }
+        catch (InvalidOperationException ex) when (ex.Message.EndsWith("not found", StringComparison.OrdinalIgnoreCase))
+        {
+            // Utilisateur inexistant (l'administrateur peut interroger n'importe quel identifiant) : 404, pas 500.
+            return NotFound(new { error = "Utilisateur introuvable." });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting statistics for user {UserId}", id);
