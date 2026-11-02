@@ -851,40 +851,6 @@ public class StudentController : ControllerBase
     // GET /api/student/download-history vit dans StudentReportsController (même
     // route, historique filtrable par période) : la doublonner ici provoquait un
     // AmbiguousMatchException à chaque appel (500 systématique côté client).
-
-    [HttpGet("reports")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetReports()
-    {
-        try
-        {
-            var userId = User.GetUserId();
-            // Monthly aggregated report from learning histories
-            var histories = await _db.LearningHistories
-                .Where(h => h.UserId == userId)
-                .ToListAsync();
-
-            var monthly = histories
-                .GroupBy(h => new { h.CreatedAt.Year, h.CreatedAt.Month })
-                .OrderByDescending(g => g.Key.Year).ThenByDescending(g => g.Key.Month)
-                .Take(12)
-                .Select(g => new
-                {
-                    period = $"{g.Key.Year}-{g.Key.Month:D2}",
-                    averageScore = g.Where(h => h.QuizScore.HasValue).Any()
-                        ? Math.Round(g.Where(h => h.QuizScore.HasValue).Average(h => (double)h.QuizScore!.Value), 1)
-                        : (double?)null,
-                    totalStudyHours = Math.Round(g.Sum(h => h.TimeSpentSeconds ?? 0) / 3600.0, 1),
-                    activitiesCount = g.Count()
-                })
-                .ToList();
-
-            return Ok(new { data = monthly, success = true });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting student reports");
-            return StatusCode(500, new { success = false, error = "Internal server error" });
-        }
-    }
+    // GET /api/student/reports vit aussi dans StudentReportsController (rapport par période) :
+    // la déclarer ici en plus provoquait un AmbiguousMatchException, donc un 500 à chaque appel.
 }
