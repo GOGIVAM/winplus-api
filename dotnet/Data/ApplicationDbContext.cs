@@ -1052,7 +1052,9 @@ public partial class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.CertificateNumber).IsRequired().HasMaxLength(100);
-            entity.Property(e => e.VerificationCode).IsRequired().HasMaxLength(50);
+            // Facultatif côté modèle : des certificats anciens ont un code NULL, et une propriété
+            // obligatoire faisait échouer toute lecture ("Column 'VerificationCode' is null", 500).
+            entity.Property(e => e.VerificationCode).HasMaxLength(50);
             entity.Property(e => e.FileUrl).HasMaxLength(500);
             entity.Property(e => e.Grade).HasPrecision(5, 2);
             entity.HasIndex(e => e.CertificateNumber).IsUnique();
