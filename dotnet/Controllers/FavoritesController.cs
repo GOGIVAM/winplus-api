@@ -57,6 +57,12 @@ public class FavoritesController : ControllerBase
         {
             return StatusCode(403, new { error = ex.Message, code = "favorites_limit" });
         }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("introuvable", StringComparison.OrdinalIgnoreCase)
+                                                   || ex.Message.Contains("not found", StringComparison.OrdinalIgnoreCase))
+        {
+            // Le cours (ou l'utilisateur) n'existe pas : 404, pas 500. Trouvé par le balayage des écritures sur objet inexistant.
+            return NotFound(new { error = "Cours introuvable." });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erreur lors de l'ajout du favori");

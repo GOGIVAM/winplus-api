@@ -367,6 +367,9 @@ public class MessagesController : ControllerBase
     public async Task<IActionResult> ArchiveConversation(int participantId)
     {
         var me = User.GetUserId();
+        // Archiver une conversation avec un utilisateur qui n'existe pas laissait une ligne orpheline (aucune clé étrangère ne la refuse).
+        if (!await _db.Users.AnyAsync(u => u.Id == participantId))
+            return NotFound(new { error = "Utilisateur introuvable." });
         var already = await _db.ArchivedConversations.AnyAsync(a => a.UserId == me && a.OtherUserId == participantId);
         if (!already)
         {
