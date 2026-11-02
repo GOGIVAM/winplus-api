@@ -220,6 +220,15 @@ public class StudyGroupsController : ControllerBase
             if (name.Length < 3 || name.Length > 80)
                 return BadRequest(new { success = false, error = "Le nom doit contenir entre 3 et 80 caractères." });
 
+            // Limites des colonnes (Subject 100, Description 500) et caractère nul,
+            // que PostgreSQL refuse : sans ce contrôle la sauvegarde échouait en 500.
+            if ((request.Subject?.Trim().Length ?? 0) > 100)
+                return BadRequest(new { success = false, error = "La matière ne peut pas dépasser 100 caractères." });
+            if ((request.Description?.Trim().Length ?? 0) > 500)
+                return BadRequest(new { success = false, error = "La description ne peut pas dépasser 500 caractères." });
+            if (HasNul(name) || HasNul(request.Subject) || HasNul(request.Description))
+                return BadRequest(new { success = false, error = "Le texte contient un caractère non autorisé." });
+
             var userId = User.GetUserId();
 
             // Lot 9.7b : droit groups.max_owned (élèves), appliqué côté serveur.
@@ -277,7 +286,9 @@ public class StudyGroupsController : ControllerBase
         try
         {
             var code = (request.Code ?? "").Trim().ToUpperInvariant();
-            if (code.Length < 4)
+            // Le code fait au plus 10 caractères (colonne JoinCode) et ne contient jamais de
+            // caractère nul : les deux faisaient échouer la recherche en 500.
+            if (code.Length < 4 || code.Length > 10 || HasNul(code))
                 return BadRequest(new { success = false, error = "Code d'invitation invalide." });
 
             var userId = User.GetUserId();
@@ -347,6 +358,8 @@ public class StudyGroupsController : ControllerBase
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }
+
+    private static bool HasNul(string? s) => s != null && s.Contains('\0');
 
     private async Task<string> GenerateUniqueCodeAsync()
     {
