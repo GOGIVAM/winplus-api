@@ -132,7 +132,18 @@ public class NotificationsController : ControllerBase
                 await heartbeat;
             }
         }
-        catch (OperationCanceledException) { /* déconnexion du client ou ntfy injoignable (10 s) */ }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Le client s'est déconnecté : rien à écrire.
+        }
+        catch (OperationCanceledException)
+        {
+            // ntfy n'a pas répondu dans les 10 s : le flux se terminait sans un mot, le client ne pouvait pas
+            // distinguer « aucune notification » de « temps réel indisponible » et ne basculait jamais sur
+            // l'interrogation périodique. On le dit explicitement, comme pour les autres refus de ntfy.
+            _logger.LogWarning("ntfy SSE sans réponse en 10 s pour l'utilisateur {UserId}", userId);
+            try { await WriteAsync("event: error\ndata: ntfy timeout\n\n"); } catch { /* connexion déjà fermée */ }
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "SSE proxy error for user {UserId}", userId);
