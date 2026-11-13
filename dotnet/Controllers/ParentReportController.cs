@@ -276,6 +276,22 @@ public class ParentReportController : ControllerBase
 
         var emitterId = User.GetUserId();
 
+        // Seul un professeur de l'élève écrit à ses parents : sa classe, une
+        // liaison directe acceptée, une de ses formations ou une séance de
+        // tutorat réservée avec lui. Vérifié avant de chercher les parents :
+        // un inconnu n'apprend pas si l'élève a des parents liés.
+        var teachesChild =
+            await _db.TeacherClassStudents.AnyAsync(cs => cs.StudentId == req.ChildId
+                && _db.TeacherClasses.Any(tc => tc.Id == cs.TeacherClassId && tc.TeacherId == emitterId))
+            || await _db.TeacherStudentLinks.AnyAsync(l => l.TeacherId == emitterId && l.StudentId == req.ChildId && l.Status == "accepted")
+            || await _db.CourseEnrollments.AnyAsync(e => e.IsActive && e.UserId == req.ChildId && e.Course.InstructorId == emitterId)
+            || await _db.TutorBookings.AnyAsync(b => b.StudentUserId == req.ChildId && b.TutorProfile!.UserId == emitterId);
+        if (!teachesChild)
+        {
+            _logger.LogWarning("Rapport parent refusé : l'émetteur {EmitterId} n'enseigne pas à l'élève {ChildId}.", emitterId, req.ChildId);
+            return StatusCode(403, new { error = "Vous n'enseignez pas à cet élève." });
+        }
+
         var parentIds = await _db.ParentStudentLinks
             .Where(l => l.StudentId == req.ChildId && l.Status == "accepted")
             .Select(l => l.ParentId)

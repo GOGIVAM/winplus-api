@@ -236,7 +236,9 @@ public class QuizzesController : ControllerBase
     public async Task<ActionResult<QuizAttemptDto>> GetQuizAttempt(int attemptId)
     {
         var attempt = await _quizService.GetQuizAttemptAsync(attemptId);
-        if (attempt == null)
+        // La tentative d'un autre élève répond comme une tentative inexistante :
+        // seuls son auteur et l'administration la lisent (score, temps, réussite).
+        if (attempt == null || (attempt.UserId != GetUserId() && !User.IsInRole("admin")))
             return NotFound(new { message = "Quiz attempt not found" });
 
         return Ok(attempt);

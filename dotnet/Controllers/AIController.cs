@@ -205,6 +205,9 @@ namespace Backend.Controllers;
         [ProducesResponseType(500)]
         public async Task<IActionResult> GetLearningPath(int userId)
         {
+            // Données d'un élève : lui, ses parents liés ou l'administration.
+            if (!await CanReadUserDataAsync(userId))
+                return StatusCode(403, new { message = "Accès refusé à ces données." });
             var (statusCode, body) = await _fastApiClient.GetRawJsonAsync($"/api/learning-path/{userId}");
             if (body == null)
                 return StatusCode(statusCode, new { message = "Service IA indisponible" });
@@ -248,6 +251,8 @@ namespace Backend.Controllers;
         [HttpGet("success-prediction/{userId:int}")]
         public async Task<IActionResult> GetSuccessPrediction(int userId, CancellationToken ct)
         {
+            if (!await CanReadUserDataAsync(userId))
+                return StatusCode(403, new { message = "Accès refusé à ces données." });
             try
             {
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -557,6 +562,8 @@ namespace Backend.Controllers;
         [HttpGet("exam-coach/today")]
         public async Task<IActionResult> ExamCoachToday([FromQuery] int userId, CancellationToken ct)
         {
+            if (!await CanReadUserDataAsync(userId))
+                return StatusCode(403, new { message = "Accès refusé à ces données." });
             // Lot 9.7b (18.17) : fonction activable par plan, débitée sur le budget WinAI.
             var ticket = await Gate.BeginAsync(GetCurrentUserId(), EntitlementCatalog.AiExamCoach, ct);
             if (!ticket.Allowed) return ticket.Refusal!;
@@ -683,6 +690,8 @@ namespace Backend.Controllers;
         [HttpGet("micro-intervention")]
         public async Task<IActionResult> GetMicroIntervention([FromQuery] int userId, CancellationToken ct)
         {
+            if (!await CanReadUserDataAsync(userId))
+                return StatusCode(403, new { message = "Accès refusé à ces données." });
             var httpClient = _httpClientFactory.CreateClient("FastApiClient");
             using var req = new HttpRequestMessage(HttpMethod.Get, $"/api/exam-coach/micro-intervention/{userId}");
             var auth = HttpContext.Request.Headers["Authorization"].ToString();
