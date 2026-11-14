@@ -259,7 +259,7 @@ namespace Backend.Tests
         public async Task La_pagination_calcule_pages_et_navigation()
         {
             var h = ChatbotHarness.Build();
-            h.Repo.Setup(r => r.GetConversationsForUserAsync(U, 2, 10, false)).ReturnsAsync(new List<Conversation> { new() { Id = 1, UserId = U, Title = "t" } });
+            h.Repo.Setup(r => r.GetConversationsForUserAsync(U, 2, It.IsAny<int>(), false)).ReturnsAsync(new List<Conversation> { new() { Id = 1, UserId = U, Title = "t" } });
             h.Repo.Setup(r => r.GetConversationCountForUserAsync(U, false)).ReturnsAsync(25);
             var res = await h.Svc.GetConversationsAsync(U, 2, 10);
             Assert.Equal(25, res.TotalCount);

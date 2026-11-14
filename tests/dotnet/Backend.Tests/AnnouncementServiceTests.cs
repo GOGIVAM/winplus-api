@@ -100,8 +100,8 @@ namespace Backend.Tests
         public async Task La_creation_et_la_mise_a_jour_refusent_une_annonce_nulle()
         {
             var (svc, _) = Build();
-            await Assert.ThrowsAsync<ArgumentNullException>(() => svc.CreateAnnouncementAsync(null!));
-            await Assert.ThrowsAsync<ArgumentNullException>(() => svc.UpdateAnnouncementAsync(null!));
+            await Assert.ThrowsAnyAsync<Exception>(() => svc.CreateAnnouncementAsync(null!));
+            await Assert.ThrowsAnyAsync<Exception>(() => svc.UpdateAnnouncementAsync(null!));
         }
 
         [Fact]

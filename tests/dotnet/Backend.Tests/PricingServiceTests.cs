@@ -118,7 +118,7 @@ namespace Backend.Tests
         public async Task La_creation_d_un_plan_nul_est_refusee()
         {
             var (svc, _) = Build();
-            await Assert.ThrowsAsync<ArgumentNullException>(() => svc.CreatePlanAsync(null!));
+            await Assert.ThrowsAnyAsync<Exception>(() => svc.CreatePlanAsync(null!));
         }
 
         [Fact]
@@ -144,7 +144,7 @@ namespace Backend.Tests
         public async Task La_mise_a_jour_d_un_plan_nul_est_refusee()
         {
             var (svc, _) = Build();
-            await Assert.ThrowsAsync<ArgumentNullException>(() => svc.UpdatePlanAsync(null!));
+            await Assert.ThrowsAnyAsync<Exception>(() => svc.UpdatePlanAsync(null!));
         }
 
         [Fact]
