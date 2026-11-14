@@ -21,6 +21,8 @@ public interface ICustomAuthService
 {
     Task<AuthResult> SignUpAsync(string email, string password, string firstName, string lastName, string? phone = null, string? role = null, string? locale = null);
     Task<AuthResult> SignInAsync(string email, string password, HttpRequest request, bool rememberMe = false);
+    /// <summary>Ouvre une session pour un compte déjà authentifié par un fournisseur externe (Google).</summary>
+    Task<AuthResult> SignInVerifiedUserAsync(User user, HttpRequest request);
     Task<AuthResult> VerifyEmailAsync(int userId, string verificationCode);
     Task<AuthResult> ResendVerificationCodeAsync(string email);
     Task<AuthResult> ForgotPasswordAsync(string email);
@@ -306,6 +308,50 @@ public class CustomAuthService : ICustomAuthService
                 };
             }
 
+            return await OpenSessionAsync(user, request, rememberMe);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during SignIn for email: {Email}", email);
+            return new AuthResult
+            {
+                Success = false,
+                Message = "An error occurred during login",
+                Errors = new() { { "signin", ex.Message } }
+            };
+        }
+    }
+
+    /// <summary>
+    /// Connexion par Google : l'identité et l'adresse ont été vérifiées par
+    /// Google, il n'y a pas de mot de passe à contrôler. Même session, mêmes
+    /// jetons qu'une connexion classique.
+    /// </summary>
+    public async Task<AuthResult> SignInVerifiedUserAsync(User user, HttpRequest request)
+    {
+        if (!user.IsActive)
+        {
+            return new AuthResult
+            {
+                Success = false,
+                Message = "Account is inactive",
+                ErrorCode = "ACCOUNT_INACTIVE",
+                Errors = new() { { "account", "Account is inactive" } }
+            };
+        }
+        // Google persiste la session, comme « Se souvenir de moi ».
+        return await OpenSessionAsync(user, request, rememberMe: true);
+    }
+
+    /// <summary>
+    /// Ouvre la session d'un compte authentifié : appareil, session, jetons
+    /// d'accès et de renouvellement, dernière connexion.
+    /// </summary>
+    private async Task<AuthResult> OpenSessionAsync(User user, HttpRequest request, bool rememberMe)
+    {
+        var email = user.Email;
+        try
+        {
             // Track device and check if it's recognized
             var device = await _deviceTrackingService.TrackDeviceAsync(user.Id, request, rememberMe);
 

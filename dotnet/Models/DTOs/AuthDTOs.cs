@@ -28,6 +28,18 @@ public class SignInRequestDto
     public string? DeviceId { get; set; } // ✅ For merging anonymous cart
 }
 
+/// <summary>Connexion avec Google : code (premier passage) ou jeton d'identité et rôle (second passage).</summary>
+public class GoogleSignInRequestDto
+{
+    public string? Code { get; set; }
+    public string? RedirectUri { get; set; }
+    public string? IdToken { get; set; }
+    public string? Role { get; set; }
+    public string? Locale { get; set; }
+    public string? DeviceId { get; set; }
+    public Backend.Services.Marketing.AttributionDto? Attribution { get; set; }
+}
+
 public class SignInResponse
 {
     public string? AccessToken { get; set; }

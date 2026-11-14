@@ -271,11 +271,14 @@ public static class EntitlementCatalog
             var mult = Math.Max(1, (int)Math.Round((double)AsLong(value) / Math.Max(1, freeReferenceTokens)));
             return mult <= 1 ? "Usage de référence" : $"{mult}x l'usage gratuit";
         }
+        var n = AsLong(value);
+        // Les unités sont au pluriel (« groupes », « favoris ») : au singulier pour 1.
+        var unit = n == 1 && def.Unit is { Length: > 1 } u && u.EndsWith('s') ? u[..^1] : def.Unit;
         return def.Type switch
         {
             EntitlementType.Boolean => AsBool(value) ? "Oui" : "Non",
-            EntitlementType.Percent => $"{AsLong(value)} %",
-            _ => AsLong(value) == Unlimited ? "Illimité" : $"{AsLong(value):N0} {def.Unit}".Replace(',', ' ').Trim(),
+            EntitlementType.Percent => $"{n} %",
+            _ => n == Unlimited ? "Illimité" : $"{n:N0} {unit}".Replace(',', ' ').Trim(),
         };
     }
 }

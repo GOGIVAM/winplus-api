@@ -19,15 +19,18 @@ public class AuthController : ControllerBase
     private readonly ILogger<AuthController> _logger;
     private readonly ApplicationDbContext _dbContext;
     private readonly Backend.Services.Marketing.IAttributionService? _attribution;
+    private readonly IGoogleAuthService? _google;
 
     public AuthController(
         ICustomAuthService customAuthService,
         ICartService cartService,
         ILogger<AuthController> logger,
         ApplicationDbContext dbContext,
-        Backend.Services.Marketing.IAttributionService? attribution = null)
+        Backend.Services.Marketing.IAttributionService? attribution = null,
+        IGoogleAuthService? google = null)
     {
         _attribution = attribution;
+        _google = google;
         _customAuthService = customAuthService;
         _cartService = cartService;
         _logger = logger;
@@ -274,6 +277,72 @@ public class AuthController : ControllerBase
             );
             return StatusCode(500, new { error = "An error occurred during login", details = ex.Message });
         }
+    }
+
+    /// <summary>
+    /// Identifiant client Google (public). Sans identifiants configurés, le
+    /// bouton « Continuer avec Google » reste désactivé.
+    /// </summary>
+    [HttpGet("google/client")]
+    [AllowAnonymous]
+    public IActionResult GoogleClient()
+        => Ok(new { clientId = _google?.ClientId, enabled = _google?.ClientId != null });
+
+    /// <summary>
+    /// Connexion avec Google. Premier passage : code et adresse de retour
+    /// renvoyés par Google. Si le compte n'existe pas et qu'aucun rôle n'est
+    /// donné, la réponse demande le rôle (needsRole) avec un jeton à renvoyer
+    /// au second passage, accompagné du rôle choisi.
+    /// </summary>
+    [HttpPost("google")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(SignInResponse), 200)]
+    public async Task<IActionResult> Google([FromBody] GoogleSignInRequestDto request)
+    {
+        // Toujours 400 en cas d'échec : le client relance les 503 et tente un
+        // renouvellement de session sur les 401, sans objet ici.
+        if (_google?.ClientId == null)
+            return BadRequest(new { error = "La connexion avec Google n'est pas disponible.", code = "google_not_configured" });
+
+        var outcome = await _google.SignInAsync(
+            request.Code, request.RedirectUri, request.IdToken, request.Role, request.Locale,
+            Request, HttpContext.RequestAborted);
+
+        if (outcome.NeedsRole)
+            return Ok(new { needsRole = true, idToken = outcome.IdToken, email = outcome.Email, firstName = outcome.FirstName });
+
+        var result = outcome.Session;
+        if (result == null || !result.Success)
+        {
+            _logger.LogWarning("[Google] Connexion refusée : {Code}", outcome.ErrorCode);
+            return BadRequest(new { error = "La connexion avec Google n'a pas abouti.", code = outcome.ErrorCode });
+        }
+
+        if (!string.IsNullOrEmpty(request.DeviceId) && result.User?.Id > 0)
+        {
+            try { await _cartService.MergeAnonymousCartAsync(result.User.Id, request.DeviceId); }
+            catch (Exception mergeEx) { _logger.LogError(mergeEx, "[Google] Fusion du panier impossible"); }
+        }
+        if (_attribution != null && request.Attribution != null && result.User?.Id is int userId)
+            await _attribution.RecordForUserAsync(userId, request.Attribution, HttpContext.RequestAborted);
+
+        return Ok(new SignInResponse
+        {
+            AccessToken = result.AccessToken,
+            RefreshToken = result.RefreshToken,
+            ExpiresIn = result.ExpiresIn ?? 900,
+            TokenType = "Bearer",
+            User = new
+            {
+                id = result.User?.Id,
+                email = result.User?.Email,
+                firstName = result.User?.FirstName,
+                lastName = result.User?.LastName,
+                role = result.User?.Role,
+                locale = result.User?.Locale,
+                isEmailVerified = result.User?.IsEmailVerified
+            }
+        });
     }
 
     /// <summary>

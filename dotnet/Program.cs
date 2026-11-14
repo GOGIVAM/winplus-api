@@ -358,6 +358,7 @@ builder.Services.AddHostedService<Backend.Services.Translation.ContentTranslatio
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IDeviceTrackingService, DeviceTrackingService>();
 builder.Services.AddScoped<ICustomAuthService, CustomAuthService>();
+builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
 
 builder.Services.AddMemoryCache();
 

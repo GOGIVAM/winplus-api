@@ -398,7 +398,7 @@ public class SubjectsController : ControllerBase
 
             var subject = new Subject
             {
-                Title = request.Title.Trim(),
+                Title = Backend.Utils.ContentTitles.Clean(request.Title),
                 Description = request.Description,
                 Category = request.Category,
                 Level = request.Level,
@@ -576,7 +576,7 @@ public class SubjectsController : ControllerBase
             if (!User.IsAdmin() && existing.AuthorUserId != User.GetUserId())
                 return StatusCode(403, new { error = "Vous ne pouvez modifier que vos propres contenus." });
 
-            if (!string.IsNullOrWhiteSpace(request.Title)) existing.Title = request.Title.Trim();
+            if (!string.IsNullOrWhiteSpace(request.Title)) existing.Title = Backend.Utils.ContentTitles.Clean(request.Title);
             if (request.Price.HasValue)
                 existing.Price = decimal.Round(request.Price.Value, 0, MidpointRounding.AwayFromZero);
 
