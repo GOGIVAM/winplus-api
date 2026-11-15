@@ -1966,5 +1966,8 @@ modelBuilder.Entity<Exam>(entity =>
 
         // ── Contenus bilingues fr/en (voir ApplicationDbContext.ContentTranslations.cs) ──
         OnModelCreatingContentTranslations(modelBuilder);
+
+        // ── Écritures « une seule fois » du mobile hors ligne (voir ApplicationDbContext.ClientRequestKeys.cs) ──
+        OnModelCreatingClientRequestKeys(modelBuilder);
     }
 }
