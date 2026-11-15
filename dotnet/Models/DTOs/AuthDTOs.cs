@@ -26,6 +26,8 @@ public class SignInRequestDto
     public string Password { get; set; } = string.Empty;
     public bool RememberMe { get; set; } = false;
     public string? DeviceId { get; set; } // ✅ For merging anonymous cart
+    /// <summary>Site web : le jeton de renouvellement part en cookie HttpOnly, jamais dans la réponse.</summary>
+    public bool UseCookie { get; set; }
 }
 
 /// <summary>Connexion avec Google : code (premier passage) ou jeton d'identité et rôle (second passage).</summary>
@@ -38,6 +40,10 @@ public class GoogleSignInRequestDto
     public string? Locale { get; set; }
     public string? DeviceId { get; set; }
     public Backend.Services.Marketing.AttributionDto? Attribution { get; set; }
+    /// <summary>« Se souvenir de moi » : session gardée 30 jours, sinon jusqu'à la fermeture du navigateur.</summary>
+    public bool RememberMe { get; set; }
+    /// <summary>Site web : le jeton de renouvellement part en cookie HttpOnly, jamais dans la réponse.</summary>
+    public bool UseCookie { get; set; }
 }
 
 public class SignInResponse
@@ -53,6 +59,8 @@ public class VerifyEmailRequestDto
 {
     public string Email { get; set; } = string.Empty;
     public string VerificationCode { get; set; } = string.Empty;
+    /// <summary>Site web : le jeton de renouvellement part en cookie HttpOnly, jamais dans la réponse.</summary>
+    public bool UseCookie { get; set; }
 }
 
 public class VerifyEmailResponse
@@ -90,7 +98,10 @@ public class VerifyResetTokenRequestDto
 
 public class RefreshTokenRequestDto
 {
-    public string RefreshToken { get; set; } = string.Empty;
+    /// <summary>Application mobile (et anciennes sessions web) ; le site envoie le cookie à la place.</summary>
+    public string? RefreshToken { get; set; }
+    /// <summary>Site web : le jeton de renouvellement part en cookie HttpOnly, jamais dans la réponse.</summary>
+    public bool UseCookie { get; set; }
 }
 
 public class RefreshTokenResponse
@@ -104,6 +115,8 @@ public class RefreshTokenResponse
 public class LogoutRequestDto
 {
     public string? RefreshToken { get; set; }
+    /// <summary>Site web : le jeton de renouvellement part en cookie HttpOnly, jamais dans la réponse.</summary>
+    public bool UseCookie { get; set; }
 }
 
 public class ChangePasswordRequestDto
@@ -131,6 +144,8 @@ public class SendConfirmationCodeRequestDto
 public class VerifyConfirmationCodeRequestDto
 {
     public string Code { get; set; } = string.Empty;
+    /// <summary>Site web : le jeton de renouvellement part en cookie HttpOnly, jamais dans la réponse.</summary>
+    public bool UseCookie { get; set; }
 }
 
 public class VerifyConfirmationCodeResponse

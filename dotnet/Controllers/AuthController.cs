@@ -20,6 +20,54 @@ public class AuthController : ControllerBase
     private readonly ApplicationDbContext _dbContext;
     private readonly Backend.Services.Marketing.IAttributionService? _attribution;
     private readonly IGoogleAuthService? _google;
+    private readonly int _refreshDays = 30;
+    private readonly SameSiteMode _cookieSameSite = SameSiteMode.Lax;
+
+    // ── Session du site : jeton de renouvellement en cookie HttpOnly ──────────
+    // Le script de la page ne le lit jamais : une faille d'injection de script
+    // ne peut pas l'emporter. Deux noms selon « Se souvenir de moi » :
+    // wp_rt est un cookie de session (fermé avec le navigateur), wp_rtp dure
+    // _refreshDays jours. L'application mobile, qui n'envoie pas UseCookie,
+    // reçoit toujours ses jetons dans la réponse.
+    private const string SessionCookie = "wp_rt";
+    private const string PersistentCookie = "wp_rtp";
+
+    private CookieOptions RefreshCookieOptions(bool persistent) => new()
+    {
+        HttpOnly = true,
+        // Pas de HTTPS en développement local : sinon le navigateur refuse le cookie.
+        Secure = !string.Equals(Request.Host.Host, "localhost", StringComparison.OrdinalIgnoreCase),
+        SameSite = _cookieSameSite,
+        Path = "/",
+        IsEssential = true,
+        Expires = persistent ? DateTimeOffset.UtcNow.AddDays(_refreshDays) : null,
+    };
+
+    /// <summary>Jeton de renouvellement du cookie, et s'il vient de « Se souvenir de moi ».</summary>
+    private string? CookieRefreshToken(out bool persistent)
+    {
+        persistent = Request.Cookies.TryGetValue(PersistentCookie, out var p) && !string.IsNullOrEmpty(p);
+        if (persistent) return p;
+        return Request.Cookies.TryGetValue(SessionCookie, out var s) && !string.IsNullOrEmpty(s) ? s : null;
+    }
+
+    private void ClearRefreshCookies()
+    {
+        Response.Cookies.Delete(SessionCookie, RefreshCookieOptions(false));
+        Response.Cookies.Delete(PersistentCookie, RefreshCookieOptions(false));
+    }
+
+    /// <summary>
+    /// Mode cookie : pose le jeton en cookie et renvoie null pour la réponse JSON.
+    /// Sinon (application mobile) : renvoie le jeton tel quel.
+    /// </summary>
+    private string? HandOverRefreshToken(string? refreshToken, bool useCookie, bool persistent)
+    {
+        if (!useCookie || string.IsNullOrEmpty(refreshToken)) return refreshToken;
+        ClearRefreshCookies();
+        Response.Cookies.Append(persistent ? PersistentCookie : SessionCookie, refreshToken, RefreshCookieOptions(persistent));
+        return null;
+    }
 
     public AuthController(
         ICustomAuthService customAuthService,
@@ -27,10 +75,14 @@ public class AuthController : ControllerBase
         ILogger<AuthController> logger,
         ApplicationDbContext dbContext,
         Backend.Services.Marketing.IAttributionService? attribution = null,
-        IGoogleAuthService? google = null)
+        IGoogleAuthService? google = null,
+        IConfiguration? configuration = null)
     {
         _attribution = attribution;
         _google = google;
+        _refreshDays = int.TryParse(configuration?["JWT:RefreshTokenExpirationDays"], out var days) && days > 0 ? days : 30;
+        _cookieSameSite = Enum.TryParse<SameSiteMode>(configuration?["Auth:RefreshCookieSameSite"], true, out var mode)
+            ? mode : SameSiteMode.Lax;
         _customAuthService = customAuthService;
         _cartService = cartService;
         _logger = logger;
@@ -250,7 +302,7 @@ public class AuthController : ControllerBase
             return Ok(new SignInResponse
             {
                 AccessToken = result.AccessToken,
-                RefreshToken = result.RefreshToken,
+                RefreshToken = HandOverRefreshToken(result.RefreshToken, request.UseCookie, request.RememberMe),
                 ExpiresIn = result.ExpiresIn ?? 900,
                 TokenType = "Bearer",
                 User = new
@@ -260,6 +312,7 @@ public class AuthController : ControllerBase
                     firstName = result.User?.FirstName,
                     lastName = result.User?.LastName,
                     role = result.User?.Role,
+                    locale = result.User?.Locale,
                     isEmailVerified = result.User?.IsEmailVerified
                 }
             });
@@ -329,7 +382,7 @@ public class AuthController : ControllerBase
         return Ok(new SignInResponse
         {
             AccessToken = result.AccessToken,
-            RefreshToken = result.RefreshToken,
+            RefreshToken = HandOverRefreshToken(result.RefreshToken, request.UseCookie, request.RememberMe),
             ExpiresIn = result.ExpiresIn ?? 900,
             TokenType = "Bearer",
             User = new
@@ -385,7 +438,7 @@ public class AuthController : ControllerBase
                 Message = result.Message,
                 IsVerified = true,
                 AccessToken = result.AccessToken,
-                RefreshToken = result.RefreshToken,
+                RefreshToken = HandOverRefreshToken(result.RefreshToken, request.UseCookie, persistent: false),
                 User = result.User
             });
         }
@@ -558,9 +611,16 @@ public class AuthController : ControllerBase
     [AllowAnonymous]
     [ProducesResponseType(typeof(RefreshTokenResponse), 200)]
     [ProducesResponseType(401)]
-    public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequestDto request)
+    public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequestDto? request)
     {
-        if (string.IsNullOrWhiteSpace(request.RefreshToken))
+        request ??= new RefreshTokenRequestDto();
+        // Le site envoie son cookie ; l'application mobile (et une ancienne
+        // session web, une seule fois) envoie le jeton dans le corps, qui est
+        // alors considéré comme « Se souvenir de moi » (il était gardé sans limite).
+        var refreshToken = request.RefreshToken;
+        var persistent = true;
+        if (string.IsNullOrWhiteSpace(refreshToken)) refreshToken = CookieRefreshToken(out persistent);
+        if (string.IsNullOrWhiteSpace(refreshToken))
         {
             return BadRequest(new { error = "Refresh token is required" });
         }
@@ -569,11 +629,12 @@ public class AuthController : ControllerBase
         {
             _logger.LogInformation("RefreshToken request");
 
-            var result = await _customAuthService.RefreshAccessTokenAsync(request.RefreshToken);
+            var result = await _customAuthService.RefreshAccessTokenAsync(refreshToken);
 
             if (!result.Success)
             {
                 _logger.LogWarning("RefreshToken failed. Message: {Message}", result.Message);
+                if (request.UseCookie) ClearRefreshCookies();
                 return Unauthorized(new { error = result.Message, details = result.Errors });
             }
 
@@ -581,7 +642,7 @@ public class AuthController : ControllerBase
             return Ok(new RefreshTokenResponse
             {
                 AccessToken = result.AccessToken,
-                RefreshToken = result.RefreshToken,
+                RefreshToken = HandOverRefreshToken(result.RefreshToken, request.UseCookie, persistent),
                 ExpiresIn = result.ExpiresIn ?? 900,
                 TokenType = "Bearer"
             });
@@ -597,18 +658,21 @@ public class AuthController : ControllerBase
     /// Logout - revoke refresh token
     /// </summary>
     [HttpPost("logout")]
-    [Authorize]
+    [AllowAnonymous] // ne fait que révoquer le jeton présenté : le cookie suffit, même jeton d'accès expiré
     [ProducesResponseType(200)]
-    public async Task<IActionResult> Logout([FromBody] LogoutRequestDto request)
+    public async Task<IActionResult> Logout([FromBody] LogoutRequestDto? request)
     {
         try
         {
             _logger.LogInformation("Logout request");
 
-            if (!string.IsNullOrWhiteSpace(request.RefreshToken))
+            var refreshToken = request?.RefreshToken;
+            if (string.IsNullOrWhiteSpace(refreshToken)) refreshToken = CookieRefreshToken(out _);
+            if (!string.IsNullOrWhiteSpace(refreshToken))
             {
-                await _customAuthService.LogoutAsync(request.RefreshToken);
+                await _customAuthService.LogoutAsync(refreshToken);
             }
+            ClearRefreshCookies();
 
             return Ok(new { message = "Logged out successfully" });
         }
@@ -727,7 +791,8 @@ public class AuthController : ControllerBase
             {
                 Message = result.Message,
                 AccessToken = result.AccessToken,
-                RefreshToken = result.RefreshToken,
+                RefreshToken = HandOverRefreshToken(result.RefreshToken, request.UseCookie,
+                    CookieRefreshToken(out var keep) == null || keep),
                 ExpiresIn = result.ExpiresIn ?? 86400,
                 TokenType = "Bearer",
                 ConfirmedAt = DateTime.UtcNow
