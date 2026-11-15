@@ -740,6 +740,10 @@ app.UseMaintenanceMode();
 
 app.UseAuthorization();
 
+// Mode hors ligne du mobile (lot 3) : une action rejouée avec la même
+// Idempotency-Key reçoit la première réponse au lieu d'être exécutée deux fois.
+app.UseClientIdempotency();
+
 // Suivi de présence : met à jour UserSessions.LastActivityAt à chaque requête
 // authentifiée. C'est la source du « qui est en ligne » du dashboard admin.
 app.UsePresenceTracking();
