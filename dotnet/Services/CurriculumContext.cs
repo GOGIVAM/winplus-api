@@ -15,7 +15,17 @@ public static class CurriculumContext
     {
         ["6e"] = "6ème", ["5e"] = "5ème", ["4e"] = "4ème", ["3e"] = "3ème",
         ["2nde"] = "Seconde", ["1ere"] = "Première", ["tle"] = "Terminale",
+        ["tc1"] = "1ère année", ["tc2"] = "2ème année", ["tc3"] = "3ème année", ["tc4"] = "4ème année",
+        ["tc2nde"] = "Seconde", ["tc1ere"] = "Première", ["tctle"] = "Terminale",
+        ["f1"] = "Form 1", ["f2"] = "Form 2", ["f3"] = "Form 3", ["f4"] = "Form 4", ["f5"] = "Form 5",
+        ["ls"] = "Lower Sixth", ["us"] = "Upper Sixth",
     };
+
+    /// <summary>Sous-système de la classe, pour que WinAI suive le bon programme et la bonne langue.</summary>
+    private static string SystemOf(string level) =>
+        level.StartsWith("tc") ? "enseignement technique francophone"
+        : level is "f1" or "f2" or "f3" or "f4" or "f5" or "ls" or "us" ? "sous-système anglophone (GCE)"
+        : "enseignement général francophone";
 
     /// <summary>« Terminale C », « 4ème »… ou null si l'élève n'a pas choisi de classe.</summary>
     public static async Task<string?> LevelLabelAsync(ApplicationDbContext db, int userId, CancellationToken ct = default)
@@ -32,7 +42,9 @@ public static class CurriculumContext
     public static async Task<string?> GradeAsync(ApplicationDbContext db, int userId, string? profileLevel, CancellationToken ct = default)
     {
         var label = await LevelLabelAsync(db, userId, ct);
-        return label != null ? $"{label} (programme officiel camerounais, MINESEC)" : profileLevel;
+        if (label == null) return profileLevel;
+        var level = await db.CurriculumSelections.AsNoTracking().Where(s => s.UserId == userId).Select(s => s.Level).FirstOrDefaultAsync(ct) ?? "";
+        return $"{label} ({SystemOf(level)}, programme officiel camerounais, MINESEC)";
     }
 
     /// <summary>

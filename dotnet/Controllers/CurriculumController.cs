@@ -61,9 +61,20 @@ public class CurriculumStudentSummary
 [Authorize]
 public class CurriculumController : ControllerBase
 {
-    private static readonly HashSet<string> Levels = new() { "6e", "5e", "4e", "3e", "2nde", "1ere", "tle" };
-    private static readonly HashSet<string> SeriesAllowed = new() { "A", "C", "D", "E", "TI" };
-    private static readonly Regex KeyPattern = new(@"^(6e|5e|4e|3e|2nde|1ere|tle)\|[a-z0-9-]{1,40}\|\d{1,2}\|\d{1,3}$", RegexOptions.Compiled);
+    // Général francophone, technique francophone (tc*), anglophone (Form 1-5, Lower/Upper Sixth).
+    private static readonly HashSet<string> Levels = new()
+    {
+        "6e", "5e", "4e", "3e", "2nde", "1ere", "tle",
+        "tc1", "tc2", "tc3", "tc4", "tc2nde", "tc1ere", "tctle",
+        "f1", "f2", "f3", "f4", "f5", "ls", "us",
+    };
+    private static readonly HashSet<string> SeriesAllowed = new()
+    {
+        "A", "C", "D", "E", "TI",
+        "F1", "F2", "F3", "F4", "F5", "F7", "MA", "IH", "ESF", "ACA", "ACC", "CG",
+        "ART", "SCI", "COM", "TECH",
+    };
+    private static readonly Regex KeyPattern = new(@"^(6e|5e|4e|3e|2nde|1ere|tle|tc1|tc2|tc3|tc4|tc2nde|tc1ere|tctle|f1|f2|f3|f4|f5|ls|us)\|[a-z0-9-]{1,40}\|\d{1,2}\|\d{1,3}$", RegexOptions.Compiled);
     /// <summary>Garde-fou : un programme complet compte quelques centaines de chapitres.</summary>
     private const int MaxChaptersPerUser = 3000;
 
