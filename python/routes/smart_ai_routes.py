@@ -629,6 +629,29 @@ def _match_correct(options: list, correct: str):
     return None
 
 
+def _shuffle_options(options: list, correct: str):
+    """Options sans lettre, dédoublonnées, mélangées puis relettrées A), B)…
+    (le modèle met souvent la bonne réponse au même rang). Renvoie
+    (options, bonne réponse) ou (None, None) si la question est inexploitable
+    (moins de trois options distinctes)."""
+    import re as _re
+    import random as _random
+    strip = lambda o: _re.sub(r"^\s*[A-Ha-h]\s*[\)\.:\-]\s*", "", str(o)).strip()
+    texts, seen = [], set()
+    for o in options:
+        t = strip(o)
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            texts.append(t)
+    good = strip(correct)
+    if len(texts) < 3 or good.lower() not in seen:
+        return None, None
+    _random.shuffle(texts)
+    lettered = [f"{_LETTERS[i]}) {t}" for i, t in enumerate(texts)]
+    new_correct = next(l for l, t in zip(lettered, texts) if t.lower() == good.lower())
+    return lettered, new_correct
+
+
 @smart_ai_router.post("/quizzes/generate-content", tags=["ai"])
 async def generate_quiz_content(
     body: QuizContentRequest,
@@ -733,10 +756,24 @@ async def generate_quiz_content(
     style_line = f"\n[Style d'apprentissage de l'élève]\n{style_instruction}\n" if style_instruction else ""
     enrolled_line = f"Matières dans lesquelles l'élève est inscrit : {', '.join(enrolled_subjects)}.\n" if enrolled_subjects else ""
 
+    quality_line = (
+        "Qualité exigée pour CHAQUE question :\n"
+        "- énoncé autonome, précis et sans ambiguïté, conforme au programme officiel de la classe"
+        + (" et centré sur le chapitre indiqué (aucune question hors de ce chapitre)" if body.topic else "") + " ;\n"
+        "- une et une seule bonne réponse, vérifiée : refais chaque calcul avant de répondre, et "
+        "l'explication doit conduire exactement à la bonne réponse ;\n"
+        "- quatre options distinctes, de même nature et de longueur comparable ; jamais « toutes les "
+        "réponses », « aucune des réponses » ni « A et B » ;\n"
+        "- la question nomme explicitement la notion travaillée (ex. « équation du second degré », "
+        "« chute libre », « photosynthèse », « figure de style ») ;\n"
+        "- formules en texte simple avec les symboles Unicode (x², √, π, ≤, →, ×), jamais de LaTeX "
+        "ni de barres obliques inversées ;\n"
+        "- français correct, vocabulaire et exemples du contexte camerounais quand c'est naturel.\n"
+    )
     prompt = (
         f"Génère exactement {QUIZ_QUESTION_COUNT} questions à choix multiples de niveau lycée/examens "
         f"camerounais.\n{subject_line}{level_line}{topic_line}{enrolled_line}\n{context_line}"
-        f"{difficulty_line}{variety_line}{avoid_repeat_line}{style_line}"
+        f"{difficulty_line}{quality_line}{variety_line}{avoid_repeat_line}{style_line}"
         f'Format JSON strict, un objet unique : '
         f'{{{subject_json_field}"questions":[{{"id":"q1","question":"...",'
         f'"options":["A) ...","B) ...","C) ...","D) ..."],'
@@ -778,6 +815,9 @@ async def generate_quiz_content(
             options = [str(o) for o in q.get("options", [])]
             correct = _match_correct(options, str(q.get("correctAnswer", ""))) if options else None
             if not correct or not str(q.get("question", "")).strip():
+                continue
+            options, correct = _shuffle_options(options, correct)
+            if options is None:
                 continue
             questions.append({
                 "id": str(q.get("id") or f"q{i + 1}"),
