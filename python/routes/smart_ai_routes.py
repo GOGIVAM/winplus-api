@@ -563,6 +563,71 @@ async def generate_revision_content(
 
 QUIZ_QUESTION_COUNT = 8
 
+_LETTERS = "ABCDEFGH"
+
+
+def _repair_json_escapes(text: str) -> str:
+    """Double les barres obliques invalides en JSON (frac, sqrt, alpha… précédés d'une barre)
+    écrits par DeepSeek dans les formules) : json.loads rejetait tout le quiz."""
+    import re as _re
+    # Commandes LaTeX qui commencent par une lettre d'échappement JSON valide
+    # (\frac = « \f » + rac, \times = « \t » + imes…) : protégées d'abord.
+    text = _re.sub(
+        r'(?<!\\)\\(frac|dfrac|sqrt|times|theta|tau|text|tan|beta|bar|binom|nabla|neq|nu|ne|rho|right|rightarrow|'
+        r'vec|forall|nabla|lambda|left|leq|le|geq|ge|cdot|cdots|ldots|pi|Delta|delta|mu|sigma|omega|Omega|infty|'
+        r'overline|int|sum|lim|log|ln|sin|cos|approx|pm|div|mathrm|mathbf|begin|end|alpha|gamma|epsilon|varepsilon|'
+        r'phi|varphi|psi|in|notin|cup|cap|subset|equiv|propto|circ|degree|quad|prime)(?![A-Za-z])',
+        r'\\\\\1', text)
+    # Puis toute barre suivie d'un caractère non autorisé en JSON est doublée
+    # (lecture par paires : une barre déjà doublée reste telle quelle).
+    return _re.sub(r'\\(.)', lambda m: m.group(0) if m.group(1) in '"\\/bfnrtu' else '\\\\' + m.group(1), text, flags=_re.DOTALL)
+
+
+def _parse_quiz_payload(raw: str) -> dict:
+    """Objet JSON du quiz, même abîmé : réparation des échappements, puis, si la
+    réponse a été coupée (max_tokens), récupération question par question."""
+    import re as _re
+    import json as _json
+    content = raw.strip()
+    if content.startswith("```"):
+        content = "\n".join(content.split("\n")[1:]).rstrip("`").strip()
+    match = _re.search(r"\{.*\}", content, _re.DOTALL)
+    for candidate in ([match.group()] if match else []):
+        for text in (_repair_json_escapes(candidate), candidate):
+            try:
+                return _json.loads(text)
+            except _json.JSONDecodeError:
+                pass
+    # Réponse tronquée : on garde chaque question complète {"id"… "explanation":"…"}.
+    fixed = _repair_json_escapes(content)
+    questions = []
+    for m in _re.finditer(r'\{\s*"id"\s*:.*?"explanation"\s*:\s*"(?:[^"\\]|\\.)*"\s*\}', fixed, _re.DOTALL):
+        try:
+            questions.append(_json.loads(m.group()))
+        except _json.JSONDecodeError:
+            continue
+    subject = _re.search(r'"subject"\s*:\s*"([^"]+)"', fixed)
+    return {"questions": questions, **({"subject": subject.group(1)} if subject else {})}
+
+
+def _match_correct(options: list, correct: str):
+    """Bonne réponse exprimée comme l'une des options : texte exact, texte sans
+    la lettre, ou simple lettre (« B », « B) »)."""
+    import re as _re
+    if correct in options:
+        return correct
+    c = correct.strip()
+    strip = lambda o: _re.sub(r"^\s*[A-Ha-h]\s*[\)\.:\-]\s*", "", o).strip().lower()
+    for o in options:
+        if strip(o) == strip(c) and strip(c):
+            return o
+    letter = _re.match(r"^\s*([A-Ha-h])\s*[\)\.:\-]?\s*$", c)
+    if letter:
+        idx = _LETTERS.index(letter.group(1).upper())
+        if idx < len(options):
+            return options[idx]
+    return None
+
 
 @smart_ai_router.post("/quizzes/generate-content", tags=["ai"])
 async def generate_quiz_content(
@@ -688,7 +753,11 @@ async def generate_quiz_content(
     raw = ""
     try:
         client = get_deepseek_client()
-        result = client.chat(
+        questions = []
+        chosen_subject = body.subject
+        base_tokens = 4200 if difficulty == "hard" else 3000
+        for attempt, max_tokens in enumerate((base_tokens, base_tokens + 2400)):
+          result = client.chat(
             messages=[{"role": "user", "content": prompt}],
             system_prompt=system,
             # 2200 tokens laissait parfois le JSON coupé en fin de génération
@@ -696,26 +765,19 @@ async def generate_quiz_content(
             # (explications plus longues par question)  json.loads() sur un
             # objet tronqué levait alors une exception non gérée (500 générique
             # au lieu du 422 "réessaie" prévu pour une génération ratée).
-            max_tokens=4200 if difficulty == "hard" else 2800,
+            max_tokens=max_tokens,
             temperature=0.6 if difficulty == "hard" else 0.5,
-        )
-        raw = result.get("content", "").strip()
-
-        import re as _re
-        import json as _json
-        match = _re.search(r"\{.*\}", raw, _re.DOTALL)
-        try:
-            payload = _json.loads(match.group()) if match else {}
-        except _json.JSONDecodeError:
-            payload = {}
-        chosen_subject = body.subject or payload.get("subject")
-        parsed = payload.get("questions", [])
-
-        questions = []
-        for i, q in enumerate(parsed[:QUIZ_QUESTION_COUNT]):
+          )
+          raw = result.get("content", "").strip()
+          payload = _parse_quiz_payload(raw)
+          chosen_subject = body.subject or payload.get("subject")
+          questions = []
+          for i, q in enumerate((payload.get("questions") or [])[:QUIZ_QUESTION_COUNT]):
+            if not isinstance(q, dict):
+                continue
             options = [str(o) for o in q.get("options", [])]
-            correct = str(q.get("correctAnswer", ""))
-            if not options or correct not in options:
+            correct = _match_correct(options, str(q.get("correctAnswer", ""))) if options else None
+            if not correct or not str(q.get("question", "")).strip():
                 continue
             questions.append({
                 "id": str(q.get("id") or f"q{i + 1}"),
@@ -724,6 +786,10 @@ async def generate_quiz_content(
                 "correctAnswer": correct,
                 "explanation": str(q.get("explanation", "")).strip(),
             })
+          # Au moins la moitié des questions demandées : sinon on retente une fois.
+          if len(questions) >= QUIZ_QUESTION_COUNT // 2:
+            break
+          logger.warning(f"[quiz-content] essai {attempt + 1} : {len(questions)} question(s) valides, finish_reason={result.get('finish_reason')}")
 
         if not questions:
             raise HTTPException(status_code=422, detail="La génération des questions a échoué. Réessaie.")
