@@ -48,6 +48,14 @@ public class SendMessageRequest
     /// recherche est ajouté au décompte du message.
     /// </summary>
     public bool KnowledgeBase { get; set; }
+
+    /// <summary>
+    /// Résumé, préparé par le site, de ce que l'élève étudie dans « Mon
+    /// programme » (classe, matières, chapitres en cours). Joint aux objectifs
+    /// transmis à WinAI pour coller au programme officiel. Optionnel.
+    /// </summary>
+    [MaxLength(1500)]
+    public string? ProgrammeContext { get; set; }
 }
 
 /// <summary>
@@ -124,6 +132,14 @@ public class StreamChatRequest
     /// recherche est ajouté au décompte du message.
     /// </summary>
     public bool KnowledgeBase { get; set; }
+
+    /// <summary>
+    /// Résumé, préparé par le site, de ce que l'élève étudie dans « Mon
+    /// programme » (classe, matières, chapitres en cours). Joint aux objectifs
+    /// transmis à WinAI pour coller au programme officiel. Optionnel.
+    /// </summary>
+    [MaxLength(1500)]
+    public string? ProgrammeContext { get; set; }
 }
 
 /// <summary>

@@ -756,7 +756,8 @@ public class QuizService : IQuizService
         // (bulletin, saisie par l'élève ou un parent lié) et des objectifs
         // actifs de l'élève (ex: « progresser en maths » dans un objectif).
         string? contextHint = null;
-        var level = await _context.Users.Where(u => u.Id == userId).Select(u => u.Level).FirstOrDefaultAsync();
+        // Classe du programme officiel choisie par l'élève (série comprise), sinon celle du profil.
+        var level = await CurriculumContext.GradeAsync(_context, userId, await _context.Users.Where(u => u.Id == userId).Select(u => u.Level).FirstOrDefaultAsync());
         if (string.IsNullOrWhiteSpace(resolvedSubject))
         {
             var goals = await _context.Goals

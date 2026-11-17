@@ -791,6 +791,8 @@ public class ChatbotController : ControllerBase
                     role,
                     child_ids = childIds,
                     grade = liveProfile.Grade,
+                    // Ce que l'élève étudie dans « Mon programme » (voir CurriculumContext).
+                    objectives = CurriculumContext.Sanitize(request.ProgrammeContext) is { } programmeLine ? new[] { programmeLine } : Array.Empty<string>(),
                     enrolled_subjects = liveProfile.EnrolledSubjects.Select(s => new { id = s.SubjectId, title = s.Title }),
                     enrolled_courses = liveProfile.EnrolledCourses.Select(c => new { id = c.CourseId, title = c.Title }),
                     force_language = string.IsNullOrEmpty(request.ForceLanguage) ? null : request.ForceLanguage,

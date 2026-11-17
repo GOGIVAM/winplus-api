@@ -475,12 +475,24 @@ async def generate_revision_content(
         f"{subject_line}{level_line}{topic_line}{difficulty_line}{enrolled_line}{style_block}\n"
         f"{context_lines}"
         f"Concentre la fiche sur ce que l'élève a réellement raté ou doit travailler en priorité, pas "
-        f"un résumé générique du programme. Réponds UNIQUEMENT en JSON (sans balises markdown autour) :\n"
+        f"un résumé générique du programme. La fiche doit être TRÈS DÉTAILLÉE et TRÈS BIEN EXPLIQUÉE, "
+        f"comme un vrai cours particulier, au niveau exact de la classe et du programme officiel "
+        f"camerounais. Elle est affichée page par page (une page par section « ## »), dans cet ordre :\n"
+        f"## Objectifs (ce que l'élève saura faire)\n"
+        f"## L'essentiel du cours (définitions, propriétés, formules avec unités, expliquées simplement)\n"
+        f"## Comprendre (l'idée intuitive, une analogie de la vie courante au Cameroun, et la description "
+        f"d'un schéma ou d'une figure à dessiner)\n"
+        f"## Méthode pas à pas (étapes numérotées pour résoudre les exercices types)\n"
+        f"## Exemples résolus (au moins deux, entièrement détaillés, chaque étape justifiée)\n"
+        f"## Erreurs fréquentes (les pièges, et comment les éviter)\n"
+        f"## Exercices d'application (trois exercices de difficulté croissante, avec corrigé détaillé)\n"
+        f"## À retenir (cinq à huit points)\n"
+        f"Réponds UNIQUEMENT en JSON (sans balises markdown autour) :\n"
         "{\n"
         f"  {subject_json_field}"
         '"title": "...",  // court, spécifique au sous-thème réellement travaillé\n'
         '  "content_markdown": "...",  // fiche complète en Markdown : ## sections, explications, '
-        'exemples chiffrés, astuces méthode  400 à 700 mots\n'
+        'exemples chiffrés, astuces méthode : 1200 à 1800 mots\n'
         '  "difficulty": "easy" | "medium" | "hard",\n'
         '  "estimated_duration_minutes": 15\n'
         "}"
@@ -497,7 +509,7 @@ async def generate_revision_content(
     # "length")  json.loads() échouait alors systématiquement en aval. Un
     # deuxième essai avec un budget plus large rattrape ce cas au lieu de
     # renvoyer une 500 à chaque fois que la fiche générée est un peu longue.
-    attempts = [3200, 4200]
+    attempts = [6000, 8000]
     raw = ""
     last_error: Optional[Exception] = None
 
@@ -601,8 +613,20 @@ async def generate_quiz_content(
                 "distracteurs clairement faux, aucun piège.\n",
         "medium": "Mélange les niveaux de difficulté (facile à moyen), avec une ou deux "
                   "questions plus difficiles en fin de quiz.\n",
-        "hard": "Toutes les questions doivent être DIFFICILES : plusieurs pas de "
-                "raisonnement, niveau concours/approfondissement.\n",
+        # Niveau « difficile » choisi par l'élève : il doit vraiment l'être.
+        "hard": (
+            "NIVEAU DIFFICILE EXIGÉ (c'est l'élève qui l'a demandé, ne le ménage pas) :\n"
+            "- chaque question demande au moins deux ou trois étapes de raisonnement ou de calcul, jamais "
+            "une simple restitution de cours ni une définition ;\n"
+            "- niveau des meilleurs sujets du BEPC, du Probatoire, du Baccalauréat et des concours d'entrée "
+            "(ENS, Polytechnique, ENSET, médecine) pour cette classe, sans sortir du programme de la classe ;\n"
+            "- combine au moins deux notions du chapitre dans plusieurs questions ; données numériques non "
+            "triviales (fractions, décimaux, unités à convertir) ;\n"
+            "- les quatre options sont toutes plausibles : chaque mauvaise réponse correspond à une erreur "
+            "classique précise (signe, condition oubliée, unité, confusion de formule, cas limite) ;\n"
+            "- au moins deux questions-pièges où l'intuition mène à une mauvaise réponse ;\n"
+            "- l'explication détaille la solution pas à pas et dit pourquoi chaque distracteur est faux.\n"
+        ),
     }
     difficulty_line = DIFFICULTY_LINES[difficulty]
 
@@ -672,8 +696,8 @@ async def generate_quiz_content(
             # (explications plus longues par question)  json.loads() sur un
             # objet tronqué levait alors une exception non gérée (500 générique
             # au lieu du 422 "réessaie" prévu pour une génération ratée).
-            max_tokens=2800,
-            temperature=0.5,
+            max_tokens=4200 if difficulty == "hard" else 2800,
+            temperature=0.6 if difficulty == "hard" else 0.5,
         )
         raw = result.get("content", "").strip()
 

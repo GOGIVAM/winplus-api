@@ -126,7 +126,9 @@ public class ChatbotService : IChatbotService
     /// </summary>
     public async Task<LiveProfileContext> GetLiveProfileContextAsync(int userId)
     {
-        var level = await _db.Users.Where(u => u.Id == userId).Select(u => u.Level).FirstOrDefaultAsync();
+        var profileLevel = await _db.Users.Where(u => u.Id == userId).Select(u => u.Level).FirstOrDefaultAsync();
+        // Classe choisie dans « Mon programme » (plus précise : série comprise), sinon celle du profil.
+        var level = await CurriculumContext.GradeAsync(_db, userId, profileLevel);
         var subjects = await GetRealEnrolledSubjectsAsync(userId);
         var courses = await GetRealEnrolledCoursesAsync(userId);
         return new LiveProfileContext(level, subjects, courses);
@@ -168,6 +170,9 @@ public class ChatbotService : IChatbotService
         // Préparer la requête pour FastAPI/DeepSeek
         var messages = await _repository.GetMessagesForConversationAsync(conversation.Id);
         var fastapiRequest = await BuildFastApiRequestAsync(userId, messages, request.IncludeContext);
+        var programmeLine = CurriculumContext.Sanitize(request.ProgrammeContext);
+        if (programmeLine != null && fastapiRequest.UserContext != null)
+            fastapiRequest.UserContext.Objectives = (fastapiRequest.UserContext.Objectives ?? new List<string>()).Append(programmeLine).ToList();
         // Décision 10.4 : FastAPI /chat n'accepte plus un message sans la
         // réserve de quota .NET correspondante (même règle que /stream).
         fastapiRequest.ClientMessageId = quotaReservationId;

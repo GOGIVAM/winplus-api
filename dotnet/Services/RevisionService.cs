@@ -515,7 +515,8 @@ public class RevisionService : IRevisionService
         // seul suffit ici à demander à DeepSeek de choisir : une fiche
         // générique reste utile même sans autre signal.
         string? contextHint = null;
-        var level = await _context.Users.Where(u => u.Id == userId).Select(u => u.Level).FirstOrDefaultAsync();
+        // Classe du programme officiel choisie par l'élève (série comprise), sinon celle du profil.
+        var level = await CurriculumContext.GradeAsync(_context, userId, await _context.Users.Where(u => u.Id == userId).Select(u => u.Level).FirstOrDefaultAsync());
         if (string.IsNullOrWhiteSpace(resolvedSubject))
         {
             var goals = await _context.Goals
