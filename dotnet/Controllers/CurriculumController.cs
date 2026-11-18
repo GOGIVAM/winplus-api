@@ -67,14 +67,18 @@ public class CurriculumController : ControllerBase
         "6e", "5e", "4e", "3e", "2nde", "1ere", "tle",
         "tc1", "tc2", "tc3", "tc4", "tc2nde", "tc1ere", "tctle",
         "f1", "f2", "f3", "f4", "f5", "ls", "us",
+        "tf1", "tf2", "tf3", "tf4",
     };
     private static readonly HashSet<string> SeriesAllowed = new()
     {
         "A", "C", "D", "E", "TI",
         "F1", "F2", "F3", "F4", "F5", "F7", "MA", "IH", "ESF", "ACA", "ACC", "CG",
         "ART", "SCI", "COM", "TECH",
+        // Métiers du premier cycle technique (CAP), francophone et anglophone.
+        "CARR", "MENU", "AFSC", "ELEQ", "ELNI", "MARE", "MACO", "INSA", "FROI", "HABI", "AUTRE",
+        "WOOD", "BUIL", "PLUM", "ACR", "TAIL", "OTHER",
     };
-    private static readonly Regex KeyPattern = new(@"^(6e|5e|4e|3e|2nde|1ere|tle|tc1|tc2|tc3|tc4|tc2nde|tc1ere|tctle|f1|f2|f3|f4|f5|ls|us)\|[a-z0-9-]{1,40}\|\d{1,2}\|\d{1,3}$", RegexOptions.Compiled);
+    private static readonly Regex KeyPattern = new(@"^(6e|5e|4e|3e|2nde|1ere|tle|tc1|tc2|tc3|tc4|tc2nde|tc1ere|tctle|f1|f2|f3|f4|f5|ls|us|tf1|tf2|tf3|tf4)\|[a-z0-9-]{1,40}\|\d{1,2}\|\d{1,3}$", RegexOptions.Compiled);
     /// <summary>Garde-fou : un programme complet compte quelques centaines de chapitres.</summary>
     private const int MaxChaptersPerUser = 3000;
 

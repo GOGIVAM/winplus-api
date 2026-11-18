@@ -19,11 +19,13 @@ public static class CurriculumContext
         ["tc2nde"] = "Seconde", ["tc1ere"] = "Première", ["tctle"] = "Terminale",
         ["f1"] = "Form 1", ["f2"] = "Form 2", ["f3"] = "Form 3", ["f4"] = "Form 4", ["f5"] = "Form 5",
         ["ls"] = "Lower Sixth", ["us"] = "Upper Sixth",
+        ["tf1"] = "Technical Year 1", ["tf2"] = "Technical Year 2", ["tf3"] = "Technical Year 3", ["tf4"] = "Technical Year 4",
     };
 
     /// <summary>Sous-système de la classe, pour que WinAI suive le bon programme et la bonne langue.</summary>
     private static string SystemOf(string level) =>
         level.StartsWith("tc") ? "enseignement technique francophone"
+        : level is "tf1" or "tf2" or "tf3" or "tf4" ? "enseignement technique anglophone (premier cycle)"
         : level is "f1" or "f2" or "f3" or "f4" or "f5" or "ls" or "us" ? "sous-système anglophone (GCE)"
         : "enseignement général francophone";
 
