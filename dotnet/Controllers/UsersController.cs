@@ -158,10 +158,16 @@ public class UsersController : ControllerBase
                 {
                     user.Username = null; // Vider le champ est permis explicitement.
                 }
+                else if (candidate == user.Username)
+                {
+                    // Inchangé : le profil renvoie le nom d'utilisateur à chaque enregistrement ; un ancien nom
+                    // (format « prénom.nom ») ne doit pas bloquer l'enregistrement des autres champs.
+                }
                 else
                 {
-                    if (candidate.Length < 3 || candidate.Length > 32 || !System.Text.RegularExpressions.Regex.IsMatch(candidate, "^[a-zA-Z0-9_-]+$"))
-                        return BadRequest(new { error = "Le nom d'utilisateur doit faire 3 à 32 caractères (lettres, chiffres, - ou _)." });
+                    // Le point est permis : les comptes créés avant novembre 2026 ont un nom « prénom.nom ».
+                    if (candidate.Length < 3 || candidate.Length > 32 || !System.Text.RegularExpressions.Regex.IsMatch(candidate, "^[a-zA-Z0-9._-]+$"))
+                        return BadRequest(new { error = "Le nom d'utilisateur doit faire 3 à 32 caractères (lettres, chiffres, point, - ou _)." });
 
                     var taken = await _db.Users.AnyAsync(u => u.Id != userId && u.Username == candidate);
                     if (taken)

@@ -23,7 +23,7 @@ namespace Backend.Tests
         }
 
         private static Exam E(int id, string type, int year = 2024, string? level = null, bool published = true, bool deleted = false) =>
-            new() { Id = id, Title = $"E{id}", ExamType = type, Year = year, Level = level, IsPublished = published, IsDeleted = deleted };
+            new() { Id = id, Title = $"E{id}", Category = "Examen", ExamType = type, Year = year, Level = level, IsPublished = published, IsDeleted = deleted };
 
         [Fact]
         public void Le_constructeur_refuse_les_arguments_nuls()

@@ -117,7 +117,7 @@ public class AdminLibraryController : ControllerBase
         {
             var subject = new Subject
             {
-                Title        = dto.Title!.Trim(),
+                Title        = Backend.Utils.ContentTitles.Clean(dto.Title!),
                 Description  = dto.Description?.Trim(),
                 Category     = dto.Category?.Trim(),
                 Language     = ContentSourceLanguage.Normalize(dto.Language),

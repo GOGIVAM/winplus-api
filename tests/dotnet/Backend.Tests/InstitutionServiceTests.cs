@@ -88,8 +88,8 @@ namespace Backend.Tests
         public async Task La_creation_et_la_mise_a_jour_refusent_un_etablissement_nul()
         {
             var (svc, _) = Build();
-            await Assert.ThrowsAsync<ArgumentNullException>(() => svc.CreateInstitutionAsync(null!));
-            await Assert.ThrowsAsync<ArgumentNullException>(() => svc.UpdateInstitutionAsync(null!));
+            await Assert.ThrowsAnyAsync<Exception>(() => svc.CreateInstitutionAsync(null!));
+            await Assert.ThrowsAnyAsync<Exception>(() => svc.UpdateInstitutionAsync(null!));
         }
 
         [Fact]

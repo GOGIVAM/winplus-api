@@ -163,7 +163,7 @@ public class AdminCatalogController : ControllerBase
         // Modification partielle : seul un champ envoyé change. L'ancien
         // écran envoyait « level: '' » et effaçait Subject.Level à chaque
         // enregistrement, via PUT /api/subjects/{id} qui écrase tout.
-        if (request.Title != null) subject.Title = request.Title.Trim();
+        if (request.Title != null) subject.Title = Backend.Utils.ContentTitles.Clean(request.Title);
         if (request.Description != null) subject.Description = request.Description.Trim();
         if (request.Category != null) subject.Category = string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim();
         if (request.SubjectLevel != null) subject.Level = string.IsNullOrWhiteSpace(request.SubjectLevel) ? null : request.SubjectLevel.Trim();

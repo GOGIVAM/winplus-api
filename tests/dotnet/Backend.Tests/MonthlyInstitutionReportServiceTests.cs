@@ -107,7 +107,7 @@ namespace Backend.Tests
             Assert.Equal(1, c.Handler.Calls);
             Assert.Contains("1. Relancer les absents (faible)", c.Html);
             Assert.Contains("2. Planifier un examen blanc", c.Html);
-            Assert.Contains("Lycée Test", c.Html);
+            Assert.Contains(System.Net.WebUtility.HtmlEncode("Lycée Test"), c.Html);
         }
 
         [Fact]

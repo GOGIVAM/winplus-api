@@ -260,15 +260,17 @@ public class TwoFactorService : ITwoFactorService
 
     public List<string> GenerateBackupCodes(int count = 5)
     {
-        var codes = new List<string>();
-        using (var rng = new RNGCryptoServiceProvider())
+        // 8 caractères tirés directement dans l'alphabet : l'ancien tirage (4 octets en base64, puis retrait de + et /)
+        // gardait le remplissage « == » et plantait (Substring hors limites) dès qu'un + ou un / était retiré,
+        // soit environ une activation de la double authentification sur deux.
+        const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        var codes = new List<string>(count);
+        for (int i = 0; i < count; i++)
         {
-            for (int i = 0; i < count; i++)
-            {
-                byte[] code = new byte[4];
-                rng.GetBytes(code);
-                codes.Add(Convert.ToBase64String(code).Replace("+", "").Replace("/", "").Substring(0, 8).ToUpper());
-            }
+            var chars = new char[8];
+            for (int j = 0; j < chars.Length; j++)
+                chars[j] = alphabet[RandomNumberGenerator.GetInt32(alphabet.Length)];
+            codes.Add(new string(chars));
         }
         return codes;
     }
