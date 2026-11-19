@@ -396,6 +396,11 @@ public class CartController : ControllerBase
                 return BadRequest(new { error = "Invalid request: no userId or deviceId" });
             }
         }
+        // Épreuve déjà possédée : 409 lisible par le client (fenêtre « déjà à toi »).
+        catch (SubjectAlreadyOwnedException ex)
+        {
+            return Conflict(new { code = "already_owned", error = ex.Message, subjectId = ex.SubjectId });
+        }
         // Lot 9.7b (F3, F10) : formation déjà achetée, déjà suivie, à soi ou gratuite.
         catch (CoursePurchaseRefusedException ex)
         {

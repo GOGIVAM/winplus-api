@@ -114,6 +114,15 @@ public class CartService : ICartService
             if (subject == null)
                 throw new InvalidOperationException($"Subject {subjectId} not found");
 
+            // Épreuve déjà à l'utilisateur (achetée ou obtenue gratuitement) :
+            // pas de deuxième achat, le client affiche « Tu as déjà cette épreuve ».
+            var alreadyOwned = await _db.OrderItems.AsNoTracking()
+                .AnyAsync(oi => oi.SubjectId == subjectId
+                    && oi.Order.UserId == userId
+                    && PaidOrderStatus.All.Contains(oi.Order.Status.ToLower()));
+            if (alreadyOwned)
+                throw new SubjectAlreadyOwnedException(subjectId);
+
             // Check if already in cart
             var existing = await _cartRepository.GetByUserAndSubjectAsync(userId, subjectId);
             if (existing != null)
@@ -461,4 +470,11 @@ public class CartService : ICartService
             throw;
         }
     }
+}
+
+/// <summary>L'utilisateur possède déjà cette épreuve (commande payée ou gratuite).</summary>
+public class SubjectAlreadyOwnedException : InvalidOperationException
+{
+    public int SubjectId { get; }
+    public SubjectAlreadyOwnedException(int subjectId) : base("Tu possèdes déjà cette épreuve.") { SubjectId = subjectId; }
 }
