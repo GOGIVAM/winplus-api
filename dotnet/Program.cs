@@ -209,6 +209,15 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         // Configure events for better logging
         options.Events = new JwtBearerEvents
         {
+            // Temps réel (SignalR) : un WebSocket ne peut pas porter d'en-tête Authorization, le jeton
+            // d'accès arrive en paramètre access_token, accepté seulement sur le chemin du hub.
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                if (!string.IsNullOrEmpty(accessToken) && context.HttpContext.Request.Path.StartsWithSegments("/api/hubs"))
+                    context.Token = accessToken;
+                return Task.CompletedTask;
+            },
             OnAuthenticationFailed = context =>
             {
                 // Uniquement logger  ne jamais écrire la réponse ici.
@@ -618,6 +627,10 @@ builder.Services.AddSingleton<INotificationPreferenceService, NotificationPrefer
 builder.Services.AddScoped<INtfyService, NtfyService>();
 builder.Services.AddScoped<ISmartNotificationService, SmartNotificationService>();
 
+// Temps réel de la messagerie (lot 2) : SignalR dans le processus (une seule instance, pas de fond de panier).
+builder.Services.AddSignalR(o => { o.KeepAliveInterval = TimeSpan.FromSeconds(15); o.ClientTimeoutInterval = TimeSpan.FromSeconds(40); });
+builder.Services.AddScoped<Backend.Services.TempsReel.ITempsReel, Backend.Services.TempsReel.TempsReelService>();
+
 // Background services for payment lifecycle
 builder.Services.AddHostedService<PaymentReconciliationService>();
 builder.Services.AddHostedService<PaymentExpirationService>();
@@ -750,6 +763,7 @@ app.UseClientIdempotency();
 app.UsePresenceTracking();
 
 app.MapControllers();
+app.MapHub<Backend.Hubs.TempsReelHub>("/api/hubs/temps-reel");
 
 // Health check endpoint
 app.MapGet("/health", () => Results.Ok(new

@@ -71,6 +71,9 @@ public class ScheduledMessageDeliveryService : BackgroundService
         }
 
         await db.SaveChangesAsync(ct);
+        // Temps réel : le message programmé apparaît maintenant dans la conversation, des deux côtés.
+        var tempsReel = scope.ServiceProvider.GetRequiredService<Backend.Services.TempsReel.ITempsReel>();
+        foreach (var msg in due) await tempsReel.MessagePriveAsync(msg.FromUserId, msg.ToUserId, msg.Id);
         _logger.LogInformation("{Count} message(s) programmé(s) délivré(s)", due.Count);
     }
 

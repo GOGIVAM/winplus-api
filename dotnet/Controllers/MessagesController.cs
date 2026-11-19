@@ -7,6 +7,7 @@ using Backend.Extensions;
 using Backend.Models.Entities;
 using Backend.Services;
 using Backend.Utils;
+using Backend.Services.TempsReel;
 
 namespace Backend.Controllers;
 
@@ -38,6 +39,7 @@ public class MessagesController : ControllerBase
     private readonly ILogger<MessagesController> _logger;
     private readonly IHttpClientFactory _http;
     private readonly IStorageService _storage;
+    private readonly ITempsReel _tempsReel;
 
     private static readonly Dictionary<string, string[]> AllowedAttachmentExtensions = new()
     {
@@ -51,8 +53,9 @@ public class MessagesController : ControllerBase
     private const long MaxAttachmentSize = 20 * 1024 * 1024; // 20 Mo
     private const long MaxVideoAttachmentSize = 80 * 1024 * 1024; // 80 Mo
 
-    public MessagesController(ApplicationDbContext db, ILogger<MessagesController> logger, IHttpClientFactory http, IStorageService storage)
+    public MessagesController(ApplicationDbContext db, ILogger<MessagesController> logger, IHttpClientFactory http, IStorageService storage, ITempsReel tempsReel)
     {
+        _tempsReel = tempsReel;
         _db = db;
         _logger = logger;
         _http = http;
@@ -572,6 +575,9 @@ public class MessagesController : ControllerBase
             _db.DirectMessages.Add(msg);
             await _db.SaveChangesAsync();
 
+            // Temps réel : un message programmé n'est annoncé qu'à son heure (ScheduledMessageDeliveryService).
+            if (!isScheduled) await _tempsReel.MessagePriveAsync(me, participantId, msg.Id);
+
             return Ok(new { id = msg.Id, sentAt = msg.CreatedAt, scheduledSendAt = msg.ScheduledSendAt });
         }
         catch (Exception ex)
@@ -700,6 +706,7 @@ public class MessagesController : ControllerBase
 
             msg.IsDeleted = true;
             await _db.SaveChangesAsync();
+            await _tempsReel.ConversationModifieeAsync(msg.FromUserId, msg.ToUserId, msg.Id, "supprime");
             return Ok(new { success = true });
         }
         catch (Exception ex)
@@ -742,6 +749,7 @@ public class MessagesController : ControllerBase
                 .Where(r => r.DirectMessageId == id)
                 .Select(r => new { userId = r.UserId, emoji = r.Emoji, isMine = r.UserId == me })
                 .ToListAsync();
+            await _tempsReel.ConversationModifieeAsync(msg.FromUserId, msg.ToUserId, msg.Id, "reaction");
             return Ok(current);
         }
         catch (Exception ex)
@@ -860,6 +868,7 @@ public class MessagesController : ControllerBase
                 m.ReadAt = DateTime.UtcNow;
             }
             await _db.SaveChangesAsync();
+            if (unread.Count > 0) await _tempsReel.MessagesLusAsync(me, participantId);
 
             return Ok(new { markedRead = unread.Count });
         }

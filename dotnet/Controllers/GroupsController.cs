@@ -25,8 +25,11 @@ public class GroupsController : ControllerBase
     private readonly ApplicationDbContext _db;
     private readonly ILogger<GroupsController> _logger;
 
-    public GroupsController(ApplicationDbContext db, ILogger<GroupsController> logger)
+    private readonly Backend.Services.TempsReel.ITempsReel _tempsReel;
+
+    public GroupsController(ApplicationDbContext db, ILogger<GroupsController> logger, Backend.Services.TempsReel.ITempsReel tempsReel)
     {
+        _tempsReel = tempsReel;
         _db = db;
         _logger = logger;
     }
@@ -234,6 +237,7 @@ public class GroupsController : ControllerBase
         };
         _db.ChatGroupMessages.Add(msg);
         await _db.SaveChangesAsync();
+        await _tempsReel.MessageGroupeAsync(id, me, msg.Id);
         return Ok(new { id = msg.Id, sentAt = msg.CreatedAt });
     }
 
@@ -248,6 +252,7 @@ public class GroupsController : ControllerBase
         if (msg == null) return NotFound();
         msg.IsPinned = !msg.IsPinned;
         await _db.SaveChangesAsync();
+        await _tempsReel.MessageGroupeAsync(id, me, msg.Id, "epingle");
         return Ok(new { isPinned = msg.IsPinned });
     }
 
