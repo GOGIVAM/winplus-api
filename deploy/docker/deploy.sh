@@ -57,8 +57,13 @@ configure_stack() {
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 
+# Connexion ECR avec le rôle de l'instance (winplus-backend-ec2-role) : les
+# fichiers ~/.aws du serveur portent les clés de l'utilisateur winplus-app (S3,
+# sauvegardes), qui n'a pas accès à ECR et passerait avant le rôle.
 ecr_login() {
-  aws ecr get-login-password --region "$AWS_REGION" \
+  env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_PROFILE \
+      AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null \
+      aws ecr get-login-password --region "$AWS_REGION" \
     | docker login --username AWS --password-stdin "$REGISTRY" > /dev/null
 }
 
