@@ -20,6 +20,10 @@ public interface ITempsReel
     Task MessagesLusAsync(int lecteurId, int autreId);
     /// <summary>Nouveau message (ou épinglage) dans un groupe de discussion, pour tous ses membres.</summary>
     Task MessageGroupeAsync(int groupeId, int expediteurId, int messageId, string raison = "nouveau");
+    /// <summary>Lot 3 : nouveau message dans le canal d'une formation (dont la réponse de WinAI).</summary>
+    Task CanalMessageAsync(int courseId, int messageId, string raison = "nouveau");
+    /// <summary>Lot 3 : nouvelle réponse dans un sujet du forum.</summary>
+    Task ForumReponseAsync(int threadId, int postId);
 }
 
 public class TempsReelService : ITempsReel
@@ -52,6 +56,14 @@ public class TempsReelService : ITempsReel
     public Task MessagesLusAsync(int lecteurId, int autreId) =>
         Envoyer(() => _hub.Clients.Groups(U(autreId), U(lecteurId))
             .SendAsync("messages-lus", new { par = lecteurId, avec = autreId }), "messages-lus");
+
+    public Task CanalMessageAsync(int courseId, int messageId, string raison = "nouveau") =>
+        Envoyer(() => _hub.Clients.Group(TempsReelHub.GroupeCanal(courseId))
+            .SendAsync("canal-message", new { courseId, id = messageId, raison }), "canal-message");
+
+    public Task ForumReponseAsync(int threadId, int postId) =>
+        Envoyer(() => _hub.Clients.Group(TempsReelHub.GroupeSujet(threadId))
+            .SendAsync("forum-reponse", new { threadId, id = postId }), "forum-reponse");
 
     public async Task MessageGroupeAsync(int groupeId, int expediteurId, int messageId, string raison = "nouveau")
     {

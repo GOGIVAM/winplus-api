@@ -209,6 +209,10 @@ public class ForumController : ControllerBase
 
             _ = TriggerModerationAsync((post as dynamic)?.Id ?? 0, id, request.Content ?? "", userId);
 
+            // Temps réel (lot 3) : la réponse apparaît tout de suite chez ceux qui ont le sujet ouvert.
+            var tempsReel = HttpContext?.RequestServices.GetService<Backend.Services.TempsReel.ITempsReel>();
+            if (tempsReel != null) await tempsReel.ForumReponseAsync(id, (int)((post as dynamic)?.Id ?? 0));
+
             // Notifie l'auteur du thread ET tous les abonnés (US-FOR-COM-01) 
             // avant cette correction, seul l'auteur était notifié.
             var threadAuthorId = await _forumService.GetThreadAuthorIdAsync(id);

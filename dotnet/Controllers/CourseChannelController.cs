@@ -36,10 +36,12 @@ public class CourseChannelController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly INtfyService _ntfy;
     private readonly ILogger<CourseChannelController> _logger;
+    private readonly Backend.Services.TempsReel.ITempsReel _tempsReel;
     private const double ConfidenceThreshold = 0.70;
 
-    public CourseChannelController(ApplicationDbContext db, IHttpClientFactory httpClientFactory, INtfyService ntfy, ILogger<CourseChannelController> logger)
+    public CourseChannelController(ApplicationDbContext db, IHttpClientFactory httpClientFactory, INtfyService ntfy, ILogger<CourseChannelController> logger, Backend.Services.TempsReel.ITempsReel tempsReel)
     {
+        _tempsReel = tempsReel;
         _db = db;
         _httpClientFactory = httpClientFactory;
         _ntfy = ntfy;
@@ -97,6 +99,8 @@ public class CourseChannelController : ControllerBase
         var msg = new CourseChannelMessage { CourseId = courseId, SenderUserId = me, Content = req.Content };
         _db.CourseChannelMessages.Add(msg);
         await _db.SaveChangesAsync();
+        // Temps réel (lot 3) : annoncé tout de suite ; la réponse de WinAI, plus lente, est annoncée à part.
+        await _tempsReel.CanalMessageAsync(courseId, msg.Id);
 
         var isStudentQuestion = course.InstructorId != me;
         if (course.CanalMessagerie && isStudentQuestion)
@@ -188,6 +192,7 @@ public class CourseChannelController : ControllerBase
             _db.WinAIInteractionLogs.Add(log);
 
             await _db.SaveChangesAsync();
+            await _tempsReel.CanalMessageAsync(course.Id, aiMsg.Id, "winai");
         }
         catch (Exception ex)
         {
@@ -245,13 +250,15 @@ public class CourseChannelController : ControllerBase
         await _db.SaveChangesAsync();
 
         // Poste la correction dans le canal pour que l'élève la voie.
-        _db.CourseChannelMessages.Add(new CourseChannelMessage
+        var correction = new CourseChannelMessage
         {
             CourseId = courseId,
             SenderUserId = me,
             Content = $"[Correction du professeur] {req.CorrectedAnswer}",
-        });
+        };
+        _db.CourseChannelMessages.Add(correction);
         await _db.SaveChangesAsync();
+        await _tempsReel.CanalMessageAsync(courseId, correction.Id, "correction");
 
         return Ok(new { success = true });
     }
