@@ -3,14 +3,14 @@ fastapi==0.156.8  # 0.104 bloquait anyio<4, requis par google-genai ; valide en 
 pydantic[email]==2.13.4
 email-validator==2.1.0
 uvicorn[standard]==0.24.0  # ASGI server
-python-multipart==0.0.6  # Pour les form-data
+python-multipart==0.0.34  # Pour les form-data (0.0.6 : failles HIGH, audit Trivy du 24/11/2026)
 python-dotenv==1.0.0
 slowapi==0.1.9  # Rate limiting pour FastAPI
 aiofiles==23.2.1  # Async file handling
-pypdf==3.17.4  # Extraction de texte des PDF d'épreuves (mode évaluation)
+pypdf==6.21.4  # Extraction de texte des PDF d'épreuves (3.17 : déni de service par PDF piégé)
 
 # ==================== AUTHENTICATION ====================
-PyJWT==2.8.0  # ✅ JWT token validation
+PyJWT==2.15.1  # Validation JWT (2.8.0 : contournement d'authentification CRITIQUE, CVE-2026-102268)
 
 # ==================== DATABASE ====================
 psycopg2-binary==2.9.9  # PostgreSQL adapter
@@ -25,14 +25,14 @@ joblib==1.3.2
 
 
 # ==================== NLP - MODÈLES LOURDS (BERT) ====================
-transformers==4.35.2  # Hugging Face Transformers (BERT, GPT, etc.)
-tokenizers==0.15.0    # Fast tokenizers
-sentencepiece==0.1.99  # Pour certains modèles
+transformers==4.57.6  # Dernière 4.x (4.35.2 : faille CRITIQUE) ; la 5.x change l'API
+tokenizers>=0.22.0,<=0.23.0  # Imposé par transformers 4.57
+sentencepiece==0.2.3  # Roues Python 3.12 fournies (0.1.99 : faille HIGH, compilation)
 sacremoses==0.1.1     # Tokenization preprocessing
 
 # ==================== AWS SERVICES ====================
-boto3==1.34.0  # AWS SDK
-botocore==1.34.0
+boto3==1.44.10  # AWS SDK (1.34 bloquait urllib3 < 2.1, vulnérable)
+urllib3>=2.6.3,<3  # Failles HIGH avant 2.6.3
 
 # ==================== HTTP ====================
 # >=0.28.1 requis par google-genai et mistralai (RAG/api) ; aucun appelant
