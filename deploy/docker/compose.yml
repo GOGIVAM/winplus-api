@@ -42,9 +42,9 @@ services:
       UVICORN_WORKERS: ${FASTAPI_WORKERS:-2}
       MODEL_CACHE_DIR: /data/models_cache
       HF_HOME: /data/hf
-      RAG_BM25_STORAGE_DIR: /data/bm25_storage
-      RAG_GRAPH_STORAGE_DIR: /data/graph_storage
-      WINAI_USAGE_DIR: /data/winai-usage
+      RAG_BM25_STORAGE_DIR: /data/bm25_storage${WINAI_DATA_SUFFIX:-}
+      RAG_GRAPH_STORAGE_DIR: /data/graph_storage${WINAI_DATA_SUFFIX:-}
+      WINAI_USAGE_DIR: /data/winai-usage${WINAI_DATA_SUFFIX:-}
       JWT_LEGACY_ALG_DEADLINE_FILE: /data/jwt_legacy_alg_deadline
     ports:
       - "127.0.0.1:${FASTAPI_PORT:?FASTAPI_PORT manquant}:8000"

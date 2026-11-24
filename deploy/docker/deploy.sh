@@ -34,14 +34,14 @@ configure_stack() {
   case "$1" in
     prod)
       export COMPOSE_PROJECT_NAME=winplus-prod
-      export DOTNET_PORT=5001 FASTAPI_PORT=8000 FASTAPI_WORKERS=2 WINPLUS_ENV=
+      export DOTNET_PORT=5001 FASTAPI_PORT=8000 FASTAPI_WORKERS=2 WINPLUS_ENV= WINAI_DATA_SUFFIX=
       export DOTNET_ENV_FILE="$HOME/winplus/dotnet/.env.dotnet"
       export PYTHON_ENV_FILE="$HOME/winplus/python/.env"
       export DOTNET_MEM="${DOTNET_MEM:-1g}" FASTAPI_MEM="${FASTAPI_MEM:-2500m}"
       DB_NAME=winplus_db ;;
     integration)
       export COMPOSE_PROJECT_NAME=winplus-integration
-      export DOTNET_PORT=5002 FASTAPI_PORT=8001 FASTAPI_WORKERS=1 WINPLUS_ENV=integration
+      export DOTNET_PORT=5002 FASTAPI_PORT=8001 FASTAPI_WORKERS=1 WINPLUS_ENV=integration WINAI_DATA_SUFFIX=-integration
       export DOTNET_ENV_FILE="$HOME/winplus-integration/dotnet/.env.dotnet"
       export PYTHON_ENV_FILE="$HOME/winplus-integration/python/.env"
       export DOTNET_MEM="${DOTNET_MEM:-700m}" FASTAPI_MEM="${FASTAPI_MEM:-1500m}"
