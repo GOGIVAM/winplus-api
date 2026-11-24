@@ -18,8 +18,15 @@ RUN python -m venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
+# PyTorch CPU d'abord : la ligne « torch --index-url … » de requirements.txt
+# n'est pas respectée par pip, qui installe sinon la version CUDA (plus de 4 Go
+# de bibliothèques NVIDIA inutiles, l'EC2 n'a pas de GPU). Même version que
+# la production (2.14.0).
+ARG TORCH_VERSION=2.14.0
+RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch==${TORCH_VERSION}"
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install -r /tmp/requirements.txt
+RUN pip install -r /tmp/requirements.txt \
+ && ! pip list 2>/dev/null | grep -qi '^nvidia-'
 
 FROM python:3.12-slim AS final
 # libgomp1 : torch et scikit-learn ; libglib2.0-0 : opencv-python-headless.
