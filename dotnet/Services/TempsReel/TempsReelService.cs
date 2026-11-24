@@ -24,6 +24,8 @@ public interface ITempsReel
     Task CanalMessageAsync(int courseId, int messageId, string raison = "nouveau");
     /// <summary>Lot 3 : nouvelle réponse dans un sujet du forum.</summary>
     Task ForumReponseAsync(int threadId, int postId);
+    /// <summary>Lot 4 : quelqu'un entre dans la salle d'un cours en direct ou en sort (pour l'appel de l'animateur).</summary>
+    Task VisioPresenceAsync(int animateurId, string type, int refId, int userId, string evenement);
 }
 
 public class TempsReelService : ITempsReel
@@ -64,6 +66,10 @@ public class TempsReelService : ITempsReel
     public Task ForumReponseAsync(int threadId, int postId) =>
         Envoyer(() => _hub.Clients.Group(TempsReelHub.GroupeSujet(threadId))
             .SendAsync("forum-reponse", new { threadId, id = postId }), "forum-reponse");
+
+    public Task VisioPresenceAsync(int animateurId, string type, int refId, int userId, string evenement) =>
+        Envoyer(() => _hub.Clients.Group(U(animateurId))
+            .SendAsync("visio-presence", new { type, id = refId, userId, evenement }), "visio-presence");
 
     public async Task MessageGroupeAsync(int groupeId, int expediteurId, int messageId, string raison = "nouveau")
     {
