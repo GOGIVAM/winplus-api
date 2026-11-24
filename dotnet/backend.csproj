@@ -31,19 +31,19 @@
 
   <ItemGroup>
     <!-- ASP.NET Core -->
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.0" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="8.0.0">
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.34" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="8.0.34">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.0" />
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.34" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
     <PackageReference Include="QuestPDF" Version="2026.6.0" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
     
     <!-- Authentication & Authorization -->
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.34" />
     
     <!-- AWS Services -->
     <PackageReference Include="AWSSDK.S3" Version="3.7.305" />
@@ -55,9 +55,7 @@
     <PackageReference Include="Polly" Version="8.2.0" />
     
     <!-- Health Checks -->
-    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="7.0.13" />
-    <PackageReference Include="AspNetCore.HealthChecks.UI" Version="7.0.2" />
-    <PackageReference Include="AspNetCore.HealthChecks.UI.Client" Version="7.1.0" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="8.0.34" />
     
     <!-- Logging & Monitoring -->
     <PackageReference Include="Serilog.AspNetCore" Version="7.0.0" />
@@ -68,9 +66,15 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="7.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="7.0.0" />
     
-    <!-- Les dépendances de test (xunit, Moq, Test.Sdk) vivent dans les projets
-         de test séparés (backend/tests/dotnet/*), pas ici : elles ne doivent
+    <!-- Les dÃƒÂ©pendances de test (xunit, Moq, Test.Sdk) vivent dans les projets
+         de test sÃƒÂ©parÃƒÂ©s (backend/tests/dotnet/*), pas ici : elles ne doivent
          pas partir en publication. -->
+
+    <!-- SÃ©curitÃ© : versions minimales des dÃ©pendances transitives vulnÃ©rables (audit du 24/11/2026) -->
+    <PackageReference Include="System.Text.Json" Version="8.0.6" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="8.0.1" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.23.0" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.23.0" />
 
     <!-- Custom Auth Services -->
     <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />

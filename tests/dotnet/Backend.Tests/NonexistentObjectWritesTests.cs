@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Backend.Controllers;
 using Backend.Models.Entities;
 using Backend.Services;
+using Backend.Services.TempsReel;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -52,7 +53,7 @@ namespace Backend.Tests
         }
 
         private static MessagesController Messages(TestApplicationDbContext db, int userId) => new(
-            db, NullLogger<MessagesController>.Instance, new Mock<IHttpClientFactory>().Object, new Mock<IStorageService>().Object)
+            db, NullLogger<MessagesController>.Instance, new Mock<IHttpClientFactory>().Object, new Mock<IStorageService>().Object, new Mock<ITempsReel>().Object)
         { ControllerContext = AsUser(userId) };
 
         [Fact]
