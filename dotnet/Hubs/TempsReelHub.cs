@@ -21,6 +21,8 @@ namespace Backend.Hubs;
 public class TempsReelHub : Hub
 {
     public static string GroupeUtilisateur(int userId) => $"u:{userId}";
+    public static string GroupeCanal(int courseId) => $"canal:{courseId}";
+    public static string GroupeSujet(int threadId) => $"forum:{threadId}";
 
     private readonly ApplicationDbContext _db;
     public TempsReelHub(ApplicationDbContext db) { _db = db; }
@@ -43,6 +45,30 @@ public class TempsReelHub : Hub
         if (!lies) return;
         await Clients.Group(GroupeUtilisateur(destinataireId)).SendAsync("ecrit", new { type = "prive", de = me });
     }
+
+    /// <summary>Lot 3 : rejoint le canal d'une formation (enseignant ou élève inscrit seulement) tant que
+    /// l'écran du canal est ouvert. Renvoie false si l'accès est refusé.</summary>
+    public async Task<bool> RejoindreCanal(int courseId)
+    {
+        var me = Context.User!.GetUserId();
+        var course = await _db.Courses.AsNoTracking().Where(c => c.Id == courseId).Select(c => new { c.InstructorId }).FirstOrDefaultAsync();
+        if (course == null) return false;
+        var autorise = course.InstructorId == me
+            || await _db.CourseEnrollments.AsNoTracking().AnyAsync(e => e.CourseId == courseId && e.UserId == me && e.IsActive);
+        if (!autorise) return false;
+        await Groups.AddToGroupAsync(Context.ConnectionId, GroupeCanal(courseId));
+        return true;
+    }
+    public Task QuitterCanal(int courseId) => Groups.RemoveFromGroupAsync(Context.ConnectionId, GroupeCanal(courseId));
+
+    /// <summary>Lot 3 : suit un sujet du forum ouvert à l'écran (sujets lisibles par tout utilisateur connecté).</summary>
+    public async Task<bool> SuivreSujet(int threadId)
+    {
+        if (!await _db.ForumThreads.AsNoTracking().AnyAsync(t => t.Id == threadId)) return false;
+        await Groups.AddToGroupAsync(Context.ConnectionId, GroupeSujet(threadId));
+        return true;
+    }
+    public Task QuitterSujet(int threadId) => Groups.RemoveFromGroupAsync(Context.ConnectionId, GroupeSujet(threadId));
 
     /// <summary>« En train d'écrire » dans un groupe : relayé aux autres membres.</summary>
     public async Task EcritGroupe(int groupeId)
