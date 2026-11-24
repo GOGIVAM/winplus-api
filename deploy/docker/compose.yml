@@ -1,0 +1,89 @@
+# Pile backend WinPlus en conteneurs (API .NET + WinAI FastAPI).
+#
+# Une même définition sert la production et l'intégration ; deploy.sh fixe les
+# variables (projet, ports, fichiers d'environnement, image) :
+#
+#   pile          projet compose          ports locaux (nginx de l'hôte)
+#   prod          winplus-prod            127.0.0.1:5001 (.NET)  127.0.0.1:8000 (FastAPI)
+#   integration   winplus-integration     127.0.0.1:5002 (.NET)  127.0.0.1:8001 (FastAPI)
+#
+# Les ports sont ceux des anciens services systemd : la configuration nginx ne
+# change pas. Les fichiers d'environnement sont ceux d'aujourd'hui sur le
+# serveur (permissions 600) ; les valeurs de « environment » ci-dessous les
+# remplacent quand elles doivent différer dans un conteneur.
+#
+# Durcissement : utilisateur non root, système de fichiers en lecture seule
+# (seuls les volumes et /tmp sont inscriptibles), aucune capacité Linux,
+# pas d'élévation de privilèges, mémoire plafonnée, journaux limités.
+
+x-durcissement: &durcissement
+  read_only: true
+  tmpfs:
+    - /tmp:size=256m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  fastapi:
+    <<: *durcissement
+    image: ${REGISTRY:?REGISTRY manquant}/winplus-fastapi:${TAG:?TAG manquant}
+    env_file:
+      - ${PYTHON_ENV_FILE:?PYTHON_ENV_FILE manquant}
+    environment:
+      WINPLUS_ENV: ${WINPLUS_ENV:-}
+      UVICORN_WORKERS: ${FASTAPI_WORKERS:-2}
+      MODEL_CACHE_DIR: /data/models_cache
+      HF_HOME: /data/hf
+      RAG_BM25_STORAGE_DIR: /data/bm25_storage
+      RAG_GRAPH_STORAGE_DIR: /data/graph_storage
+      WINAI_USAGE_DIR: /data/winai-usage
+      JWT_LEGACY_ALG_DEADLINE_FILE: /data/jwt_legacy_alg_deadline
+    ports:
+      - "127.0.0.1:${FASTAPI_PORT:?FASTAPI_PORT manquant}:8000"
+    volumes:
+      - fastapi-data:/data
+    mem_limit: ${FASTAPI_MEM:-2g}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
+
+  dotnet:
+    <<: *durcissement
+    image: ${REGISTRY}/winplus-dotnet:${TAG}
+    env_file:
+      - ${DOTNET_ENV_FILE:?DOTNET_ENV_FILE manquant}
+    environment:
+      WINPLUS_ENV: ${WINPLUS_ENV:-}
+      ASPNETCORE_URLS: http://+:8080
+      # Dans le réseau de la pile, FastAPI s'appelle « fastapi » (plus 127.0.0.1).
+      FastApi__BaseUrl: http://fastapi:8000
+      AIService__BaseUrl: http://fastapi:8000
+    ports:
+      - "127.0.0.1:${DOTNET_PORT:?DOTNET_PORT manquant}:8080"
+    volumes:
+      - dotnet-logs:/app/logs
+      - dotnet-uploads:/app/wwwroot/uploads
+      - dotnet-private:/app/private_uploads
+      - dotnet-keys:/home/app/.aspnet/DataProtection-Keys
+    mem_limit: ${DOTNET_MEM:-1g}
+    depends_on:
+      fastapi:
+        condition: service_started
+
+volumes:
+  fastapi-data:
+  dotnet-logs:
+  dotnet-uploads:
+  dotnet-private:
+  dotnet-keys:

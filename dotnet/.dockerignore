@@ -1,0 +1,13 @@
+bin/
+obj/
+publish/
+logs/
+private_uploads/
+wwwroot/uploads/
+.env
+.env.*
+*.user
+.vs/
+.vscode/
+Dockerfile
+.dockerignore

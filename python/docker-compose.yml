@@ -23,7 +23,7 @@ services:
   fastapi-app:
     build:
       context: .
-      dockerfile: Dockerfile.fastapi
+      dockerfile: Dockerfile
     container_name: winplus_fastapi
     environment:
       DATABASE_URL: postgresql://${DB_USER:-winplus_user}:${DB_PASSWORD:-winplus_password}@postgres:5432/${DB_NAME:-winplus_db}
