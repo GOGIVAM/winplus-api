@@ -1,0 +1,5 @@
+
+# Scripts et fichiers lus sous Linux : toujours LF
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
