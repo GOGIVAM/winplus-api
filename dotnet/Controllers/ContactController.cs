@@ -86,8 +86,10 @@ public class ContactController : ControllerBase
 <p><strong>De :</strong> {H(message.Name)} &lt;{H(message.Email)}&gt;{(message.Phone != null ? " · " + H(message.Phone) : "")}{(userId != null ? $" · compte n° {userId}" : " · sans compte")}</p>
 <p><strong>Sujet :</strong> {H(message.Subject)}</p>
 <div style=""white-space:pre-wrap;border-left:3px solid #33BBAF;padding-left:12px"">{H(message.Message)}</div>
-<p style=""color:#777"">Répondre directement à {H(message.Email)}.</p>";
-            message.EmailSent = await _email.SendGenericEmailAsync(destinataire, $"[Contact WinPlus] {message.Subject}", html, NotificationCategory.Transactional);
+<p style=""color:#777"">« Répondre » écrit directement à {H(message.Email)}.</p>";
+            // « Répondre » dans la messagerie de l'équipe écrit directement à l'auteur du message.
+            message.EmailSent = await _email.SendGenericEmailAsync(destinataire, $"[Contact WinPlus] {message.Subject}", html,
+                NotificationCategory.Transactional, replyTo: message.Email);
             await _db.SaveChangesAsync(ct);
         }
         catch (Exception ex)

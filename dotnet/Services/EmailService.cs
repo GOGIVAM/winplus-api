@@ -23,6 +23,14 @@ public interface IEmailService
     /// refusé par les préférences ou par le fournisseur.
     /// </summary>
     Task<bool> SendGenericEmailAsync(string to, string subject, string htmlContent, NotificationCategory category);
+
+    /// <summary>
+    /// Même envoi, avec une adresse de réponse (en-tête Reply-To) : « Répondre » dans la messagerie écrit
+    /// directement à cette adresse (ex. l'auteur d'un message de contact) au lieu de l'expéditeur WinPlus.
+    /// Par défaut (implémentations de test), l'adresse de réponse est ignorée.
+    /// </summary>
+    Task<bool> SendGenericEmailAsync(string to, string subject, string htmlContent, NotificationCategory category, string? replyTo)
+        => SendGenericEmailAsync(to, subject, htmlContent, category);
 }
 
 public class EmailService : IEmailService
@@ -483,7 +491,10 @@ public class EmailService : IEmailService
     // ─────────────────────────────────────────────────────────────────────────
     //  ENVOI GÉNÉRIQUE
     // ─────────────────────────────────────────────────────────────────────────
-    public async Task<bool> SendGenericEmailAsync(string to, string subject, string htmlContent, NotificationCategory category)
+    public Task<bool> SendGenericEmailAsync(string to, string subject, string htmlContent, NotificationCategory category)
+        => SendGenericEmailAsync(to, subject, htmlContent, category, null);
+
+    public async Task<bool> SendGenericEmailAsync(string to, string subject, string htmlContent, NotificationCategory category, string? replyTo)
     {
         // Point unique de vérification des préférences e-mail (Partie 12.3) : tout
         // envoi traverse cette méthode, les émetteurs n'ont qu'à déclarer la
@@ -512,13 +523,16 @@ public class EmailService : IEmailService
 
         try
         {
-            var payload = new
+            // Clés telles que l'API Resend les attend (reply_to en snake_case), quel que soit _json.
+            var payload = new Dictionary<string, object>
             {
-                from    = $"{_fromName} <{_fromEmail}>",
-                to      = new[] { to },
-                subject,
-                html    = htmlContent
+                ["from"]    = $"{_fromName} <{_fromEmail}>",
+                ["to"]      = new[] { to },
+                ["subject"] = subject,
+                ["html"]    = htmlContent,
             };
+            if (!string.IsNullOrWhiteSpace(replyTo))
+                payload["reply_to"] = new[] { replyTo.Trim() };
 
             var json    = JsonSerializer.Serialize(payload, _json);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
