@@ -37,6 +37,7 @@ from routes.smart_ai_routes import smart_ai_router
 from routes.exam_quiz_routes import exam_quiz_router
 from routes.canal_qa_routes import canal_qa_router
 from routes.winai_memory_routes import winai_memory_router
+from routes.winai_atelier_routes import winai_atelier_router
 from routes.goal_suggestions import router as goal_suggestions_router
 from routes.cover_routes import router as cover_router
 from routes.translation_routes import router as translation_router
@@ -185,6 +186,7 @@ app.include_router(tutor_interview_router, prefix="/api", tags=["tutor-interview
 app.include_router(smart_ai_router, prefix="/api", tags=["smart-ai"])
 app.include_router(canal_qa_router, prefix="/api", tags=["canal-qa"])
 app.include_router(winai_memory_router, prefix="/api", tags=["winai-memory"])
+app.include_router(winai_atelier_router, prefix="/api", tags=["winai-atelier"])
 # RAG (self_hosted / api)  branché pour test, voir RAG/README.md et
 # RAG/DEPLOYMENT.md. Expose /api/rag/query, /api/rag/ingest, /api/rag/health.
 app.include_router(rag_router, prefix="/api", tags=["rag"])

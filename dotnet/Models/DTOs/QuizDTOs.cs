@@ -5,6 +5,8 @@ namespace Backend.Models.DTOs;
 /// </summary>
 public class QuizDto
 {
+    /// <summary>Atelier WinAI : sources choisies réellement citées par la génération ({type, id, title, page}).</summary>
+    public List<object>? Sources { get; set; }
     public int Id { get; set; }
     public string Title { get; set; } = null!;
     public string? Description { get; set; }
@@ -85,6 +87,8 @@ public class SubjectQuizGenerationResult
 /// <summary>Corps de la requête POST /quizzes/me/generate (bouton "Quiz d'entraînement IA").</summary>
 public class GenerateQuizRequestDto
 {
+    /// <summary>Atelier WinAI : sources choisies ({type, id}, 10 au plus), comme pour le chat.</summary>
+    public List<SourceRefDto>? Sources { get; set; }
     /// <summary>Si omis, la matière la plus faible de l'élève est utilisée (voir QuizService).</summary>
     public string? Subject { get; set; }
     public string? Topic { get; set; }

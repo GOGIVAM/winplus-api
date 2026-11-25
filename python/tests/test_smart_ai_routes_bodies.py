@@ -488,3 +488,37 @@ def test_quiz_provider_failure_or_malformed_questions_is_a_500(env, headers_for,
     env.use(answer)
     r = _quiz(env, headers_for, subject="Maths")
     assert r.status_code == 500 and r.json()["detail"] == "Génération du quiz impossible pour le moment."
+
+
+# -- Atelier WinAI : sources choisies sur la fiche et le quiz ----------------------------------------------
+
+@pytest.fixture
+def chosen(monkeypatch):
+    import routes.winai_atelier_routes as wa
+    calls = []
+
+    async def fake_block(body, user_id):
+        calls.append((body.sources_filter, body.sources_context, user_id))
+        return "\n[Sources choisies]\nZEBRE-42 : extrait de la fiche", [{"doc_id": "winsrc_7_a", "title": "Ma fiche", "page": 1}]
+
+    monkeypatch.setattr(wa, "sources_block", fake_block)
+    return calls
+
+
+def test_revision_with_chosen_sources_puts_them_in_the_prompt_and_returns_citations(env, headers_for, chosen):
+    fake = env.use(json.dumps(FICHE))
+    r = _rev(env, headers_for, subject="Maths", sources_filter={"doc_ids": ["winsrc_7_a"]})
+    assert r.status_code == 200 and r.json()["citations"][0]["doc_id"] == "winsrc_7_a"
+    assert "ZEBRE-42" in fake.calls[0]["prompt"] and chosen == [({"doc_ids": ["winsrc_7_a"]}, None, 7)]
+
+
+def test_quiz_with_chosen_sources_puts_them_in_the_prompt_and_returns_citations(env, headers_for, chosen):
+    fake = env.use(json.dumps({"questions": [_q(i) for i in range(1, 9)]}))
+    r = _quiz(env, headers_for, subject="Maths", sources_context="Erreurs : 3x2")
+    assert r.status_code == 200 and r.json()["citations"][0]["title"] == "Ma fiche"
+    assert "ZEBRE-42" in fake.calls[0]["prompt"] and chosen[0][1] == "Erreurs : 3x2"
+
+
+def test_generation_without_sources_skips_the_search(env, headers_for, chosen):
+    env.use(json.dumps(FICHE))
+    assert "citations" not in _rev(env, headers_for, subject="Maths").json() and chosen == []

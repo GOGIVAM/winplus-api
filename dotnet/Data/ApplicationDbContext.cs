@@ -1964,6 +1964,7 @@ modelBuilder.Entity<Exam>(entity =>
         OnModelCreatingVisio(modelBuilder);
         OnModelCreatingWinAiSources(modelBuilder);
         OnModelCreatingContactMessages(modelBuilder);
+        OnModelCreatingWinAiProductions(modelBuilder);
 
         // ── Rendez-vous parent-professeur (voir ApplicationDbContext.ParentTeacherMeetings.cs) ──
         OnModelCreatingParentTeacherMeetings(modelBuilder);

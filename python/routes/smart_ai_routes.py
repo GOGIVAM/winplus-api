@@ -125,6 +125,9 @@ class RevisionContentRequest(BaseModel):
     context_hint: Optional[str] = None
     #  easy | medium | hard, contrôle explicite de l'élève.
     difficulty: Optional[str] = None
+    # Atelier WinAI : sources choisies par l'élève, contrôlées et traduites par le .NET.
+    sources_filter: Optional[Dict[str, Any]] = None
+    sources_context: Optional[str] = None
 
 
 class QuizContentRequest(BaseModel):
@@ -140,6 +143,22 @@ class QuizContentRequest(BaseModel):
     # matière (QuizService.GenerateAIQuizAsync)  anti-répétition, "régénérer"
     # ne redonnait sinon quasi toujours le même quiz.
     recent_question_texts: List[str] = []
+    # Atelier WinAI : sources choisies par l'élève, contrôlées et traduites par le .NET.
+    sources_filter: Optional[Dict[str, Any]] = None
+    sources_context: Optional[str] = None
+
+
+async def _chosen_sources(body, current_user) -> tuple[str, list]:
+    """Atelier WinAI : bloc de prompt tiré des sources choisies, et citations. Import tardif : la
+    recherche RAG n'est chargée que si l'élève a choisi des sources."""
+    if not (getattr(body, "sources_filter", None) or getattr(body, "sources_context", None)):
+        return "", []
+    from routes.winai_atelier_routes import sources_block
+    block, citations = await sources_block(body, int(current_user.user_id))
+    if not block.strip():
+        return "", citations
+    return (block + "\n\nAppuie le contenu en priorité sur ces sources choisies par l'élève ; "
+            "n'invente rien qui les contredise.\n"), citations
 
 
 # ─── 1. Generate smart notification ──────────────────────────────────────────
@@ -470,10 +489,12 @@ async def generate_revision_content(
             f"Objectifs actifs de l'élève : {goals_text}\n\n"
         )
 
+    sources_text, citations = await _chosen_sources(body, current_user)
+
     prompt = (
         f"Tu es WinAI, professeur particulier pour un lycéen camerounais préparant ses examens.\n"
         f"{subject_line}{level_line}{topic_line}{difficulty_line}{enrolled_line}{style_block}\n"
-        f"{context_lines}"
+        f"{context_lines}{sources_text}"
         f"Concentre la fiche sur ce que l'élève a réellement raté ou doit travailler en priorité, pas "
         f"un résumé générique du programme. La fiche doit être TRÈS DÉTAILLÉE et TRÈS BIEN EXPLIQUÉE, "
         f"comme un vrai cours particulier, au niveau exact de la classe et du programme officiel "
@@ -551,6 +572,7 @@ async def generate_revision_content(
                 "content_markdown": content_markdown,
                 "difficulty": data.get("difficulty") if data.get("difficulty") in ("easy", "medium", "hard") else (difficulty or "medium"),
                 "estimated_duration_minutes": int(data.get("estimated_duration_minutes") or 15),
+                **({"citations": citations} if citations else {}),
             }
         except Exception as e:
             last_error = e
@@ -770,9 +792,11 @@ async def generate_quiz_content(
         "ni de barres obliques inversées ;\n"
         "- français correct, vocabulaire et exemples du contexte camerounais quand c'est naturel.\n"
     )
+    sources_text, citations = await _chosen_sources(body, current_user)
+
     prompt = (
         f"Génère exactement {QUIZ_QUESTION_COUNT} questions à choix multiples de niveau lycée/examens "
-        f"camerounais.\n{subject_line}{level_line}{topic_line}{enrolled_line}\n{context_line}"
+        f"camerounais.\n{subject_line}{level_line}{topic_line}{enrolled_line}\n{context_line}{sources_text}"
         f"{difficulty_line}{quality_line}{variety_line}{avoid_repeat_line}{style_line}"
         f'Format JSON strict, un objet unique : '
         f'{{{subject_json_field}"questions":[{{"id":"q1","question":"...",'
@@ -834,7 +858,8 @@ async def generate_quiz_content(
         if not questions:
             raise HTTPException(status_code=422, detail="La génération des questions a échoué. Réessaie.")
 
-        return {"success": True, "data": {"questions": questions, "subject": chosen_subject, "difficulty": difficulty}}
+        return {"success": True, "data": {"questions": questions, "subject": chosen_subject, "difficulty": difficulty},
+                **({"citations": citations} if citations else {})}
     except HTTPException:
         raise
     except Exception as e:

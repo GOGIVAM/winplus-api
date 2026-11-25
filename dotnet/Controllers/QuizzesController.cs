@@ -157,14 +157,34 @@ public class QuizzesController : ControllerBase
         // Lot 9.7b (18.17) : quiz généré par WinAI = droit
         // ai.feature.adaptive_quiz, débité sur le budget au coût réel
         // (en-tête X-WinAI-Tokens relevé par IFastApiClient).
+        // Atelier WinAI : sources choisies, contrôlées et traduites AVANT la réserve de quota.
+        Backend.Services.WinAi.ResolvedSources? resolved = null;
+        GenerationSources? sources = null;
+        if (request?.Sources is { Count: > 0 })
+        {
+            try
+            {
+                var sourceService = HttpContext.RequestServices.GetRequiredService<Backend.Services.WinAi.IWinAiSourceService>();
+                resolved = await sourceService.ResolveAsync(userId, Backend.Extensions.ClaimsPrincipalExtensions.IsAdmin(User),
+                    request.Sources.Select(x => new Backend.Services.WinAi.SourceRef(x.Type, x.Id)).ToList(), HttpContext.RequestAborted);
+                sources = new GenerationSources { Filter = resolved.Filter, Context = resolved.ContextText };
+            }
+            catch (Backend.Services.WinAi.WinAiSourceException e)
+            {
+                return StatusCode(e.Status, new { success = false, error = e.Message, code = e.Code, message = e.Message });
+            }
+        }
+
         var gate = HttpContext.RequestServices.GetRequiredService<Backend.Services.Entitlements.IAiFeatureGate>();
         var ticket = await gate.BeginAsync(userId, Backend.Services.Entitlements.EntitlementCatalog.AiAdaptiveQuiz, HttpContext.RequestAborted);
         if (!ticket.Allowed) return (ActionResult)ticket.Refusal!;
         var served = false;
         try
         {
-            var quiz = await _quizService.GenerateAIQuizAsync(userId, request?.Subject, request?.Topic, request?.Difficulty);
+            var quiz = await _quizService.GenerateAIQuizAsync(userId, request?.Subject, request?.Topic, request?.Difficulty, sources);
             served = true;
+            if (resolved != null && sources?.Citations is { } cits)
+                quiz.Sources = resolved.MapCitations(cits);
             return Ok(quiz);
         }
         catch (ArgumentException ex)

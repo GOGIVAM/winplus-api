@@ -5,6 +5,8 @@ namespace Backend.Models.DTOs;
 /// <summary>Corps de la requête au frontend pour générer une fiche personnalisée.</summary>
 public class GenerateRevisionRequestDto
 {
+    /// <summary>Atelier WinAI : sources choisies ({type, id}, 10 au plus), comme pour le chat.</summary>
+    public List<SourceRefDto>? Sources { get; set; }
     /// <summary>Si omis, le sujet le plus faible de l'élève est utilisé (voir RevisionService).</summary>
     public string? Subject { get; set; }
     public string? Topic { get; set; }
@@ -42,6 +44,9 @@ public class GeneratedRevisionContentDto
 
     [JsonPropertyName("estimated_duration_minutes")]
     public int EstimatedDurationMinutes { get; set; } = 15;
+
+    /// <summary>Atelier WinAI : extraits des sources choisies réellement utilisés.</summary>
+    public System.Text.Json.JsonElement? Citations { get; set; }
 }
 
 /// <summary>
@@ -49,6 +54,8 @@ public class GeneratedRevisionContentDto
 /// </summary>
 public class RevisionDto
 {
+    /// <summary>Atelier WinAI : sources choisies réellement citées par la génération ({type, id, title, page}).</summary>
+    public List<object>? Sources { get; set; }
     public int Id { get; set; }
     public string Title { get; set; } = null!;
     public string? Description { get; set; }

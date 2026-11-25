@@ -477,7 +477,7 @@ public class RevisionService : IRevisionService
         return assignedEnrollments;
     }
 
-    public async Task<RevisionDto> GenerateAIRevisionAsync(int userId, string? subject, string? topic, string? difficulty = null)
+    public async Task<RevisionDto> GenerateAIRevisionAsync(int userId, string? subject, string? topic, string? difficulty = null, GenerationSources? sources = null)
     {
         var normalizedDifficulty = (difficulty ?? "").Trim().ToLowerInvariant();
         if (normalizedDifficulty is not ("easy" or "medium" or "hard"))
@@ -535,7 +535,7 @@ public class RevisionService : IRevisionService
             // Distinct de l'échec de génération IA plus bas (InvalidOperationException,
             // vraie panne → 503) : ici rien n'a échoué, il manque juste de quoi choisir
             // une matière  400, pas 503 (voir QuizService.GenerateAIQuizAsync).
-            if (string.IsNullOrWhiteSpace(level) && goals.Count == 0 && latestGrade == null)
+            if (string.IsNullOrWhiteSpace(level) && goals.Count == 0 && latestGrade == null && sources == null)
                 throw new ArgumentException("Passe un quiz, télécharge une épreuve ou définis un objectif pour qu'on sache sur quelle matière te faire une fiche personnalisée.");
 
             var hints = new List<string>(goals);
@@ -544,7 +544,7 @@ public class RevisionService : IRevisionService
             contextHint = hints.Count > 0 ? string.Join("; ", hints) : null;
         }
 
-        var generated = await _fastApiClient.GenerateRevisionContentAsync(userId, resolvedSubject, topic, level, contextHint, normalizedDifficulty);
+        var generated = await _fastApiClient.GenerateRevisionContentAsync(userId, resolvedSubject, topic, level, contextHint, normalizedDifficulty, sources);
         if (generated == null)
             throw new InvalidOperationException("La génération de la fiche a échoué, réessaie dans un instant.");
 

@@ -29,6 +29,7 @@ from routes.teacher_extra_routes import teacher_ai_router
 from routes.translation_routes import router as translation_router
 from routes.tutor_interview_routes import tutor_interview_router
 from routes.winai_memory_routes import winai_memory_router
+from routes.winai_atelier_routes import winai_atelier_router
 
 ALL_ROLES = ("student", "teacher", "parent", "admin", "institution")
 
@@ -39,7 +40,7 @@ MOUNTS = [
     (study_session_router, "/api/study-session"), (exam_quiz_router, "/api/exam-quiz"),
     (parent_extra_router, "/api"), (teacher_ai_router, "/api"), (institution_router, "/api"), (admin_router, "/api"),
     (tutor_interview_router, "/api"), (smart_ai_router, "/api"), (canal_qa_router, "/api"),
-    (winai_memory_router, "/api"), (goal_router, ""), (cover_router, ""), (translation_router, ""),
+    (winai_memory_router, "/api"), (winai_atelier_router, "/api"), (goal_router, ""), (cover_router, ""), (translation_router, ""),
 ]
 
 
@@ -76,6 +77,8 @@ ROUTES = {
     ("POST", "/api/winai/canal-qa"): ANY,
     ("GET", "/api/winai/memoire"): ANY,
     ("DELETE", "/api/winai/memoire/1"): ANY,
+    ("POST", "/api/winai/flashcards/generate-content"): ANY,
+    ("POST", "/api/winai/resume-audio/generate-content"): ANY,
     ("POST", "/api/ai/cover/generate"): ANY,
     ("POST", "/api/ai/goal-suggestions"): ANY,
     ("POST", "/api/quiz/explain-error"): ANY,

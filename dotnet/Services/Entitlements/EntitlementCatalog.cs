@@ -50,6 +50,8 @@ public static class EntitlementCatalog
     public const string AiSourcesMaxFiles = "ai.sources.max_files";
     /// <summary>Atelier WinAI : volume total des documents personnels, en Mo.</summary>
     public const string AiSourcesMaxMb = "ai.sources.max_mb";
+    /// <summary>Atelier WinAI : fiches recto verso générées depuis les sources (Standard et au-dessus).</summary>
+    public const string AiFlashcards = "ai.feature.flashcards";
     public const string AiErrorExplain = "ai.feature.error_explain";
     public const string AiAdaptiveQuiz = "ai.feature.adaptive_quiz";
     public const string AiStudyPlan = "ai.feature.study_plan";
@@ -113,6 +115,9 @@ public static class EntitlementCatalog
             "Documents personnels gardés comme sources de WinAI.", SP, AllowUnlimited: true, Group: "WinAI"),
         new(AiSourcesMaxMb, EntitlementType.Integer, "Mo", "30", "Espace des sources WinAI",
             "Volume total des documents personnels gardés comme sources.", SP, AllowUnlimited: true, Group: "WinAI"),
+        // WinAiAtelierController (fiches recto verso)
+        new(AiFlashcards, EntitlementType.Boolean, "", "false", "Fiches recto verso",
+            "Fiches de révision question-réponse générées par WinAI depuis vos sources.", SP, Group: "WinAI"),
         // AIController explain-error
         new(AiErrorExplain, EntitlementType.Boolean, "", "true", "Explication des erreurs",
             "WinAI explique une erreur de quiz.", S, Group: "WinAI"),

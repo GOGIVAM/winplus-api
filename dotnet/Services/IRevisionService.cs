@@ -103,7 +103,7 @@ public interface IRevisionService
     /// l'utilisateur. Si <paramref name="subject"/> est omis, la matière la
     /// plus faible de l'utilisateur est utilisée.
     /// </summary>
-    Task<RevisionDto> GenerateAIRevisionAsync(int userId, string? subject, string? topic, string? difficulty = null);
+    Task<RevisionDto> GenerateAIRevisionAsync(int userId, string? subject, string? topic, string? difficulty = null, GenerationSources? sources = null);
 
     /// <summary>Fiches IA générées pour cet utilisateur, actives par défaut (ou masquées si demandé).</summary>
     Task<IEnumerable<RevisionDto>> GetMyGeneratedRevisionsAsync(int userId, bool includeHidden = false, int page = 1, int pageSize = 50);

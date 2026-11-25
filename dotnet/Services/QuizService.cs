@@ -725,7 +725,7 @@ public class QuizService : IQuizService
         return MapToDto(quiz);
     }
 
-    public async Task<QuizDto> GenerateAIQuizAsync(int userId, string? subject, string? topic, string? difficulty = null)
+    public async Task<QuizDto> GenerateAIQuizAsync(int userId, string? subject, string? topic, string? difficulty = null, GenerationSources? sources = null)
     {
         // Contrôle explicite du niveau (bouton "plus facile / plus dur" côté
         // élève), distinct du niveau scolaire résolu plus bas. Normalisé ici
@@ -788,7 +788,8 @@ public class QuizService : IQuizService
             // quoi choisir une matière. Type d'exception différent pour que le
             // contrôleur puisse renvoyer 400 au lieu de 503 (qui déclenchait à tort le
             // log/monitoring "panne serveur" pour un cas normal de nouvel utilisateur).
-            if (goals.Count == 0 && latestGrade == null)
+            // Des sources choisies dans l'atelier suffisent : WinAI tire la matière de leur contenu.
+            if (goals.Count == 0 && latestGrade == null && sources == null)
                 throw new ArgumentException("Passe un quiz, télécharge une épreuve ou définis un objectif pour qu'on sache sur quelle matière t'entraîner.");
 
             var hints = new List<string>(goals);
@@ -822,7 +823,7 @@ public class QuizService : IQuizService
             }
         }
 
-        var questions = await _fastApiClient.GenerateSubjectQuizAsync(userId, resolvedSubject, topic, level, contextHint, normalizedDifficulty, recentQuestionTexts);
+        var questions = await _fastApiClient.GenerateSubjectQuizAsync(userId, resolvedSubject, topic, level, contextHint, normalizedDifficulty, recentQuestionTexts, sources);
         if (questions == null || questions.Questions.Count == 0)
             throw new InvalidOperationException("La génération du quiz a échoué, réessaie dans un instant.");
 
