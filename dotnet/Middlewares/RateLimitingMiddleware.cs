@@ -55,6 +55,8 @@ public class RateLimitingMiddleware
     /// </summary>
     private const int SensitiveAttempts = 12;
     private const int SensitiveWindowMinutes = 15;
+    private const int ContactAttempts = 5;
+    private const int ContactWindowMinutes = 60;
 
     public RateLimitingMiddleware(RequestDelegate next, ILogger<RateLimitingMiddleware> logger)
     {
@@ -113,6 +115,9 @@ public class RateLimitingMiddleware
                 "/auth/send-confirmation-code", "/auth/verify-confirmation"
             },
             SensitiveAttempts, SensitiveWindowMinutes, "authentication", SensitiveWindowMinutes),
+        // Formulaire de contact (25/11/2026) : ouvert sans compte, donc limité contre les envois en masse.
+        (new[] { "/support/contact" },
+            ContactAttempts, ContactWindowMinutes, "contact", ContactWindowMinutes),
     };
 
     private static (int MaxAttempts, int WindowMinutes, string Label, int RetryAfter)? ResolveRule(string path)

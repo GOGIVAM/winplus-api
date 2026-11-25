@@ -204,7 +204,8 @@ public class HomeService : IHomeService
         {
             // Récupérer les infos de contact générales pour le footer
             var contactEmail = "contact@winplus.cm";
-            var contactPhone = "+237 2XX XXX XXX";
+            // Numéro réel affiché sur la page Contact du site ; un faux « +237 2XX XXX XXX » était renvoyé ici (25/11/2026).
+            var contactPhone = "+237 671 88 56 52";
             var contactAddress = "Yaoundé, Cameroun";
             
             var footerData = new FooterDto
