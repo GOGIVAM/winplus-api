@@ -283,6 +283,10 @@ class ChatResponse(BaseModel):
     generation_time_ms: int
     success: bool
     error: Optional[str] = None
+    # Déclarés ici sinon FastAPI les retire de la réponse (response_model) : coût de la recherche RAG,
+    # et citations des sources choisies (atelier WinAI), relayées par le .NET au client.
+    rag_tokens: int = 0
+    citations: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 # ==================== HEALTH CHECK SCHEMAS ====================

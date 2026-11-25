@@ -127,7 +127,7 @@ def test_chat_maps_the_provider_answer_and_passes_the_quota_id(env, headers_for)
     body = {**CHAT, "client_message_id": "msg-9", "max_tokens": 500, "temperature": 0.2}
     r = env.post("/api/chatbot/chat", json=body, headers=headers_for(7))
     assert r.json() == {"content": "Bonjour !", "tokens_used": 42, "generation_time_ms": 800, "success": True,
-                        "error": None}
+                        "error": None, "rag_tokens": 0, "citations": []}
     assert env.state.quota == [(7, "msg-9", "Chat", None)]
     call = env.state.provider.chat_calls[0]
     assert call["system_prompt"] == "SYS" and call["max_tokens"] == 500 and call["temperature"] == 0.2
