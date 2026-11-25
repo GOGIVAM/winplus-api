@@ -506,6 +506,7 @@ builder.Services.AddScoped<ICourseGamificationService, CourseGamificationService
 builder.Services.AddScoped<ICourseCertificateService, CourseCertificateService>();
 builder.Services.AddScoped<IBadgeService, BadgeService>();
 builder.Services.AddScoped<IDailyScoreService, DailyScoreService>();
+builder.Services.AddScoped<IPeerComparisonService, PeerComparisonService>();
 builder.Services.AddScoped<IRevisionService, RevisionService>();
 
 // New Repository Services

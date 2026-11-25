@@ -790,56 +790,26 @@ public class StudentController : ControllerBase
 
     /// <summary>
     /// GET /api/student/peer-comparison
-    /// Compare la moyenne de l'étudiant courant avec ses pairs anonymisés au même niveau.
+    /// Compare la moyenne de l'élève avec ses pairs anonymes sur 30 jours.
+    ///   ?scope=class|level|platform (platform par défaut, comportement historique) ; &amp;subjectId= facultatif.
+    /// hasData = la comparaison est possible ; sinon reason (no_scores, no_class, no_level, group_too_small)
+    /// et reasonMessage, phrase prête à afficher. subjects[] : une ligne par matière travaillée.
+    /// Voir PeerComparisonService.
     /// </summary>
     [HttpGet("peer-comparison")]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetPeerComparison()
+    public async Task<IActionResult> GetPeerComparison([FromServices] IPeerComparisonService peers,
+        [FromQuery] string? scope, [FromQuery] int? subjectId, CancellationToken ct)
     {
         try
         {
-            var userId = User.GetUserId();
-
-            // User's daily score average (last 30 days)
-            var cutoff = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-30));
-            var userScores = await _db.DailyScores
-                .Where(s => s.UserId == userId && s.Date >= cutoff)
-                .Select(s => (double)s.AverageScore)
-                .ToListAsync();
-
-            if (!userScores.Any())
-                return Ok(new { hasData = false });
-
-            var userAvg = Math.Round(userScores.Average(), 1);
-
-            // Peer average: all students who have scores in same period (anonymised)
-            var allScores = await _db.DailyScores
-                .Where(s => s.Date >= cutoff && s.UserId != userId)
-                .GroupBy(s => s.UserId)
-                .Select(g => g.Average(s => (double)s.AverageScore))
-                .ToListAsync();
-
-            if (!allScores.Any())
-                return Ok(new { hasData = false });
-
-            var peerAvg = Math.Round(allScores.Average(), 1);
-            var topPct  = allScores.OrderByDescending(s => s).Take(Math.Max(1, allScores.Count / 5)).Average();
-            var topPerformersAvg = Math.Round(topPct, 1);
-
-            // Percentile: how many peers score BELOW this student
-            var belowCount = allScores.Count(s => s < userAvg);
-            var percentile = (int)Math.Round((double)belowCount / allScores.Count * 100);
-
-            return Ok(new
-            {
-                hasData = true,
-                userAvg,
-                peerAvg,
-                percentile,
-                topPerformersAvg,
-                sampleSize = allScores.Count,
-            });
+            return Ok(await peers.ComputeAsync(User.GetUserId(), scope, subjectId, ct));
+        }
+        catch (PeerComparisonException ex)
+        {
+            return BadRequest(new { success = false, code = ex.Code, error = ex.Message, message = ex.Message });
         }
         catch (Exception ex)
         {
