@@ -92,6 +92,28 @@ def build_filter(filters: Dict[str, Any]) -> Optional[qm.Filter]:
     return qm.Filter(must=must)
 
 
+def payload_matches(payload: Optional[Dict[str, Any]], filters: Optional[Dict[str, Any]]) -> bool:
+    """Même règle que build_filter, appliquée à un extrait déjà récupéré.
+
+    La recherche lexicale (BM25) ne connaît pas les filtres : sans ce contrôle,
+    un extrait d'un autre utilisateur (pièce jointe privée, owner_user_id) ou
+    hors du périmètre demandé (doc_id, subject_id) pouvait revenir par la
+    fusion RRF. Chaque condition doit être vraie (ET) ; une liste vaut « l'une
+    des valeurs ». Une clé absente du payload ne correspond pas."""
+    if not filters:
+        return True
+    payload = payload or {}
+    for key, value in filters.items():
+        # Même convention que les pipelines : un extrait sans statut est actif.
+        actual = payload.get(key, "active" if key == "status" else None)
+        if isinstance(value, list):
+            if actual not in value and str(actual) not in {str(v) for v in value}:
+                return False
+        elif actual != value and str(actual) != str(value):
+            return False
+    return True
+
+
 def search_dense(
     collection: str,
     vector: List[float],
@@ -143,3 +165,20 @@ def mark_superseded(collection: str, doc_id: str, superseded_by: str) -> None:
         payload={"status": "superseded", "superseded_by": superseded_by},
         points=qm.Filter(must=[qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id))]),
     )
+
+
+def count_by_filter(collection: str, filters: Dict[str, Any]) -> int:
+    """Nombre exact d'extraits correspondant au filtre (0 si la collection n'existe pas)."""
+    try:
+        return get_client().count(collection_name=collection, count_filter=build_filter(filters), exact=True).count
+    except Exception:
+        return 0
+
+
+def delete_by_filter(collection: str, filters: Dict[str, Any]) -> None:
+    """Supprime définitivement les extraits correspondant au filtre (atelier WinAI :
+    retrait d'une source personnelle). Le filtre doit toujours inclure le
+    propriétaire : jamais de suppression large."""
+    if not filters:
+        raise ValueError("Suppression sans filtre refusée")
+    get_client().delete(collection_name=collection, points_selector=qm.FilterSelector(filter=build_filter(filters)))

@@ -171,6 +171,24 @@ public class ChatbotController : ControllerBase
             // 8.7 : même ClientMessageId que le flux SSE quand ce POST est le
             // repli REST (ou un « Réessayer ») du même message utilisateur —
             // la réserve encore ouverte est rattachée, sans second décompte.
+            // Atelier WinAI : sources choisies, contrôlées et traduites AVANT la réserve de quota.
+            Backend.Services.WinAi.ResolvedSources? sources = null;
+            if (request.Sources is { Count: > 0 })
+            {
+                try
+                {
+                    var sourceService = HttpContext.RequestServices.GetRequiredService<Backend.Services.WinAi.IWinAiSourceService>();
+                    sources = await sourceService.ResolveAsync(userId, Backend.Extensions.ClaimsPrincipalExtensions.IsAdmin(User),
+                        request.Sources.Select(x => new Backend.Services.WinAi.SourceRef(x.Type, x.Id)).ToList(), HttpContext.RequestAborted);
+                    request.ResolvedSourcesFilter = sources.Filter;
+                    request.ResolvedSourcesContext = sources.ContextText;
+                }
+                catch (Backend.Services.WinAi.WinAiSourceException e)
+                {
+                    return StatusCode(e.Status, new { error = e.Code, code = e.Code, message = e.Message });
+                }
+            }
+
             var quota = await _aiQuota.CheckAndReserveAsync(userId, request.ClientMessageId, "rest");
             if (quota.Outcome == AiQuotaOutcome.Unavailable)
                 return StatusCode(503, QuotaUnavailableBody());
@@ -184,6 +202,8 @@ public class ChatbotController : ControllerBase
             try
             {
                 response = await _chatbotService.SendMessageAsync(userId, request, quota.ReservationId);
+                if (sources != null && response.RawCitations is { } cits)
+                    response.Sources = sources.MapCitations(cits);
                 return Ok(response);
             }
             finally
@@ -626,6 +646,25 @@ public class ChatbotController : ControllerBase
             return;
         }
 
+        // Atelier WinAI : sources choisies, contrôlées et traduites AVANT la réserve de quota.
+        Backend.Services.WinAi.ResolvedSources? sources = null;
+        if (request.Sources is { Count: > 0 })
+        {
+            try
+            {
+                var sourceService = HttpContext.RequestServices.GetRequiredService<Backend.Services.WinAi.IWinAiSourceService>();
+                sources = await sourceService.ResolveAsync(userId, Backend.Extensions.ClaimsPrincipalExtensions.IsAdmin(User),
+                    request.Sources.Select(x => new Backend.Services.WinAi.SourceRef(x.Type, x.Id)).ToList(), cancellationToken);
+            }
+            catch (Backend.Services.WinAi.WinAiSourceException e)
+            {
+                Response.StatusCode = e.Status;
+                Response.ContentType = "application/json; charset=utf-8";
+                await Response.WriteAsync(JsonSerializer.Serialize(new { error = e.Code, code = e.Code, message = e.Message }), cancellationToken);
+                return;
+            }
+        }
+
         var quota = await _aiQuota.CheckAndReserveAsync(userId, request.ClientMessageId, "stream", cancellationToken);
         if (quota.Outcome == AiQuotaOutcome.Unavailable)
         {
@@ -784,6 +823,9 @@ public class ChatbotController : ControllerBase
                 client_message_id = quota.ReservationId,
                 // Lot 9.7b (18.21) : mode « base de connaissance » (désactivé par défaut), coût de la recherche imputé.
                 knowledge_base = request.KnowledgeBase,
+                // Atelier WinAI : recherche limitée aux sources choisies (null : comportement habituel).
+                sources_filter = sources?.Filter,
+                sources_context = sources?.ContextText,
                 max_tokens = _platformSettings?.GetInt(PlatformSettingDefinitions.WinAiChatMaxTokens) ?? 2000,
                 temperature = (double)(_platformSettings?.GetDecimal(PlatformSettingDefinitions.WinAiChatTemperature) ?? 0.7m),
                 user_context = new
@@ -839,6 +881,17 @@ public class ChatbotController : ControllerBase
                         using var doc = JsonDocument.Parse(line[6..]);
                         if (doc.RootElement.TryGetProperty("tokens_used", out var t) && t.TryGetInt32(out var n))
                             observedTokens = Math.Max(observedTokens, n);
+                        // Atelier WinAI : citations des sources choisies, traduites en {type, id, title, page}
+                        // et envoyées au client dans un événement à part, avant [DONE].
+                        if (sources != null && doc.RootElement.TryGetProperty("citations", out var cits))
+                        {
+                            var mapped = sources.MapCitations(cits);
+                            if (mapped.Count > 0)
+                            {
+                                await Response.WriteAsync("data: " + JsonSerializer.Serialize(new { sources = mapped }) + "\n\n", cancellationToken);
+                                await Response.Body.FlushAsync(cancellationToken);
+                            }
+                        }
                     }
                     catch (JsonException) { /* événement illisible : estimation au finally */ }
                     continue;

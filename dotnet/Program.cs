@@ -496,6 +496,8 @@ builder.Services.AddScoped<ITutorReviewService, TutorReviewService>();
 builder.Services.AddScoped<ITutorSessionMaterialService, TutorSessionMaterialService>();
 // Lot 9.5 (suivi 17.11, 17.12, 17.16) : vérification pour le présentiel, stockage privé, signalements.
 builder.Services.AddScoped<IPrivateFileStore, PrivateFileStore>();
+// Atelier WinAI (25/11/2026) : documents personnels et sources choisies pour le chat.
+builder.Services.AddScoped<Backend.Services.WinAi.IWinAiSourceService, Backend.Services.WinAi.WinAiSourceService>();
 builder.Services.AddScoped<ITutorVerificationService, TutorVerificationService>();
 builder.Services.AddScoped<ITutorReportService, TutorReportService>();
 builder.Services.AddScoped<ITutorInsightsService, TutorInsightsService>();

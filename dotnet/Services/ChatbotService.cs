@@ -178,6 +178,9 @@ public class ChatbotService : IChatbotService
         fastapiRequest.ClientMessageId = quotaReservationId;
         // Lot 9.7b (18.21) : base de connaissance seulement si l'utilisateur a activé le mode.
         fastapiRequest.KnowledgeBase = request.KnowledgeBase;
+        // Atelier WinAI : sources choisies (déjà contrôlées par le contrôleur).
+        fastapiRequest.SourcesFilter = request.ResolvedSourcesFilter;
+        fastapiRequest.SourcesContext = request.ResolvedSourcesContext;
 
         // Appeler FastAPI/DeepSeek
         var fastapiResponse = await CallFastApiServiceAsync(fastapiRequest);
@@ -207,6 +210,7 @@ public class ChatbotService : IChatbotService
             // repli avec Success = false. Le contrôleur s'en sert pour libérer
             // la réserve de quota (point D, passe 8.10).
             AiServiceSucceeded = fastapiResponse.Success,
+            RawCitations = fastapiResponse.Citations,
         };
     }
 

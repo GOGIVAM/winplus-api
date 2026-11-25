@@ -75,6 +75,8 @@ public interface IQuizService
     /// d'évaluation chronométré rattaché à une épreuve précise.
     /// </summary>
     Task<QuizDto> GetOrCreateExamQuizAsync(int examId);
+    /// <summary>Vrai si l'appel suivant à GetOrCreateExamQuizAsync générera (ou régénérera) le quiz, donc fera appel à WinAI.</summary>
+    Task<bool> ExamQuizNeedsGenerationAsync(int examId);
 
     /// <summary>
     /// Met à jour un quiz

@@ -46,6 +46,10 @@ public static class EntitlementCatalog
     public const string AiTopup = "ai.topup";
     public const string AiChat = "ai.feature.chat";
     public const string AiAttachments = "ai.feature.attachments";
+    /// <summary>Atelier WinAI : nombre de documents personnels (sources) gardés par l'utilisateur.</summary>
+    public const string AiSourcesMaxFiles = "ai.sources.max_files";
+    /// <summary>Atelier WinAI : volume total des documents personnels, en Mo.</summary>
+    public const string AiSourcesMaxMb = "ai.sources.max_mb";
     public const string AiErrorExplain = "ai.feature.error_explain";
     public const string AiAdaptiveQuiz = "ai.feature.adaptive_quiz";
     public const string AiStudyPlan = "ai.feature.study_plan";
@@ -81,6 +85,7 @@ public static class EntitlementCatalog
     private static readonly string[] T = { "teacher" };
     private static readonly string[] SPT = { "student", "parent", "teacher" };
     private static readonly string[] ST = { "student", "teacher" };
+    private static readonly string[] SP = { "student", "parent" };
 
     public static readonly IReadOnlyList<EntitlementDefinition> All = new List<EntitlementDefinition>
     {
@@ -103,6 +108,11 @@ public static class EntitlementCatalog
         // ChatbotController (pièces jointes)
         new(AiAttachments, EntitlementType.Boolean, "", "false", "Pièces jointes WinAI",
             "Photos, documents et audio envoyés à WinAI.", SPT, Group: "WinAI"),
+        // WinAiSourcesController (atelier WinAI : documents personnels comme sources)
+        new(AiSourcesMaxFiles, EntitlementType.Integer, "fichiers", "10", "Sources WinAI",
+            "Documents personnels gardés comme sources de WinAI.", SP, AllowUnlimited: true, Group: "WinAI"),
+        new(AiSourcesMaxMb, EntitlementType.Integer, "Mo", "30", "Espace des sources WinAI",
+            "Volume total des documents personnels gardés comme sources.", SP, AllowUnlimited: true, Group: "WinAI"),
         // AIController explain-error
         new(AiErrorExplain, EntitlementType.Boolean, "", "true", "Explication des erreurs",
             "WinAI explique une erreur de quiz.", S, Group: "WinAI"),

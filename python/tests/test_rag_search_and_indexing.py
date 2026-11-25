@@ -37,7 +37,8 @@ def test_hybrid_retrieve_fuses_dense_and_keyword_rankings_and_keeps_active_chunk
         (collection, vector, top_k, filters)) or [hit("a"), hit("b"), hit("c")])
     bm25 = FakeBM25(["c", "d"])
     monkeypatch.setattr(eng.BM25Registry, "get", classmethod(lambda cls, collection: bm25))
-    records = [hit("a", text="A"), hit("b", text="B", status="superseded"), hit("c", text="C", status="active")]
+    records = [hit("a", text="A", subject_id=3), hit("b", text="B", status="superseded", subject_id=3),
+               hit("c", text="C", status="active", subject_id=3)]
     fetched = []
     monkeypatch.setattr(eng, "get_by_ids", lambda collection, ids: fetched.append(ids) or records)
 
@@ -48,6 +49,19 @@ def test_hybrid_retrieve_fuses_dense_and_keyword_rankings_and_keeps_active_chunk
     assert [r["id"] for r in result] == ["c", "a"]                           # b est « superseded »
     assert dense_calls == [(config.QDRANT_COLLECTION, [0.1, 0.2], 4, {"subject_id": 3})]
     assert bm25.calls == [("ma question", 4)]
+
+
+def test_hybrid_retrieve_drops_keyword_hits_outside_the_filters(monkeypatch):
+    # Fuite corrigée le 25/11/2026 : BM25 ne connaît pas les filtres. Un extrait privé d'un autre
+    # utilisateur (owner_user_id) ou d'un autre document ne doit jamais revenir par la fusion.
+    monkeypatch.setattr(eng, "search_dense", lambda *a, **k: [hit("mine")])
+    monkeypatch.setattr(eng.BM25Registry, "get", classmethod(lambda cls, collection: FakeBM25(["other_user", "other_doc"])))
+    records = [hit("mine", text="M", owner_user_id=7, doc_id="d1"),
+               hit("other_user", text="X", owner_user_id=8, doc_id="d9"),
+               hit("other_doc", text="Y", owner_user_id=7, doc_id="d2")]
+    monkeypatch.setattr(eng, "get_by_ids", lambda collection, ids: records)
+    result = eng._hybrid_retrieve([0.1], "q", {"owner_user_id": 7, "doc_id": ["d1"], "status": "active"}, top_k=3)
+    assert [r["id"] for r in result] == ["mine"]
 
 
 def test_hybrid_retrieve_without_any_hit_returns_nothing(monkeypatch):

@@ -22,7 +22,7 @@ from RAG.shared.bm25_index import BM25Registry
 from RAG.shared.contracts import Citation, RAGAnswer, RAGQueryRequest, RetrievedContext
 from RAG.shared.graph_registry import GraphRegistry
 from RAG.shared.rrf import reciprocal_rank_fusion
-from RAG.shared.vector_store import get_by_ids, scroll_by_filter, search_dense
+from RAG.shared.vector_store import get_by_ids, payload_matches, scroll_by_filter, search_dense
 
 # Approximation d'entités normatives dans la requête  même heuristique que
 # le routeur de complexité (suites de mots capitalisés ou sigles).
@@ -48,7 +48,11 @@ def _hybrid_retrieve(query_vector: List[float], query_text: str, filters: Dict, 
     return [
         {"id": cid, "payload": by_id[cid].payload}
         for cid in top_ids
-        if cid in by_id and by_id[cid].payload.get("status", "active") == "active"
+        if cid in by_id
+        and by_id[cid].payload.get("status", "active") == "active"
+        # Les résultats BM25 ne sont pas filtrés : on réapplique les filtres
+        # (propriétaire, documents, matières) à chaque extrait fusionné.
+        and payload_matches(by_id[cid].payload, filters)
     ]
 
 

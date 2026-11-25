@@ -367,15 +367,9 @@ namespace Backend.Controllers;
             }
         }
 
-        /// <summary>
-        /// POST /api/ai/chat
-        /// Discuter avec l'assistant IA
-        /// </summary>
-        [HttpPost("chat")]
-        [ProducesResponseType(typeof(ChatResponse), 200)]
-        [ProducesResponseType(400)]
-        [ProducesResponseType(401)]
-        [ProducesResponseType(500)]
+        // POST /api/ai/chat n'existe plus : l'attribut [HttpPost("chat")], resté d'une ancienne méthode, était posé
+        // sur ExplainError, si bien que /api/ai/chat lançait l'explication d'erreur (25/11/2026). Le chat passe
+        // par /api/chatbot/stream et /api/chatbot/message.
         /// <summary>
         /// POST /api/ai/explain-error
         /// Streaming proxy → Python /api/quiz/explain-error

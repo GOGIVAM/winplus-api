@@ -609,6 +609,15 @@ public class UsersController : ControllerBase
             var userId = User.GetUserId();
             var result = await _userService.SoftDeleteUserAsync(userId, userId);
             if (!result) return NotFound(new { error = "Compte introuvable." });
+            // Atelier WinAI : documents personnels retirés du stockage et du RAG (au mieux : n'empêche jamais
+            // la suppression du compte ; une source restante est aussi supprimée en cascade avec l'utilisateur).
+            try
+            {
+                var bearer = Request.Headers["Authorization"].ToString();
+                await HttpContext.RequestServices.GetRequiredService<Backend.Services.WinAi.IWinAiSourceService>()
+                    .PurgeUserAsync(userId, string.IsNullOrEmpty(bearer) ? null : bearer, HttpContext.RequestAborted);
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "Sources WinAI non purgées pour l'utilisateur {UserId}", userId); }
             return Ok(new { success = true, message = "Votre compte a été supprimé." });
         }
         catch (WalletHolderDeletionBlockedException ex)

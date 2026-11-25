@@ -646,6 +646,16 @@ public class QuizService : IQuizService
     /// toujours, même après correction du service de génération  puisqu'aucun
     /// score n'existe encore, rien n'est perdu à la régénérer.
     /// </summary>
+    public async Task<bool> ExamQuizNeedsGenerationAsync(int examId)
+    {
+        var existing = await _context.Quizzes.AsNoTracking()
+            .Where(q => q.ExamId == examId && !q.IsDeleted)
+            .OrderByDescending(q => q.CreatedAt)
+            .Select(q => new { q.Attempts })
+            .FirstOrDefaultAsync();
+        return existing == null || existing.Attempts <= 0;
+    }
+
     public async Task<QuizDto> GetOrCreateExamQuizAsync(int examId)
     {
         var existing = await _context.Quizzes

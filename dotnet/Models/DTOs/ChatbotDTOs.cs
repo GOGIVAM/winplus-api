@@ -56,6 +56,20 @@ public class SendMessageRequest
     /// </summary>
     [MaxLength(1500)]
     public string? ProgrammeContext { get; set; }
+
+    /// <summary>
+    /// Atelier WinAI : sources choisies pour ce message ({type, id} : document, epreuve, formation,
+    /// erreurs-quiz). L'accès à chacune est contrôlé côté serveur ; 10 au plus.
+    /// </summary>
+    public List<SourceRefDto>? Sources { get; set; }
+
+    /// <summary>Filtre RAG des sources, posé par le contrôleur après contrôle d'accès. Jamais lu du client.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public object? ResolvedSourcesFilter { get; set; }
+
+    /// <summary>Contexte texte des sources (ex. erreurs de quiz), posé par le contrôleur. Jamais lu du client.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ResolvedSourcesContext { get; set; }
 }
 
 /// <summary>
@@ -140,6 +154,12 @@ public class StreamChatRequest
     /// </summary>
     [MaxLength(1500)]
     public string? ProgrammeContext { get; set; }
+
+    /// <summary>
+    /// Atelier WinAI : sources choisies pour ce message ({type, id} : document, epreuve, formation,
+    /// erreurs-quiz). L'accès à chacune est contrôlé côté serveur ; 10 au plus.
+    /// </summary>
+    public List<SourceRefDto>? Sources { get; set; }
 }
 
 /// <summary>
@@ -360,6 +380,12 @@ public class ChatResponse
     /// </summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public bool AiServiceSucceeded { get; set; } = true;
+    /// <summary>Atelier WinAI : sources réellement citées ({type, id, title, page}), si des sources ont été choisies.</summary>
+    public List<object>? Sources { get; set; }
+
+    /// <summary>Citations brutes du service WinAI, traduites par le contrôleur dans <see cref="Sources"/>.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public System.Text.Json.JsonElement? RawCitations { get; set; }
 }
 
 /// <summary>
@@ -468,6 +494,12 @@ public class FastApiChatRequest
 
     /// <summary>Lot 9.7b : mode « base de connaissance » (sérialisé « knowledge_base »).</summary>
     public bool KnowledgeBase { get; set; }
+
+    /// <summary>Atelier WinAI : filtre des sources choisies (sérialisé « sources_filter »).</summary>
+    public object? SourcesFilter { get; set; }
+
+    /// <summary>Atelier WinAI : contexte texte des sources (sérialisé « sources_context »).</summary>
+    public string? SourcesContext { get; set; }
 }
 
 /// <summary>
@@ -491,6 +523,16 @@ public class FastApiChatResponse
     public string? Model { get; set; }
     public bool Success { get; set; } = true;
     public string? Error { get; set; }
+    /// <summary>Atelier WinAI : citations des sources choisies ({doc_id, subject_id, course_id, title, page}).</summary>
+    public System.Text.Json.JsonElement? Citations { get; set; }
+}
+
+/// <summary>Atelier WinAI : une source choisie pour un message (type : document, epreuve, formation, erreurs-quiz).</summary>
+public class SourceRefDto
+{
+    [Required, MaxLength(20)]
+    public string Type { get; set; } = string.Empty;
+    public int Id { get; set; }
 }
 
 #endregion

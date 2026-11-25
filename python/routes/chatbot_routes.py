@@ -15,7 +15,7 @@ from typing import Dict, Any, List, Optional
 
 from services.deepseek_client import get_deepseek_client
 from services.prompt_builder import build_system_prompt, UserContext, detect_language
-from services.rag_chat_bridge import build_rag_context_block
+from services.rag_chat_bridge import build_rag_context_block, build_sources_context_block
 from services.attachment_processor import process_chat_attachment_async
 from services.ai_quota import check_quota
 from sqlalchemy import text as sql_text
@@ -716,7 +716,13 @@ async def chat(
         # l'utilisateur a activé ce mode dans le chat ; le coût réel de la
         # recherche (embedding, rerank) est ajouté au décompte du message.
         rag_cost = 0
-        if chat_request.knowledge_base:
+        citations: list = []
+        if chat_request.sources_filter or chat_request.sources_context:
+            # Atelier WinAI : recherche limitée aux sources choisies (prioritaire sur le mode base de connaissance).
+            src_block, rag_cost, citations = await build_sources_context_block(
+                chat_request.sources_filter or {}, formatted_messages, current_user.user_id)
+            system_prompt += (src_block or "") + _sources_context_block(chat_request.sources_context)
+        elif chat_request.knowledge_base:
             rag_block, rag_cost = await build_rag_context_block(chat_request.user_context, formatted_messages, current_user.user_id)
             if rag_block:
                 system_prompt += rag_block
@@ -756,6 +762,7 @@ async def chat(
             "content": result.get('content', ''),
             "tokens_used": int(result.get('tokens_used', 0) or 0) + rag_cost,
             "rag_tokens": rag_cost,
+            "citations": citations,
             "generation_time_ms": result.get('generation_time_ms', 0),
             "success": result.get('success', False),
             "error": result.get('error')
@@ -783,6 +790,19 @@ class StreamChatBody(BaseModel):
     client_message_id: Optional[str] = None
     # Lot 9.7b (18.21) : mode « base de connaissance » activé par l'utilisateur.
     knowledge_base: bool = False
+    # Atelier WinAI : sources choisies (voir ChatRequest.sources_filter).
+    sources_filter: Optional[Dict[str, List[Any]]] = None
+    sources_context: Optional[str] = None
+
+
+def _sources_context_block(text: Optional[str]) -> str:
+    """Contexte texte préparé par le .NET pour les sources qui ne sont pas des
+    documents indexés (ex. les erreurs de quiz de l'élève)."""
+    text = (text or "").strip()[:6000]
+    if not text:
+        return ""
+    return ("\n\n[Éléments choisis par l'utilisateur pour cette question]\n" + text
+            + "\n\nAppuie-toi sur ces éléments quand ils sont utiles à la question.")
 
 
 @chatbot_router.post('/stream', tags=["chatbot"])
@@ -829,7 +849,12 @@ async def stream_chat(
     # Lot 9.7b (18.21) : recherche dans la base de connaissance seulement si
     # le mode est activé ; son coût est ajouté à l'événement d'usage final.
     rag_cost = 0
-    if body.knowledge_base:
+    citations: list = []
+    if body.sources_filter or body.sources_context:
+        src_block, rag_cost, citations = await build_sources_context_block(
+            body.sources_filter or {}, messages, current_user.user_id)
+        system_prompt += (src_block or "") + _sources_context_block(body.sources_context)
+    elif body.knowledge_base:
         rag_block, rag_cost = await build_rag_context_block(body.user_context, messages, current_user.user_id)
         if rag_block:
             system_prompt += rag_block
@@ -859,9 +884,12 @@ async def stream_chat(
                         data = json.loads(chunk[6:].strip())
                         if data.get("usage_final"):
                             tokens_used = int(data.get("tokens_used") or 0) + rag_cost
-                            if rag_cost:
+                            if rag_cost or citations:
                                 data["tokens_used"] = tokens_used
                                 data["rag_tokens"] = rag_cost
+                                # Atelier WinAI : citations des sources choisies, relayées par le .NET au client.
+                                if citations:
+                                    data["citations"] = citations
                                 chunk = "data: " + json.dumps(data) + "\n\n"
                         else:
                             full_content += data.get("delta", "")

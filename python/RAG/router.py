@@ -129,6 +129,50 @@ async def ingest_status(doc_id: str, current_user: UserTokenData = Depends(verif
     return job
 
 
+def _active_collection() -> str:
+    if RAG_BACKEND == "self_hosted":
+        from RAG.self_hosted import config as backend_config
+    else:
+        from RAG.api import config as backend_config
+    return backend_config.QDRANT_COLLECTION
+
+
+# ── Atelier WinAI : documents personnels (sources) ────────────────────────────
+# État et suppression d'un document personnel, toujours restreints au
+# propriétaire tiré du JWT : un utilisateur ne voit ni ne supprime jamais les
+# extraits d'un autre compte, même s'il connaît leur doc_id.
+
+@rag_router.get("/documents/{doc_id}/state")
+async def document_state(doc_id: str, current_user: UserTokenData = Depends(verify_token)):
+    """Nombre d'extraits actifs indexés pour ce document personnel, et état du
+    travail d'ingestion s'il est encore connu (registre en mémoire, perdu au
+    redémarrage : le nombre d'extraits fait foi)."""
+    from RAG.shared.vector_store import count_by_filter
+
+    chunks = count_by_filter(_active_collection(),
+                             {"doc_id": doc_id, "owner_user_id": current_user.user_id, "status": "active"})
+    job = IngestJobRegistry.get(doc_id)
+    return {
+        "doc_id": doc_id,
+        "chunks": chunks,
+        "job_status": getattr(getattr(job, "status", None), "value", getattr(job, "status", None)) if job is not None else None,
+        "job_error": getattr(job, "error", None) if job is not None else None,
+    }
+
+
+@rag_router.delete("/documents/{doc_id}")
+async def delete_document(doc_id: str, current_user: UserTokenData = Depends(verify_token)):
+    """Supprime tous les extraits (toutes versions) de ce document personnel."""
+    from RAG.shared.vector_store import delete_by_filter
+
+    try:
+        delete_by_filter(_active_collection(), {"doc_id": doc_id, "owner_user_id": current_user.user_id})
+    except Exception as e:
+        logger.warning(f"[RAG] Suppression du document {doc_id} : {e}")
+        raise HTTPException(status_code=503, detail="Suppression impossible pour l'instant")
+    return {"doc_id": doc_id, "deleted": True}
+
+
 @rag_router.post("/query", response_model=RAGAnswer)
 async def query(request: RAGQueryRequest, current_user: UserTokenData = Depends(verify_token)):
     from RAG.query_service import query_rag

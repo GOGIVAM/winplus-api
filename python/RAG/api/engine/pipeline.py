@@ -18,7 +18,7 @@ from RAG.shared.config import REFUSAL_MESSAGE, RERANK_CONFIDENCE_THRESHOLD, SELF
 from RAG.shared.cost import embedding_cost_tokens, reformulation_cost_tokens, RERANK_TOKEN_EQUIVALENT
 from RAG.shared.contracts import Citation, RAGAnswer, RAGQueryRequest, RetrievedContext
 from RAG.shared.rrf import reciprocal_rank_fusion
-from RAG.shared.vector_store import get_by_ids, search_dense
+from RAG.shared.vector_store import get_by_ids, payload_matches, search_dense
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,11 @@ def _hybrid_retrieve(query_vector: List[float], query_text: str, filters: Dict, 
     return [
         {"id": cid, "payload": by_id[cid].payload}
         for cid in top_ids
-        if cid in by_id and by_id[cid].payload.get("status", "active") == "active"
+        if cid in by_id
+        and by_id[cid].payload.get("status", "active") == "active"
+        # Les résultats BM25 ne sont pas filtrés : on réapplique les filtres
+        # (propriétaire, documents, matières) à chaque extrait fusionné.
+        and payload_matches(by_id[cid].payload, filters)
     ]
 
 

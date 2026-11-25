@@ -210,3 +210,74 @@ async def build_rag_context_block(
     accessible_course_ids = _accessible_course_ids(user_context)
     merged = RetrievedContext(passages=passages, citations=citations, refused=False)
     return _format_context_block(merged, accessible_subject_ids, accessible_course_ids), cost
+
+
+# ── Atelier WinAI : discussion ancrée sur des sources choisies ────────────────
+# Le .NET a déjà contrôlé l'accès à chaque source et traduit les identifiants
+# opaques {type, id} en filtres : documents personnels (doc_id, toujours
+# restreints au propriétaire), épreuves (subject_id), formations (course_id).
+# Un filtre par famille : Qdrant combine les conditions en ET, une recherche
+# par famille donne le OU voulu entre elles.
+
+MAX_SOURCE_PASSAGES = 8
+
+
+async def build_sources_context_block(
+    sources_filter: dict,
+    messages: List[dict],
+    user_id: Optional[int],
+) -> tuple[str, int, List[dict]]:
+    """Bloc de contexte limité aux sources choisies, coût en tokens équivalents,
+    et citations renvoyées au client ({doc_id, subject_id, course_id, title, page}).
+    Ne lève jamais d'exception."""
+    last_message = _extract_last_user_text(messages)
+    if not last_message or not sources_filter:
+        return "", 0, []
+
+    groups: List[tuple[str, dict]] = []
+    doc_ids = [str(d) for d in (sources_filter.get("doc_ids") or []) if d]
+    subject_ids = [int(s) for s in (sources_filter.get("subject_ids") or []) if s is not None]
+    course_ids = [int(c) for c in (sources_filter.get("course_ids") or []) if c is not None]
+    if doc_ids and user_id is not None:
+        groups.append(("documents personnels", {"doc_id": doc_ids, "owner_user_id": user_id, "status": "active"}))
+    if subject_ids:
+        groups.append(("épreuves", {"subject_id": subject_ids, "status": "active"}))
+    if course_ids:
+        groups.append(("formations", {"course_id": course_ids, "status": "active"}))
+    if not groups:
+        return "", 0, []
+
+    results = await asyncio.gather(*[
+        _safe_retrieve(RAGQueryRequest(question=last_message, filters=f, top_k=RAG_TOP_K,
+                                       max_iterations=CHAT_MAX_ITERATIONS), label)
+        for label, f in groups
+    ])
+    cost = sum(c for _, c in results)
+    pairs = []
+    for result, _ in results:
+        if result and not result.refused:
+            pairs.extend(zip(result.passages, result.citations))
+    if not pairs:
+        return "", cost, []
+    pairs.sort(key=lambda pc: pc[1].score, reverse=True)
+    pairs = pairs[:MAX_SOURCE_PASSAGES]
+
+    lines, cited, seen = [], [], set()
+    for i, (passage, citation) in enumerate(pairs, start=1):
+        excerpt = passage.strip().replace("\n", " ")[:700]
+        where = f", page {citation.page}" if citation.page else ""
+        lines.append(f"{i}. [Source : {citation.title}{where}]\n{excerpt}")
+        key = (citation.doc_id, citation.page)
+        if key not in seen:
+            seen.add(key)
+            cited.append({"doc_id": citation.doc_id, "subject_id": citation.subject_id,
+                          "course_id": citation.course_id, "title": citation.title, "page": citation.page})
+    block = (
+        "\n\n[Sources choisies par l'utilisateur pour cette question]\n"
+        + "\n\n".join(lines)
+        + "\n\nConsignes : appuie ta réponse en priorité sur ces sources, que l'utilisateur a "
+        "sélectionnées et auxquelles il a accès. Cite la source utilisée entre crochets, par "
+        "exemple [Source : titre, page 3]. Si elles ne contiennent pas la réponse, dis-le "
+        "clairement avant de répondre avec tes connaissances générales."
+    )
+    return block, cost, cited

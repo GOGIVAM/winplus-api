@@ -1962,6 +1962,7 @@ modelBuilder.Entity<Exam>(entity =>
         OnModelCreatingClassTimetable(modelBuilder);
         OnModelCreatingCurriculum(modelBuilder);
         OnModelCreatingVisio(modelBuilder);
+        OnModelCreatingWinAiSources(modelBuilder);
 
         // ── Rendez-vous parent-professeur (voir ApplicationDbContext.ParentTeacherMeetings.cs) ──
         OnModelCreatingParentTeacherMeetings(modelBuilder);

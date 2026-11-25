@@ -3,6 +3,7 @@ using Backend.Services;
 using Microsoft.AspNetCore.Mvc;
 using Backend.Extensions;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Controllers;
 
@@ -288,6 +289,38 @@ public class QuizzesController : ControllerBase
     [ProducesResponseType(422)]
     public async Task<ActionResult<QuizDto>> GetOrCreateExamQuiz(int examId)
     {
+        // Décision de Georges (25/11/2026) : il faut avoir accès à l'épreuve (gratuite, achetée, couverte
+        // par un abonnement, ou auteur) ; une NOUVELLE génération est facturée en jetons dans la consommation
+        // WinAI de l'utilisateur, un quiz déjà créé et tenté ne coûte rien. Avant : aucun contrôle ni débit.
+        var services = HttpContext.RequestServices;
+        var db = services.GetRequiredService<Backend.Data.ApplicationDbContext>();
+        var userId = User.GetUserId();
+        var isAdmin = Backend.Extensions.ClaimsPrincipalExtensions.IsAdmin(User);
+
+        var exam = await db.Exams.AsNoTracking().Where(e => e.Id == examId && !e.IsDeleted)
+            .Select(e => new { e.Id, e.SubjectId }).FirstOrDefaultAsync();
+        if (exam == null) return NotFound(new { message = "Épreuve introuvable." });
+        if (exam.SubjectId is int subjectId && !isAdmin)
+        {
+            var subject = await db.Subjects.FirstOrDefaultAsync(s => s.Id == subjectId);
+            var acces = subject == null || subject.Price <= 0
+                || await services.GetRequiredService<IContentAccessService>().HasPaidContentAccessAsync(userId, subject, isAdmin);
+            if (!acces)
+                return StatusCode(403, new { code = "exam_access_required", error = "exam_access_required",
+                    message = "Achetez cette épreuve ou un abonnement qui la couvre pour lancer l'évaluation." });
+        }
+
+        Backend.Services.Entitlements.AiFeatureTicket? ticket = null;
+        var fastApi = services.GetRequiredService<IFastApiClient>();
+        if (await _quizService.ExamQuizNeedsGenerationAsync(examId))
+        {
+            var gate = services.GetRequiredService<Backend.Services.Entitlements.IAiFeatureGate>();
+            ticket = await gate.BeginIncludedAsync(userId, "exam-quiz", HttpContext.RequestAborted);
+            if (!ticket.Allowed) return (ActionResult)ticket.Refusal!;
+            fastApi.ConsumeWinAiTokens(); // repart de zéro : seuls les jetons de cette génération sont facturés
+        }
+
+        var tokens = 0;
         try
         {
             var quiz = await _quizService.GetOrCreateExamQuizAsync(examId);
@@ -300,6 +333,16 @@ public class QuizzesController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return UnprocessableEntity(new { message = ex.Message });
+        }
+        finally
+        {
+            if (ticket != null)
+            {
+                tokens = fastApi.ConsumeWinAiTokens();
+                // Jetons réellement consommés par WinAI ; aucun (échec, quiz existant renvoyé) : réserve rendue.
+                await services.GetRequiredService<Backend.Services.Entitlements.IAiFeatureGate>()
+                    .CompleteAsync(ticket, served: tokens > 0, observedTokens: tokens);
+            }
         }
     }
 

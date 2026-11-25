@@ -15,11 +15,12 @@ from typing import List
 import fitz
 
 from RAG.api.ingestion.chunking import chunk_text
-from RAG.api.ingestion.ocr_client import ocr_pdf
+from RAG.api.ingestion.ocr_client import ocr_image, ocr_pdf
 from RAG.api.ingestion.transcription_client import transcribe_video
 from RAG.api.ingestion.vision_client import caption_image
 from RAG.shared.contracts import Chunk, ChunkMetadata, ChunkType, IngestRequest, SourceType
 from RAG.shared.pdf_utils import extract_native_text
+from RAG.shared.text_extract import IMAGE_EXTENSIONS, TEXT_EXTENSIONS, WORD_EXTENSIONS, read_docx, read_text_file
 
 logger = logging.getLogger(__name__)
 
@@ -131,10 +132,31 @@ def _process_video(request: IngestRequest) -> tuple[List[Chunk], SourceType, Lis
     return chunks, SourceType.VIDEO, warnings
 
 
+def _process_plain(request: IngestRequest, ext: str) -> tuple[List[Chunk], SourceType, List[str]]:
+    """Atelier WinAI : texte brut, Word, ou image (OCR) téléversés par l'élève."""
+    warnings: List[str] = []
+    try:
+        if ext in TEXT_EXTENSIONS:
+            text = read_text_file(request.file_path)
+        elif ext in WORD_EXTENSIONS:
+            text = read_docx(request.file_path)
+        else:
+            with open(request.file_path, "rb") as f:
+                text = ocr_image(f.read())
+    except Exception as e:
+        return [], SourceType.IMAGE if ext in IMAGE_EXTENSIONS else SourceType.PDF_NATIVE, [f"Extraction impossible ({e})"]
+    chunks = [_to_chunk(pair, request, ChunkType.SHORT) for pair in chunk_text(text or "", page=None)] if (text or "").strip() else []
+    if not chunks:
+        warnings.append("Aucun texte exploitable dans ce document")
+    return chunks, SourceType.IMAGE if ext in IMAGE_EXTENSIONS else SourceType.PDF_NATIVE, warnings
+
+
 def process_document(request: IngestRequest) -> tuple[List[Chunk], SourceType, List[str]]:
     ext = os.path.splitext(request.file_path)[1].lower()
     if ext in VIDEO_EXTENSIONS:
         return _process_video(request)
+    if ext in TEXT_EXTENSIONS or ext in WORD_EXTENSIONS or ext in IMAGE_EXTENSIONS:
+        return _process_plain(request, ext)
     return _process_pdf(request)
 
 

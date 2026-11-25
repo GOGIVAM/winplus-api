@@ -270,6 +270,11 @@ class ChatRequest(BaseModel):
     client_message_id: Optional[str] = None
     # Lot 9.7b (18.21) : mode « base de connaissance » activé par l'utilisateur (désactivé par défaut).
     knowledge_base: bool = False
+    # Atelier WinAI : sources choisies par l'utilisateur, déjà contrôlées et traduites
+    # par le .NET ({doc_ids, subject_ids, course_ids}), et contexte texte associé
+    # (ex. ses erreurs de quiz). La recherche se limite alors à ces sources.
+    sources_filter: Optional[Dict[str, List[Any]]] = None
+    sources_context: Optional[str] = Field(default=None, max_length=6000)
 
 
 class ChatResponse(BaseModel):
