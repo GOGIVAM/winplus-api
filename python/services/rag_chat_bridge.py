@@ -193,8 +193,10 @@ async def build_rag_context_block(
             citations.extend(public_result.citations)
 
     if user_id is not None:
+        # Le jeton porte user_id en chaîne ; owner_user_id est stocké en entier (Qdrant compare le type) :
+        # sans conversion, les documents personnels ne remontaient jamais (corrigé le 25/11/2026).
         personal_request = RAGQueryRequest(
-            question=last_message, filters={"owner_user_id": user_id, "status": "active"}, top_k=RAG_TOP_K,
+            question=last_message, filters={"owner_user_id": int(user_id), "status": "active"}, top_k=RAG_TOP_K,
             max_iterations=CHAT_MAX_ITERATIONS,
         )
         personal_result, c = await _safe_retrieve(personal_request, "personnelle")
@@ -239,7 +241,7 @@ async def build_sources_context_block(
     subject_ids = [int(s) for s in (sources_filter.get("subject_ids") or []) if s is not None]
     course_ids = [int(c) for c in (sources_filter.get("course_ids") or []) if c is not None]
     if doc_ids and user_id is not None:
-        groups.append(("documents personnels", {"doc_id": doc_ids, "owner_user_id": user_id, "status": "active"}))
+        groups.append(("documents personnels", {"doc_id": doc_ids, "owner_user_id": int(user_id), "status": "active"}))
     if subject_ids:
         groups.append(("épreuves", {"subject_id": subject_ids, "status": "active"}))
     if course_ids:

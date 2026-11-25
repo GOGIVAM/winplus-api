@@ -138,6 +138,12 @@ def _active_collection() -> str:
 
 
 # ── Atelier WinAI : documents personnels (sources) ────────────────────────────
+def _owner_id(user: UserTokenData) -> int:
+    """Le jeton .NET porte user_id en chaîne (« 30 ») ; les extraits stockent owner_user_id en entier.
+    Qdrant compare en tenant compte du type : sans conversion, rien ne correspond."""
+    return int(user.user_id)
+
+
 # État et suppression d'un document personnel, toujours restreints au
 # propriétaire tiré du JWT : un utilisateur ne voit ni ne supprime jamais les
 # extraits d'un autre compte, même s'il connaît leur doc_id.
@@ -150,7 +156,7 @@ async def document_state(doc_id: str, current_user: UserTokenData = Depends(veri
     from RAG.shared.vector_store import count_by_filter
 
     chunks = count_by_filter(_active_collection(),
-                             {"doc_id": doc_id, "owner_user_id": current_user.user_id, "status": "active"})
+                             {"doc_id": doc_id, "owner_user_id": _owner_id(current_user), "status": "active"})
     job = IngestJobRegistry.get(doc_id)
     return {
         "doc_id": doc_id,
@@ -166,7 +172,7 @@ async def delete_document(doc_id: str, current_user: UserTokenData = Depends(ver
     from RAG.shared.vector_store import delete_by_filter
 
     try:
-        delete_by_filter(_active_collection(), {"doc_id": doc_id, "owner_user_id": current_user.user_id})
+        delete_by_filter(_active_collection(), {"doc_id": doc_id, "owner_user_id": _owner_id(current_user)})
     except Exception as e:
         logger.warning(f"[RAG] Suppression du document {doc_id} : {e}")
         raise HTTPException(status_code=503, detail="Suppression impossible pour l'instant")
