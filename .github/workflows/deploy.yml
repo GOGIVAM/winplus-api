@@ -6,6 +6,9 @@ on:
 
 jobs:
   deploy:
+    # Inactif une fois la production en conteneurs (variable DOCKER_DEPLOY_PROD =
+    # true) : c'est alors build-images.yml qui déploie (deploy/docker/deploy.sh).
+    if: vars.DOCKER_DEPLOY_PROD != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Deploy via SSH

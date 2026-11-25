@@ -21,7 +21,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Depuis la mise en conteneurs (variable DOCKER_DEPLOY_INTEGRATION = true),
+  # l'intégration est déployée par build-images.yml (deploy/docker/deploy.sh).
+  # Ce workflow ne fait plus que tenir à jour le clone ~/winplus-integration-repo,
+  # dont winplus-tests se sert pour ses tests (compilation .NET, analyse).
+  sync-repo:
+    if: vars.DOCKER_DEPLOY_INTEGRATION == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Mise a jour du clone (winplus-tests)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 56.228.79.206
+          username: ubuntu
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd ~/winplus-integration-repo
+            git fetch -q origin develop
+            git checkout -q develop
+            git reset -q --hard origin/develop
+            git log --oneline -1
+
   deploy:
+    if: vars.DOCKER_DEPLOY_INTEGRATION != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
