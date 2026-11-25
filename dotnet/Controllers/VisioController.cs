@@ -330,6 +330,12 @@ public class VisioController : ControllerBase
         {
             return BadRequest(new { success = false, error = "Le fichier n'est pas arrivé dans le stockage. Recommencez le dépôt." });
         }
+        catch (AmazonS3Exception ex)
+        {
+            // Droits S3 du serveur insuffisants ou stockage indisponible : message clair plutôt qu'une erreur 500.
+            _logger.LogWarning(ex, "Visio : vérification de l'enregistrement {Cle} impossible", req.Cle);
+            return StatusCode(503, new { success = false, error = "Stockage indisponible pour l'instant. Réessayez dans quelques minutes." });
+        }
 
         var nomFichier = Path.GetFileName(string.IsNullOrWhiteSpace(req.FileName) ? req.Cle : req.FileName);
         if (nomFichier.Length > 200) nomFichier = nomFichier[^200..];
