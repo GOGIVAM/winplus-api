@@ -17,7 +17,7 @@ namespace Backend.Controllers;
 ///   GET    /api/winai/flashcards          liste (sans les cartes)
 ///   GET    /api/winai/flashcards/{id}     paquet complet
 ///   DELETE /api/winai/flashcards/{id}
-///   POST   /api/winai/resume-audio        {subject?, topic?, level?, minutes? (1-5, 3), sources?}
+///   POST   /api/winai/resume-audio        {subject?, topic?, level?, minutes? (1-5, 3) ou duree? (courte | longue), sources?}
 ///   GET    /api/winai/resume-audio, GET /api/winai/resume-audio/{id}, DELETE /api/winai/resume-audio/{id}
 /// Fiches : droit ai.feature.flashcards (Standard et au-dessus). Résumé audio : inclus dans tous les plans.
 /// Les deux sont débités en jetons WinAI (même budget que le chat). Le script audio est lu par la synthèse
@@ -60,7 +60,12 @@ public class WinAiAtelierController : ControllerBase
     }
 
     public sealed class FlashcardsBody : GenerateBody { public int? Count { get; set; } }
-    public sealed class AudioBody : GenerateBody { public int? Minutes { get; set; } }
+    public sealed class AudioBody : GenerateBody
+    {
+        public int? Minutes { get; set; }
+        /// <summary>Raccourci : « courte » (1 minute, ~140 mots) ou « longue » (3 minutes, ~420 mots).</summary>
+        public string? Duree { get; set; }
+    }
 
     private static ObjectResult Refus(int status, string code, string message) =>
         new(new { success = false, error = message, code, message }) { StatusCode = status };
@@ -92,7 +97,7 @@ public class WinAiAtelierController : ControllerBase
     [HttpPost("resume-audio")]
     public async Task<IActionResult> GenererAudio([FromBody] AudioBody body, CancellationToken ct)
     {
-        var minutes = body.Minutes ?? 3;
+        var minutes = body.Minutes ?? (body.Duree?.Trim().ToLowerInvariant() switch { "courte" => 1, "longue" => 3, _ => 3 });
         if (minutes is < 1 or > 5) return Refus(400, "duree_invalide", "Choisissez une durée de 1 à 5 minutes.");
         return await GenererAsync(KindAudio, body, null, "/api/winai/resume-audio/generate-content",
             extra: new Dictionary<string, object?> { ["minutes"] = minutes }, ct);

@@ -130,6 +130,30 @@ namespace Backend.Tests
         }
 
         [Fact]
+        public async Task Classe_creee_par_un_compte_etablissement()
+        {
+            using var db = Db();
+            db.Users.Add(new User { Id = 50, Email = "lycee@t", Role = "institution" });
+            db.StudyGroups.Add(new StudyGroup { Id = 4, OwnerId = 50, Name = "2nde A", JoinCode = "ABC123", IsActive = true });
+            db.StudyGroups.Add(new StudyGroup { Id = 5, OwnerId = 60, Name = "Groupe d'amis", JoinCode = "XYZ789", IsActive = true });
+            foreach (var id in Enumerable.Range(1, 6))
+            {
+                Score(db, id, id == Me ? 40 : 70);
+                db.StudyGroupMembers.Add(new StudyGroupMember { StudyGroupId = 4, UserId = id });
+            }
+            db.StudyGroupMembers.Add(new StudyGroupMember { StudyGroupId = 4, UserId = 70, Role = "teacher" });
+            db.StudyGroupMembers.Add(new StudyGroupMember { StudyGroupId = 5, UserId = Me });
+            db.SaveChanges();
+
+            var r = await new PeerComparisonService(db).ComputeAsync(Me, "class", null);
+
+            Assert.True(r.HasData);
+            Assert.Equal("2nde A", r.Group!.Label);
+            Assert.Equal(5, r.Group.Size);
+            Assert.Equal(0, r.Percentile);
+        }
+
+        [Fact]
         public async Task Niveau_compare_aux_eleves_du_meme_niveau()
         {
             using var db = Db();

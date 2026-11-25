@@ -200,7 +200,8 @@ public class PeerComparisonService : IPeerComparisonService
 
     /// <summary>
     /// Classe de l'élève : d'abord son groupe dans un établissement (rattachement actif, non refusé),
-    /// sinon la classe active d'un professeur où il a été ajouté le plus récemment.
+    /// puis une classe créée par un compte établissement, sinon la classe active d'un professeur où il a
+    /// été ajouté le plus récemment.
     /// </summary>
     private async Task<ResolvedGroup?> ResolveClassAsync(int userId, CancellationToken ct)
     {
@@ -220,6 +221,17 @@ public class PeerComparisonService : IPeerComparisonService
                             && s.GroupName != null && s.GroupName.Trim().ToLower() == lower)
                 .Select(s => s.StudentId));
         }
+
+        // Classe créée par le compte établissement (groupes de l'espace établissement, mobile compris).
+        var sg = await (from m in _db.StudyGroupMembers.AsNoTracking()
+                        join g in _db.StudyGroups.AsNoTracking() on m.StudyGroupId equals g.Id
+                        join o in _db.Users.AsNoTracking() on g.OwnerId equals o.Id
+                        where m.UserId == userId && m.Role != "teacher" && g.IsActive && o.Role == "institution"
+                        orderby m.JoinedAt descending
+                        select new { g.Id, g.Name }).FirstOrDefaultAsync(ct);
+        if (sg != null)
+            return new ResolvedGroup("class", sg.Name, _db.StudyGroupMembers
+                .Where(m => m.StudyGroupId == sg.Id && m.Role != "teacher").Select(m => m.UserId));
 
         var tc = await _db.TeacherClassStudents.AsNoTracking()
             .Where(m => m.StudentId == userId && m.TeacherClass != null && m.TeacherClass.IsActive)

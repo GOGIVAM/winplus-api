@@ -104,3 +104,60 @@ def test_resume_audio_refuses_a_too_long_duration_and_a_too_short_script(env, he
     env.use(json.dumps({"script": "trop court"}))
     assert env.post(URL_AUDIO, json={"user_id": 7, "subject": "Maths", "minutes": 30}, headers=headers_for(7)).status_code == 422
     assert env.post(URL_AUDIO, json={"user_id": 7, "subject": "Maths"}, headers=headers_for(7)).status_code == 502
+
+
+URL_SYNTH = "/api/winai/synthese/generate-content"
+
+
+def test_synthesis_writes_the_parent_week_from_the_facts_only(env, headers_for):
+    fake = env.use("**Bilan** " + " ".join(["mot"] * 60))
+    r = env.post(URL_SYNTH, json={"kind": "parent-week", "name": "Awa", "facts": ["3 quiz terminés", "moyenne 64 %"]},
+                 headers=headers_for(5))
+    assert r.status_code == 200
+    assert r.json()["title"] == "Bilan de la semaine de Awa" and r.json()["text"].startswith("Bilan mot")
+    prompt = fake.calls[0]["prompt"]
+    assert "- 3 quiz terminés" in prompt and "Awa" in prompt and "parent" in prompt
+
+
+def test_synthesis_refuses_an_unknown_kind_no_facts_and_a_too_short_answer(env, headers_for):
+    env.use("trop court")
+    assert env.post(URL_SYNTH, json={"kind": "autre", "name": "x", "facts": ["a"]}, headers=headers_for(5)).status_code == 422
+    assert env.post(URL_SYNTH, json={"kind": "class", "name": "x", "facts": []}, headers=headers_for(5)).status_code == 422
+    r = env.post(URL_SYNTH, json={"kind": "class", "name": "Tle C", "facts": ["12 élèves"]}, headers=headers_for(5))
+    assert r.status_code == 502 and "synthèse" in r.json()["detail"]
+
+def test_sources_without_a_matching_search_fall_back_to_reading_the_chosen_documents(env, headers_for, monkeypatch):
+    async def nothing(filt, messages, user_id):
+        return "", 30, []
+
+    seen = {}
+
+    def scroll(filt, user_id):
+        seen["args"] = (filt, user_id)
+        return "\n[Sources choisies par l'élève]\n1. [Source : Ma fiche]\nPythagore", [{"doc_id": "winsrc_7_x", "title": "Ma fiche", "page": None}]
+
+    monkeypatch.setattr(wa, "build_sources_context_block", nothing)
+    monkeypatch.setattr(wa, "_scroll_sources", scroll)
+    fake = env.use(json.dumps({"title": "Résumé", "script": " ".join(["mot"] * 80)}))
+    r = env.post(URL_AUDIO, json={"user_id": 7, "sources_filter": {"doc_ids": ["winsrc_7_x"]}}, headers=headers_for(7))
+    assert r.status_code == 200 and r.json()["citations"][0]["doc_id"] == "winsrc_7_x"
+    assert seen["args"] == ({"doc_ids": ["winsrc_7_x"]}, 7) and "Pythagore" in fake.calls[0]["prompt"]
+    assert env.usage == [30]
+
+
+def test_scroll_sources_keeps_the_owner_filter_and_orders_by_page(monkeypatch):
+    import RAG.router as rr
+    import RAG.shared.vector_store as vs
+    from types import SimpleNamespace
+    calls = []
+
+    def scroll_by_filter(collection, f, limit=20):
+        calls.append(f)
+        return [SimpleNamespace(payload={"doc_id": "winsrc_7_x", "title": "Ma fiche", "page": 2, "text": "deux"}),
+                SimpleNamespace(payload={"doc_id": "winsrc_7_x", "title": "Ma fiche", "page": 1, "text": "un"})]
+
+    monkeypatch.setattr(rr, "_active_collection", lambda: "c")
+    monkeypatch.setattr(vs, "scroll_by_filter", scroll_by_filter)
+    block, cited = wa._scroll_sources({"doc_ids": ["winsrc_7_x"], "subject_ids": [3]}, 7)
+    assert calls == [{"doc_id": ["winsrc_7_x"], "owner_user_id": 7, "status": "active"}, {"subject_id": [3], "status": "active"}]
+    assert block.index("page 1") < block.index("page 2") and [c["page"] for c in cited] == [1, 2]
