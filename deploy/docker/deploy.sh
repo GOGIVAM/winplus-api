@@ -52,8 +52,21 @@ configure_stack() {
   export REGISTRY
   [ -r "$DOTNET_ENV_FILE" ] || die "fichier d'environnement absent : $DOTNET_ENV_FILE"
   [ -r "$PYTHON_ENV_FILE" ] || die "fichier d'environnement absent : $PYTHON_ENV_FILE"
+  # Identifiants S3 du .NET : le code crée ses clients AWS avec la chaîne par
+  # défaut du SDK (AWS__AccessKeyId n'est lu nulle part). Sous systemd, il
+  # trouvait les clés winplus-app dans ~/.aws ; en conteneur, ~/.aws n'existe
+  # pas et le rôle de l'instance (ECR seulement) prenait le relais : S3 refusé.
+  # On passe donc les mêmes clés au conteneur sous les noms standard du SDK.
+  DOTNET_S3_KEY_ID=$(env_value "$DOTNET_ENV_FILE" AWS__AccessKeyId)
+  DOTNET_S3_SECRET=$(env_value "$DOTNET_ENV_FILE" AWS__SecretAccessKey)
+  [ -n "$DOTNET_S3_KEY_ID" ] && [ -n "$DOTNET_S3_SECRET" ] \
+    || die "AWS__AccessKeyId / AWS__SecretAccessKey absents de $DOTNET_ENV_FILE (S3 serait refusé)"
+  export DOTNET_S3_KEY_ID DOTNET_S3_SECRET
   mkdir -p "$STATE"
 }
+
+# Valeur d'une variable dans un fichier .env (sans guillemets ni retour chariot).
+env_value() { grep -E "^$2=" "$1" | tail -1 | cut -d= -f2- | tr -d '"\r'; }
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 

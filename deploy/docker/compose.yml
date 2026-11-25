@@ -69,6 +69,10 @@ services:
       # Dans le réseau de la pile, FastAPI s'appelle « fastapi » (plus 127.0.0.1).
       FastApi__BaseUrl: http://fastapi:8000
       AIService__BaseUrl: http://fastapi:8000
+      # Clés winplus-app (S3), extraites du .env.dotnet par deploy.sh : le SDK
+      # AWS du .NET lit la chaîne par défaut, pas AWS__AccessKeyId.
+      AWS_ACCESS_KEY_ID: ${DOTNET_S3_KEY_ID:?DOTNET_S3_KEY_ID manquant}
+      AWS_SECRET_ACCESS_KEY: ${DOTNET_S3_SECRET:?DOTNET_S3_SECRET manquant}
     ports:
       - "127.0.0.1:${DOTNET_PORT:?DOTNET_PORT manquant}:8080"
     volumes:
