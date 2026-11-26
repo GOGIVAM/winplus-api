@@ -85,20 +85,29 @@ public sealed class CourseInactivityAlertService : BackgroundService
                     .ToDictionaryAsync(x => x.UserId, x => x.Last, ct);
 
                 var now = DateTime.UtcNow;
-                var inactiveCount = enrollments.Count(e =>
-                {
-                    var last = lastProgressByUser.TryGetValue(e.UserId, out var l) ? l : e.EnrolledAt;
-                    return (now - last).TotalDays >= course.InactivityThresholdDays;
-                });
+                var inactiveDays = enrollments
+                    .Select(e => (int)(now - (lastProgressByUser.TryGetValue(e.UserId, out var l) ? l : e.EnrolledAt)).TotalDays)
+                    .Where(d => d >= course.InactivityThresholdDays)
+                    .ToList();
+                var inactiveCount = inactiveDays.Count;
 
-                if (inactiveCount > 0)
+                // Une alerte par formation et par semaine au plus. Avant (26/11/2026) : envoyée 5 minutes après
+                // chaque démarrage du serveur, sans mémoire de l'envoi précédent ; chaque redéploiement en
+                // ajoutait une (huit identiques le même jour sur l'intégration, cloche à 99+).
+                if (inactiveCount > 0 && !await RecentlyNotifiedAsync(db, course.InstructorId, course.Id, course.Title, now, ct))
                 {
-                    // Lot 10.6 : dans la langue du professeur (User.Locale).
+                    var oldest = inactiveDays.Max();
+                    var plural = inactiveCount > 1;
+                    // Lot 10.6 : dans la langue du professeur (User.Locale). Durée réelle : seuil ET plus ancienne
+                    // inactivité (le texte disait « 7 jours » pour un élève inactif depuis 46 jours).
                     await ntfy.PublishLocalizedAsync(db, $"winplus-user-{course.InstructorId}",
                         new("Élèves inactifs", "Inactive students"),
-                        new($"{inactiveCount} élève{(inactiveCount > 1 ? "s sont inactifs" : " est inactif")} depuis {course.InactivityThresholdDays} jours sur « {course.Title} ».",
-                            $"{inactiveCount} student{(inactiveCount > 1 ? "s have" : " has")} been inactive for {course.InactivityThresholdDays} days on \"{course.Title}\"."),
-                        userId: course.InstructorId, type: "CourseInactivity");
+                        new($"{inactiveCount} élève{(plural ? "s" : "")} sans activité depuis au moins {course.InactivityThresholdDays} jours sur « {course.Title} »"
+                                + (plural ? $" (le plus ancien : {oldest} jours)." : $" ({oldest} jours)."),
+                            $"{inactiveCount} student{(plural ? "s" : "")} inactive for at least {course.InactivityThresholdDays} days on \"{course.Title}\""
+                                + (plural ? $" (longest: {oldest} days)." : $" ({oldest} days).")),
+                        userId: course.InstructorId, type: "CourseInactivity",
+                        relatedEntityType: "Course", relatedEntityId: course.Id);
                 }
 
                 await DetectDropoutAsync(db, httpFactory, serviceToken, course.Id, course.Title, enrollments.Select(e => (e.UserId, e.Name, e.EnrolledAt)).ToList(), lastProgressByUser, now, ct);
@@ -108,6 +117,22 @@ public sealed class CourseInactivityAlertService : BackgroundService
                 _logger.LogWarning(ex, "Failed inactivity check for course {CourseId}", course.Id);
             }
         }
+    }
+
+    /// <summary>Intervalle minimal entre deux alertes d'inactivité pour une même formation.</summary>
+    internal static readonly TimeSpan RepeatAfter = TimeSpan.FromDays(7);
+
+    /// <summary>Une alerte d'inactivité a-t-elle déjà été envoyée pour cette formation récemment ? Lu en base,
+    /// donc vrai après un redémarrage. Les anciennes alertes, sans formation liée, sont reconnues au titre.</summary>
+    internal static async Task<bool> RecentlyNotifiedAsync(ApplicationDbContext db, int instructorId, int courseId, string courseTitle, DateTime now, CancellationToken ct)
+    {
+        var since = now - RepeatAfter;
+        var quoted = $"« {courseTitle} »";
+        var quotedEn = $"\"{courseTitle}\"";
+        return await db.Notifications.AsNoTracking().AnyAsync(n =>
+            n.UserId == instructorId && n.Type == "CourseInactivity" && n.CreatedAt >= since
+            && ((n.RelatedEntityType == "Course" && n.RelatedEntityId == courseId)
+                || (n.RelatedEntityId == null && (n.Message.Contains(quoted) || n.Message.Contains(quotedEn)))), ct);
     }
 
     /// <summary>
