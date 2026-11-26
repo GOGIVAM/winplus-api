@@ -27,6 +27,10 @@ public sealed record PeerScope(string Scope, string Label, bool Available);
 public sealed record PeerSubject(int SubjectId, string? Name, double UserAvg, int UserQuizCount,
     double? GroupAvg, double? GroupMedian, int? Percentile, int Size, string? Reason, string? ReasonMessage);
 
+/// <summary>
+/// Toutes les moyennes (userAvg, peerAvg, groupAvg, groupMedian, topPerformersAvg, moyennes par matière)
+/// sont des POURCENTAGES de 0 à 100 (scores de quiz), jamais des notes sur 20.
+/// </summary>
 public sealed record PeerComparisonResult
 {
     public bool HasData { get; init; }
