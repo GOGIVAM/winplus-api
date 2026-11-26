@@ -146,8 +146,8 @@ def test_unusable_model_answer_gives_the_deterministic_insights(setup, headers_f
     # Marie a 2 quiz et 2 jours actifs, Paul 0 et 0 : Marie est la plus assidue ET la plus régulière
     assert insights[0].startswith("Marie est particulièrement assidu(e) avec 2 exercices ce mois")
     assert not any("très régulier(e)" in i for i in insights)
-    assert any(i.startswith("Marie pourrait bénéficier") for i in insights)
-    assert any(i.startswith("Paul pourrait bénéficier") for i in insights)
+    assert any(i.startswith("Marie pourrait profiter") for i in insights)
+    assert any(i.startswith("Paul pourrait profiter") for i in insights)
     assert len(insights) == 3
 
 

@@ -79,7 +79,14 @@ public sealed class MonthlyPortfolioService : BackgroundService
             return;
         }
 
-        var cutoff30 = DateTime.UtcNow.AddDays(-30);
+        // Passage du 1er : le portrait porte sur le mois écoulé, nommé (« en octobre ») ; il disait « ce mois-ci »
+        // alors qu'il était daté du 1er du mois suivant.
+        var nowUtc = DateTime.UtcNow;
+        var monthStart = new DateTime(nowUtc.Year, nowUtc.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var previousMonth = monthStart.AddMonths(-1);
+        var cutoff30 = previousMonth;
+        var period = "en " + FrenchMonth(previousMonth.Month);
+        var periodLabel = $"{FrenchMonth(previousMonth.Month)} {previousMonth.Year}";
         var computed = 0;
 
         foreach (var childId in childIds)
@@ -93,7 +100,7 @@ public sealed class MonthlyPortfolioService : BackgroundService
                     .Select(u => u.FirstName)
                     .FirstOrDefaultAsync(ct) ?? "Votre enfant";
 
-                var portrait = await BuildPortraitAsync(db, childId, childName, cutoff30, ct);
+                var portrait = await BuildPortraitAsync(db, childId, childName, cutoff30, ct, period, periodLabel, monthStart);
                 var contentJson = JsonSerializer.Serialize(portrait);
 
                 var parentIds = links.Where(l => l.StudentId == childId).Select(l => l.ParentId).Distinct();
@@ -122,7 +129,11 @@ public sealed class MonthlyPortfolioService : BackgroundService
         _logger.LogInformation("Monthly portfolio computed for {Count}/{Total} children.", computed, childIds.Count);
     }
 
-    internal sealed record Portrait(string Regularite, string Autonomie, string Curiosite);
+    /// <summary>Periode : libellé de la période couverte (« octobre 2026 », « 30 derniers jours »), pour l'affichage.</summary>
+    internal sealed record Portrait(string Regularite, string Autonomie, string Curiosite, string? Periode = null);
+
+    internal static string FrenchMonth(int month) =>
+        System.Globalization.CultureInfo.GetCultureInfo("fr-FR").DateTimeFormat.GetMonthName(month);
 
     /// <summary>
     /// Calcul du portrait d'un enfant sur 30 jours. Statique : réutilisé par
@@ -130,22 +141,23 @@ public sealed class MonthlyPortfolioService : BackgroundService
     /// demande, sans attendre le passage mensuel.
     /// </summary>
     internal static async Task<Portrait> BuildPortraitAsync(
-        ApplicationDbContext db, int childId, string name, DateTime cutoff30, CancellationToken ct)
+        ApplicationDbContext db, int childId, string name, DateTime cutoff30, CancellationToken ct,
+        string period = "sur les 30 derniers jours", string periodLabel = "30 derniers jours", DateTime? until = null)
     {
         // ── Régularité : jours distincts avec une activité (étude, téléchargement
         // ou quiz) sur 30 jours. UserSession (device management) n'est pas fiable
         // pour reconstituer un historique jour par jour  une ligne par device y
         // est mise à jour en continu plutôt que créée à chaque connexion.
         var studyDays = await db.StudySessions.AsNoTracking()
-            .Where(s => s.UserId == childId && s.CreatedAt >= cutoff30)
+            .Where(s => s.UserId == childId && s.CreatedAt >= cutoff30 && (until == null || s.CreatedAt < until))
             .Select(s => s.CreatedAt.Date)
             .ToListAsync(ct);
         var downloadDays = await db.DownloadHistories.AsNoTracking()
-            .Where(d => d.UserId == childId && d.CreatedAt >= cutoff30)
+            .Where(d => d.UserId == childId && d.CreatedAt >= cutoff30 && (until == null || d.CreatedAt < until))
             .Select(d => d.CreatedAt.Date)
             .ToListAsync(ct);
         var quizDays = await db.QuizAttempts.AsNoTracking()
-            .Where(a => a.UserId == childId && a.CompletedAt >= cutoff30)
+            .Where(a => a.UserId == childId && a.CompletedAt >= cutoff30 && (until == null || a.CompletedAt < until))
             .Select(a => a.CompletedAt.Date)
             .ToListAsync(ct);
 
@@ -156,8 +168,8 @@ public sealed class MonthlyPortfolioService : BackgroundService
             : activeDaysCount >= 4
                 ? $"{name} se connecte de temps en temps, sans rythme fixe."
                 : activeDaysCount >= 1
-                    ? $"{name} a eu une activité irrégulière ce mois-ci."
-                    : $"{name} n'a pas eu d'activité enregistrée ce mois-ci.";
+                    ? $"{name} a eu une activité irrégulière {period}."
+                    : $"{name} n'a pas eu d'activité enregistrée {period}.";
 
         // ── Autonomie : matières consultées (30j) qui viennent, ou non, d'un
         // achat du parent (ParentCreditLedger  seul lien fiable Order/enfant,
@@ -171,11 +183,11 @@ public sealed class MonthlyPortfolioService : BackgroundService
         ).Distinct().ToListAsync(ct)).ToHashSet();
 
         var consultedFromDownloads = await db.DownloadHistories.AsNoTracking()
-            .Where(d => d.UserId == childId && d.CreatedAt >= cutoff30)
+            .Where(d => d.UserId == childId && d.CreatedAt >= cutoff30 && (until == null || d.CreatedAt < until))
             .Select(d => d.SubjectId)
             .ToListAsync(ct);
         var consultedFromStudy = await db.StudySessions.AsNoTracking()
-            .Where(s => s.UserId == childId && s.CreatedAt >= cutoff30)
+            .Where(s => s.UserId == childId && s.CreatedAt >= cutoff30 && (until == null || s.CreatedAt < until))
             .Select(s => s.SubjectId)
             .ToListAsync(ct);
         var consultedSet = consultedFromDownloads.Concat(consultedFromStudy).Distinct().ToHashSet();
@@ -184,7 +196,7 @@ public sealed class MonthlyPortfolioService : BackgroundService
         var purchasedConsultedCount = consultedSet.Count - autonomousCount;
 
         var autonomie = consultedSet.Count == 0
-            ? $"{name} n'a pas encore consulté de contenu ce mois-ci."
+            ? $"{name} n'a pas encore consulté de contenu {period}."
             : autonomousCount > purchasedConsultedCount
                 ? $"{name} explore souvent la plateforme de lui-même."
                 : $"{name} utilise principalement les contenus partagés par ses parents.";
@@ -214,11 +226,11 @@ public sealed class MonthlyPortfolioService : BackgroundService
         var outsideHabitualCount = consultedSet.Count(id => !habitualSet.Contains(id));
 
         var curiosite = consultedSet.Count == 0
-            ? $"{name} n'a pas exploré de nouveau contenu ce mois-ci."
+            ? $"{name} n'a pas exploré de nouveau contenu {period}."
             : outsideHabitualCount > 0
                 ? $"{name} montre de la curiosité pour des sujets variés."
                 : $"{name} reste concentré sur ses matières habituelles.";
 
-        return new Portrait(regularite, autonomie, curiosite);
+        return new Portrait(regularite, autonomie, curiosite, periodLabel);
     }
 }

@@ -181,13 +181,13 @@ public class UsersController : ControllerBase
             }
             if (request.Phone != null) user.Phone = request.Phone;
             if (request.Bio != null) user.Bio = request.Bio;
-            if (request.Level != null) user.Level = request.Level;
+            if (request.Level != null) user.Level = SchoolLabels.Normalize(request.Level);
             if (request.City != null) user.City = request.City;
             // Lot 10.6 : "EN", "en-GB"... sont acceptés et ramenés à "en" ou "fr".
             if (!string.IsNullOrWhiteSpace(request.Locale) && request.Locale.Trim().ToLowerInvariant().Split('-', '_')[0] is "fr" or "en")
                 user.Locale = Backend.Services.AiLocaleHeaderHandler.Normalize(request.Locale);
             if (request.Specialization != null) user.Specialization = request.Specialization;
-            if (request.TargetExam != null) user.TargetExam = request.TargetExam;
+            if (request.TargetExam != null) user.TargetExam = SchoolLabels.Normalize(request.TargetExam);
             if (request.TeachingSubjects != null) user.TeachingSubjects = request.TeachingSubjects;
             if (request.TeachingLevels != null) user.TeachingLevels = request.TeachingLevels;
             if (request.ParentChildObjective != null) user.ParentChildObjective = request.ParentChildObjective;

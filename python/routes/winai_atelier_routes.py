@@ -547,7 +547,9 @@ SYNTHESIS_KINDS = {
         "Vouvoie le parent, appelle l'élève par son prénom, ton chaleureux et factuel, 120 à 180 mots. "
         "Tu ne connais pas le genre de l'élève : ne le déduis jamais du prénom, n'emploie ni « il » ni « elle » "
         "ni accord genré pour l'élève, répète le prénom ou tourne la phrase autrement (« votre enfant »). "
-        "Si les faits montrent peu ou pas d'activité, dis-le simplement et propose comment relancer.",
+        "Si les faits montrent peu ou pas d'activité, dis-le simplement et propose comment relancer. "
+        "Pas de formule d'appel ni de politesse (ni « Bonjour » ni signature), pas de tiret long : une virgule "
+        "ou un deux-points à la place.",
         "Bilan de la semaine de {name}",
     ),
     "class": (
@@ -578,6 +580,10 @@ async def generate_synthesis(body: SynthesisRequest, current_user: UserTokenData
     try:
         result = get_deepseek_client().chat(messages=[{"role": "user", "content": prompt}], max_tokens=700, temperature=0.5)
         text = re.sub(r"[*#_`]+", "", str(result.get("content") or "")).strip()
+        if body.kind == "parent-week":
+            from services.parent_text import tidy_parent_text
+            # Formule d'appel, tirets longs et apostrophes mêlées retirés ; paragraphes gardés (pas de limite de phrases).
+            text = "\n\n".join(t for t in (tidy_parent_text(p, max_sentences=0) for p in text.split("\n\n")) if t)
     except Exception as e:
         logger.error(f"[synthese] {body.kind} : {e}")
         text = ""

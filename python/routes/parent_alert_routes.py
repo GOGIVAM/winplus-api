@@ -30,6 +30,7 @@ from auth import require_role, UserTokenData
 from database import Database, QuizAttempt, User, ExamCoachPlanAI, ParentAlertDB, ParentStudentLink
 from services.deepseek_client import get_deepseek_client
 from services.language import in_language, language_directive, is_english
+from services.parent_text import PARENT_STYLE, tidy_parent_text
 
 logger = logging.getLogger(__name__)
 
@@ -169,12 +170,13 @@ def _winai_message(alert_type: str, child_name: str, stat_value: float | int | N
                 "(interdits : dépression, anxiété diagnostiquée, trouble, burnout, diagnostic). "
                 "Ce sont des signaux comportementaux observés, pas un diagnostic médical. "
                 "Préfère des formulations comme : changement de rythme, signal à ne pas "
-                "ignorer, moment pour prendre des nouvelles, baisse d'activité observée."
+                "ignorer, moment pour prendre des nouvelles, baisse d'activité observée. "
+                + PARENT_STYLE
             ),
             max_tokens=120,
             temperature=0.7,
         )
-        text = result.get("content", "").strip()
+        text = tidy_parent_text(result.get("content", ""))
         if text and not _contains_forbidden_vocabulary(text):
             return text
         if text:
@@ -187,11 +189,11 @@ def _winai_message(alert_type: str, child_name: str, stat_value: float | int | N
 
 def _fallback_message(alert_type: str, child_name: str) -> str:
     fallbacks = {
-        "performance_drop": f"Les scores de {child_name} ont baissé cette semaine  un petit encouragement peut faire toute la différence !",
+        "performance_drop": f"Les scores de {child_name} ont baissé cette semaine : un petit encouragement peut faire la différence.",
         "inactivity":       f"{child_name} n'a pas étudié depuis quelques jours. Un message de votre part pourrait l'aider à reprendre.",
-        "excellent_week":   f"Bravo à {child_name} pour cette excellente semaine ! Partagez-lui votre fierté.",
-        "exam_anxiety":     f"{child_name} révise très tard le soir. Encouragez-le à se reposer : le sommeil est essentiel avant un examen.",
-        "surmenage":        f"{child_name} travaille beaucoup mais ses résultats baissent. Invitez-le à faire une pause  la qualité prime sur la quantité.",
+        "excellent_week":   f"{child_name} a fait une excellente semaine : dites-lui votre fierté.",
+        "exam_anxiety":     f"{child_name} révise très tard le soir. Rappelez-lui que le sommeil compte avant un examen.",
+        "surmenage":        f"{child_name} travaille beaucoup mais ses résultats baissent. Proposez-lui une pause : la qualité prime sur la quantité.",
     }
     return fallbacks.get(alert_type, f"WinAI a détecté quelque chose à surveiller pour {child_name}.")
 

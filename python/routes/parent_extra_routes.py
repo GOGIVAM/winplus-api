@@ -27,6 +27,7 @@ from auth import verify_token, require_role, UserTokenData
 from database import Database, QuizAttempt, DailyScore, User, ParentStudentLink
 from services.deepseek_client import get_deepseek_client
 from services.language import in_language, language_directive, is_english
+from services.parent_text import PARENT_STYLE, tidy_parent_text
 from services.parent_child_context import compute_child_context
 
 logger = logging.getLogger(__name__)
@@ -149,6 +150,7 @@ async def get_children_insights(
                 }],
                 system_prompt=(
                     "Tu es WinAI, conseiller pédagogique familial bienveillant. "
+                    + PARENT_STYLE + " Chaque observation tient en une ou deux phrases. "
                     f"Réponds {in_language()} avec un JSON valide uniquement."
                 ),
                 max_tokens=200,
@@ -162,13 +164,14 @@ async def get_children_insights(
             insights = json.loads(content)
             if not isinstance(insights, list):
                 raise ValueError("Not a list")
+            insights = [t for t in (tidy_parent_text(str(i)) for i in insights) if t]
         except Exception:
             # Fallback: generate simple insights
             insights = []
             most_active = max(children_data, key=lambda c: c["quiz_count"])
             most_consistent = max(children_data, key=lambda c: c["active_days"])
             insights.append(
-                f"{most_active['child_name']} est particulièrement assidu(e) avec {most_active['quiz_count']} exercices ce mois  félicitez-le/la !"
+                f"{most_active['child_name']} est particulièrement assidu(e) avec {most_active['quiz_count']} exercices ce mois : pensez à le féliciter."
             )
             if most_consistent["child_id"] != most_active["child_id"]:
                 insights.append(
@@ -177,7 +180,7 @@ async def get_children_insights(
             for c in children_data:
                 if c["quiz_count"] < 3:
                     insights.append(
-                        f"{c['child_name']} pourrait bénéficier d'un petit coup de pouce  proposez-lui une session de 15 minutes ensemble."
+                        f"{c['child_name']} pourrait profiter d'un petit coup de pouce : proposez-lui 15 minutes de travail ensemble."
                     )
 
         return {
