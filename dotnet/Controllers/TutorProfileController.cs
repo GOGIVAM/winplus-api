@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Backend.Extensions;
+using Backend.Utils;
 using Backend.Models.DTOs;
 using Backend.Services;
 
@@ -145,6 +146,7 @@ public class TutorProfileController : ControllerBase
     [HttpPut("me")]
     public async Task<ActionResult<TutorProfileDto>> UpdateMine([FromBody] UpdateTutorProfileRequestDto request)
     {
+        if (ContentModeration.Check(request.Title, request.TutorBio, request.TeachingStyle, request.TutorHomeAddressHint, string.Join(" ; ", request.Specialties ?? new List<string>())) is { } refus) return ContentModeration.ToResult(refus);
         try
         {
             return Ok(await _service.UpdateAsync(User.GetUserId(), request));

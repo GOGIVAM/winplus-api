@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Backend.Extensions;
+using Backend.Utils;
 using Backend.Models.DTOs;
 using Backend.Services;
 
@@ -107,6 +108,7 @@ public class TutorBookingController : ControllerBase
     [HttpPost("{id:int}/cancel")]
     public async Task<ActionResult<TutorBookingDto>> Cancel(int id, [FromBody] CancelTutorBookingRequestDto request)
     {
+        if (ContentModeration.Check(request?.Reason) is { } refus) return ContentModeration.ToResult(refus);
         try
         {
             return Ok(await _service.CancelBookingAsync(User.GetUserId(), id, request.Reason));
@@ -169,6 +171,7 @@ public class TutorBookingController : ControllerBase
     [HttpPut("{id:int}/decline")]
     public async Task<ActionResult<TutorBookingDto>> Decline(int id, [FromBody] DeclineTutorBookingRequestDto request)
     {
+        if (ContentModeration.Check(request?.Reason) is { } refus) return ContentModeration.ToResult(refus);
         try { return Ok(await _service.DeclineBookingAsync(User.GetUserId(), id, request.Reason)); }
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
     }

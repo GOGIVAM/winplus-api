@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Backend.Extensions;
+using Backend.Utils;
 using Backend.Models.DTOs;
 using Backend.Services;
 
@@ -45,6 +46,7 @@ public class TutorAssignmentController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<TutorAssignmentDto>> Create([FromBody] CreateTutorAssignmentRequestDto request)
     {
+        if (ContentModeration.Check(request.Note) is { } refus) return ContentModeration.ToResult(refus);
         try { return Ok(await _service.CreateAsync(User.GetUserId(), request)); }
         catch (InvalidOperationException ex) { return Fail(ex); }
     }
@@ -64,6 +66,7 @@ public class TutorAssignmentController : ControllerBase
     [HttpPut("{id:int}/accept")]
     public async Task<ActionResult<TutorAssignmentDto>> Accept(int id, [FromBody] RespondTutorAssignmentRequestDto? request)
     {
+        if (ContentModeration.Check(request?.Note) is { } refus) return ContentModeration.ToResult(refus);
         try { return Ok(await _service.AcceptAsync(User.GetUserId(), id, request?.Note)); }
         catch (InvalidOperationException ex) { return Fail(ex); }
     }
@@ -71,6 +74,7 @@ public class TutorAssignmentController : ControllerBase
     [HttpPut("{id:int}/decline")]
     public async Task<ActionResult<TutorAssignmentDto>> Decline(int id, [FromBody] RespondTutorAssignmentRequestDto? request)
     {
+        if (ContentModeration.Check(request?.Note) is { } refus) return ContentModeration.ToResult(refus);
         try { return Ok(await _service.DeclineAsync(User.GetUserId(), id, request?.Note)); }
         catch (InvalidOperationException ex) { return Fail(ex); }
     }

@@ -7,6 +7,7 @@ using Backend.Services;
 using Backend.Models.Entities;
 using Backend.Models.DTOs;
 using Backend.Extensions;
+using Backend.Utils;
 
 namespace Backend.Controllers;
 
@@ -143,6 +144,7 @@ public class UsersController : ControllerBase
     [Authorize]
     public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileRequest request)
     {
+        if (ContentModeration.Check(request.Bio) is { } refus) return ContentModeration.ToResult(refus);
         try
         {
             var userId = User.GetUserId();

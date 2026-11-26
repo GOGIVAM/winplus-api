@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Backend.Extensions;
+using Backend.Utils;
 using Backend.Models.DTOs;
 using Backend.Services;
 
@@ -24,6 +25,7 @@ public class TutorReviewController : ControllerBase
     [Authorize]
     public async Task<ActionResult<TutorReviewDto>> Submit([FromBody] SubmitTutorReviewRequestDto request)
     {
+        if (ContentModeration.Check(request.Comment) is { } refus) return ContentModeration.ToResult(refus);
         try { return Ok(await _service.SubmitAsync(User.GetUserId(), request)); }
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
     }
@@ -33,6 +35,7 @@ public class TutorReviewController : ControllerBase
     [Authorize]
     public async Task<ActionResult<TutorReviewDto>> Reply(int id, [FromBody] ReplyToTutorReviewRequestDto request)
     {
+        if (ContentModeration.Check(request.Reply) is { } refus) return ContentModeration.ToResult(refus);
         try { return Ok(await _service.ReplyAsync(User.GetUserId(), id, request.Reply)); }
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
     }

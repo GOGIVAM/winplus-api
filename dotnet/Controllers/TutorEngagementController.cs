@@ -1,4 +1,5 @@
 using Backend.Extensions;
+using Backend.Utils;
 using Backend.Models.DTOs;
 using Backend.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -71,7 +72,9 @@ public class TutorEngagementController : ControllerBase
     /// <summary>Le tuteur refuse l'engagement entier : remboursement intégral, séance par séance.</summary>
     [HttpPut("{id:int}/decline")]
     public Task<ActionResult<TutorEngagementDto>> Decline(int id, [FromBody] DeclineTutorBookingRequestDto request) =>
-        Run(() => _service.DeclineAsync(User.GetUserId(), id, request?.Reason));
+        ContentModeration.Check(request?.Reason) is { } refus
+            ? Task.FromResult<ActionResult<TutorEngagementDto>>(ContentModeration.ToResult(refus))
+            : Run(() => _service.DeclineAsync(User.GetUserId(), id, request?.Reason));
 
     /// <summary>Annule l'engagement : séances futures annulées et remboursées (politique du tuteur par séance si le payeur annule ; intégral si le tuteur annule).</summary>
     [HttpPost("{id:int}/cancel")]
