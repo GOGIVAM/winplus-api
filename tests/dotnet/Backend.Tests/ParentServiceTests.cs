@@ -38,7 +38,7 @@ namespace Backend.Tests
             object s = await svc.GetChildStatsAsync(P, Child);
             Assert.Equal(0, Prop(s, "enrollmentCount"));
             Assert.Equal(0m, Prop(s, "completionRate"));
-            Assert.Equal(0m, Prop(s, "averageScore"));
+            Assert.Null(Prop(s, "averageScore")); // aucune activité notée : pas de moyenne (et non 0)
         }
 
         [Fact]
@@ -58,7 +58,7 @@ namespace Backend.Tests
             object s = await svc.GetChildStatsAsync(P, Child);
             Assert.Equal(3, Prop(s, "enrollmentCount"));
             Assert.Equal(33.33m, Prop(s, "completionRate"));
-            Assert.Equal(7.67m, Prop(s, "averageScore"));
+            Assert.Equal(11.5m, Prop(s, "averageScore")); // seules les activités notées comptent : (10 + 13) / 2
         }
 
         [Fact]
