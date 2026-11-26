@@ -19,6 +19,10 @@ namespace Backend.Controllers;
 ///   DELETE /api/winai/flashcards/{id}
 ///   POST   /api/winai/resume-audio        {subject?, topic?, level?, minutes? (1-5, 3) ou duree? (courte | longue), sources?}
 ///   GET    /api/winai/resume-audio, GET /api/winai/resume-audio/{id}, DELETE /api/winai/resume-audio/{id}
+///   POST   /api/teacher/epreuves          {subject?, topic?, level?, examType? (interrogation | devoir | composition |
+///          examen-blanc), durationMinutes? (15-300, 120), totalPoints? (5-100, 20), exercises? (1-6, 3), instructions?, sources?}
+///   GET    /api/teacher/epreuves, GET /api/teacher/epreuves/{id}, DELETE /api/teacher/epreuves/{id}
+///          Épreuve complète (sujet, barème par question, corrigé) : professeur ou admin, droit ai.feature.quiz_generation.
 /// Fiches : droit ai.feature.flashcards (Standard et au-dessus). Résumé audio : inclus dans tous les plans.
 /// Les deux sont débités en jetons WinAI (même budget que le chat). Le script audio est lu par la synthèse
 /// vocale de l'appareil : aucun fichier audio n'est produit.
@@ -31,6 +35,8 @@ public class WinAiAtelierController : ControllerBase
 {
     public const string KindFlashcards = "flashcards";
     public const string KindAudio = "resume-audio";
+    public const string KindEpreuve = "epreuve";
+    private static readonly HashSet<string> ExamTypes = new() { "interrogation", "devoir", "composition", "examen-blanc" };
     private const int MaxPerUser = 200;
 
     private readonly ApplicationDbContext _db;
@@ -65,6 +71,15 @@ public class WinAiAtelierController : ControllerBase
         public int? Minutes { get; set; }
         /// <summary>Raccourci : « courte » (1 minute, ~140 mots) ou « longue » (3 minutes, ~420 mots).</summary>
         public string? Duree { get; set; }
+    }
+
+    public sealed class EpreuveBody : GenerateBody
+    {
+        public string? ExamType { get; set; }
+        public int? DurationMinutes { get; set; }
+        public int? TotalPoints { get; set; }
+        public int? Exercises { get; set; }
+        public string? Instructions { get; set; }
     }
 
     private static ObjectResult Refus(int status, string code, string message) =>
@@ -111,6 +126,45 @@ public class WinAiAtelierController : ControllerBase
 
     [HttpDelete("resume-audio/{id:int}")]
     public Task<IActionResult> SupprimerAudio(int id, CancellationToken ct) => SupprimerAsync(KindAudio, id, ct);
+
+    // ── Épreuve complète pour l'enseignant ────────────────────────────────────
+
+    private bool EstEnseignant() => User.HasRole("teacher") || User.IsAdmin();
+    private static ObjectResult RefusRole() =>
+        Refus(403, "role_enseignant", "La création d'épreuves est réservée aux enseignants.");
+
+    [HttpPost("~/api/teacher/epreuves")]
+    public async Task<IActionResult> GenererEpreuve([FromBody] EpreuveBody body, CancellationToken ct)
+    {
+        if (!EstEnseignant()) return RefusRole();
+        var type = (body.ExamType ?? "devoir").Trim().ToLowerInvariant();
+        if (!ExamTypes.Contains(type))
+            return Refus(400, "type_invalide", "Type d'épreuve inconnu : interrogation, devoir, composition ou examen blanc.");
+        var duree = body.DurationMinutes ?? 120;
+        if (duree is < 15 or > 300) return Refus(400, "duree_invalide", "Choisissez une durée de 15 minutes à 5 heures.");
+        var total = body.TotalPoints ?? 20;
+        if (total is < 5 or > 100) return Refus(400, "bareme_invalide", "Le total des points doit être compris entre 5 et 100.");
+        var exos = body.Exercises ?? 3;
+        if (exos is < 1 or > 6) return Refus(400, "nombre_invalide", "Choisissez entre 1 et 6 exercices.");
+        return await GenererAsync(KindEpreuve, body, EntitlementCatalog.AiQuizGeneration, "/api/teacher/epreuve/generate-content",
+            extra: new Dictionary<string, object?>
+            {
+                ["exam_type"] = type, ["duration_minutes"] = duree, ["total_points"] = total, ["exercises"] = exos,
+                ["instructions"] = Court(body.Instructions, 1000),
+            }, ct);
+    }
+
+    [HttpGet("~/api/teacher/epreuves")]
+    public async Task<IActionResult> ListeEpreuves(CancellationToken ct) =>
+        EstEnseignant() ? await ListeAsync(KindEpreuve, ct) : RefusRole();
+
+    [HttpGet("~/api/teacher/epreuves/{id:int}")]
+    public async Task<IActionResult> Epreuve(int id, CancellationToken ct) =>
+        EstEnseignant() ? await DetailAsync(KindEpreuve, id, ct) : RefusRole();
+
+    [HttpDelete("~/api/teacher/epreuves/{id:int}")]
+    public async Task<IActionResult> SupprimerEpreuve(int id, CancellationToken ct) =>
+        EstEnseignant() ? await SupprimerAsync(KindEpreuve, id, ct) : RefusRole();
 
     // ── Commun ────────────────────────────────────────────────────────────────
 
@@ -167,9 +221,12 @@ public class WinAiAtelierController : ControllerBase
             _logger.LogWarning("Atelier WinAI {Kind} : HTTP {Status} {Body}", kind, status, raw?.Length > 300 ? raw[..300] : raw);
             return status == 422
                 ? Refus(400, "materiel_manquant", "Choisissez au moins une source, une matière ou un chapitre.")
-                : Refus(502, "generation_echouee", kind == KindFlashcards
-                    ? "WinAI n'a pas pu préparer les fiches. Réessayez dans un instant."
-                    : "WinAI n'a pas pu préparer le résumé. Réessayez dans un instant.");
+                : Refus(502, "generation_echouee", kind switch
+                {
+                    KindFlashcards => "WinAI n'a pas pu préparer les fiches. Réessayez dans un instant.",
+                    KindEpreuve => "WinAI n'a pas pu préparer l'épreuve. Réessayez dans un instant.",
+                    _ => "WinAI n'a pas pu préparer le résumé. Réessayez dans un instant.",
+                });
         }
 
         using var doc = JsonDocument.Parse(raw);
@@ -192,6 +249,20 @@ public class WinAiAtelierController : ControllerBase
             content = new { cards };
             items = cards.Count;
         }
+        else if (kind == KindEpreuve)
+        {
+            var exercises = r.TryGetProperty("exercises", out var ex) && ex.ValueKind == JsonValueKind.Array ? ex.Clone() : default;
+            items = exercises.ValueKind == JsonValueKind.Array
+                ? exercises.EnumerateArray().Sum(e => e.TryGetProperty("questions", out var q) && q.ValueKind == JsonValueKind.Array ? q.GetArrayLength() : 0)
+                : 0;
+            int? Int(string name) => r.TryGetProperty(name, out var v) && v.TryGetInt32(out var i) ? i : null;
+            content = new
+            {
+                examType = Str("exam_type"), durationMinutes = Int("duration_minutes"), totalPoints = Int("total_points"),
+                instructions = Str("instructions"),
+                exercises = exercises.ValueKind == JsonValueKind.Array ? (object)exercises : Array.Empty<object>(),
+            };
+        }
         else
         {
             var script = Str("script") ?? "";
@@ -204,7 +275,7 @@ public class WinAiAtelierController : ControllerBase
         var production = new WinAiProduction
         {
             UserId = userId, Kind = kind,
-            Title = Court(Str("title"), 200) ?? (kind == KindFlashcards ? "Fiches de révision" : "Résumé audio"),
+            Title = Court(Str("title"), 200) ?? kind switch { KindFlashcards => "Fiches de révision", KindEpreuve => "Épreuve", _ => "Résumé audio" },
             Subject = Court(subject ?? Str("subject"), 150), Topic = topic, Level = Court(level, 100), ItemCount = items,
             ContentJson = JsonSerializer.Serialize(content, Json),
             SourcesJson = JsonSerializer.Serialize(new { chosen = refs.Select(x => new { type = x.Type, id = x.Id }), citations }, Json),
@@ -222,12 +293,16 @@ public class WinAiAtelierController : ControllerBase
         {
             ["id"] = p.Id, ["kind"] = p.Kind, ["title"] = p.Title, ["subject"] = p.Subject, ["topic"] = p.Topic,
             ["level"] = p.Level, ["createdAt"] = p.CreatedAt,
-            [p.Kind == KindFlashcards ? "cardCount" : "wordCount"] = p.ItemCount,
+            [p.Kind switch { KindFlashcards => "cardCount", KindEpreuve => "questionCount", _ => "wordCount" }] = p.ItemCount,
             ["sources"] = sources.RootElement.TryGetProperty("citations", out var cit) ? cit.Clone() : null,
             ["chosenSources"] = sources.RootElement.TryGetProperty("chosen", out var ch) ? ch.Clone() : null,
         };
         if (p.Kind == KindAudio && content.RootElement.TryGetProperty("estimatedSeconds", out var es))
             baseVue["estimatedSeconds"] = es.Clone();
+        if (p.Kind == KindEpreuve)
+            foreach (var name in new[] { "examType", "durationMinutes", "totalPoints" })
+                if (content.RootElement.TryGetProperty(name, out var v) && v.ValueKind != JsonValueKind.Null)
+                    baseVue[name] = v.Clone();
         if (full)
             foreach (var prop in content.RootElement.EnumerateObject())
                 baseVue[prop.Name] = prop.Value.Clone();

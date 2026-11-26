@@ -3,6 +3,7 @@ Atelier WinAI (25/11/2026) : productions générées à partir des sources chois
   POST /api/winai/flashcards/generate-content   fiches recto verso (question au recto, réponse au verso)
   POST /api/winai/resume-audio/generate-content script d'un résumé à écouter (lu par la synthèse vocale
                                                  de l'appareil, aucun fichier audio produit ici)
+  POST /api/teacher/epreuve/generate-content    épreuve complète pour l'enseignant : sujet, barème, corrigé
 
 Appelées par le .NET (WinAiAtelierController), qui contrôle l'accès aux sources, le droit d'abonnement
 et le quota, puis enregistre le résultat. Les sources arrivent déjà traduites : sources_filter
@@ -22,7 +23,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from auth import verify_token, UserTokenData
+from auth import verify_token, require_role, UserTokenData
 from services.deepseek_client import get_deepseek_client
 from services.language import language_directive
 from services.rag_chat_bridge import build_sources_context_block
@@ -257,6 +258,140 @@ async def generate_resume_audio(body: ResumeAudioRequest, current_user: UserToke
             logger.warning(f"[resume-audio] essai max_tokens={max_tokens} échoué : {e} ; brut : {raw[:300]!r}")
     logger.error(f"[resume-audio] échec : {last_error}")
     raise HTTPException(status_code=502, detail="WinAI n'a pas pu préparer le résumé. Réessayez dans un instant.")
+
+
+# -- Épreuve complète pour l'enseignant : sujet, barème et corrigé (26/11/2026) -----------------------------
+
+EXAM_TYPES = {
+    "interrogation": "une interrogation écrite courte",
+    "devoir": "un devoir surveillé",
+    "composition": "une composition trimestrielle",
+    "examen-blanc": "un examen blanc au format de l'examen officiel (BEPC, Probatoire, Baccalauréat, GCE)",
+}
+
+
+class EpreuveRequest(AtelierRequest):
+    exam_type: str = "devoir"
+    duration_minutes: int = Field(120, ge=15, le=300)
+    total_points: int = Field(20, ge=5, le=100)
+    exercises: int = Field(3, ge=1, le=6)
+    instructions: Optional[str] = Field(None, max_length=1000)
+
+
+def _num(v: Any) -> float:
+    try:
+        return max(0.0, float(str(v).replace(",", ".")))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _quarter(x: float) -> float:
+    return round(x * 4) / 4
+
+
+def _clean_exam(data: dict, total: int) -> List[dict]:
+    """Exercices exploitables, barème ramené au total demandé (au quart de point), points
+    d'un exercice = somme de ses questions."""
+    exercises: List[dict] = []
+    for ex in data.get("exercises") if isinstance(data.get("exercises"), list) else []:
+        if not isinstance(ex, dict):
+            continue
+        questions = []
+        for i, q in enumerate(ex.get("questions") if isinstance(ex.get("questions"), list) else [], start=1):
+            if not isinstance(q, dict) or not str(q.get("statement") or "").strip():
+                continue
+            questions.append({
+                "number": str(q.get("number") or i)[:10],
+                "statement": str(q.get("statement")).strip()[:2000],
+                "points": _num(q.get("points")),
+                "answer": str(q.get("answer") or "").strip()[:3000],
+                "scoringGuide": str(q.get("scoring_guide") or q.get("scoringGuide") or "").strip()[:1000],
+            })
+        if questions:
+            exercises.append({
+                "title": str(ex.get("title") or f"Exercice {len(exercises) + 1}").strip()[:200],
+                "context": str(ex.get("context") or "").strip()[:3000] or None,
+                "questions": questions,
+            })
+    all_q = [q for ex in exercises for q in ex["questions"]]
+    if not all_q:
+        return []
+    raw_sum = sum(q["points"] for q in all_q)
+    if raw_sum <= 0:
+        for q in all_q:
+            q["points"] = total / len(all_q)
+    elif abs(raw_sum - total) > 0.01:
+        for q in all_q:
+            q["points"] = q["points"] * total / raw_sum
+    for q in all_q:
+        q["points"] = max(0.25, _quarter(q["points"]))
+    # Écart d'arrondi reporté sur la question la plus notée.
+    gap = total - sum(q["points"] for q in all_q)
+    if abs(gap) > 0.001:
+        top = max(all_q, key=lambda q: q["points"])
+        top["points"] = max(0.25, _quarter(top["points"] + gap))
+    for ex in exercises:
+        ex["points"] = sum(q["points"] for q in ex["questions"])
+    return exercises
+
+
+@winai_atelier_router.post("/teacher/epreuve/generate-content", tags=["winai-atelier"])
+async def generate_epreuve(body: EpreuveRequest,
+                           current_user: UserTokenData = Depends(require_role("teacher", "admin"))):
+    block, citations = await sources_block(body, int(current_user.user_id))
+    _require_material(body, block)
+    kind = EXAM_TYPES.get(body.exam_type, EXAM_TYPES["devoir"])
+    extra = f"Consignes de l'enseignant : {body.instructions.strip()}\n" if (body.instructions or "").strip() else ""
+    subject_lines = _subject_lines(body).replace("Niveau scolaire de l'élève", "Classe")
+    prompt = (
+        "Tu es WinAI, concepteur d'épreuves pour des enseignants camerounais (programmes officiels MINESEC, "
+        "sous-systèmes francophone et anglophone).\n"
+        f"Rédige {kind}, complet et prêt à distribuer, avec son barème et son corrigé.\n"
+        f"{subject_lines}\n"
+        f"Durée : {body.duration_minutes} minutes. Total : {body.total_points} points. "
+        f"Nombre d'exercices : {body.exercises}.\n"
+        f"{extra}"
+        "Exigences :\n"
+        "- progression du plus simple au plus exigeant, au niveau exact de la classe, faisable dans la durée ;\n"
+        "- chaque exercice peut avoir un contexte (énoncé, document, données) puis des questions numérotées ;\n"
+        "- chaque question porte ses points ; la somme de tous les points vaut exactement "
+        f"{body.total_points} ;\n"
+        "- pour chaque question : la réponse attendue complète (démarche et résultat), puis le barème détaillé "
+        "(ce qui rapporte des points, par étape) ;\n"
+        "- formules en LaTeX ($...$) ; aucune donnée personnelle ;\n"
+        "- si des sources sont fournies, l'épreuve porte sur leur contenu ; n'invente rien qui les contredise.\n"
+        f"{block}\n\n"
+        "Réponds UNIQUEMENT en JSON (sans balises markdown autour) :\n"
+        '{"title": "...", "subject": "...", "instructions": "consignes générales aux candidats", '
+        '"exercises": [{"title": "Exercice 1 : ...", "context": "...", "questions": [{"number": "1.a", '
+        '"statement": "...", "points": 2, "answer": "...", "scoring_guide": "..."}]}]}'
+        f"{language_directive()}"
+    )
+    client = get_deepseek_client()
+    last_error: Optional[Exception] = None
+    for max_tokens in (6000, 8000):
+        raw = ""
+        try:
+            result = client.chat(messages=[{"role": "user", "content": prompt}], max_tokens=max_tokens, temperature=0.4)
+            raw = result.get("content", "")
+            data = _extract_json(raw)
+            exercises = _clean_exam(data, body.total_points)
+            if not exercises:
+                raise ValueError("aucun exercice exploitable")
+            subject = body.subject or data.get("subject")
+            title = str(data.get("title") or (f"Épreuve : {body.topic or subject}" if (body.topic or subject) else "Épreuve"))[:200]
+            return {
+                "success": True, "title": title, "subject": subject,
+                "instructions": str(data.get("instructions") or "").strip()[:2000] or None,
+                "exam_type": body.exam_type if body.exam_type in EXAM_TYPES else "devoir",
+                "duration_minutes": body.duration_minutes, "total_points": body.total_points,
+                "exercises": exercises, "citations": citations,
+            }
+        except Exception as e:
+            last_error = e
+            logger.warning(f"[epreuve] essai max_tokens={max_tokens} échoué : {e} ; brut : {raw[:300]!r}")
+    logger.error(f"[epreuve] échec : {last_error}")
+    raise HTTPException(status_code=502, detail="WinAI n'a pas pu préparer l'épreuve. Réessayez dans un instant.")
 
 
 # -- Synthèses : bilan de la semaine (parent) et synthèse de classe (établissement) -------------------------

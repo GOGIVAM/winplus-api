@@ -80,6 +80,7 @@ ROUTES = {
     ("POST", "/api/winai/flashcards/generate-content"): ANY,
     ("POST", "/api/winai/resume-audio/generate-content"): ANY,
     ("POST", "/api/winai/synthese/generate-content"): ANY,
+    ("POST", "/api/teacher/epreuve/generate-content"): role("teacher", "admin"),
     ("POST", "/api/ai/cover/generate"): ANY,
     ("POST", "/api/ai/goal-suggestions"): ANY,
     ("POST", "/api/quiz/explain-error"): ANY,

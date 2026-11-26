@@ -161,3 +161,56 @@ def test_scroll_sources_keeps_the_owner_filter_and_orders_by_page(monkeypatch):
     block, cited = wa._scroll_sources({"doc_ids": ["winsrc_7_x"], "subject_ids": [3]}, 7)
     assert calls == [{"doc_id": ["winsrc_7_x"], "owner_user_id": 7, "status": "active"}, {"subject_id": [3], "status": "active"}]
     assert block.index("page 1") < block.index("page 2") and [c["page"] for c in cited] == [1, 2]
+
+# ── Épreuve complète pour l'enseignant ───────────────────────────────────────
+
+URL_EXAM = "/api/teacher/epreuve/generate-content"
+
+
+def _exam(points):
+    return {"title": "Devoir de géométrie", "subject": "Maths", "instructions": "Calculatrice autorisée.",
+            "exercises": [{"title": "Exercice 1", "context": "Triangle ABC",
+                           "questions": [{"number": f"1.{i}", "statement": f"Q{i}", "points": p,
+                                          "answer": f"R{i}", "scoring_guide": "méthode 1 pt"}
+                                         for i, p in enumerate(points)]},
+                          {"title": "vide", "questions": [{"statement": ""}]}]}
+
+
+def test_exam_is_reserved_to_teachers(env, headers_for):
+    env.use(json.dumps(_exam([10, 10])))
+    body = {"user_id": 7, "subject": "Maths", "level": "3e"}
+    assert env.post(URL_EXAM, json=body, headers=headers_for(7, "student")).status_code == 403
+    assert env.post(URL_EXAM, json=body, headers=headers_for(7, "teacher")).status_code == 200
+    assert env.post(URL_EXAM, json={**body, "total_points": 500}, headers=headers_for(7, "teacher")).status_code == 422
+
+
+def test_exam_scales_the_scoring_to_the_requested_total(env, headers_for):
+    fake = env.use(json.dumps(_exam([3, 3, 4])))
+    r = env.post(URL_EXAM, json={"user_id": 7, "subject": "Maths", "topic": "Pythagore", "level": "3e",
+                                 "exam_type": "composition", "duration_minutes": 90, "total_points": 20, "exercises": 1},
+                 headers=headers_for(7, "teacher"))
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total_points"] == 20 and data["duration_minutes"] == 90 and data["exam_type"] == "composition"
+    assert len(data["exercises"]) == 1, "l'exercice sans question exploitable est écarté"
+    qs = data["exercises"][0]["questions"]
+    assert [q["points"] for q in qs] == [6, 6, 8]
+    assert data["exercises"][0]["points"] == 20
+    assert qs[0]["answer"] == "R0" and qs[0]["scoringGuide"] == "méthode 1 pt"
+    prompt = fake.calls[0]["prompt"]
+    assert "composition trimestrielle" in prompt and "Classe : 3e" in prompt and "90 minutes" in prompt
+
+
+def test_exam_rounding_gap_and_missing_points():
+    exos = wa._clean_exam(_exam([1, 1, 1]), 20)
+    pts = [q["points"] for q in exos[0]["questions"]]
+    assert sum(pts) == 20 and all(p * 4 == int(p * 4) for p in pts)
+    exos = wa._clean_exam(_exam(["", "x", None]), 10)
+    assert sum(q["points"] for q in exos[0]["questions"]) == 10
+    assert wa._clean_exam({"exercises": "rien"}, 20) == []
+
+
+def test_exam_fails_cleanly_when_the_model_returns_nothing_usable(env, headers_for):
+    env.use("pas de JSON")
+    r = env.post(URL_EXAM, json={"user_id": 7, "subject": "Maths"}, headers=headers_for(7, "teacher"))
+    assert r.status_code == 502
