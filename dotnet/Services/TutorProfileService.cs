@@ -131,6 +131,7 @@ public class TutorProfileService : ITutorProfileService
             CompletionScore = completion.Score,
             IsActive = profile.IsActive,
             MissingItems = completion.MissingItems,
+            RequiredFields = completion.RequiredFields,
         };
     }
 
@@ -659,7 +660,7 @@ public class TutorProfileService : ITutorProfileService
         return TimeSpan.FromMinutes(minutes);
     }
     public const int MaxSessionsPerWeekCap = 60;
-    private static readonly HashSet<string> MinimumFields = new() { "photo", "subjects", "levels", "interventionMode", "hourlyRate" };
+    private static readonly string[] MinimumFields = { "photo", "subjects", "levels", "interventionMode", "hourlyRate" };
 
     /// <summary>Éléments du minimum d'un profil public (activation et présence dans la recherche).</summary>
     internal static List<TutorProfileMissingItemDto> MinimumMissing(TutorProfile p, bool hasPhoto)
@@ -667,7 +668,7 @@ public class TutorProfileService : ITutorProfileService
         var missing = new List<TutorProfileMissingItemDto>();
         void Need(bool ok, string field, string label)
         {
-            if (!ok) missing.Add(new TutorProfileMissingItemDto { Field = field, Label = label, Required = true });
+            if (!ok) missing.Add(new TutorProfileMissingItemDto { Field = field, Label = label });
         }
         Need(hasPhoto, "photo", "Photo de profil");
         Need(p.Subjects.Count > 0, "subjects", "Au moins une matière");
@@ -899,7 +900,7 @@ public class TutorProfileService : ITutorProfileService
             if (!present)
             {
                 score -= weight;
-                missing.Add(new TutorProfileMissingItemDto { Field = field, Label = label, Required = MinimumFields.Contains(field) });
+                missing.Add(new TutorProfileMissingItemDto { Field = field, Label = label });
             }
         }
 
@@ -916,7 +917,7 @@ public class TutorProfileService : ITutorProfileService
         Check(!string.IsNullOrWhiteSpace(profile.Title), 5, "title", "Titre professionnel");
         Check(!string.IsNullOrWhiteSpace(profile.VideoUrl), 5, "video", "Vidéo d'introduction");
 
-        return new TutorProfileCompletionDto { Score = Math.Max(0, score), MissingItems = missing };
+        return new TutorProfileCompletionDto { Score = Math.Max(0, score), MissingItems = missing, RequiredFields = MinimumFields.ToList() };
     }
 }
 

@@ -262,6 +262,10 @@ public class TutorProfileCompletionDto
 {
     public int Score { get; set; }
     public List<TutorProfileMissingItemDto> MissingItems { get; set; } = new();
+    /// <summary>Codes (field) du minimum exigé pour activer le profil et rester dans la recherche : photo, subjects,
+    /// levels, interventionMode, hourlyRate. Clé à part : les éléments manquants restent des paires de chaînes
+    /// {field, label}, que les versions du mobile antérieures à 837a2ca lisent en Map&lt;String, String&gt;.</summary>
+    public List<string> RequiredFields { get; set; } = new();
 }
 
 public class TutorProfileMissingItemDto
@@ -270,8 +274,6 @@ public class TutorProfileMissingItemDto
     /// bio, title, video) : les clients traduisent à partir de lui ; Label n'est qu'un repli en français.</summary>
     public string Field { get; set; } = null!;
     public string Label { get; set; } = null!;
-    /// <summary>Fait partie du minimum exigé pour activer le profil et rester dans la recherche.</summary>
-    public bool Required { get; set; }
 }
 
 /// <summary>
@@ -287,6 +289,8 @@ public class TutorOnboardingStatusDto
     public int CompletionScore { get; set; }
     public bool IsActive { get; set; }
     public List<TutorProfileMissingItemDto> MissingItems { get; set; } = new();
+    /// <summary>Voir TutorProfileCompletionDto.RequiredFields.</summary>
+    public List<string> RequiredFields { get; set; } = new();
 }
 
 /// <summary>Résultat d'une recherche de répétiteur côté élève (Module B du référentiel).</summary>
