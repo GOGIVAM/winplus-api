@@ -235,7 +235,8 @@ async def generate_resume_audio(body: ResumeAudioRequest, current_user: UserToke
     )
     client = get_deepseek_client()
     last_error: Optional[Exception] = None
-    for max_tokens in (int(target * 2.2) + 400, int(target * 3) + 800):
+    # Plancher large : avec 700 jetons le modèle rendait une réponse vide (budget consommé avant la sortie).
+    for max_tokens in (max(2500, int(target * 3) + 800), max(4000, int(target * 4) + 1200)):
         raw = ""
         try:
             result = client.chat(messages=[{"role": "user", "content": prompt}], max_tokens=max_tokens, temperature=0.6)
