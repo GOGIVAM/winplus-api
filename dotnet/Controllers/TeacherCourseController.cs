@@ -146,6 +146,8 @@ public class TeacherCourseController : ControllerBase
                 course.TotalDurationMin, course.LessonsCount, course.EnrolledCount,
                 course.AvgRating, course.ReviewsCount, course.Requirements, course.Objectives,
                 course.CertificateEnabled, course.CanalMessagerie, course.CreatedAt,
+                // Seuil de relance des élèves inactifs, réglable depuis le site : le mobile le lit ici.
+                inactivityThresholdDays = course.InactivityThresholdDays,
                 instructor = new
                 {
                     id = course.Instructor.Id,
