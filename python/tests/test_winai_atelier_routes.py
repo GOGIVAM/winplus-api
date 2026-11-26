@@ -251,6 +251,22 @@ def test_exam_keeps_the_model_scoring_when_it_matches_and_strips_points_from_tit
     assert ex["title"] == "Exercice 1 : Pythagore" and [q["points"] for q in ex["questions"]] == [2, 3]
 
 
+def test_exam_with_a_missing_exercise_is_refused_not_stretched(env, headers_for, monkeypatch):
+    class Partial:
+        calls = 0
+
+        def chat(self, messages, max_tokens=None, temperature=None, **kw):
+            Partial.calls += 1
+            p = messages[0]["content"]
+            if "Découpe le contenu" in p:
+                return {"content": "1. a\n2. b"}
+            return {"content": "" if "exercice 2 sur 2" in p else TAGGED}
+
+    monkeypatch.setattr(wa, "get_deepseek_client", lambda: Partial())
+    r = env.post(URL_EXAM, json={"user_id": 7, "subject": "Maths", "exercises": 2}, headers=headers_for(7, "teacher"))
+    assert r.status_code == 502
+
+
 def test_plan_needs_one_line_per_exercise():
     assert wa._parse_plan("Voici :\n1) Pythagore\n**2.** Trigonométrie\n3 - Problème", 3) == ["Pythagore", "Trigonométrie", "Problème"]
     assert wa._parse_plan("1. seul", 2) == []

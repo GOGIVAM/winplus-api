@@ -340,7 +340,9 @@ EXAM_LABELS = {"interrogation": "Interrogation écrite", "devoir": "Devoir surve
                "composition": "Composition", "examen-blanc": "Examen blanc"}
 # Budget d'un exercice : le modèle raisonne avant d'écrire (8 000 jetons ne donnaient que 4 300 caractères
 # pour une épreuve entière, en 40 s). Un appel par exercice, en parallèle, reste sous le délai de 60 s du .NET.
-EXERCISE_TOKENS = 4000
+# À 4 000 jetons, les exercices exigeants revenaient vides (tout le budget passé à raisonner, en ~23 s) ;
+# 7 000 jetons tiennent en ~35 s, plan compris, sous le délai.
+EXERCISE_TOKENS = 7000
 PLAN_TOKENS = 1500
 # Le .NET coupe à 60 s : un second essai d'exercice n'est lancé que s'il peut finir avant.
 EXAM_DEADLINE = 52.0
@@ -512,12 +514,13 @@ async def generate_epreuve(body: EpreuveRequest,
         return best
 
     results = await asyncio.gather(*(asyncio.to_thread(one, k) for k in range(n)))
-    exercises = _clean_exam({"exercises": [ex for ex in results if ex]}, body.total_points)
-    if not exercises:
-        logger.error("[epreuve] échec : aucun exercice généré")
+    # Épreuve incomplète refusée : étirer un exercice simple jusqu'au total donnait 9 points pour un calcul direct.
+    if not all(results):
+        logger.error(f"[epreuve] échec : {sum(1 for ex in results if ex)} exercice(s) obtenu(s) sur {n}")
         raise HTTPException(status_code=502, detail="WinAI n'a pas pu préparer l'épreuve. Réessayez dans un instant.")
+    exercises = _clean_exam({"exercises": results}, body.total_points)
     if len(exercises) < n:
-        logger.warning(f"[epreuve] {len(exercises)} exercice(s) sur {n} : barème ramené au total sur ceux obtenus")
+        raise HTTPException(status_code=502, detail="WinAI n'a pas pu préparer l'épreuve. Réessayez dans un instant.")
     subject = (body.subject or "").strip() or None
     title = " ".join(p for p in (EXAM_LABELS[exam_type], f"de {subject}" if subject else "",
                                  f"({body.level})" if body.level else "") if p)
