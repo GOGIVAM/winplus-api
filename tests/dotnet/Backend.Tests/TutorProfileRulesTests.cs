@@ -113,6 +113,40 @@ public class TutorProfileRulesTests
     }
 
     [Fact]
+    public async Task Recherche_libelles_normalises_et_tuteur_en_ligne_sans_zone()
+    {
+        var (_, svc, uid) = await WorldAsync();
+        await svc.ActivateAsync(uid);
+        // Le profil enregistre « Maths » / « Terminale » : la recherche accepte casse, accents et alias.
+        Assert.Contains(await svc.SearchAsync("mathematiques", "TERMINALE", null, false, 1, 20), r => r.UserId == uid);
+        // En ligne sans zone : proposé pour une ville, sauf filtre présentiel.
+        Assert.Contains(await svc.SearchAsync(null, null, null, false, 1, 20, city: "Douala"), r => r.UserId == uid);
+        Assert.DoesNotContain(await svc.SearchAsync(null, null, null, false, 1, 20, mode: "in_person", city: "Douala"), r => r.UserId == uid);
+    }
+
+    [Fact]
+    public async Task Prochain_creneau_ignore_les_seances_deja_prises()
+    {
+        var (db, svc, uid) = await WorldAsync();
+        var tomorrow = DateOnly.FromDateTime(System.DateTime.UtcNow).AddDays(1);
+        await svc.UpdateAvailabilityAsync(uid, new List<TutorAvailabilitySlotDto>
+        {
+            new() { DayOfWeek = (int)tomorrow.DayOfWeek, StartTime = "10:00", EndTime = "11:00", IsActive = true },
+        });
+        await svc.ActivateAsync(uid);
+        var before = (await svc.SearchAsync(null, null, null, false, 1, 20)).Single(r => r.UserId == uid);
+        Assert.Equal(tomorrow.ToDateTime(new TimeOnly(10, 0)), before.NextAvailableSlot);
+
+        var profileId = db.TutorProfiles.Single(p => p.UserId == uid).Id;
+        db.TutorBookings.Add(new TutorBooking { TutorProfileId = profileId, StudentUserId = uid, SessionDate = tomorrow,
+            StartTime = new System.TimeSpan(10, 0, 0), EndTime = new System.TimeSpan(11, 0, 0), Status = "confirmed" });
+        await db.SaveChangesAsync();
+        var after = (await svc.SearchAsync(null, null, null, false, 1, 20)).Single(r => r.UserId == uid);
+        Assert.NotEqual(tomorrow.ToDateTime(new TimeOnly(10, 0)), after.NextAvailableSlot);
+        Assert.DoesNotContain(await svc.SearchAsync(null, null, null, false, 1, 20, availableSoon: true), r => r.UserId == uid);
+    }
+
+    [Fact]
     public async Task Creneaux_non_plafonnes_par_le_maximum_de_seances()
     {
         var (_, svc, uid) = await WorldAsync();

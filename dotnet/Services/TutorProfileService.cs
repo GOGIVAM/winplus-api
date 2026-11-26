@@ -436,10 +436,6 @@ public class TutorProfileService : ITutorProfileService
             .AsSplitQuery()
             .AsQueryable();
 
-        if (!string.IsNullOrWhiteSpace(subject))
-            query = query.Where(p => p.Subjects.Any(s => s.Subject.ToLower() == subject.ToLower()));
-        if (!string.IsNullOrWhiteSpace(level))
-            query = query.Where(p => p.Levels.Any(l => l.Level.ToLower() == level.ToLower()));
         if (verifiedOnly)
             query = query.Where(p => p.IsDiplomaVerified);
         // Lot 9.5 (17.11) : un filtre présentiel ne renvoie que des tuteurs
@@ -457,10 +453,24 @@ public class TutorProfileService : ITutorProfileService
         };
         if (inPersonVerifiedOnly)
             query = query.Where(p => p.InPersonVerifiedAt != null && p.InPersonSuspendedAt == null);
+        var inPersonMode = mode is "student_home" or "tutor_home" or "neutral_place" or "in_person";
         if (!string.IsNullOrWhiteSpace(city))
-            query = query.Where(p => p.InterventionZones.Any(z => z.City.ToLower() == city.ToLower()));
+            query = inPersonMode
+                ? query.Where(p => p.InterventionZones.Any(z => z.City.ToLower() == city.ToLower()))
+                : query.Where(p => p.OffersOnline || p.InterventionZones.Any(z => z.City.ToLower() == city.ToLower()));
 
         var candidates = await query.ToListAsync();
+
+        if (!string.IsNullOrWhiteSpace(subject))
+        {
+            var key = TutorReferential.Key(TutorReferential.Canonical(subject));
+            candidates = candidates.Where(p => p.Subjects.Any(x => TutorReferential.Key(TutorReferential.Canonical(x.Subject)) == key)).ToList();
+        }
+        if (!string.IsNullOrWhiteSpace(level))
+        {
+            var key = TutorReferential.Key(TutorReferential.Canonical(level));
+            candidates = candidates.Where(p => p.Levels.Any(x => TutorReferential.Key(TutorReferential.Canonical(x.Level)) == key)).ToList();
+        }
 
         // T2 : un profil actif qui ne remplit plus le minimum (matières, niveaux, mode, tarif ou photo
         // retirés après l'activation) sort de la recherche, et y revient de lui-même une fois complété.
@@ -497,29 +507,51 @@ public class TutorProfileService : ITutorProfileService
         }
         int TopicScore(TutorProfile p) => matchedTopics.TryGetValue(p.Id, out var m) ? m.Count : 0;
 
-        // "Disponibilité immédiate" (US-REP-01) : approximation par les créneaux
-        // hebdo déclarés sur les 48h à venir, en respectant le préavis minimum.
-        // Ne vérifie pas les réservations déjà prises sur ce créneau précis
-        // (ça exigerait de croiser TutorBookings pour toute la page)  un
-        // répétiteur peut donc apparaître "disponible" alors que ce créneau
-        // exact est déjà pris ; la fermeture réelle a lieu au moment de réserver
-        // (TutorBookingService).
-        if (availableSoon)
+        // Disponibilité (US-REP-01) : créneaux hebdo déclarés, préavis respecté, MOINS les séances déjà prises
+        // (réservations actives sur 14 jours, chargées en une requête pour toute la liste) et hors semaine
+        // déjà au plafond de séances. « Disponible bientôt » = une place libre dans les 48 h.
+        var nowUtc = DateTime.UtcNow;
+        var horizonStart = DateOnly.FromDateTime(nowUtc);
+        var horizonEnd = horizonStart.AddDays(14 + 7);
+        var poolIds = candidates.Select(p => p.Id).ToList();
+        var booked = (await _context.TutorBookings.AsNoTracking()
+                .Where(b => poolIds.Contains(b.TutorProfileId) && b.SessionDate >= horizonStart.AddDays(-7) && b.SessionDate <= horizonEnd
+                    && ActiveBookingStatuses.Contains(b.Status))
+                .Select(b => new { b.TutorProfileId, b.SessionDate, b.StartTime, b.EndTime })
+                .ToListAsync())
+            .GroupBy(b => b.TutorProfileId)
+            .ToDictionary(g => g.Key, g => g.Select(b => (b.SessionDate, b.StartTime, b.EndTime)).ToList());
+
+        DateTime? FirstFree(TutorProfile p, int days)
         {
-            var now = DateTime.UtcNow;
-            candidates = candidates.Where(p =>
+            var taken = booked.GetValueOrDefault(p.Id) ?? new List<(DateOnly, TimeSpan, TimeSpan)>();
+            var earliest = nowUtc.AddHours(p.NoticeHours);
+            for (var d = 0; d < days; d++)
             {
-                for (var d = 0; d < 2; d++)
+                var date = horizonStart.AddDays(d);
+                if (p.MaxSessionsPerWeek is int cap)
                 {
-                    var date = DateOnly.FromDateTime(now).AddDays(d);
-                    var dow = (int)date.DayOfWeek;
-                    if (p.AvailabilitySlots.Any(s => s.IsActive && s.DayOfWeek == dow &&
-                        date.ToDateTime(TimeOnly.FromTimeSpan(s.StartTime), DateTimeKind.Utc) >= now.AddHours(p.NoticeHours)))
-                        return true;
+                    var weekStart = date.AddDays(-(((int)date.DayOfWeek + 6) % 7));
+                    if (taken.Count(t => t.Item1 >= weekStart && t.Item1 <= weekStart.AddDays(6)) >= cap) continue;
                 }
-                return false;
-            }).ToList();
+                var dayTaken = taken.Where(t => t.Item1 == date).OrderBy(t => t.Item2).ToList();
+                foreach (var slot in p.AvailabilitySlots.Where(s => s.IsActive && s.DayOfWeek == (int)date.DayOfWeek).OrderBy(s => s.StartTime))
+                {
+                    var start = slot.StartTime;
+                    var earliestToday = date == DateOnly.FromDateTime(earliest) ? earliest.TimeOfDay : TimeSpan.Zero;
+                    if (date < DateOnly.FromDateTime(earliest)) continue;
+                    if (start < earliestToday) start = RoundUpToSlice(earliestToday);
+                    foreach (var t in dayTaken)
+                        if (t.Item2 < start + MinFreeSlot && t.Item3 > start) start = t.Item3;
+                    if (start + MinFreeSlot <= slot.EndTime)
+                        return date.ToDateTime(TimeOnly.FromTimeSpan(start), DateTimeKind.Utc);
+                }
+            }
+            return null;
         }
+
+        if (availableSoon)
+            candidates = candidates.Where(p => FirstFree(p, 2) is DateTime f && f <= nowUtc.AddHours(48)).ToList();
 
         // Tri par pertinence (note × volume de séances × réactivité, US-REP-01) 
         // calculé en batch pour éviter le N+1 sur la page de résultats.
@@ -558,28 +590,8 @@ public class TutorProfileService : ITutorProfileService
             return avgRating * (1 + completed) * reactivity;
         }
 
-        // Prochain créneau réservable (14 jours, même logique honnête que
-        // `availableSoon` : approximé depuis la grille déclarée, sans croiser
-        // les réservations déjà prises pour ne pas exploser le coût de la page).
-        DateTime? NextSlot(TutorProfile p)
-        {
-            var now = DateTime.UtcNow;
-            for (var d = 0; d < 14; d++)
-            {
-                var date = DateOnly.FromDateTime(now).AddDays(d);
-                var dow = (int)date.DayOfWeek;
-                var slot = p.AvailabilitySlots
-                    .Where(s => s.IsActive && s.DayOfWeek == dow)
-                    .Select(s => date.ToDateTime(TimeOnly.FromTimeSpan(s.StartTime), DateTimeKind.Utc))
-                    .Where(dt => dt >= now.AddHours(p.NoticeHours))
-                    .OrderBy(dt => dt)
-                    .FirstOrDefault();
-                if (slot != default) return slot;
-            }
-            return null;
-        }
-
-        var nextSlots = candidates.ToDictionary(p => p.Id, NextSlot);
+        // Prochaine place réellement libre sur 14 jours (même calcul que « disponible bientôt »).
+        var nextSlots = candidates.ToDictionary(p => p.Id, p => FirstFree(p, 14));
 
         var ordered = sort switch
         {
@@ -635,6 +647,17 @@ public class TutorProfileService : ITutorProfileService
     private static string Truncate(string value, int maxLength) => value.Length <= maxLength ? value : value[..maxLength];
 
     public const decimal MinHourlyRateXaf = 500m;
+    /// <summary>Statuts de réservation qui occupent un créneau (mêmes que TutorBookingService).</summary>
+    private static readonly string[] ActiveBookingStatuses = { "pending_payment", "pending_tutor_approval", "confirmed" };
+    /// <summary>Durée minimale d'une place libre pour la compter (une demi-heure, pas de la grille tarifaire).</summary>
+    private static readonly TimeSpan MinFreeSlot = TimeSpan.FromMinutes(TutorPricing.SliceMinutes);
+
+    private static TimeSpan RoundUpToSlice(TimeSpan t)
+    {
+        var slice = TutorPricing.SliceMinutes;
+        var minutes = (int)Math.Ceiling(t.TotalMinutes / slice) * slice;
+        return TimeSpan.FromMinutes(minutes);
+    }
     public const int MaxSessionsPerWeekCap = 60;
     private static readonly HashSet<string> MinimumFields = new() { "photo", "subjects", "levels", "interventionMode", "hourlyRate" };
 

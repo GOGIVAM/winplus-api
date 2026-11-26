@@ -513,6 +513,20 @@ public class ParentController : ControllerBase
         return new ContentResult { Content = content, ContentType = "application/json", StatusCode = (int)res.StatusCode };
     }
 
+    /// <summary>GET /api/parent/settings : réglages du parent (rapport hebdomadaire, comparaison des enfants).</summary>
+    [HttpGet("settings")]
+    public async Task<IActionResult> GetSettings()
+    {
+        var parent = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == User.GetUserId());
+        return parent == null ? NotFound(new { message = "Parent not found" }) : Ok(new { settings = SettingsView(parent) });
+    }
+
+    private static object SettingsView(User parent) => new
+    {
+        weeklyReport = parent.ParentWeeklyReport,
+        childrenComparison = parent.ParentChildrenComparison,
+    };
+
     /// <summary>
     /// PUT /api/parent/settings
     /// Mise à jour des préférences du parent (rapport hebdomadaire, comparaison enfants…)
@@ -526,20 +540,12 @@ public class ParentController : ControllerBase
             var parent = await _db.Users.FindAsync(parentId);
             if (parent == null) return NotFound(new { message = "Parent not found" });
 
-            // Store settings in Bio field as JSON metadata (lightweight settings store)
-            System.Collections.Generic.Dictionary<string, object?> meta;
-            try { meta = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, object?>>(parent.Bio ?? "{}") ?? new(); }
-            catch { meta = new(); }
-
-            if (settings.WeeklyReport.HasValue) meta["weeklyReport"] = settings.WeeklyReport.Value;
-            if (settings.ChildrenComparison.HasValue) meta["childrenComparison"] = settings.ChildrenComparison.Value;
-
-            // Only write back if Bio looks like a settings JSON (not a real bio string)
-            if (parent.Bio == null || parent.Bio.TrimStart().StartsWith("{"))
-                parent.Bio = System.Text.Json.JsonSerializer.Serialize(meta);
+            // Colonnes dédiées (26/11/2026) : les réglages ne sont plus rangés en JSON dans la bio.
+            if (settings.WeeklyReport.HasValue) parent.ParentWeeklyReport = settings.WeeklyReport.Value;
+            if (settings.ChildrenComparison.HasValue) parent.ParentChildrenComparison = settings.ChildrenComparison.Value;
 
             await _db.SaveChangesAsync();
-            return Ok(new { message = "Settings updated", settings = meta });
+            return Ok(new { message = "Settings updated", settings = SettingsView(parent) });
         }
         catch (Exception ex)
         {

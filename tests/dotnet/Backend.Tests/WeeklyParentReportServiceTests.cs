@@ -58,21 +58,6 @@ namespace Backend.Tests
 
         private static HttpResponseMessage Ok(string json) => new(HttpStatusCode.OK) { Content = new StringContent(json) };
 
-        [Theory]
-        [InlineData("{\"weeklyReport\":true}", true)]
-        [InlineData("  {\"weeklyReport\":true,\"autre\":1}", true)]
-        [InlineData("{\"weeklyReport\":false}", false)]
-        [InlineData("{\"autre\":true}", false)]
-        [InlineData("{\"weeklyReport\":\"oui\"}", false)]
-        [InlineData("{ json invalide", false)]
-        [InlineData("texte libre", false)]
-        [InlineData("", false)]
-        [InlineData(null, false)]
-        public void L_activation_est_lue_dans_la_biographie_json(string? bio, bool expected)
-        {
-            Assert.Equal(expected, Static<bool>("IsWeeklyReportEnabled", bio));
-        }
-
         [Fact]
         public void Le_delai_jusqu_au_prochain_lundi_est_positif_et_au_plus_sept_jours()
         {

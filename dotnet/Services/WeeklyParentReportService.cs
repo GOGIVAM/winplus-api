@@ -182,15 +182,14 @@ public sealed class WeeklyParentReportService : BackgroundService
         var email = scope.ServiceProvider.GetRequiredService<IEmailService>();
         var preferences = scope.ServiceProvider.GetRequiredService<INotificationPreferenceService>();
 
-        // Find all parents with weeklyReport enabled in their Bio JSON
+        // Parents qui ont demandé le rapport hebdomadaire (colonne dédiée depuis le 26/11/2026, plus dans Bio).
         var parents = await db.Users
-            .Where(u => u.Role == "parent" && u.IsActive && !u.IsDeleted && u.IsEmailVerified)
+            .Where(u => u.Role == "parent" && u.IsActive && !u.IsDeleted && u.IsEmailVerified && u.ParentWeeklyReport)
             .ToListAsync(ct);
 
         var eligibleParents = new List<User>();
         foreach (var parent in parents)
         {
-            if (!IsWeeklyReportEnabled(parent.Bio)) continue;
 
             // Module 22 : e-mail non transactionnel, soumis à la préférence
             // « Notifications par e-mail » (vérifiée avant l'appel WinAI).
@@ -226,17 +225,6 @@ public sealed class WeeklyParentReportService : BackgroundService
                 _logger.LogWarning(ex, "Failed to send weekly report to {Email}", parent.Email);
             }
         }
-    }
-
-    private static bool IsWeeklyReportEnabled(string? bio)
-    {
-        if (string.IsNullOrWhiteSpace(bio) || !bio.TrimStart().StartsWith("{")) return false;
-        try
-        {
-            var doc = JsonSerializer.Deserialize<JsonElement>(bio);
-            return doc.TryGetProperty("weeklyReport", out var val) && val.GetBoolean();
-        }
-        catch { return false; }
     }
 
     private async Task SendWeeklyReportAsync(

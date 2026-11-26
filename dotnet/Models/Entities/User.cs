@@ -126,6 +126,12 @@ public class User
     [MaxLength(30)]
     public string? ParentFollowUpPreference { get; set; }
 
+    /// <summary>Parent : reçoit le rapport hebdomadaire par e-mail (avant le 26/11/2026 : JSON dans Bio).</summary>
+    public bool ParentWeeklyReport { get; set; }
+
+    /// <summary>Parent : comparaison entre ses enfants affichée (null = choix jamais fait).</summary>
+    public bool? ParentChildrenComparison { get; set; }
+
     /// <summary>
     /// Institution rattachée (comptes institution et leurs élèves).
     /// Avant cette colonne, le dashboard institution utilisait l'id de
