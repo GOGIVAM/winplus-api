@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -335,63 +336,152 @@ def _clean_exam(data: dict, total: int) -> List[dict]:
     return exercises
 
 
+EXAM_LABELS = {"interrogation": "Interrogation écrite", "devoir": "Devoir surveillé",
+               "composition": "Composition", "examen-blanc": "Examen blanc"}
+# Budget d'un exercice : le modèle raisonne avant d'écrire (8 000 jetons ne donnaient que 4 300 caractères
+# pour une épreuve entière, en 40 s). Un appel par exercice, en parallèle, reste sous le délai de 60 s du .NET.
+EXERCISE_TOKENS = 4000
+RETRY_IF_FASTER_THAN = 22.0
+
+_TAG = re.compile(r"^\s*\**\s*(TITRE|CONTEXTE|QUESTION|[ÉE]NONC[ÉE]|R[ÉE]PONSE|BAR[ÈE]ME)\s*\**\s*:\s*(.*)$", re.IGNORECASE)
+_TAG_KEYS = {"TITRE": "title", "CONTEXTE": "context", "ENONCE": "statement", "REPONSE": "answer", "BAREME": "scoring_guide"}
+
+
+def _tag_name(t: str) -> str:
+    return t.upper().replace("É", "E").replace("È", "E")
+
+
+def _parse_exercise(raw: str) -> Optional[dict]:
+    """Exercice au format balisé (TITRE, CONTEXTE, puis QUESTION: n | points, ÉNONCÉ, RÉPONSE, BARÈME).
+    Pas de JSON : les formules LaTeX et les guillemets n'ont rien à échapper."""
+    ex: dict = {"title": "", "context": "", "questions": []}
+    field: Optional[tuple] = None
+    for line in (raw or "").replace("\r", "").split("\n"):
+        m = _TAG.match(line)
+        if m:
+            tag, rest = _tag_name(m.group(1)), m.group(2).strip()
+            if tag == "QUESTION":
+                number, _, pts = rest.partition("|")
+                pts = pts.strip().split()
+                ex["questions"].append({"number": number.strip().rstrip(".") or str(len(ex["questions"]) + 1),
+                                        "points": _num(pts[0]) if pts else 0.0,
+                                        "statement": "", "answer": "", "scoring_guide": ""})
+                field = None
+                continue
+            key = _TAG_KEYS[tag]
+            target = ex if key in ("title", "context") or not ex["questions"] else ex["questions"][-1]
+            target[key] = rest
+            field = (target, key)
+        elif field is not None:
+            target, key = field
+            target[key] = f"{target[key]}\n{line}" if target[key] else line.strip()
+    for q in ex["questions"]:
+        for k in ("statement", "answer", "scoring_guide"):
+            q[k] = q[k].strip()
+    ex["questions"] = [q for q in ex["questions"] if q["statement"]]
+    if not ex["questions"]:
+        return None
+    ex["title"], ex["context"] = ex["title"].strip(), ex["context"].strip()
+    return ex
+
+
+def _exercise_targets(n: int, total: int) -> List[float]:
+    """Points visés par exercice : croissants avec la difficulté (poids 2, 3, 4…), au demi-point."""
+    weights = [2 + k for k in range(n)]
+    targets = [round(total * w / sum(weights) * 2) / 2 for w in weights]
+    targets[-1] += total - sum(targets)
+    return targets
+
+
+def _exercise_role(k: int, n: int) -> str:
+    if n == 1:
+        return "un exercice complet qui va des questions de cours aux applications plus exigeantes"
+    if k == 0:
+        return "le premier exercice : restitution des connaissances et applications directes du cours"
+    if k == n - 1:
+        return ("le dernier exercice : un problème ou une situation d'intégration plus exigeante, dans un contexte "
+                "concret de la vie au Cameroun")
+    return f"l'exercice {k + 1} : une application de difficulté moyenne, sur une autre partie du programme que le premier"
+
+
 @winai_atelier_router.post("/teacher/epreuve/generate-content", tags=["winai-atelier"])
 async def generate_epreuve(body: EpreuveRequest,
                            current_user: UserTokenData = Depends(require_role("teacher", "admin"))):
     block, citations = await sources_block(body, int(current_user.user_id))
     _require_material(body, block)
-    kind = EXAM_TYPES.get(body.exam_type, EXAM_TYPES["devoir"])
+    exam_type = body.exam_type if body.exam_type in EXAM_TYPES else "devoir"
+    kind = EXAM_TYPES[exam_type]
     extra = f"Consignes de l'enseignant : {body.instructions.strip()}\n" if (body.instructions or "").strip() else ""
     subject_lines = _subject_lines(body).replace("Niveau scolaire de l'élève", "Classe")
-    prompt = (
-        "Tu es WinAI, concepteur d'épreuves pour des enseignants camerounais (programmes officiels MINESEC, "
-        "sous-systèmes francophone et anglophone).\n"
-        f"Rédige {kind}, complet et prêt à distribuer, avec son barème et son corrigé.\n"
-        f"{subject_lines}\n"
-        f"Durée : {body.duration_minutes} minutes. Total : {body.total_points} points. "
-        f"Nombre d'exercices : {body.exercises}.\n"
-        f"{extra}"
-        "Exigences :\n"
-        "- progression du plus simple au plus exigeant, au niveau exact de la classe, faisable dans la durée ;\n"
-        "- chaque exercice peut avoir un contexte (énoncé, document, données) puis des questions numérotées ;\n"
-        "- chaque question porte ses points ; la somme de tous les points vaut exactement "
-        f"{body.total_points} ;\n"
-        "- pour chaque question : la réponse attendue complète (démarche et résultat), puis le barème détaillé "
-        "(ce qui rapporte des points, par étape) ;\n"
-        "- formules en LaTeX ($...$) ; aucune donnée personnelle ;\n"
-        "- si des sources sont fournies, l'épreuve porte sur leur contenu ; n'invente rien qui les contredise.\n"
-        f"{block}\n\n"
-        "Réponds UNIQUEMENT en JSON (sans balises markdown autour) :\n"
-        '{"title": "...", "subject": "...", "instructions": "consignes générales aux candidats", '
-        '"exercises": [{"title": "Exercice 1 : ...", "context": "...", "questions": [{"number": "1.a", '
-        '"statement": "...", "points": 2, "answer": "...", "scoring_guide": "..."}]}]}'
-        f"{language_directive()}"
-    )
+    n, targets = body.exercises, _exercise_targets(body.exercises, body.total_points)
     client = get_deepseek_client()
-    last_error: Optional[Exception] = None
-    for max_tokens in (6000, 8000):
-        raw = ""
-        try:
-            result = client.chat(messages=[{"role": "user", "content": prompt}], max_tokens=max_tokens, temperature=0.4)
-            raw = result.get("content", "")
-            data = _extract_json(raw)
-            exercises = _clean_exam(data, body.total_points)
-            if not exercises:
-                raise ValueError("aucun exercice exploitable")
-            subject = body.subject or data.get("subject")
-            title = str(data.get("title") or (f"Épreuve : {body.topic or subject}" if (body.topic or subject) else "Épreuve"))[:200]
-            return {
-                "success": True, "title": title, "subject": subject,
-                "instructions": str(data.get("instructions") or "").strip()[:2000] or None,
-                "exam_type": body.exam_type if body.exam_type in EXAM_TYPES else "devoir",
-                "duration_minutes": body.duration_minutes, "total_points": body.total_points,
-                "exercises": exercises, "citations": citations,
-            }
-        except Exception as e:
-            last_error = e
-            logger.warning(f"[epreuve] essai max_tokens={max_tokens} échoué : {e} ; brut : {raw[:300]!r}")
-    logger.error(f"[epreuve] échec : {last_error}")
-    raise HTTPException(status_code=502, detail="WinAI n'a pas pu préparer l'épreuve. Réessayez dans un instant.")
+
+    def prompt_for(k: int) -> str:
+        return (
+            "Tu es WinAI, concepteur d'épreuves pour des enseignants camerounais (programmes officiels MINESEC).\n"
+            f"Tu rédiges l'exercice {k + 1} sur {n} de {kind}, avec son corrigé et son barème.\n"
+            f"{subject_lines}\n"
+            f"Durée totale de l'épreuve : {body.duration_minutes} minutes pour {n} exercice(s).\n"
+            f"Cet exercice est {_exercise_role(k, n)}. Il vaut exactement {targets[k]:g} points.\n"
+            f"{extra}"
+            "Exigences : niveau exact de la classe, questions numérotées et progressives, faisable dans le temps ; "
+            "pour chaque question, la réponse attendue complète (démarche et résultat) et le barème par étape ; "
+            "formules en LaTeX ($...$) ; aucune donnée personnelle ; si des sources sont fournies, l'exercice porte "
+            "sur leur contenu.\n"
+            f"{block}\n\n"
+            "Réponds UNIQUEMENT dans ce format balisé, sans JSON ni Markdown, chaque balise en début de ligne :\n"
+            f"TITRE: Exercice {k + 1} : ...\n"
+            "CONTEXTE: énoncé commun, données ou document (sur une ou plusieurs lignes, ou vide)\n"
+            f"QUESTION: {k + 1}.a | 2\n"
+            "ÉNONCÉ: ...\n"
+            "RÉPONSE: ...\n"
+            "BARÈME: ...\n"
+            f"QUESTION: {k + 1}.b | 3\n"
+            "(et ainsi de suite ; le nombre après | est le nombre de points de la question)"
+            f"{language_directive()}"
+        )
+
+    def one(k: int) -> Optional[dict]:
+        started = time.monotonic()
+        for attempt in (1, 2):
+            raw = ""
+            try:
+                raw = client.chat(messages=[{"role": "user", "content": prompt_for(k)}],
+                                  max_tokens=EXERCISE_TOKENS, temperature=0.4).get("content", "")
+                ex = _parse_exercise(raw)
+                if not ex:
+                    raise ValueError("aucune question exploitable")
+                pts = sum(q["points"] for q in ex["questions"])
+                for q in ex["questions"]:  # exercice ramené à ses points visés
+                    q["points"] = q["points"] * targets[k] / pts if pts > 0 else targets[k] / len(ex["questions"])
+                ex["title"] = ex["title"] or f"Exercice {k + 1}"
+                return ex
+            except Exception as e:
+                logger.warning(f"[epreuve] exercice {k + 1}, essai {attempt} échoué : {e} ; brut : {raw[:200]!r}")
+                if time.monotonic() - started > RETRY_IF_FASTER_THAN:
+                    break
+        return None
+
+    results = await asyncio.gather(*(asyncio.to_thread(one, k) for k in range(n)))
+    exercises = _clean_exam({"exercises": [ex for ex in results if ex]}, body.total_points)
+    if not exercises:
+        logger.error("[epreuve] échec : aucun exercice généré")
+        raise HTTPException(status_code=502, detail="WinAI n'a pas pu préparer l'épreuve. Réessayez dans un instant.")
+    if len(exercises) < n:
+        logger.warning(f"[epreuve] {len(exercises)} exercice(s) sur {n} : barème ramené au total sur ceux obtenus")
+    subject = (body.subject or "").strip() or None
+    title = " ".join(p for p in (EXAM_LABELS[exam_type], f"de {subject}" if subject else "",
+                                 f"({body.level})" if body.level else "") if p)
+    if body.topic:
+        title += f" : {body.topic}"
+    instructions = (f"Durée : {body.duration_minutes} minutes. L'épreuve est notée sur {body.total_points} points. "
+                    "Les exercices sont indépendants et peuvent être traités dans l'ordre choisi. "
+                    "La qualité de la rédaction et la rigueur des justifications seront prises en compte.")
+    return {
+        "success": True, "title": title[:200], "subject": subject, "instructions": instructions,
+        "exam_type": exam_type, "duration_minutes": body.duration_minutes, "total_points": body.total_points,
+        "exercises_requested": n, "exercises": exercises, "citations": citations,
+    }
 
 
 # -- Synthèses : bilan de la semaine (parent) et synthèse de classe (établissement) -------------------------

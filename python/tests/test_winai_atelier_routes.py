@@ -176,29 +176,62 @@ def _exam(points):
                           {"title": "vide", "questions": [{"statement": ""}]}]}
 
 
+TAGGED = r"""TITRE: Exercice 1 : Pythagore
+CONTEXTE: Soit ABC un triangle rectangle en A
+avec AB = 3 cm et AC = 4 cm.
+QUESTION: 1.a | 1
+ÉNONCÉ: Calculer $BC$.
+RÉPONSE: $BC^2 = 3^2 + 4^2 = 25$ donc "BC = 5" cm.
+BARÈME: théorème cité 0,5 ; résultat 0,5
+QUESTION: 1.b | 3
+**ÉNONCÉ:** Calculer $\cos \widehat{B}$.
+RÉPONSE: $\cos B = 3/5$
+BARÈME: méthode 2 ; résultat 1
+QUESTION: 1.c | 2
+ÉNONCÉ:
+"""
+
+
+def test_tagged_exercise_is_parsed_without_json():
+    ex = wa._parse_exercise(TAGGED)
+    assert ex["title"] == "Exercice 1 : Pythagore"
+    assert ex["context"] == "Soit ABC un triangle rectangle en A\navec AB = 3 cm et AC = 4 cm."
+    assert [q["number"] for q in ex["questions"]] == ["1.a", "1.b"], "la question sans énoncé est écartée"
+    assert ex["questions"][0]["answer"] == '$BC^2 = 3^2 + 4^2 = 25$ donc "BC = 5" cm.'
+    assert ex["questions"][1]["points"] == 3 and "\widehat" in ex["questions"][1]["statement"]
+    assert wa._parse_exercise("rien d'utile") is None
+
+
+def test_exercise_targets_grow_and_sum_to_total():
+    assert wa._exercise_targets(3, 20) == [4.5, 6.5, 9.0]
+    assert sum(wa._exercise_targets(4, 20)) == 20 and wa._exercise_targets(1, 20) == [20]
+
+
 def test_exam_is_reserved_to_teachers(env, headers_for):
-    env.use(json.dumps(_exam([10, 10])))
-    body = {"user_id": 7, "subject": "Maths", "level": "3e"}
+    env.use(TAGGED)
+    body = {"user_id": 7, "subject": "Maths", "level": "3e", "exercises": 1}
     assert env.post(URL_EXAM, json=body, headers=headers_for(7, "student")).status_code == 403
     assert env.post(URL_EXAM, json=body, headers=headers_for(7, "teacher")).status_code == 200
     assert env.post(URL_EXAM, json={**body, "total_points": 500}, headers=headers_for(7, "teacher")).status_code == 422
 
 
-def test_exam_scales_the_scoring_to_the_requested_total(env, headers_for):
-    fake = env.use(json.dumps(_exam([3, 3, 4])))
+def test_exam_one_call_per_exercise_and_exact_total(env, headers_for):
+    fake = env.use(TAGGED)
     r = env.post(URL_EXAM, json={"user_id": 7, "subject": "Maths", "topic": "Pythagore", "level": "3e",
-                                 "exam_type": "composition", "duration_minutes": 90, "total_points": 20, "exercises": 1},
+                                 "exam_type": "composition", "duration_minutes": 90, "total_points": 20, "exercises": 3},
                  headers=headers_for(7, "teacher"))
     assert r.status_code == 200
     data = r.json()
     assert data["total_points"] == 20 and data["duration_minutes"] == 90 and data["exam_type"] == "composition"
-    assert len(data["exercises"]) == 1, "l'exercice sans question exploitable est écarté"
-    qs = data["exercises"][0]["questions"]
-    assert [q["points"] for q in qs] == [6, 6, 8]
-    assert data["exercises"][0]["points"] == 20
-    assert qs[0]["answer"] == "R0" and qs[0]["scoringGuide"] == "méthode 1 pt"
-    prompt = fake.calls[0]["prompt"]
-    assert "composition trimestrielle" in prompt and "Classe : 3e" in prompt and "90 minutes" in prompt
+    assert data["title"] == "Composition de Maths (3e) : Pythagore"
+    assert len(fake.calls) == 3 and len(data["exercises"]) == 3
+    assert [e["points"] for e in data["exercises"]] == [4.5, 6.5, 9.0]
+    assert sum(q["points"] for e in data["exercises"] for q in e["questions"]) == 20
+    q = data["exercises"][0]["questions"][0]
+    assert q["scoringGuide"] == "théorème cité 0,5 ; résultat 0,5" and q["answer"].startswith("$BC^2")
+    prompts = sorted(c["prompt"] for c in fake.calls)
+    assert all("composition trimestrielle" in p and "Classe : 3e" in p and "90 minutes" in p for p in prompts)
+    assert any("dernier exercice" in p and "9 points" in p for p in prompts)
 
 
 def test_exam_rounding_gap_and_missing_points():
@@ -211,6 +244,6 @@ def test_exam_rounding_gap_and_missing_points():
 
 
 def test_exam_fails_cleanly_when_the_model_returns_nothing_usable(env, headers_for):
-    env.use("pas de JSON")
-    r = env.post(URL_EXAM, json={"user_id": 7, "subject": "Maths"}, headers=headers_for(7, "teacher"))
+    env.use("pas d'exercice")
+    r = env.post(URL_EXAM, json={"user_id": 7, "subject": "Maths", "exercises": 2}, headers=headers_for(7, "teacher"))
     assert r.status_code == 502
