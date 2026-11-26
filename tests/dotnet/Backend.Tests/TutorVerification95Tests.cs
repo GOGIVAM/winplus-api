@@ -73,6 +73,8 @@ namespace Backend.Tests
                 Email = $"{name}-{tag}@it.local", Role = role, IsActive = true, FirstName = name, LastName = "IT", InstitutionId = institution,
             };
             var tutor = U("tuteur", "teacher");
+            // Photo exigée pour figurer dans la recherche (minimum du profil public, 26/11/2026).
+            tutor.AvatarUrl = "https://example.test/tuteur.jpg";
             var admin = U("admin", "admin");
             var students = Enumerable.Range(1, 5).Select(i => U($"eleve{i}", "student")).ToList();
             var parent = U("parent", "parent");

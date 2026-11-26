@@ -66,6 +66,9 @@ public class TutorProfileDto
     public bool IsActive { get; set; }
     public int OnboardingStep { get; set; }
     public int CompletionScore { get; set; }
+    /// <summary>Propriétaire seulement : actif, hors vacances et minimum rempli, donc visible dans la recherche.
+    /// Absent (null) sur une fiche publique.</summary>
+    public bool? IsListedInSearch { get; set; }
 
     public List<string> Subjects { get; set; } = new();
     public List<string> Levels { get; set; } = new();
@@ -183,6 +186,9 @@ public class TutorVerificationDocumentDto
 /// </summary>
 public class UpdateTutorProfileRequestDto
 {
+    /// <summary>Champs à remettre à vide : hourlyRate, trialSessionPrice, maxSessionsPerWeek, videoUrl, title,
+    /// tutorBio, teachingStyle, tutorHomeAddressHint (appliqué avant les autres valeurs du corps).</summary>
+    public List<string>? Clear { get; set; }
     public string? Title { get; set; }
     public string? TutorBio { get; set; }
     public string? VideoUrl { get; set; }
@@ -260,8 +266,12 @@ public class TutorProfileCompletionDto
 
 public class TutorProfileMissingItemDto
 {
+    /// <summary>Code stable de l'élément (photo, subjects, levels, interventionMode, hourlyRate, availability,
+    /// bio, title, video) : les clients traduisent à partir de lui ; Label n'est qu'un repli en français.</summary>
     public string Field { get; set; } = null!;
     public string Label { get; set; } = null!;
+    /// <summary>Fait partie du minimum exigé pour activer le profil et rester dans la recherche.</summary>
+    public bool Required { get; set; }
 }
 
 /// <summary>

@@ -142,10 +142,11 @@ public class TutorProfileService : ITutorProfileService
         // trop long (copier-coller d'une bio depuis ailleurs, par ex.) ne
         // remontait pas une erreur de validation claire mais un 500 brut de
         // Postgres ("value too long for type character varying(n)").
-        if (request.Title != null) profile.Title = Truncate(request.Title, 150);
-        if (request.TutorBio != null) profile.TutorBio = Truncate(request.TutorBio, 300);
-        if (request.VideoUrl != null) profile.VideoUrl = Truncate(request.VideoUrl, 500);
-        if (request.TeachingStyle != null) profile.TeachingStyle = Truncate(request.TeachingStyle, 30);
+        ApplyClears(profile, request.Clear);
+        if (request.Title != null) profile.Title = EmptyToNull(Truncate(request.Title.Trim(), 150));
+        if (request.TutorBio != null) profile.TutorBio = EmptyToNull(Truncate(request.TutorBio.Trim(), 300));
+        if (request.VideoUrl != null) profile.VideoUrl = ValidateVideoUrl(request.VideoUrl);
+        if (request.TeachingStyle != null) profile.TeachingStyle = EmptyToNull(Truncate(request.TeachingStyle.Trim(), 30));
 
         // Lot 9.5 (17.17) : un tuteur non vérifié (ou au présentiel suspendu)
         // ENREGISTRE ses choix présentiels, qui restent inactifs (non proposés,
@@ -157,14 +158,36 @@ public class TutorProfileService : ITutorProfileService
         if (request.OffersAtTutorHome.HasValue) profile.OffersAtTutorHome = request.OffersAtTutorHome.Value;
         if (request.OffersOnline.HasValue) profile.OffersOnline = request.OffersOnline.Value;
         if (request.OffersNeutralPlace.HasValue) profile.OffersNeutralPlace = request.OffersNeutralPlace.Value;
-        if (request.TutorHomeAddressHint != null) profile.TutorHomeAddressHint = Truncate(request.TutorHomeAddressHint, 200);
+        if (request.TutorHomeAddressHint != null) profile.TutorHomeAddressHint = EmptyToNull(Truncate(request.TutorHomeAddressHint.Trim(), 200));
 
-        if (request.HourlyRateXaf.HasValue) profile.HourlyRateXaf = request.HourlyRateXaf.Value;
+        if (request.HourlyRateXaf.HasValue)
+        {
+            var rate = request.HourlyRateXaf.Value;
+            if (rate < MinHourlyRateXaf || rate > TutorPricing.MaxHourlyRateXaf)
+                throw new TutorProfileRuleException("tarif_invalide",
+                    $"Le tarif horaire doit être compris entre {MinHourlyRateXaf:N0} et {TutorPricing.MaxHourlyRateXaf:N0} FCFA.");
+            profile.HourlyRateXaf = rate;
+        }
         if (request.TrialSessionEnabled.HasValue) profile.TrialSessionEnabled = request.TrialSessionEnabled.Value;
-        if (request.TrialSessionPriceXaf.HasValue) profile.TrialSessionPriceXaf = request.TrialSessionPriceXaf.Value;
+        if (request.TrialSessionPriceXaf.HasValue)
+        {
+            var trial = request.TrialSessionPriceXaf.Value;
+            var cap = profile.HourlyRateXaf ?? TutorPricing.MaxHourlyRateXaf;
+            if (trial < 0 || trial > cap)
+                throw new TutorProfileRuleException("prix_essai_invalide",
+                    "Le prix de la séance d'essai doit être compris entre 0 FCFA (gratuite) et ton tarif horaire.");
+            profile.TrialSessionPriceXaf = trial;
+        }
 
         if (request.NoticeHours.HasValue) profile.NoticeHours = request.NoticeHours.Value is 12 or 24 or 48 ? request.NoticeHours.Value : 24;
-        if (request.MaxSessionsPerWeek.HasValue) profile.MaxSessionsPerWeek = request.MaxSessionsPerWeek.Value;
+        if (request.MaxSessionsPerWeek.HasValue)
+        {
+            var max = request.MaxSessionsPerWeek.Value;
+            if (max < 1 || max > MaxSessionsPerWeekCap)
+                throw new TutorProfileRuleException("plafond_seances_invalide",
+                    $"Le nombre maximum de séances par semaine doit être compris entre 1 et {MaxSessionsPerWeekCap}.");
+            profile.MaxSessionsPerWeek = max;
+        }
 
         // Lot 9.2 (17.10) : réglages d'annulation validés dans les limites
         // plateforme (TutorPolicy), refusés avec un message clair au lieu
@@ -273,20 +296,14 @@ public class TutorProfileService : ITutorProfileService
     }
 
     /// <summary>
-    /// Sauvegarde instantanée de la grille de disponibilités (US-PRO-08),
-    /// hors du flux d'onboarding par étape. Tant que le module Sessions
-    /// (réservations réelles) n'existe pas, le plafond "séances max/semaine"
-    /// est appliqué au nombre de créneaux actifs déclarés : au-delà, la
-    /// grille refuse le créneau en trop plutôt que de le sauvegarder
-    /// silencieusement.
+    /// Sauvegarde instantanée de la grille de disponibilités (US-PRO-08), hors du flux d'onboarding.
+    /// Un seul sens pour MaxSessionsPerWeek (26/11/2026) : c'est le plafond de séances RÉSERVÉES par
+    /// semaine, appliqué à la réservation (TutorBookingService, TutorEngagementService). Les créneaux
+    /// déclarés sont des plages de disponibilité et ne sont pas plafonnés, ici comme dans UpdateAsync.
     /// </summary>
     public async Task<TutorProfileDto> UpdateAvailabilityAsync(int userId, List<TutorAvailabilitySlotDto> slots)
     {
         var profile = await GetOrCreateEntityAsync(userId);
-
-        var activeCount = slots.Count(s => s.IsActive);
-        if (profile.MaxSessionsPerWeek is int max && activeCount > max)
-            throw new InvalidOperationException($"Tu as atteint ta limite de {max} séance(s) par semaine : désactive un créneau avant d'en ajouter un autre, ou augmente ta limite dans tes paramètres.");
 
         ReplaceAvailabilitySlots(profile, slots);
         profile.UpdatedAt = DateTime.UtcNow;
@@ -318,18 +335,32 @@ public class TutorProfileService : ITutorProfileService
         // à un élève qui doit choisir entre plusieurs profils.
         var user = profile.User ?? await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
         var hasPhoto = !string.IsNullOrWhiteSpace(user?.AvatarUrl) || !string.IsNullOrWhiteSpace(user?.ProfileImageUrl);
-        if (!hasPhoto)
-            throw new InvalidOperationException("Ajoute une photo de profil avant d'activer ton profil répétiteur : elle est obligatoire pour un profil public.");
 
-        var completion = ComputeCompletion(profile, hasPhoto);
-        if (completion.Score < 60)
-            throw new InvalidOperationException("Complète au moins les matières, niveaux, un mode d'intervention et ton tarif horaire avant d'activer ton profil.");
+        // Minimum exigé élément par élément (avant : un score de 60 laissait passer un profil sans
+        // matières, sans niveaux, sans tarif ou sans mode, alors que le message disait l'inverse).
+        var missing = MinimumMissing(profile, hasPhoto);
+        if (missing.Count > 0)
+            throw new TutorProfileRuleException("profil_incomplet",
+                "Pour activer ton profil, il manque : " + string.Join(", ", missing.Select(m => m.Label.ToLowerInvariant())) + ".",
+                missing);
 
         profile.IsActive = true;
         profile.OnboardingStep = 5;
         profile.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
         _logger.LogInformation("Mode Répétiteur activé pour l'utilisateur {UserId}", userId);
+        return await MapToDtoAsync(profile);
+    }
+
+    /// <summary>Retire le profil de la recherche et des fiches publiques (réactivable par ActivateAsync).
+    /// Les réservations déjà prises ne sont pas annulées.</summary>
+    public async Task<TutorProfileDto> DeactivateAsync(int userId)
+    {
+        var profile = await GetOrCreateEntityAsync(userId);
+        profile.IsActive = false;
+        profile.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+        _logger.LogInformation("Mode Répétiteur désactivé pour l'utilisateur {UserId}", userId);
         return await MapToDtoAsync(profile);
     }
 
@@ -385,7 +416,8 @@ public class TutorProfileService : ITutorProfileService
             .Include(p => p.Subjects).Include(p => p.Levels).Include(p => p.Specialties)
             .Include(p => p.InterventionZones).Include(p => p.Packages).Include(p => p.AvailabilitySlots)
             .Include(p => p.Rates).Include(p => p.RateModifiers).Include(p => p.DurationDiscounts).Include(p => p.GroupDiscounts)
-            .FirstOrDefaultAsync(p => p.UserId == userId && p.IsActive);
+            .Include(p => p.User)
+            .FirstOrDefaultAsync(p => p.UserId == userId && p.IsActive && p.User.IsActive && !p.User.IsDeleted);
         return profile == null ? null : await MapToDtoAsync(profile, isPublicView: true);
     }
 
@@ -399,7 +431,7 @@ public class TutorProfileService : ITutorProfileService
             .Include(p => p.InterventionZones).Include(p => p.AvailabilitySlots)
             .Include(p => p.Rates)
             .Include(p => p.User)
-            .Where(p => p.IsActive && !p.IsOnVacation)
+            .Where(p => p.IsActive && !p.IsOnVacation && p.User.IsActive && !p.User.IsDeleted)
             .AsSplitQuery()
             .AsQueryable();
 
@@ -428,6 +460,10 @@ public class TutorProfileService : ITutorProfileService
             query = query.Where(p => p.InterventionZones.Any(z => z.City.ToLower() == city.ToLower()));
 
         var candidates = await query.ToListAsync();
+
+        // T2 : un profil actif qui ne remplit plus le minimum (matières, niveaux, mode, tarif ou photo
+        // retirés après l'activation) sort de la recherche, et y revient de lui-même une fois complété.
+        candidates = candidates.Where(IsListable).ToList();
 
         // Lot 9.1 : le tarif comparé est le « à partir de » de la grille
         // (plus bas tarif de base), plus seulement HourlyRateXaf.
@@ -597,6 +633,69 @@ public class TutorProfileService : ITutorProfileService
 
     private static string Truncate(string value, int maxLength) => value.Length <= maxLength ? value : value[..maxLength];
 
+    public const decimal MinHourlyRateXaf = 500m;
+    public const int MaxSessionsPerWeekCap = 60;
+    private static readonly HashSet<string> MinimumFields = new() { "photo", "subjects", "levels", "interventionMode", "hourlyRate" };
+
+    /// <summary>Éléments du minimum d'un profil public (activation et présence dans la recherche).</summary>
+    internal static List<TutorProfileMissingItemDto> MinimumMissing(TutorProfile p, bool hasPhoto)
+    {
+        var missing = new List<TutorProfileMissingItemDto>();
+        void Need(bool ok, string field, string label)
+        {
+            if (!ok) missing.Add(new TutorProfileMissingItemDto { Field = field, Label = label, Required = true });
+        }
+        Need(hasPhoto, "photo", "Photo de profil");
+        Need(p.Subjects.Count > 0, "subjects", "Au moins une matière");
+        Need(p.Levels.Count > 0, "levels", "Au moins un niveau");
+        Need(p.OffersAtStudentHome || p.OffersAtTutorHome || p.OffersOnline || p.OffersNeutralPlace, "interventionMode", "Un mode d'intervention");
+        Need(p.HourlyRateXaf is > 0 || p.Rates.Any(r => r.HourlyRateXaf > 0), "hourlyRate", "Un tarif horaire");
+        return missing;
+    }
+
+    private static bool IsListable(TutorProfile p) =>
+        MinimumMissing(p, !string.IsNullOrWhiteSpace(p.User?.AvatarUrl) || !string.IsNullOrWhiteSpace(p.User?.ProfileImageUrl)).Count == 0;
+
+    private static string? EmptyToNull(string s) => string.IsNullOrWhiteSpace(s) ? null : s;
+
+    /// <summary>Vidéo de présentation : lien https absolu (YouTube, Vimeo, stockage WinPlus…), vide = retirée.</summary>
+    private static string? ValidateVideoUrl(string raw)
+    {
+        var url = raw.Trim();
+        if (url.Length == 0) return null;
+        if (url.Length > 500 || !Uri.TryCreate(url, UriKind.Absolute, out var u) || u.Scheme != Uri.UriSchemeHttps)
+            throw new TutorProfileRuleException("video_invalide", "Le lien de la vidéo doit être une adresse https complète (YouTube, Vimeo ou fichier envoyé).");
+        return url;
+    }
+
+    /// <summary>Champs à remettre à vide explicitement (les numériques ne peuvent pas l'être par null).</summary>
+    public static readonly IReadOnlyList<string> ClearableFields = new[]
+    {
+        "hourlyRate", "trialSessionPrice", "maxSessionsPerWeek", "videoUrl", "title", "tutorBio", "teachingStyle", "tutorHomeAddressHint",
+    };
+
+    private static void ApplyClears(TutorProfile profile, List<string>? fields)
+    {
+        if (fields == null) return;
+        foreach (var f in fields)
+        {
+            switch (f)
+            {
+                case "hourlyRate": profile.HourlyRateXaf = null; break;
+                case "trialSessionPrice": profile.TrialSessionPriceXaf = null; break;
+                case "maxSessionsPerWeek": profile.MaxSessionsPerWeek = null; break;
+                case "videoUrl": profile.VideoUrl = null; break;
+                case "title": profile.Title = null; break;
+                case "tutorBio": profile.TutorBio = null; break;
+                case "teachingStyle": profile.TeachingStyle = null; break;
+                case "tutorHomeAddressHint": profile.TutorHomeAddressHint = null; break;
+                default:
+                    throw new TutorProfileRuleException("champ_inconnu",
+                        $"« {f} » ne peut pas être vidé. Champs possibles : {string.Join(", ", ClearableFields)}.");
+            }
+        }
+    }
+
     private const int ExperiencedSessionThreshold = 10;
     private const int MinRespondedSampleForReactivity = 5;
     private const double HighlyResponsiveThreshold = 0.8;
@@ -706,6 +805,8 @@ public class TutorProfileService : ITutorProfileService
             // pour un élève qui consulte la fiche publique.
             OnboardingStep = isPublicView ? 0 : profile.OnboardingStep,
             CompletionScore = isPublicView ? 0 : ComputeCompletion(profile, !string.IsNullOrWhiteSpace(user?.AvatarUrl) || !string.IsNullOrWhiteSpace(user?.ProfileImageUrl)).Score,
+            IsListedInSearch = isPublicView ? null : profile.IsActive && !profile.IsOnVacation
+                && MinimumMissing(profile, !string.IsNullOrWhiteSpace(user?.AvatarUrl) || !string.IsNullOrWhiteSpace(user?.ProfileImageUrl)).Count == 0,
             Subjects = profile.Subjects.Select(s => s.Subject).ToList(),
             Levels = profile.Levels.Select(l => l.Level).ToList(),
             Specialties = profile.Specialties.Select(s => s.Label).ToList(),
@@ -774,7 +875,7 @@ public class TutorProfileService : ITutorProfileService
             if (!present)
             {
                 score -= weight;
-                missing.Add(new TutorProfileMissingItemDto { Field = field, Label = label });
+                missing.Add(new TutorProfileMissingItemDto { Field = field, Label = label, Required = MinimumFields.Contains(field) });
             }
         }
 
@@ -792,5 +893,19 @@ public class TutorProfileService : ITutorProfileService
         Check(!string.IsNullOrWhiteSpace(profile.VideoUrl), 5, "video", "Vidéo d'introduction");
 
         return new TutorProfileCompletionDto { Score = Math.Max(0, score), MissingItems = missing };
+    }
+}
+
+/// <summary>Refus d'une règle du profil répétiteur, avec un code stable pour les clients.</summary>
+public sealed class TutorProfileRuleException : InvalidOperationException
+{
+    public string Code { get; }
+    public List<TutorProfileMissingItemDto>? Missing { get; }
+
+    public TutorProfileRuleException(string code, string message, List<TutorProfileMissingItemDto>? missing = null)
+        : base(message)
+    {
+        Code = code;
+        Missing = missing;
     }
 }

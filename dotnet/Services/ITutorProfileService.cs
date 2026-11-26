@@ -11,6 +11,7 @@ public interface ITutorProfileService
     Task<TutorProfileDto> UpdateAsync(int userId, UpdateTutorProfileRequestDto request);
     Task<TutorProfileDto> UpdateAvailabilityAsync(int userId, List<TutorAvailabilitySlotDto> slots);
     Task<TutorProfileDto> ActivateAsync(int userId);
+    Task<TutorProfileDto> DeactivateAsync(int userId);
     Task<TutorProfileDto> SetVacationAsync(int userId, bool isOnVacation);
     Task<TutorVerificationDocumentDto> SubmitVerificationDocumentAsync(int userId, string documentUrl);
     Task<TutorProfileCompletionDto> GetCompletionAsync(int userId);

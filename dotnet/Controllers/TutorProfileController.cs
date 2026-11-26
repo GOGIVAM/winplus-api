@@ -151,6 +151,10 @@ public class TutorProfileController : ControllerBase
         {
             return Ok(await _service.UpdateAsync(User.GetUserId(), request));
         }
+        catch (TutorProfileRuleException ex)
+        {
+            return RuleRefusal(ex);
+        }
         catch (InvalidOperationException ex)
         {
             return BadRequest(new { message = ex.Message });
@@ -188,11 +192,24 @@ public class TutorProfileController : ControllerBase
         {
             return Ok(await _service.ActivateAsync(User.GetUserId()));
         }
+        catch (TutorProfileRuleException ex)
+        {
+            return RuleRefusal(ex);
+        }
         catch (InvalidOperationException ex)
         {
             return BadRequest(new { message = ex.Message });
         }
     }
+
+    /// <summary>Désactive le profil : retiré de la recherche et des fiches publiques, réactivable par me/activate.
+    /// Les réservations déjà prises sont maintenues.</summary>
+    [HttpPost("me/deactivate")]
+    public async Task<ActionResult<TutorProfileDto>> Deactivate()
+        => Ok(await _service.DeactivateAsync(User.GetUserId()));
+
+    private static ObjectResult RuleRefusal(TutorProfileRuleException ex) =>
+        new(new { success = false, code = ex.Code, error = ex.Message, message = ex.Message, missing = ex.Missing }) { StatusCode = 400 };
 
     /// <summary>Statut "En vacances" (US-PRO-09) : true = suspend les réservations sans dépublier le profil.</summary>
     [HttpPost("me/vacation")]
