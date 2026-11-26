@@ -89,6 +89,9 @@ public class InstitutionStudentsController : ControllerBase
     {
         try
         {
+            if (!User.HasRole("institution") && !User.IsAdmin())
+                return NoContent();   // Réservé au compte établissement : même état vide qu'un compte non rattaché.
+
             var userId = User.GetUserId();
             var institutionId = await _db.Users
                 .Where(u => u.Id == userId)

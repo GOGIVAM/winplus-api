@@ -117,9 +117,9 @@ public class ChangeEmailRequest
     [EmailAddress]
     public string NewEmail { get; set; }
     
-    [Required]
-    [StringLength(100, MinimumLength = 6)]
-    public string Password { get; set; } // Password confirmation for security
+    /// <summary>Mot de passe actuel, exigé sauf pour un compte sans mot de passe (connexion Google).</summary>
+    [StringLength(200)]
+    public string? Password { get; set; }
 }
 
 /// <summary>

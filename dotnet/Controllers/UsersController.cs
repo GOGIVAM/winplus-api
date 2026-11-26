@@ -78,6 +78,7 @@ public class UsersController : ControllerBase
                 Email = user.Email,
                 FirstName = user.FirstName,
                 LastName = user.LastName,
+                Username = user.Username,
                 Phone = user.Phone,
                 Bio = user.Bio,
                 Level = user.Level,
@@ -312,8 +313,20 @@ public class UsersController : ControllerBase
                     Check(!string.IsNullOrWhiteSpace(user.AvatarUrl), 15, "avatar", "Photo de profil");
                     break;
 
+                case "institution":
+                    var inst = user.InstitutionId == null ? null : await _db.Institutions.AsNoTracking()
+                        .FirstOrDefaultAsync(i => i.Id == user.InstitutionId && !i.IsDeleted);
+                    Check(inst != null, 30, "institution", "Fiche de l'établissement");
+                    Check(!string.IsNullOrWhiteSpace(inst?.City), 15, "city", "Ville");
+                    Check(!string.IsNullOrWhiteSpace(inst?.Phone ?? user.Phone), 15, "phone", "Numéro de téléphone");
+                    Check(!string.IsNullOrWhiteSpace(inst?.Type), 10, "institutionType", "Type d'établissement");
+                    Check(!string.IsNullOrWhiteSpace(inst?.Cycles), 10, "cycles", "Cycles enseignés");
+                    Check(!string.IsNullOrWhiteSpace(inst?.Subsystem), 10, "subsystem", "Sous-système");
+                    Check(!string.IsNullOrWhiteSpace(user.AvatarUrl), 10, "logo", "Logo");
+                    break;
+
                 default:
-                    // Rôle sans profil applicatif dédié (admin, institution) :
+                    // Rôle sans profil applicatif dédié (admin) :
                     // réponse propre plutôt qu'une erreur, comme l'exige le
                     // cas limite du Module 15.
                     return Ok(new ProfileCompletionDto { Score = 100, MissingItems = new() });
@@ -697,6 +710,19 @@ public class UsersController : ControllerBase
             var user = await _userService.GetUserByIdAsync(userId);
             if (user == null) return NotFound(new { error = "User not found" });
 
+            // Confirmation par le mot de passe actuel. Un compte créé avec Google n'a pas de mot de passe :
+            // la session suffit.
+            if (!string.IsNullOrEmpty(user.PasswordHash))
+            {
+                if (string.IsNullOrEmpty(request.Password))
+                    return BadRequest(new { success = false, code = "mot_de_passe_requis", error = "Saisissez votre mot de passe actuel pour changer d'adresse e-mail.", message = "Saisissez votre mot de passe actuel pour changer d'adresse e-mail." });
+                bool ok;
+                try { ok = BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash); }
+                catch (BCrypt.Net.SaltParseException) { ok = false; }
+                if (!ok)
+                    return BadRequest(new { success = false, code = "mot_de_passe_incorrect", error = "Mot de passe incorrect.", message = "Mot de passe incorrect." });
+            }
+
             var existing = await _userService.GetUserByEmailAsync(request.NewEmail);
             if (existing != null && existing.Id != userId)
                 return BadRequest(new { error = "Email already in use" });
@@ -878,8 +904,10 @@ public class UsersController : ControllerBase
     {
         try
         {
+            // L'identifiant vient du jeton : celui du corps est ignoré (les clients ne l'envoyaient pas
+            // toujours, ce qui donnait un 403).
             var userId = User.GetUserId();
-            if (settings.UserId != userId && !User.IsAdmin()) return Forbid();
+            settings.UserId = userId;
 
             var updated = await _settingsService.SaveNotificationSettingsAsync(userId, settings);
             return Ok(updated);
@@ -914,7 +942,7 @@ public class UsersController : ControllerBase
         try
         {
             var userId = User.GetUserId();
-            if (settings.UserId != userId && !User.IsAdmin()) return Forbid();
+            settings.UserId = userId;
 
             var updated = await _settingsService.SavePrivacySettingsAsync(userId, settings);
             return Ok(updated);
