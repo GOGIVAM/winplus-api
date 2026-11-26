@@ -292,6 +292,8 @@ public class QuizService : IQuizService
             AssignmentId = assignment?.Id,
             UserAnswersJson = JsonSerializer.Serialize(request.Answers),
             Score = score,
+            // Calculé mais jamais enregistré avant le 27/11/2026 : le parent voyait « 0/10 » à côté de 50 %.
+            CorrectAnswers = correctAnswers,
             TimeSpentSeconds = timeSpentSeconds,
             CompletedAt = DateTime.UtcNow,
             Passed = score >= (decimal)PASSING_SCORE,

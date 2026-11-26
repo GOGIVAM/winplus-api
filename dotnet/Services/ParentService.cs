@@ -53,14 +53,15 @@ public class ParentService : IParentService
             var enrollmentCount = enrollments.Count;
             var completionRate = enrollmentCount > 0 ? 
                 (enrollments.Count(e => e.IsCompleted) / (decimal)enrollmentCount * 100) : 0;
-            var averageScore = histories.Any() ? 
-                histories.Average(h => h.Score ?? 0) : 0;
+            // Moyenne des seules activités notées ; aucune : null (champ omis), pas 0.
+            var scored = histories.Where(h => h.Score != null).ToList();
+            decimal? averageScore = scored.Count > 0 ? scored.Average(h => (decimal)h.Score!.Value) : null;
             
             return new
             {
                 enrollmentCount,
                 completionRate = Math.Round(completionRate, 2),
-                averageScore = Math.Round(averageScore, 2)
+                averageScore = averageScore.HasValue ? Math.Round(averageScore.Value, 2) : (decimal?)null
             };
         }
         catch (Exception ex)

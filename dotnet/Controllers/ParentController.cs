@@ -67,7 +67,7 @@ public class ParentController : ControllerBase
 
             var avgScore = await _db.QuizAttempts
                 .Where(a => a.UserId == childId && a.CompletedAt >= now.AddDays(-30))
-                .AverageAsync(a => (double?)a.Score) ?? 0;
+                .AverageAsync(a => (double?)a.Score); // null sans quiz : champ omis, pas un 0 trompeur
 
             // Conversations WinAI actives cette semaine (table partagée avec le
             // chatbot Python, voir Conversation.cs)  remplace le 0 codé en dur
@@ -97,7 +97,7 @@ public class ParentController : ControllerBase
                 downloadsThisWeek,
                 quizzesThisWeek,
                 // Pourcentage (moyenne des scores de quiz sur 30 jours), pas une note sur 20.
-                averageScore = Math.Round(avgScore, 1),
+                averageScore = avgScore.HasValue ? Math.Round(avgScore.Value, 1) : (double?)null,
                 aiSessionsThisWeek,
                 currentStreak,
                 inactivityDays,
@@ -173,8 +173,11 @@ public class ParentController : ControllerBase
                     {
                         title = lastAttempt.Title,
                         scorePercent = Math.Round(lastAttempt.Score, 0),
-                        correctAnswers = lastAttempt.CorrectAnswers,
-                        totalQuestions = lastAttempt.QuestionCount,
+                        // Bonnes réponses / questions seulement si elles concordent avec le score : les tentatives
+                        // d'avant le 27/11/2026 n'enregistraient pas CorrectAnswers (0), et QuestionCount est le
+                        // nombre prévu du quiz, pas toujours celui des questions notées. Sinon null (champ omis).
+                        correctAnswers = CountsMatch(lastAttempt.CorrectAnswers, lastAttempt.QuestionCount, lastAttempt.Score) ? lastAttempt.CorrectAnswers : (int?)null,
+                        totalQuestions = CountsMatch(lastAttempt.CorrectAnswers, lastAttempt.QuestionCount, lastAttempt.Score) ? lastAttempt.QuestionCount : (int?)null,
                     },
                 },
                 success = true,
@@ -186,6 +189,9 @@ public class ParentController : ControllerBase
             return StatusCode(500, new { success = false, error = "Internal server error" });
         }
     }
+
+    private static bool CountsMatch(int correct, int total, decimal scorePercent) =>
+        total > 0 && correct >= 0 && correct <= total && Math.Abs(correct * 100m / total - scorePercent) <= 1m;
 
     /// <summary>
     /// Récupère les activités récentes de l'enfant
