@@ -268,6 +268,8 @@ SYNTHESIS_KINDS = {
         "Quatre courts paragraphes, sans titre ni liste : ce qui a été fait, ce qui progresse, le point "
         "d'attention s'il y en a un, puis une suggestion concrète et réaliste pour la semaine qui vient. "
         "Vouvoie le parent, appelle l'élève par son prénom, ton chaleureux et factuel, 120 à 180 mots. "
+        "Tu ne connais pas le genre de l'élève : ne le déduis jamais du prénom, n'emploie ni « il » ni « elle » "
+        "ni accord genré pour l'élève, répète le prénom ou tourne la phrase autrement (« votre enfant »). "
         "Si les faits montrent peu ou pas d'activité, dis-le simplement et propose comment relancer.",
         "Bilan de la semaine de {name}",
     ),
