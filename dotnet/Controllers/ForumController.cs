@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using Backend.Models.DTOs;
 using Backend.Services;
 using Backend.Extensions;
+using Backend.Utils;
 
 namespace Backend.Controllers;
 
@@ -150,6 +151,7 @@ public class ForumController : ControllerBase
         if (PostingDisabled() is { } disabled) return disabled;
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
+        if (ContentModeration.Check(request.Title, request.Content) is { } refus) return ContentModeration.ToResult(refus);
 
         try
         {
@@ -201,6 +203,7 @@ public class ForumController : ControllerBase
         if (PostingDisabled() is { } disabled) return disabled;
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
+        if (ContentModeration.Check(request.Content) is { } refus) return ContentModeration.ToResult(refus);
 
         try
         {

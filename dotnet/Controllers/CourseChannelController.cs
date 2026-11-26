@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Extensions;
+using Backend.Utils;
 using Backend.Models.Entities;
 using Backend.Services;
 
@@ -95,6 +96,7 @@ public class CourseChannelController : ControllerBase
         var course = await GetAccessibleCourseAsync(courseId, me);
         if (course == null) return Forbid();
         if (string.IsNullOrWhiteSpace(req.Content)) return BadRequest(new { message = "Message vide." });
+        if (ContentModeration.Check(req.Content) is { } refus) return ContentModeration.ToResult(refus);
 
         var msg = new CourseChannelMessage { CourseId = courseId, SenderUserId = me, Content = req.Content };
         _db.CourseChannelMessages.Add(msg);

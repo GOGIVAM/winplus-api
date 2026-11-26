@@ -412,6 +412,8 @@ public class MessagesController : ControllerBase
             if (!await AreLinkedAsync(me, req.ParticipantId))
                 return StatusCode(403, new { error = "Vous ne pouvez envoyer un message qu'à vos contacts liés." });
 
+            if (ContentModeration.Check(req.FirstMessage) is { } refus) return ContentModeration.ToResult(refus);
+
             var msg = new DirectMessage
             {
                 FromUserId = me,
@@ -547,6 +549,8 @@ public class MessagesController : ControllerBase
 
             if (!await AreLinkedAsync(me, participantId))
                 return StatusCode(403, new { error = "Vous ne pouvez envoyer un message qu'à vos contacts liés." });
+
+            if (ContentModeration.Check(req.Content) is { } refus) return ContentModeration.ToResult(refus);
 
             if (!string.IsNullOrWhiteSpace(req.Content) && await IsMessageBlockedAsync(req.Content, me))
                 return UnprocessableEntity(new { error = "Votre message contient un contenu inapproprié et n'a pas pu être envoyé." });
@@ -819,6 +823,7 @@ public class MessagesController : ControllerBase
             return BadRequest(new { error = "Limite de 20 modèles atteinte. Supprime-en un pour en ajouter un nouveau." });
         if (string.IsNullOrWhiteSpace(req.Name) || string.IsNullOrWhiteSpace(req.Text))
             return BadRequest(new { error = "Nom et texte requis." });
+        if (ContentModeration.Check(req.Name, req.Text) is { } refus) return ContentModeration.ToResult(refus);
 
         var template = new MessageTemplate { UserId = me, Name = req.Name.Trim(), Text = req.Text.Trim() };
         _db.MessageTemplates.Add(template);
@@ -833,6 +838,7 @@ public class MessagesController : ControllerBase
         var me = User.GetUserId();
         var template = await _db.MessageTemplates.FirstOrDefaultAsync(t => t.Id == id && t.UserId == me);
         if (template == null) return NotFound();
+        if (ContentModeration.Check(req.Name, req.Text) is { } refus) return ContentModeration.ToResult(refus);
         template.Name = req.Name.Trim();
         template.Text = req.Text.Trim();
         await _db.SaveChangesAsync();

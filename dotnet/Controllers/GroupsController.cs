@@ -217,6 +217,7 @@ public class GroupsController : ControllerBase
     {
         var me = User.GetUserId();
         if (!await IsMemberAsync(id, me)) return StatusCode(403, new { error = "Tu ne fais pas partie de ce groupe." });
+        if (ContentModeration.Check(req.Content) is { } refus) return ContentModeration.ToResult(refus);
 
         var group = await _db.ChatGroups.FindAsync(id);
         if (group == null) return NotFound();
