@@ -341,7 +341,11 @@ EXAM_LABELS = {"interrogation": "Interrogation écrite", "devoir": "Devoir surve
 # Budget d'un exercice : le modèle raisonne avant d'écrire (8 000 jetons ne donnaient que 4 300 caractères
 # pour une épreuve entière, en 40 s). Un appel par exercice, en parallèle, reste sous le délai de 60 s du .NET.
 EXERCISE_TOKENS = 4000
-RETRY_IF_FASTER_THAN = 22.0
+PLAN_TOKENS = 1500
+# Le .NET coupe à 60 s : un second essai d'exercice n'est lancé que s'il peut finir avant.
+EXAM_DEADLINE = 52.0
+LETTERS = ["ABC", "EFG", "MNP", "RST", "IJK", "UVW"]
+_POINTS_IN_TITLE = re.compile(r"\s*[\(\[–—-]?\s*\d+(?:[.,]\d+)?\s*(?:pts?|points?)\s*[\)\]]?\s*$", re.IGNORECASE)
 
 _TAG = re.compile(r"^\s*\**\s*(TITRE|CONTEXTE|QUESTION|[ÉE]NONC[ÉE]|R[ÉE]PONSE|BAR[ÈE]ME)\s*\**\s*:\s*(.*)$", re.IGNORECASE)
 _TAG_KEYS = {"TITRE": "title", "CONTEXTE": "context", "ENONCE": "statement", "REPONSE": "answer", "BAREME": "scoring_guide"}
@@ -404,6 +408,16 @@ def _exercise_role(k: int, n: int) -> str:
     return f"l'exercice {k + 1} : une application de difficulté moyenne, sur une autre partie du programme que le premier"
 
 
+def _parse_plan(raw: str, n: int) -> List[str]:
+    """Plan de l'épreuve : une ligne « k. partie du chapitre : type d'exercice » par exercice."""
+    lines = []
+    for line in (raw or "").replace("\r", "").split("\n"):
+        m = re.match(r"^\s*\**\s*(\d+)\s*[.)\-:]\s*(.+?)\s*$", line)
+        if m and m.group(2).strip("* "):
+            lines.append(m.group(2).strip("* ")[:400])
+    return lines[:n] if len(lines) >= n else []
+
+
 @winai_atelier_router.post("/teacher/epreuve/generate-content", tags=["winai-atelier"])
 async def generate_epreuve(body: EpreuveRequest,
                            current_user: UserTokenData = Depends(require_role("teacher", "admin"))):
@@ -415,14 +429,41 @@ async def generate_epreuve(body: EpreuveRequest,
     subject_lines = _subject_lines(body).replace("Niveau scolaire de l'élève", "Classe")
     n, targets = body.exercises, _exercise_targets(body.exercises, body.total_points)
     client = get_deepseek_client()
+    started = time.monotonic()
+
+    # Plan commun : chaque exercice reçoit une partie distincte du chapitre, sinon les appels parallèles,
+    # qui ne se voient pas, écrivent le même exercice (essai réel : deux fois le même triangle 6-8-10).
+    plan: List[str] = []
+    if n > 1:
+        plan_prompt = (
+            f"Tu prépares {kind} pour des enseignants camerounais (programmes MINESEC).\n{subject_lines}\n{extra}"
+            f"Découpe le contenu à évaluer en {n} exercices qui portent sur des parties ou compétences DIFFÉRENTES, "
+            "du plus simple au plus exigeant ; le dernier est une situation concrète de la vie au Cameroun.\n"
+            f"{block}\n\nRéponds UNIQUEMENT par {n} lignes numérotées « 1. partie évaluée : type d'exercice », sans "
+            f"autre texte.{language_directive()}"
+        )
+        try:
+            raw_plan = (await asyncio.to_thread(client.chat, messages=[{"role": "user", "content": plan_prompt}],
+                                                max_tokens=PLAN_TOKENS, temperature=0.4)).get("content", "")
+            plan = _parse_plan(raw_plan, n)
+            if not plan:
+                logger.warning(f"[epreuve] plan illisible : {raw_plan[:200]!r}")
+        except Exception as e:
+            logger.warning(f"[epreuve] plan impossible : {e}")
 
     def prompt_for(k: int) -> str:
+        focus = f"Cet exercice porte UNIQUEMENT sur : {plan[k]}.\n" if plan else ""
+        others = ("Les autres exercices portent sur : " + " ; ".join(p for i, p in enumerate(plan) if i != k)
+                  + ". N'y empiète pas.\n") if plan else ""
         return (
             "Tu es WinAI, concepteur d'épreuves pour des enseignants camerounais (programmes officiels MINESEC).\n"
             f"Tu rédiges l'exercice {k + 1} sur {n} de {kind}, avec son corrigé et son barème.\n"
             f"{subject_lines}\n"
             f"Durée totale de l'épreuve : {body.duration_minutes} minutes pour {n} exercice(s).\n"
             f"Cet exercice est {_exercise_role(k, n)}. Il vaut exactement {targets[k]:g} points.\n"
+            f"{focus}{others}"
+            "Données originales (pas le triangle 3-4-5 ni ses multiples) ; nomme les points avec les lettres "
+            f"{LETTERS[k % len(LETTERS)]}… pour ne pas reprendre les figures des autres exercices.\n"
             f"{extra}"
             "Exigences : niveau exact de la classe, questions numérotées et progressives, faisable dans le temps ; "
             "pour chaque question, la réponse attendue complète (démarche et résultat) et le barème par étape ; "
@@ -437,30 +478,38 @@ async def generate_epreuve(body: EpreuveRequest,
             "RÉPONSE: ...\n"
             "BARÈME: ...\n"
             f"QUESTION: {k + 1}.b | 3\n"
-            "(et ainsi de suite ; le nombre après | est le nombre de points de la question)"
+            "(et ainsi de suite ; le nombre après | est le nombre de points de la question).\n"
+            f"Les nombres après | doivent totaliser EXACTEMENT {targets[k]:g} points, et le BARÈME de chaque question "
+            "détaille exactement ses points : vérifie l'addition avant de répondre. Ne mets pas les points dans le TITRE."
             f"{language_directive()}"
         )
 
     def one(k: int) -> Optional[dict]:
-        started = time.monotonic()
+        best: Optional[dict] = None
         for attempt in (1, 2):
-            raw = ""
+            raw, t0 = "", time.monotonic()
             try:
                 raw = client.chat(messages=[{"role": "user", "content": prompt_for(k)}],
                                   max_tokens=EXERCISE_TOKENS, temperature=0.4).get("content", "")
                 ex = _parse_exercise(raw)
                 if not ex:
                     raise ValueError("aucune question exploitable")
+                ex["title"] = _POINTS_IN_TITLE.sub("", ex["title"]).strip() or f"Exercice {k + 1}"
+                best = ex
                 pts = sum(q["points"] for q in ex["questions"])
-                for q in ex["questions"]:  # exercice ramené à ses points visés
-                    q["points"] = q["points"] * targets[k] / pts if pts > 0 else targets[k] / len(ex["questions"])
-                ex["title"] = ex["title"] or f"Exercice {k + 1}"
-                return ex
+                if abs(pts - targets[k]) < 0.01:
+                    break  # barème respecté : les points et le détail du barème concordent
+                raise ValueError(f"barème à {pts:g} points au lieu de {targets[k]:g}")
             except Exception as e:
-                logger.warning(f"[epreuve] exercice {k + 1}, essai {attempt} échoué : {e} ; brut : {raw[:200]!r}")
-                if time.monotonic() - started > RETRY_IF_FASTER_THAN:
+                logger.warning(f"[epreuve] exercice {k + 1}, essai {attempt} : {e} ; brut : {raw[:200]!r}")
+                if time.monotonic() - started + (time.monotonic() - t0) > EXAM_DEADLINE:
                     break
-        return None
+        if best:  # dernier recours : barème ramené aux points visés
+            pts = sum(q["points"] for q in best["questions"])
+            if abs(pts - targets[k]) >= 0.01:
+                for q in best["questions"]:
+                    q["points"] = q["points"] * targets[k] / pts if pts > 0 else targets[k] / len(best["questions"])
+        return best
 
     results = await asyncio.gather(*(asyncio.to_thread(one, k) for k in range(n)))
     exercises = _clean_exam({"exercises": [ex for ex in results if ex]}, body.total_points)

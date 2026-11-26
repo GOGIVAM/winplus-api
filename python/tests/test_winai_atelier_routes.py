@@ -215,8 +215,12 @@ def test_exam_is_reserved_to_teachers(env, headers_for):
     assert env.post(URL_EXAM, json={**body, "total_points": 500}, headers=headers_for(7, "teacher")).status_code == 422
 
 
-def test_exam_one_call_per_exercise_and_exact_total(env, headers_for):
-    fake = env.use(TAGGED)
+PLAN = "1. Calcul de longueurs : application directe\n2. Rapports trigonométriques : calculs\n3. Hauteur d'un poteau à Douala : problème"
+
+
+def test_exam_plans_distinct_exercises_retries_a_wrong_scoring_and_keeps_an_exact_total(env, headers_for):
+    # Plan, puis chaque exercice : TAGGED totalise 4 points, jamais la cible -> second essai, puis barème ramené.
+    fake = env.use(PLAN, TAGGED)
     r = env.post(URL_EXAM, json={"user_id": 7, "subject": "Maths", "topic": "Pythagore", "level": "3e",
                                  "exam_type": "composition", "duration_minutes": 90, "total_points": 20, "exercises": 3},
                  headers=headers_for(7, "teacher"))
@@ -224,14 +228,32 @@ def test_exam_one_call_per_exercise_and_exact_total(env, headers_for):
     data = r.json()
     assert data["total_points"] == 20 and data["duration_minutes"] == 90 and data["exam_type"] == "composition"
     assert data["title"] == "Composition de Maths (3e) : Pythagore"
-    assert len(fake.calls) == 3 and len(data["exercises"]) == 3
+    assert len(fake.calls) == 1 + 3 * 2 and len(data["exercises"]) == 3
     assert [e["points"] for e in data["exercises"]] == [4.5, 6.5, 9.0]
     assert sum(q["points"] for e in data["exercises"] for q in e["questions"]) == 20
     q = data["exercises"][0]["questions"][0]
     assert q["scoringGuide"] == "théorème cité 0,5 ; résultat 0,5" and q["answer"].startswith("$BC^2")
-    prompts = sorted(c["prompt"] for c in fake.calls)
+    assert "Découpe le contenu à évaluer en 3 exercices" in fake.calls[0]["prompt"]
+    prompts = [c["prompt"] for c in fake.calls[1:]]
     assert all("composition trimestrielle" in p and "Classe : 3e" in p and "90 minutes" in p for p in prompts)
-    assert any("dernier exercice" in p and "9 points" in p for p in prompts)
+    assert any("UNIQUEMENT sur : Hauteur d'un poteau à Douala : problème" in p and "9 points" in p
+               and "lettres MNP" in p and "N'y empiète pas" in p for p in prompts)
+
+
+def test_exam_keeps_the_model_scoring_when_it_matches_and_strips_points_from_titles(env, headers_for):
+    exact = (TAGGED.replace("TITRE: Exercice 1 : Pythagore", "TITRE: Exercice 1 : Pythagore (5 points)")
+             .replace("QUESTION: 1.a | 1", "QUESTION: 1.a | 2"))
+    fake = env.use(exact)
+    r = env.post(URL_EXAM, json={"user_id": 7, "subject": "Maths", "total_points": 5, "exercises": 1},
+                 headers=headers_for(7, "teacher"))
+    assert r.status_code == 200 and len(fake.calls) == 1, "un exercice seul : ni plan ni second essai"
+    ex = r.json()["exercises"][0]
+    assert ex["title"] == "Exercice 1 : Pythagore" and [q["points"] for q in ex["questions"]] == [2, 3]
+
+
+def test_plan_needs_one_line_per_exercise():
+    assert wa._parse_plan("Voici :\n1) Pythagore\n**2.** Trigonométrie\n3 - Problème", 3) == ["Pythagore", "Trigonométrie", "Problème"]
+    assert wa._parse_plan("1. seul", 2) == []
 
 
 def test_exam_rounding_gap_and_missing_points():
