@@ -236,6 +236,12 @@ public class TutorProfileController : ControllerBase
         }
     }
 
+    /// <summary>Référentiel commun des matières et des niveaux du répétiteur (site et mobile).</summary>
+    [HttpGet("referential")]
+    [AllowAnonymous]
+    [ResponseCache(Duration = 3600)]
+    public IActionResult GetReferential() => Ok(new { success = true, data = TutorReferential.View() });
+
     /// <summary>Fiche publique d'un répétiteur (US-10, côté élève)  404 si non actif.</summary>
     [HttpGet("{userId:int}")]
     [AllowAnonymous]

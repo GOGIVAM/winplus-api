@@ -207,8 +207,9 @@ public class TutorProfileService : ITutorProfileService
 
         if (request.OnboardingStep.HasValue) profile.OnboardingStep = Math.Clamp(request.OnboardingStep.Value, 0, 5);
 
-        if (request.Subjects != null) ReplaceCollection(profile.Subjects, request.Subjects, s => new TutorSubject { TutorProfileId = profile.Id, Subject = Truncate(s, 100) });
-        if (request.Levels != null) ReplaceCollection(profile.Levels, request.Levels, l => new TutorLevel { TutorProfileId = profile.Id, Level = Truncate(l, 100) });
+        // Libellés ramenés au référentiel commun (TutorReferential) : site et mobile enregistrent la même valeur.
+        if (request.Subjects != null) ReplaceCollection(profile.Subjects, request.Subjects.Select(TutorReferential.Canonical).ToList(), s => new TutorSubject { TutorProfileId = profile.Id, Subject = Truncate(s, 100) });
+        if (request.Levels != null) ReplaceCollection(profile.Levels, request.Levels.Select(TutorReferential.Canonical).ToList(), l => new TutorLevel { TutorProfileId = profile.Id, Level = Truncate(l, 100) });
         if (request.Specialties != null) ReplaceCollection(profile.Specialties, request.Specialties, s => new TutorSpecialty { TutorProfileId = profile.Id, Label = Truncate(s, 100) });
 
         if (request.InterventionZones != null)
