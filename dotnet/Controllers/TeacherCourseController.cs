@@ -746,9 +746,13 @@ public class TeacherCourseController : ControllerBase
             if (await OwnCourse(id, teacherId) == null) return NotFound(new { error = "Formation introuvable" });
 
             var enrolledCount = await _db.CourseEnrollments.CountAsync(e => e.CourseId == id && e.IsActive);
+            // Ordre du programme : chapitre puis leçon (Position recommence à 1 dans chaque chapitre ; trié sur
+            // Position seule, le suivi mélangeait les chapitres et « là où les élèves décrochent » comparait deux
+            // leçons qui ne se suivent pas).
             var lessons = await _db.CourseLessons.AsNoTracking()
+                .Include(l => l.Section)
                 .Where(l => l.CourseId == id)
-                .OrderBy(l => l.Position)
+                .OrderBy(l => l.Section.Position).ThenBy(l => l.SectionId).ThenBy(l => l.Position).ThenBy(l => l.Id)
                 .ToListAsync();
 
             var lessonIds = lessons.Select(l => l.Id).ToList();
@@ -773,6 +777,10 @@ public class TeacherCourseController : ControllerBase
                 {
                     lessonId = l.Id,
                     title = l.Title,
+                    sectionId = l.SectionId,
+                    sectionTitle = l.Section?.Title,
+                    sectionPosition = l.Section?.Position,
+                    position = l.Position,
                     lessonType = l.LessonType,
                     completionRate = enrolledCount == 0 ? 0 : Math.Round(100.0 * (prog?.Completed ?? 0) / enrolledCount, 1),
                     completedCount = prog?.Completed ?? 0,

@@ -117,7 +117,7 @@ public class CourseChannelController : ControllerBase
         {
             var lessons = await _db.CourseLessons
                 .Where(l => l.CourseId == course.Id)
-                .OrderBy(l => l.Position)
+                .OrderBy(l => l.Section.Position).ThenBy(l => l.SectionId).ThenBy(l => l.Position)
                 .Select(l => new { l.Title, l.Description, l.ArticleContent })
                 .ToListAsync();
 
