@@ -243,77 +243,63 @@ public class InstitutionMobileController : ControllerBase
 
     // ── Analytics ─────────────────────────────────────────────────────────────
 
-    /// <summary>GET /api/institution/analytics  KPIs agrégés de l'institution.</summary>
+    /// <summary>
+    /// GET /api/institution/analytics : indicateurs de l'accueil de l'établissement sur 30 jours.
+    /// Recalculé le 27/11/2026 : élèves actifs = au moins une activité (quiz, leçon, révision ou téléchargement),
+    /// et non plus les seuls téléchargements ; averageScore omis sans quiz (« 0/20 » trompeur avant) ;
+    /// activityByDay = élèves actifs chaque jour des 7 derniers jours (avant : téléchargements ÷ 7 sur chaque jour).
+    /// Mêmes élèves pour un compte rattaché à un établissement ou un compte qui gère ses propres classes.
+    /// La vue complète est GET /api/institution/analytics/overview.
+    /// </summary>
     [HttpGet("analytics")]
     public async Task<IActionResult> GetAnalytics()
     {
         try
         {
-            var userId = User.GetUserId();
-            var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
-            var institutionId = user?.InstitutionId;
+            var (_, _, _, studentIds) = await ResolveStudentsAsync();
+            var now = DateTime.UtcNow;
+            var monthStart = now.AddDays(-30);
+            var weekStart = now.Date.AddDays(-6);
 
-            int totalStudents = 0, activeStudents = 0, downloadsThisMonth = 0, quizzesThisMonth = 0;
-            double avgScore = 0;
+            var quizzes = await _db.QuizAttempts.AsNoTracking()
+                .Where(a => studentIds.Contains(a.UserId) && a.CompletedAt >= monthStart)
+                .Select(a => new { a.UserId, a.Score, At = a.CompletedAt }).ToListAsync();
+            var downloads = await _db.DownloadHistories.AsNoTracking()
+                .Where(d => studentIds.Contains(d.UserId) && d.CreatedAt >= monthStart)
+                .Select(d => new { d.UserId, At = d.CreatedAt }).ToListAsync();
+            var lessons = await _db.LessonProgress.AsNoTracking()
+                .Where(x => studentIds.Contains(x.UserId) && x.UpdatedAt >= monthStart)
+                .Select(x => new { x.UserId, At = x.UpdatedAt }).ToListAsync();
+            var study = await _db.StudySessions.AsNoTracking()
+                .Where(x => studentIds.Contains(x.UserId) && x.CreatedAt >= monthStart)
+                .Select(x => new { x.UserId, At = x.CreatedAt }).ToListAsync();
 
-            if (institutionId.HasValue)
-            {
-                var studentIds = await _db.InstitutionStudents
-                    .Where(s => s.InstitutionId == institutionId.Value && s.IsActive)
-                    .Select(s => s.StudentId)
-                    .ToListAsync();
+            var events = quizzes.Select(q => (q.UserId, q.At))
+                .Concat(downloads.Select(d => (d.UserId, d.At)))
+                .Concat(lessons.Select(l => (l.UserId, l.At)))
+                .Concat(study.Select(x => (x.UserId, x.At)))
+                .ToList();
 
-                totalStudents = studentIds.Count;
-                var monthStart = DateTime.UtcNow.AddDays(-30);
-
-                activeStudents = await _db.DownloadHistories
-                    .Where(d => studentIds.Contains(d.UserId) && d.CreatedAt >= monthStart)
-                    .Select(d => d.UserId)
-                    .Distinct()
-                    .CountAsync();
-
-                downloadsThisMonth = await _db.DownloadHistories
-                    .CountAsync(d => studentIds.Contains(d.UserId) && d.CreatedAt >= monthStart);
-
-                quizzesThisMonth = await _db.QuizAttempts
-                    .CountAsync(a => studentIds.Contains(a.UserId) && a.CompletedAt >= monthStart);
-
-                avgScore = await _db.QuizAttempts
-                    .Where(a => studentIds.Contains(a.UserId) && a.CompletedAt >= monthStart)
-                    .AverageAsync(a => (double?)a.Score) ?? 0;
-            }
-            else
-            {
-                // Groupes propres à cet utilisateur institution
-                var groupIds = await _db.StudyGroups
-                    .Where(g => g.OwnerId == userId && g.IsActive)
-                    .Select(g => g.Id)
-                    .ToListAsync();
-                totalStudents = await _db.StudyGroupMembers
-                    .CountAsync(m => groupIds.Contains(m.StudyGroupId) && m.UserId != userId);
-            }
-
-            var today = DateTime.UtcNow.Date;
+            string[] dayNames = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"];
             var activityByDay = new Dictionary<string, int>
             {
-                ["Lun"] = 0, ["Mar"] = 0, ["Mer"] = 0,
-                ["Jeu"] = 0, ["Ven"] = 0, ["Sam"] = 0, ["Dim"] = 0,
+                ["Lun"] = 0, ["Mar"] = 0, ["Mer"] = 0, ["Jeu"] = 0, ["Ven"] = 0, ["Sam"] = 0, ["Dim"] = 0,
             };
-            string[] dayNames = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"];
-            for (int i = 6; i >= 0; i--)
+            for (var i = 6; i >= 0; i--)
             {
-                var d = today.AddDays(-i);
-                var key = dayNames[(int)d.DayOfWeek];
-                activityByDay[key] = downloadsThisMonth / 7;
+                var day = now.Date.AddDays(-i);
+                activityByDay[dayNames[(int)day.DayOfWeek]] = events
+                    .Where(e => e.At >= day && e.At < day.AddDays(1)).Select(e => e.UserId).Distinct().Count();
             }
 
             return Ok(new
             {
-                totalStudents,
-                activeStudents,
-                averageScore = Math.Round(avgScore, 1),
-                downloadsThisMonth,
-                quizzesThisMonth,
+                totalStudents = studentIds.Count,
+                activeStudents = events.Select(e => e.UserId).Distinct().Count(),
+                // Pourcentage de 0 à 100 ; omis (champ absent) quand aucun quiz n'a été fait sur 30 jours.
+                averageScore = quizzes.Count > 0 ? Math.Round((double)quizzes.Average(q => q.Score), 1) : (double?)null,
+                downloadsThisMonth = downloads.Count,
+                quizzesThisMonth = quizzes.Count,
                 activityByDay,
             });
         }
