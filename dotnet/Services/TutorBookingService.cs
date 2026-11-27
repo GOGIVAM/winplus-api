@@ -411,7 +411,7 @@ public class TutorBookingService : ITutorBookingService
             var tutorName = $"{tutorProfile.User?.FirstName} {tutorProfile.User?.LastName}".Trim();
             var result = await _notchPay.InitiatePaymentAsync(
                 e164Phone, price, booking.Id,
-                $"WinPlus  Cours particulier avec {tutorName}", studentEmail, studentName, channel, ReferencePrefix);
+                $"WinPlus · Cours particulier avec {tutorName}", studentEmail, studentName, channel, ReferencePrefix);
 
             booking.NotchpayReference = result.Transaction?.Reference;
             booking.PaymentStatus = MapNotchPayStatus(result.Transaction?.Status) ?? "pending";
@@ -666,7 +666,7 @@ public class TutorBookingService : ITutorBookingService
                     $"The student is disputing the session on {booking.SessionDate:dd/MM/yyyy}. WinPlus support will review the case."),
                 priority: "high", userId: tutorUserId.Value, type: "TutorBooking");
         await _ntfy.PublishAdminAsync("Litige cours particulier",
-            $"Réservation #{booking.Id} contestée par le compte #{studentUserId} (payeur {booking.PayerType ?? "student"} #{booking.PayerUserId ?? booking.StudentUserId})  motif : {reason}", tags: new[] { "warning" });
+            $"Réservation #{booking.Id} contestée par le compte #{studentUserId} (payeur {booking.PayerType ?? "student"} #{booking.PayerUserId ?? booking.StudentUserId}), motif : {reason}", tags: new[] { "warning" });
 
         return MapToDto(booking);
     }

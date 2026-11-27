@@ -560,7 +560,7 @@ public class ChatbotController : ControllerBase
             {
                 _logger.LogWarning(ex, "Extraction de pièce jointe échouée (non bloquant, réponse dégradée)");
             }
-            return $"[Pièce jointe : {name} ({mime}). Extraction indisponible pour le moment  demande à l'élève de recopier le passage utile, ou de joindre une photo de la page.]";
+            return $"[Pièce jointe : {name} ({mime}). Extraction indisponible pour le moment : demande à l'élève de recopier le passage utile, ou de joindre une photo de la page.]";
         }
 
         try
@@ -579,7 +579,7 @@ public class ChatbotController : ControllerBase
         }
         catch (Exception)
         {
-            return $"[Pièce jointe : {name} ({mime})  contenu illisible.]";
+            return $"[Pièce jointe : {name} ({mime}), contenu illisible.]";
         }
     }
 

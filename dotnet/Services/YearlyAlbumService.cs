@@ -195,7 +195,8 @@ public sealed class YearlyAlbumService : IYearlyAlbumService
         else if (quizAttempts.Count < 4)
         {
             var avg = quizAttempts.Average(a => a.Score);
-            progression = $"{childName} a fait {quizAttempts.Count} quiz cette année, avec un score moyen de {avg:F0}%  pas assez de quiz pour dégager une tendance.";
+            // Notes d'élève sur 20 (règle de Georges, 27/11/2026).
+            progression = $"{childName} a fait {quizAttempts.Count} quiz cette année, avec une moyenne de {Sur20(avg)}/20 : pas assez de quiz pour dégager une tendance.";
         }
         else
         {
@@ -204,7 +205,7 @@ public sealed class YearlyAlbumService : IYearlyAlbumService
             var endAvg = quizAttempts.Skip(quizAttempts.Count - quarter).Average(a => a.Score);
             var delta = endAvg - startAvg;
             var trend = delta > 3 ? "progressé" : delta < -3 ? "reculé" : "resté stable";
-            progression = $"{childName} a {trend} sur l'année : score moyen de {startAvg:F0}% en début d'année à {endAvg:F0}% en fin d'année, sur {quizAttempts.Count} quiz au total.";
+            progression = $"{childName} a {trend} sur l'année : moyenne de {Sur20(startAvg)}/20 en début d'année et de {Sur20(endAvg)}/20 en fin d'année, sur {quizAttempts.Count} quiz au total.";
         }
 
         // ── Objectifs atteints vs non atteints (Goals.TargetDate dans la période).
@@ -286,4 +287,8 @@ public sealed class YearlyAlbumService : IYearlyAlbumService
         var diff = day == 0 ? -6 : 1 - day; // lundi = premier jour
         return date.Date.AddDays(diff);
     }
+
+    /// <summary>Pourcentage (0-100) ramené à une note sur 20, une décimale, virgule française.</summary>
+    private static string Sur20(decimal percent) =>
+        (percent / 5m).ToString("0.0", System.Globalization.CultureInfo.GetCultureInfo("fr-FR"));
 }

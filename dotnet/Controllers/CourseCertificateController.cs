@@ -107,7 +107,7 @@ public class CourseCertificateController : ControllerBase
     {
         var userId = User.GetUserId();
         var cert = await _certificates.GetMineAsync(userId, courseId);
-        if (cert == null) return NotFound(new { error = "Aucun certificat pour l'instant  termine la formation à 100%." });
+        if (cert == null) return NotFound(new { error = "Aucun certificat pour l'instant : termine la formation à 100 %." });
 
         return Ok(new
         {

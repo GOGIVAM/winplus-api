@@ -115,7 +115,7 @@ public class TeachingSessionService : ITeachingSessionService
 
             if (enrollment.Student?.Email is { Length: > 0 } email)
             {
-                _ = _email.SendGenericEmailAsync(email, "Session annulée  WinPlus",
+                _ = _email.SendGenericEmailAsync(email, "Session annulée · WinPlus",
                     $"<p>Bonjour,</p><p>La session <strong>{session.Title}</strong> prévue le " +
                     $"{session.StartDate:dd/MM/yyyy à HH:mm} a été annulée par le professeur." +
                     (enrollment.PaymentStatus == "paid" ? " Le remboursement de ta place est en cours." : "") +
@@ -126,7 +126,7 @@ public class TeachingSessionService : ITeachingSessionService
             if (enrollment.PaymentStatus == "paid")
             {
                 enrollment.PaymentStatus = "refunded";
-                await _ntfy.PublishAdminAsync("Remboursement manuel requis  session annulée",
+                await _ntfy.PublishAdminAsync("Remboursement manuel requis : session annulée",
                     $"Session #{session.Id} annulée : rembourser l'élève #{enrollment.StudentId} " +
                     $"({enrollment.PriceChargedXaf} XAF, réf. {enrollment.NotchpayReference}) via NotchPay/MoMo.",
                     tags: new[] { "moneybag" });

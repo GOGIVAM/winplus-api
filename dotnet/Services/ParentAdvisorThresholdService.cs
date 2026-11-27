@@ -89,7 +89,7 @@ public sealed class ParentAdvisorThresholdService : BackgroundService
     {
         ["BaisseScoreSeuil"] = new("Baisse de score observée", "Drop in scores observed"),
         ["DevoirRetardProlonge"] = new("Devoir en retard", "Overdue homework"),
-        ["ExamenImminentSansRevision"] = new("Examen proche  pas de révision récente", "Exam coming up, no recent revision"),
+        ["ExamenImminentSansRevision"] = new("Examen proche, pas de révision récente", "Exam coming up, no recent revision"),
     };
 
     /// <returns>false si WinAI n'a pas pu être interrogé (nouvel essai plus tôt).</returns>

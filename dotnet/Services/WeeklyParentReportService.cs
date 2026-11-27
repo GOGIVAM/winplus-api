@@ -359,7 +359,7 @@ public sealed class WeeklyParentReportService : BackgroundService
 
         await emailService.SendGenericEmailAsync(
             parentEmail,
-            $"Rapport hebdomadaire WinPlus  semaine du {cutoff:dd/MM}",
+            $"Rapport hebdomadaire WinPlus · semaine du {cutoff:dd/MM}",
             html,
             NotificationCategory.General
         );
@@ -498,6 +498,6 @@ public sealed class WeeklyParentReportService : BackgroundService
 
     private static string FallbackSynthesis(List<string> summaries)
         => summaries.Any()
-            ? "Vos enfants ont été actifs cette semaine sur WinPlus. Continuez à les encourager  chaque effort compte ! Un message de votre part peut faire toute la différence dans leur motivation."
+            ? "Vos enfants ont été actifs cette semaine sur WinPlus. Continuez à les encourager : chaque effort compte ! Un message de votre part peut faire toute la différence dans leur motivation."
             : "Aucune activité enregistrée cette semaine. Invitez vos enfants à démarrer une session de révision dès aujourd'hui.";
 }

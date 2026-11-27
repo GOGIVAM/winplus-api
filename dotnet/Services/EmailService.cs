@@ -160,7 +160,7 @@ public class EmailService : IEmailService
 
       {Divider()}
 
-      {WarningBox("Didn't request this?", "Your account remains secure  just ignore this email.")}" : $@"
+      {WarningBox("Didn't request this?", "Your account remains secure: just ignore this email.")}" : $@"
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 4px 32px;"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
@@ -329,7 +329,7 @@ public class EmailService : IEmailService
 
       {Divider()}
 
-      {InfoBox("Didn't request this? Ignore this email  your current address stays unchanged.")}" : $@"
+      {InfoBox("Didn't request this? Ignore this email: your current address stays unchanged.")}" : $@"
       <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"">
         <tr><td align=""center"" style=""padding:0 8px 32px;"">
           <p style=""margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.6;color:#4E7280;text-align:center;"">
@@ -350,7 +350,7 @@ public class EmailService : IEmailService
 
       {Divider()}
 
-      {InfoBox("Tu n'as pas fait cette demande&nbsp;? Ignore cet e-mail  ton adresse actuelle reste inchangée.")}";
+      {InfoBox("Tu n'as pas fait cette demande&nbsp;? Ignore cet e-mail : ton adresse actuelle reste inchangée.")}";
 
         var html = Wrapper(
             isEn ? "Email change" : "Changement d'email",

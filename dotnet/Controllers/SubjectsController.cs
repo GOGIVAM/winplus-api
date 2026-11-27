@@ -557,7 +557,7 @@ public class SubjectsController : ControllerBase
                 suggested = new SuggestedContentFieldsDto(),
                 winaiScore = (decimal?)null,
                 winaiJustification = (string?)null,
-                extractionWarning = "WinAI indisponible pour l'instant  remplis le formulaire manuellement.",
+                extractionWarning = "WinAI indisponible pour l'instant : remplis le formulaire manuellement.",
                 platformCommissionRatePreview = previewRate,
             });
         }

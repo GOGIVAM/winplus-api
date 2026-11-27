@@ -83,7 +83,7 @@ public class TutorProfileController : ControllerBase
         if (file == null || file.Length == 0)
             return BadRequest(new { message = "Fichier manquant." });
         if (file.Length > MaxVideoBytes)
-            return BadRequest(new { message = "Vidéo trop volumineuse (25 Mo maximum  environ 1 minute en bonne qualité)." });
+            return BadRequest(new { message = "Vidéo trop volumineuse (25 Mo au maximum, environ 1 minute en bonne qualité)." });
 
         var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
         if (!VideoExtensions.Contains(ext))

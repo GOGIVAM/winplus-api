@@ -244,7 +244,7 @@ public class TeacherClassesController : ControllerBase
 
             var hasStudents = await _db.TeacherClassStudents.AnyAsync(cs => cs.TeacherClassId == id);
             if (hasStudents)
-                return BadRequest(new { success = false, error = "Cette classe contient des élèves  retirez-les d'abord, ou désactivez la classe au lieu de la supprimer." });
+                return BadRequest(new { success = false, error = "Cette classe contient des élèves : retirez-les d'abord, ou désactivez la classe au lieu de la supprimer." });
 
             _db.TeacherClasses.Remove(klass);
             await _db.SaveChangesAsync();
