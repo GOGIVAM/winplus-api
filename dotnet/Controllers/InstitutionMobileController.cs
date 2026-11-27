@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
 using Backend.Extensions;
+using Backend.Services;
 using Backend.Models.Entities;
 
 namespace Backend.Controllers;
@@ -371,83 +372,25 @@ public class InstitutionMobileController : ControllerBase
 
             if (!studentIds.Any()) return Ok(new List<object>());
 
-            // Calcul réel (27/11/2026). Avant : activité lue sur les seuls téléchargements, scores à 0 en dur,
-            // sans classe (« Score : 0/20 » pour tous). Scores en POURCENTAGE de 0 à 100 (moyenne des quiz sur 30 jours).
-            var now = DateTime.UtcNow;
-            var since30 = now.AddDays(-30);
-
-            var lastQuiz = await _db.QuizAttempts.AsNoTracking().Where(a => studentIds.Contains(a.UserId))
-                .GroupBy(a => a.UserId).Select(g => new { g.Key, Last = g.Max(a => a.CompletedAt) }).ToListAsync();
-            var lastStudy = await _db.StudySessions.AsNoTracking().Where(x => studentIds.Contains(x.UserId))
-                .GroupBy(x => x.UserId).Select(g => new { g.Key, Last = g.Max(x => x.CreatedAt) }).ToListAsync();
-            var lastDownload = await _db.DownloadHistories.AsNoTracking().Where(x => studentIds.Contains(x.UserId))
-                .GroupBy(x => x.UserId).Select(g => new { g.Key, Last = g.Max(x => x.CreatedAt) }).ToListAsync();
-            var lastLesson = await _db.LessonProgress.AsNoTracking().Where(x => studentIds.Contains(x.UserId))
-                .GroupBy(x => x.UserId).Select(g => new { g.Key, Last = g.Max(x => x.UpdatedAt) }).ToListAsync();
-            var lastActivity = new Dictionary<int, DateTime>();
-            foreach (var r in lastQuiz.Concat(lastStudy).Concat(lastDownload).Concat(lastLesson))
-                if (!lastActivity.TryGetValue(r.Key, out var cur) || r.Last > cur) lastActivity[r.Key] = r.Last;
-
-            var attempts = await (from a in _db.QuizAttempts.AsNoTracking()
-                                  join q in _db.Quizzes.AsNoTracking() on a.QuizId equals q.Id
-                                  join sub in _db.Subjects.AsNoTracking() on q.SubjectId equals (int?)sub.Id into subs
-                                  from sub in subs.DefaultIfEmpty()
-                                  where studentIds.Contains(a.UserId) && a.CompletedAt >= since30
-                                  select new { a.UserId, a.Score, Subject = sub != null ? sub.Title : null })
-                .ToListAsync();
-            var scoresByUser = attempts.GroupBy(a => a.UserId).ToDictionary(g => g.Key, g => g.ToList());
-
-            var groupNames = await _db.InstitutionStudents.AsNoTracking()
-                .Where(x => studentIds.Contains(x.StudentId) && x.IsActive && x.GroupName != null)
-                .Select(x => new { x.StudentId, x.GroupName })
-                .ToListAsync();
-            var groupByStudent = groupNames.GroupBy(x => x.StudentId).ToDictionary(g => g.Key, g => g.First().GroupName);
-
-            var users = await _db.Users.AsNoTracking()
-                .Where(u => studentIds.Contains(u.Id) && u.IsActive && !u.IsDeleted)
-                .Select(u => new { u.Id, u.FirstName, u.LastName, u.Level, u.CreatedAt })
-                .ToListAsync();
-
-            var rows = users.Select(u =>
+            // Calcul réel (27/11/2026), partagé avec la vue d'ensemble des analyses (Services/InstitutionAnalytics).
+            var me = User.GetUserId();
+            var rows = await InstitutionAnalytics.AtRiskAsync(_db, me, studentIds, 50);
+            var result = rows.Select(r => new
             {
-                var last = lastActivity.TryGetValue(u.Id, out var l) ? l : (DateTime?)null;
-                var inactiveDays = (int)Math.Max(0, (now - (last ?? u.CreatedAt)).TotalDays);
-                var mine = scoresByUser.GetValueOrDefault(u.Id);
-                int? global = mine is { Count: > 0 } ? (int)Math.Round(mine.Average(a => a.Score)) : null;
-                var weak = mine?.Where(a => a.Subject != null).GroupBy(a => a.Subject!)
-                    .Select(g => new { Subject = g.Key, Avg = (int)Math.Round(g.Average(a => a.Score)) })
-                    .OrderBy(x => x.Avg).FirstOrDefault();
-
-                // Risque 0..1 : inactivité (7 jours = 0,5, 21 jours et plus = 1) et faiblesse des résultats.
-                var inactivityRisk = inactiveDays < 7 ? 0 : Math.Min(1.0, 0.5 + (inactiveDays - 7) / 28.0);
-                var scoreRisk = global is int gs && gs < 50 ? Math.Min(1.0, (50 - gs) / 50.0 + 0.4) : 0;
-                var risk = Math.Round(Math.Max(inactivityRisk, scoreRisk), 2);
-                var reasons = new List<string>();
-                if (inactiveDays >= 7) reasons.Add(last == null ? "Aucune activité enregistrée" : $"Aucune activité depuis {inactiveDays} jours");
-                if (global is int g2 && g2 < 50) reasons.Add($"Moyenne des quiz à {g2} % sur 30 jours");
-                return new
-                {
-                    id = u.Id,
-                    firstName = u.FirstName ?? "",
-                    lastName = u.LastName ?? "",
-                    groupName = groupByStudent.GetValueOrDefault(u.Id),
-                    level = u.Level ?? "",
-                    riskScore = risk,
-                    riskReason = string.Join(" ; ", reasons),
-                    weakSubject = weak?.Subject ?? "",
-                    weakScore = weak?.Avg ?? 0,
-                    // Absent (champ omis) quand l'élève n'a fait aucun quiz sur 30 jours : pas un 0 trompeur.
-                    globalScore = global,
-                    hasScores = global != null,
-                    inactiveDays,
-                };
-            })
-            .Where(r => r.riskScore > 0)
-            .OrderByDescending(r => r.riskScore).ThenByDescending(r => r.inactiveDays)
-            .Take(50)
-            .ToList();
-
-            var result = rows;
+                id = r.Id,
+                firstName = r.FirstName,
+                lastName = r.LastName,
+                groupName = r.GroupName,
+                level = r.Level,
+                riskScore = r.RiskScore,
+                riskReason = r.RiskReason,
+                weakSubject = r.WeakSubject,
+                weakScore = r.WeakScore,
+                // Absent (champ omis) quand l'élève n'a fait aucun quiz sur 30 jours : pas un 0 trompeur.
+                globalScore = r.GlobalScore,
+                hasScores = r.GlobalScore != null,
+                inactiveDays = r.InactiveDays,
+            }).ToList();
 
             return Ok(result);
         }
