@@ -765,7 +765,8 @@ public class TutorProfileService : ITutorProfileService
     /// minimum viable pour apparaître dans une recherche utile) pèse la
     /// majorité du score.
     /// </summary>
-    private static TutorProfileCompletionDto ComputeCompletion(TutorProfile profile, bool hasPhoto)
+    /// <summary>Score de complétude du profil (seuil d'activation : 60). Aussi lu par la liste admin des professeurs.</summary>
+    internal static TutorProfileCompletionDto ComputeCompletion(TutorProfile profile, bool hasPhoto)
     {
         var missing = new List<TutorProfileMissingItemDto>();
         var score = 100;

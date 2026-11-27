@@ -695,13 +695,22 @@ public class AdminUsersController : ControllerBase
         [FromQuery] string? q = null,
         [FromQuery] string? status = null,
         [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 100)
+        [FromQuery] int pageSize = 100,
+        [FromQuery] string? catalog = null)
     {
         try
         {
             if (page < 1) page = 1;
             pageSize = Math.Clamp(pageSize, 1, 100);
             var query   = RoleQuery("teacher", status, q);
+            // Visibilité dans le catalogue des répétiteurs : même règle que
+            // /tutor-profile/search (profil activé et pas en pause).
+            query = catalog switch
+            {
+                "visible" => query.Where(u => _db.TutorProfiles.Any(p => p.UserId == u.Id && p.IsActive && !p.IsOnVacation)),
+                "hidden"  => query.Where(u => !_db.TutorProfiles.Any(p => p.UserId == u.Id && p.IsActive && !p.IsOnVacation)),
+                _ => query,
+            };
             var total   = await query.CountAsync();
             var users   = await query.OrderByDescending(u => u.CreatedAt)
                 .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
@@ -733,6 +742,12 @@ public class AdminUsersController : ControllerBase
                 .Select(g => new { g.Key, Count = g.Count() })
                 .ToDictionaryAsync(x => x.Key, x => x.Count);
 
+            var tutorProfiles = await _db.TutorProfiles.AsNoTracking()
+                .Include(p => p.Subjects).Include(p => p.Levels).Include(p => p.Rates).Include(p => p.AvailabilitySlots)
+                .Where(p => ids.Contains(p.UserId))
+                .AsSplitQuery()
+                .ToDictionaryAsync(p => p.UserId);
+
             var subsUserIds = ids;
             var subs = await _db.Subscriptions
                 .Where(s => subsUserIds.Contains(s.UserId) && !s.IsDeleted)
@@ -753,6 +768,12 @@ public class AdminUsersController : ControllerBase
                     _ when sub.EndDate == null || sub.EndDate > now => "active",
                     _ => "expired",
                 });
+                // État du profil répétiteur : none (jamais ouvert), draft (commencé,
+                // pas publié), paused (publié mais en pause), visible (dans le catalogue).
+                tutorProfiles.TryGetValue(u.Id, out var tp);
+                var tutorState = tp == null ? "none" : !tp.IsActive ? "draft" : tp.IsOnVacation ? "paused" : "visible";
+                var tutorScore = tp == null ? 0 : TutorProfileService.ComputeCompletion(tp,
+                    !string.IsNullOrWhiteSpace(u.AvatarUrl) || !string.IsNullOrWhiteSpace(u.ProfileImageUrl)).Score;
                 return new
                 {
                     id               = u.Id,
@@ -770,6 +791,8 @@ public class AdminUsersController : ControllerBase
                     createdAt        = u.CreatedAt,
                     totalRevenue     = earningsMap.GetValueOrDefault(u.Id, 0m),
                     ordersCount      = ordersMap.GetValueOrDefault(u.Id, 0),
+                    tutorProfileState = tutorState,
+                    tutorProfileScore = tutorScore,
                     linkedStudents   = linkedMap.GetValueOrDefault(u.Id, 0),
                     pendingStudents  = pendingMap.GetValueOrDefault(u.Id, 0),
                     totalRequests    = totalRequestsMap.GetValueOrDefault(u.Id, 0),
