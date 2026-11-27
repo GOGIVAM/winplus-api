@@ -78,14 +78,17 @@ public class StudentController : ControllerBase
                 .Select(h => new { h.QuizScore, h.TimeSpentSeconds, h.ActivityType })
                 .ToListAsync();
 
-            var averageScore = histories.Any(h => h.QuizScore.HasValue)
-                ? histories.Where(h => h.QuizScore.HasValue).Average(h => (double)h.QuizScore!.Value)
-                : 0.0;
+            // Moyenne des quiz réellement notés (QuizAttempts, en POURCENTAGE de 0 à 100), toutes dates.
+            // Avant le 27/11/2026 : lue sur LearningHistories.QuizScore, presque jamais rempli, d'où « 0/20 ».
+            // Absente (champ omis) sans aucun quiz noté.
+            var attemptScores = await _db.QuizAttempts.AsNoTracking().Where(a => a.UserId == userId)
+                .Select(a => a.Score).ToListAsync();
+            double? averageScore = attemptScores.Count > 0 ? (double)attemptScores.Average() : null;
 
             var totalTimeSeconds = histories.Sum(h => h.TimeSpentSeconds ?? 0);
 
-            var quizCompleted = histories.Count(h =>
-                h.ActivityType != null && h.ActivityType.ToLower().Contains("quiz"));
+            var quizCompleted = Math.Max(attemptScores.Count, histories.Count(h =>
+                h.ActivityType != null && h.ActivityType.ToLower().Contains("quiz")));
 
             // ── Téléchargements et objectif de la semaine ──────────────────────
             // Avant : jamais calculés ici, donc la carte « Épreuves téléchargées »
@@ -187,7 +190,9 @@ public class StudentController : ControllerBase
             {
                 totalCoursesEnrolled,
                 coursesCompleted,
-                averageScore = Math.Round(averageScore, 2),
+                averageScore = averageScore.HasValue ? Math.Round(averageScore.Value, 2) : (double?)null,
+                // Même moyenne en note sur 20 (décision de Georges : notes d'élève sur 20 partout), prête à afficher.
+                averageScore20 = averageScore.HasValue ? Math.Round(averageScore.Value / 5, 1) : (double?)null,
                 totalTimeSeconds,
                 hoursSpent = Math.Round(totalTimeSeconds / 3600d, 1),
                 quizCompleted,
@@ -460,20 +465,25 @@ public class StudentController : ControllerBase
                 .Select(h => new { h.QuizScore, h.TimeSpentSeconds, h.ActivityType })
                 .ToListAsync();
 
-            var averageScore = histories.Any(h => h.QuizScore.HasValue)
-                ? histories.Where(h => h.QuizScore.HasValue).Average(h => (double)h.QuizScore!.Value)
-                : 0.0;
+            // Moyenne des quiz réellement notés (QuizAttempts, en POURCENTAGE de 0 à 100), toutes dates.
+            // Avant le 27/11/2026 : lue sur LearningHistories.QuizScore, presque jamais rempli, d'où « 0/20 ».
+            // Absente (champ omis) sans aucun quiz noté.
+            var attemptScores = await _db.QuizAttempts.AsNoTracking().Where(a => a.UserId == userId)
+                .Select(a => a.Score).ToListAsync();
+            double? averageScore = attemptScores.Count > 0 ? (double)attemptScores.Average() : null;
 
             var totalTimeSeconds = histories.Sum(h => h.TimeSpentSeconds ?? 0);
 
-            var quizCompleted = histories.Count(h =>
-                h.ActivityType != null && h.ActivityType.ToLower().Contains("quiz"));
+            var quizCompleted = Math.Max(attemptScores.Count, histories.Count(h =>
+                h.ActivityType != null && h.ActivityType.ToLower().Contains("quiz")));
 
             var data = new
             {
                 totalCoursesEnrolled,
                 completedCourses,
-                averageScore = Math.Round(averageScore, 2),
+                averageScore = averageScore.HasValue ? Math.Round(averageScore.Value, 2) : (double?)null,
+                // Même moyenne en note sur 20 (décision de Georges : notes d'élève sur 20 partout), prête à afficher.
+                averageScore20 = averageScore.HasValue ? Math.Round(averageScore.Value / 5, 1) : (double?)null,
                 totalTimeSeconds,
                 quizCompleted
             };
