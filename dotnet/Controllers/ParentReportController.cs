@@ -136,7 +136,8 @@ public class ParentReportController : ControllerBase
                 .Select(u => u.FirstName)
                 .FirstOrDefaultAsync() ?? "Votre enfant";
             var portrait = await Backend.Services.MonthlyPortfolioService.BuildPortraitAsync(
-                _db, childId, childName, DateTime.UtcNow.AddDays(-30), HttpContext.RequestAborted);
+                _db, childId, childName, DateTime.UtcNow.AddDays(-30), HttpContext.RequestAborted,
+                period: "sur les 30 derniers jours", periodLabel: "30 derniers jours");
             report = new Backend.Models.Entities.ParentReport
             {
                 ParentId = parentId,
@@ -149,7 +150,7 @@ public class ParentReportController : ControllerBase
             await _db.SaveChangesAsync();
         }
 
-        string? regularite = null, autonomie = null, curiosite = null;
+        string? regularite = null, autonomie = null, curiosite = null, periode = null;
         try
         {
             var doc = System.Text.Json.JsonDocument.Parse(report.Content);
@@ -157,6 +158,8 @@ public class ParentReportController : ControllerBase
             regularite = root.TryGetProperty("Regularite", out var r1) ? r1.GetString() : null;
             autonomie = root.TryGetProperty("Autonomie", out var r2) ? r2.GetString() : null;
             curiosite = root.TryGetProperty("Curiosite", out var r3) ? r3.GetString() : null;
+            // Période couverte (« octobre 2026 », « 30 derniers jours ») ; absente des portraits d'avant le 27/11/2026.
+            periode = root.TryGetProperty("Periode", out var r4) && r4.ValueKind == System.Text.Json.JsonValueKind.String ? r4.GetString() : null;
         }
         catch (System.Text.Json.JsonException ex)
         {
@@ -169,6 +172,7 @@ public class ParentReportController : ControllerBase
             regularite,
             autonomie,
             curiosite,
+            periode,
             updatedAt = report.CreatedAt,
         });
     }
