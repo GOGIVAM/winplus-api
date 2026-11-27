@@ -60,7 +60,7 @@ public static class InstitutionAnalytics
                               join sub in db.Subjects.AsNoTracking() on q.SubjectId equals (int?)sub.Id into subs
                               from sub in subs.DefaultIfEmpty()
                               where studentIds.Contains(a.UserId) && a.CompletedAt >= since30
-                              select new { a.UserId, a.Score, Subject = sub != null ? sub.Title : null })
+                              select new { a.UserId, a.Score, Subject = sub != null ? (sub.Category ?? sub.Title) : null })
             .ToListAsync(ct);
         var scoresByUser = attempts.GroupBy(a => a.UserId).ToDictionary(g => g.Key, g => g.ToList());
         var groups = await GroupNamesAsync(db, ownerUserId, studentIds, ct);

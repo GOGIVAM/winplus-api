@@ -91,7 +91,7 @@ public class InstitutionAnalyticsController : ControllerBase
                               join sub in _db.Subjects.AsNoTracking() on q.SubjectId equals (int?)sub.Id into subs
                               from sub in subs.DefaultIfEmpty()
                               where ids.Contains(a.UserId) && a.CompletedAt >= prevFrom && a.CompletedAt <= to
-                              select new { a.UserId, a.QuizId, a.Score, a.CompletedAt, Subject = sub != null ? sub.Title : null })
+                              select new { a.UserId, a.QuizId, a.Score, a.CompletedAt, Subject = sub != null ? (sub.Category ?? sub.Title) : null })
             .ToListAsync(ct);
         var cur = attempts.Where(a => a.CompletedAt >= from).ToList();
         var prev = attempts.Where(a => a.CompletedAt < from).ToList();
