@@ -291,10 +291,19 @@ public sealed class WeeklyParentReportService : BackgroundService
                     .CountAsync(a => a.UserId == child.Id && a.CompletedAt >= cutoff, ct);
             }
 
-            var trend = delta > 2 ? "en progression" : delta < -2 ? "en baisse" : "stable";
-            childSummaries.Add(
-                $"{child.FirstName ?? "Votre enfant"} : score moyen {weekAvg:F0}% ({trend}), {quizCount} exercice(s) cette semaine."
-            );
+            // 27/11/2026 : pas de « score moyen 0 % » pour un enfant sans quiz, pas de « en progression » quand la
+            // semaine précédente n'a pas de note (comparée à 0) ; note sur 20 (règle de Georges pour les notes d'élève).
+            var name = child.FirstName ?? "Votre enfant";
+            if (quizCount == 0 && weekAvg <= 0)
+            {
+                childSummaries.Add($"{name} : aucun quiz cette semaine.");
+            }
+            else
+            {
+                var note = (weekAvg / 5).ToString("0.0", System.Globalization.CultureInfo.GetCultureInfo("fr-FR"));
+                var trend = prevAvg <= 0 ? null : delta > 2 ? "en progression" : delta < -2 ? "en baisse" : "stable";
+                childSummaries.Add($"{name} : moyenne de {note}/20{(trend != null ? $" ({trend})" : "")}, {quizCount} quiz cette semaine.");
+            }
 
             // Capsule hebdomadaire (dashboard, pas l'onglet Rapports  voir
             // GenerateAndStoreCapsuleAsync) : générée dans la même passe, par
@@ -323,7 +332,7 @@ public sealed class WeeklyParentReportService : BackgroundService
   </td></tr>
   <tr><td style=""background:#fff;border-radius:20px;padding:40px 36px;"">
     <p style=""margin:0 0 8px;font-family:Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:0.09em;color:#259A8E;text-transform:uppercase;"">Rapport hebdomadaire</p>
-    <h1 style=""margin:0 0 24px;font-family:-apple-system,Arial,sans-serif;font-size:22px;color:#0F2A35;"">Bonjour {System.Net.WebUtility.HtmlEncode(parentFirstName)}  voici la semaine de vos enfants</h1>
+    <h1 style=""margin:0 0 24px;font-family:-apple-system,Arial,sans-serif;font-size:22px;color:#0F2A35;"">Bonjour {System.Net.WebUtility.HtmlEncode(parentFirstName)}, voici la semaine de vos enfants</h1>
     <table width=""100%"" cellpadding=""0"" cellspacing=""0"" border=""0"" style=""margin:0 0 28px;"">
       {childRows}
     </table>

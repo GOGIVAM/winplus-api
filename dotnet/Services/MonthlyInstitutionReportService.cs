@@ -349,7 +349,7 @@ public sealed class MonthlyInstitutionReportService : BackgroundService
     <div class=""kpi-row"">
       <div class=""kpi""><div class=""value"">{totalStudents}</div><div class=""label"">Étudiants inscrits</div></div>
       <div class=""kpi""><div class=""value"">{activeStudents}</div><div class=""label"">Actifs ce mois</div></div>
-      <div class=""kpi""><div class=""value"">{avgScore}%</div><div class=""label"">Score moyen</div></div>
+      <div class=""kpi""><div class=""value"">{(totalQuizzes > 0 ? (avgScore / 5).ToString("0.0", System.Globalization.CultureInfo.GetCultureInfo("fr-FR")) + "/20" : "–")}</div><div class=""label"">Note moyenne</div></div>
       <div class=""kpi""><div class=""value"">{passRate}%</div><div class=""label"">Taux de réussite</div></div>
       <div class=""kpi""><div class=""value"">{engagementRate}%</div><div class=""label"">Engagement</div></div>
       <div class=""kpi""><div class=""value"">{totalQuizzes}</div><div class=""label"">Quiz complétés</div></div>
