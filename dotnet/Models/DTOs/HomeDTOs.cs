@@ -11,6 +11,8 @@ public class HomeStatsDto
     public double SuccessRate { get; set; }
     public int StudentCount { get; set; }
     public int TeacherCount { get; set; }
+    /// <summary>Répétiteurs visibles dans le catalogue (profil activé, pas en pause) : même règle que /tutor-profile/search.</summary>
+    public int TutorCount { get; set; }
     public int ParentCount { get; set; }
     public int CompletedEnrollments { get; set; }
     public int TotalEnrollments { get; set; }

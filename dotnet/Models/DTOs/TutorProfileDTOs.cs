@@ -276,6 +276,8 @@ public class TutorOnboardingStatusDto
     public int OnboardingStep { get; set; }
     public int CompletionScore { get; set; }
     public bool IsActive { get; set; }
+    /// <summary>Profil en pause : il n'apparaît plus dans le catalogue des répétiteurs.</summary>
+    public bool IsOnVacation { get; set; }
     public List<TutorProfileMissingItemDto> MissingItems { get; set; } = new();
 }
 

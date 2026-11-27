@@ -130,6 +130,7 @@ public class TutorProfileService : ITutorProfileService
             OnboardingStep = profile.OnboardingStep,
             CompletionScore = completion.Score,
             IsActive = profile.IsActive,
+            IsOnVacation = profile.IsOnVacation,
             MissingItems = completion.MissingItems,
         };
     }
