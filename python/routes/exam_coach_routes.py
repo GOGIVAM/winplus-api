@@ -174,7 +174,7 @@ async def generate_plan(
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="exam_date invalide  format attendu: YYYY-MM-DD",
+            detail="exam_date invalide : format attendu: YYYY-MM-DD",
         )
 
     days_remaining = (exam_dt - date.today()).days

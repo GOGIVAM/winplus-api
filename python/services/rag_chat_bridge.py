@@ -122,7 +122,7 @@ def _format_context_block(
         subject_ok = citation.subject_id is None or citation.subject_id in accessible_subject_ids
         course_ok = citation.course_id is None or citation.course_id in accessible_course_ids
         visible = subject_ok and course_ok
-        tag = f"[Source citable : {citation.title}]" if visible else "[Source NON citable  accès non détenu par l'utilisateur]"
+        tag = f"[Source citable : {citation.title}]" if visible else "[Source NON citable : accès non détenu par l'utilisateur]"
         excerpt = passage.strip().replace("\n", " ")[:600]
         lines.append(f"{i}. {tag}\n{excerpt}")
     return (

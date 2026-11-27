@@ -111,7 +111,7 @@ def _prepare(data_url_or_base64: str, filename: Optional[str], user_id: int) -> 
             text = f"[Contenu du fichier joint « {name} »]\n{preview}"
         else:
             text = (
-                f"[Pièce jointe « {name} » reçue  traitement en cours (une lecture optique peut être "
+                f"[Pièce jointe « {name} » reçue : traitement en cours (une lecture optique peut être "
                 "nécessaire pour un document scanné). Réponds à l'utilisateur avec ce que tu sais déjà, "
                 "et indique-lui qu'il peut reposer sa question dans un instant une fois le document "
                 "analysé, ou recopier directement le passage qui l'intéresse pour une réponse immédiate.]"

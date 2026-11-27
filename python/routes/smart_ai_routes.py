@@ -336,7 +336,7 @@ async def content_fit_analysis(
         confidence_note = (
             f"Confiance élevée ({quiz_count} données)"
             if quiz_count >= 10
-            else f"Données limitées ({quiz_count} quiz  résultat indicatif)"
+            else f"Données limitées ({quiz_count} quiz, résultat indicatif)"
         )
     finally:
         session.close()
@@ -409,7 +409,7 @@ async def generate_revision_content(
     try:
         cutoff = datetime.utcnow() - timedelta(days=60)
 
-        mistakes_text = "Aucune erreur récente enregistrée  base-toi sur les fondamentaux du sujet."
+        mistakes_text = "Aucune erreur récente enregistrée : base-toi sur les fondamentaux du sujet."
         if body.subject:
             mistakes = (
                 session.query(QuizMistake)
@@ -747,7 +747,7 @@ async def generate_quiz_content(
             f"L'élève a récemment eu du mal avec des questions proches de celles-ci "
             f"(reste sur les mêmes notions, formulations différentes) :\n{mistakes_text}\n\n"
             if mistakes_text else
-            "Aucune erreur récente enregistrée  couvre les notions fondamentales du programme.\n\n"
+            "Aucune erreur récente enregistrée : couvre les notions fondamentales du programme.\n\n"
         )
     else:
         subject_line = (
@@ -766,7 +766,7 @@ async def generate_quiz_content(
     if body.recent_question_texts:
         recent_list = "\n".join(f"- {q[:200]}" for q in body.recent_question_texts[:15])
         avoid_repeat_line = (
-            f"L'élève a déjà eu ces questions dans un quiz précédent sur cette matière  ne les répète "
+            f"L'élève a déjà eu ces questions dans un quiz précédent sur cette matière : ne les répète "
             f"PAS, même reformulées, choisis d'autres notions ou d'autres angles :\n{recent_list}\n\n"
         )
 

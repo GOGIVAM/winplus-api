@@ -58,7 +58,7 @@ def _language_instruction(ctx: UserContext) -> str:
     if not lang or lang == "french":
         return ""
     if lang == "english":
-        return "\n\n[Langue] L'utilisateur s'exprime en anglais  réponds en anglais."
+        return "\n\n[Langue] L'utilisateur s'exprime en anglais : réponds en anglais."
     if lang == "pidgin":
         return (
             "\n\n[Langue] L'utilisateur utilise le parler camerounais (pidgin/français mélangé) "
@@ -109,7 +109,7 @@ _VARK_INSTRUCTIONS = {
         "- Utilise des connecteurs parlés : 'd'abord', 'ensuite', 'donc', 'en d'autres termes', 'pour résumer'.\n"
         "- Propose des mnémotechniques, des rimes ou des formules à mémoriser oralement.\n"
         "- Reformule les concepts avec des analogies et des métaphores vivantes.\n"
-        "- Évite les tableaux et listes sèches sans explication verbale  commente toujours."
+        "- Évite les tableaux et listes sèches sans explication verbale : commente toujours."
     ),
     "reading_writing": (
         "Cet étudiant est un apprenant LECTEUR/SCRIPTEUR.\n"
@@ -117,7 +117,7 @@ _VARK_INSTRUCTIONS = {
         "- Propose systématiquement des définitions précises des termes clés.\n"
         "- Utilise des listes numérotées, des sous-sections avec titres clairs.\n"
         "- Encourage la prise de notes : propose des résumés rédigés que l'étudiant peut recopier.\n"
-        "- Évite les raccourcis visuels sans texte d'accompagnement  explique toujours par écrit."
+        "- Évite les raccourcis visuels sans texte d'accompagnement : explique toujours par écrit."
     ),
     "kinesthetic": (
         "Cet étudiant est un apprenant KINESTHÉSIQUE.\n"
@@ -219,7 +219,7 @@ def _mistakes_block(ctx: UserContext) -> str:
         correct = m.get("correct_answer") or "?"
         lines.append(f"  [{subject}] {question}… | Répondu : {given} | Correct : {correct}")
     return (
-        "\n\n[Lacunes identifiées  questions récemment ratées]\n"
+        "\n\n[Lacunes identifiées : questions récemment ratées]\n"
         + "\n".join(lines)
         + "\n→ Utilise ces lacunes directement pour proposer des exercices ciblés sans redemander la matière."
     )

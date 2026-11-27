@@ -212,7 +212,7 @@ async def generate_phase2_quiz(
                     "question": f"Quelle est une notion fondamentale en {subject_name} ?",
                     "options": ["A) Notion A", "B) Notion B", "C) Notion C", "D) Notion D"],
                     "correct": "A) Notion A",
-                    "explanation": "Réponse générée automatiquement  relancez pour un quiz personnalisé.",
+                    "explanation": "Réponse générée automatiquement : relancez pour un quiz personnalisé.",
                 }
             ]
 
@@ -267,7 +267,7 @@ async def generate_phase3_summary(
             elif body.score >= 60:
                 perf_comment = f"Bon travail ({body.score:.0f}/100). Quelques points à renforcer."
             else:
-                perf_comment = f"Score de {body.score:.0f}/100  pas d'inquiétude, chaque erreur est une occasion d'apprendre."
+                perf_comment = f"Score de {body.score:.0f}/100 : pas d'inquiétude, chaque erreur est une occasion d'apprendre."
             score_context = (
                 f"Le score du quiz de l'étudiant est {body.score:.0f}/100. "
                 f"Inclus une phrase de commentaire sur sa performance : \"{perf_comment}\""

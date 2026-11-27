@@ -167,7 +167,7 @@ def test_prediction_computes_rates_counts_and_risk_factors(env, headers_for, mon
     assert body["predicted_pass_rate"] == 60.0                       # 3 sur 5, 50 compris
     assert body["at_risk_count"] == 2 and body["likely_to_excel_count"] == 1
     assert body["avg_score"] == 48.0 and body["inactive_count"] == 2
-    assert body["key_risk_factors"] == ["Score moyen faible (48.0%)  objectif 60%",
+    assert body["key_risk_factors"] == ["Score moyen faible (48.0%) : objectif 60%",
                                         "2 étudiant(s) inactifs depuis +14j",
                                         "2 étudiant(s) en zone critique (score <35%)"]
     assert body["recommended_interventions"] == [{"intervention": "Soutien"}]

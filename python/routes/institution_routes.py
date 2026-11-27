@@ -168,7 +168,7 @@ async def class_prediction(
 
         risk_factors = []
         if avg < 50:
-            risk_factors.append(f"Score moyen faible ({avg:.1f}%)  objectif 60%")
+            risk_factors.append(f"Score moyen faible ({avg:.1f}%) : objectif 60%")
         if inactive_count > total * 0.3:
             risk_factors.append(f"{inactive_count} étudiant(s) inactifs depuis +{RISK_INACTIVITY_DAYS}j")
         if at_risk > 0:

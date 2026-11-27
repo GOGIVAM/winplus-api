@@ -140,7 +140,7 @@ def _generate_questions_from_text(
         f"{f' (matière : {category})' if category else ''} :\n\n"
         f"---\n{content}\n---\n\n"
         f"Identifie TOUS les exercices et TOUTES les questions (y compris les sous-questions numérotées, "
-        f"ex. 1), 2), a), b)) réellement présents dans ce texte  ne te limite à AUCUN nombre fixe, couvre "
+        f"ex. 1), 2), a), b)) réellement présents dans ce texte : ne te limite à AUCUN nombre fixe, couvre "
         f"l'intégralité de l'épreuve du début à la fin. "
         f"Pour chaque question : reprends l'énoncé de la question dans les mots EXACTS du document (ne "
         f"l'invente pas, ne la reformule pas, ne la résume pas). Dans le champ \"statement\", indique le "

@@ -407,7 +407,7 @@ async def content_health_check(
             "quality_score": 65 if has_pdf else 40,
             "issues": [] if has_pdf else [{"type": "incomplete_content", "severity": "high", "detail": "Aucun fichier PDF fourni."}],
             "recommendation": "request_revision" if not has_pdf else "approve",
-            "auto_moderation_note": "Analyse automatique non disponible  révision manuelle recommandée.",
+            "auto_moderation_note": "Analyse automatique non disponible : révision manuelle recommandée.",
         }
 
     # Ensure recommendation matches quality_score
@@ -774,7 +774,7 @@ async def moderate_message(
         if not isinstance(result, dict) or "verdict" not in result:
             result = {"verdict": "needs_review", "confidence": 0.5, "reason": "Analyse indisponible."}
     except Exception:
-        result = {"verdict": "safe", "confidence": 1.0, "reason": "Service indisponible  message autorisé."}
+        result = {"verdict": "safe", "confidence": 1.0, "reason": "Service indisponible : message autorisé."}
 
     verdict = result.get("verdict", "safe")
     confidence = float(result.get("confidence", 0.5))

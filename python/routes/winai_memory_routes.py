@@ -31,7 +31,7 @@ winai_memory_router = APIRouter()
 
 
 def _continuation_suggestion(content: str) -> str:
-    return f"On avait commencé « {content} »  tu veux continuer ?"
+    return f"On avait commencé « {content} » : tu veux continuer ?"
 
 
 @winai_memory_router.get("/winai/memoire")

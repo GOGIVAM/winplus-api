@@ -88,7 +88,7 @@ async def explain_error(
         f"Explique en 3-5 phrases maximum, {in_language()} simple et encourageant, "
         "pourquoi sa réponse est incorrecte et pourquoi la bonne réponse est juste. "
         "Sois concis et pédagogique. "
-        "Ne commence pas par « La réponse est... »  commence par expliquer le concept."
+        "Ne commence pas par « La réponse est... » : commence par expliquer le concept."
     )
 
     def generate():

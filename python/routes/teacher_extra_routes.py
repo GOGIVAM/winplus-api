@@ -241,7 +241,7 @@ async def generate_quiz_questions(
                 QuizOptionOut(id="d", text="Option D"),
             ],
             correctOptionId="a",
-            explanation="WinAI n'a pas pu générer les questions  réessayez ou formulez le sujet différemment.",
+            explanation="WinAI n'a pas pu générer les questions : réessayez ou formulez le sujet différemment.",
         ) for i in range(5)]
 
     return {"questions": questions}
@@ -277,7 +277,7 @@ async def optimize_title(
         f'Type : {type_labels.get(body.type or "", "Contenu")}\n\n'
         "Propose un titre plus attractif, précis et mieux référencé pour le catalogue WinPlus. "
         "Le titre doit : indiquer clairement matière + niveau + type + année si pertinent. "
-        "Exemple de bon titre : « Épreuves BAC C Mathématiques 2023  Probabilités et Analyse ».\n"
+        "Exemple de bon titre : « Épreuves BAC C Mathématiques 2023 : Probabilités et Analyse ».\n"
         'Format JSON strict : {"optimized_title":"...","rationale":"..."}'
     )
     system = (
@@ -475,7 +475,7 @@ async def get_class_analysis(
             f"{dist['struggling']} en difficulté, {dist['at_risk']} à risque"
         )
         ai_prompt = (
-            f"Classe de {student_count} élèves  contenu « {subject_title} ».\n"
+            f"Classe de {student_count} élèves : contenu « {subject_title} ».\n"
             f"Score moyen : {overall_avg}%\nDistribution : {dist_str}\n"
             f"Nombre de quiz avec taux d'erreur >50% : {len(hard_questions)}\n\n"
             "Génère des insights pédagogiques actionnables :\n"
@@ -553,7 +553,7 @@ async def get_content_impact(
         if not enrollments:
             return {
                 "impact_score": 0,
-                "interpretation": "Aucun apprenant inscrit  partagez ce contenu pour obtenir votre score d'impact.",
+                "interpretation": "Aucun apprenant inscrit : partagez ce contenu pour obtenir votre score d'impact.",
                 "completion_rate": 0.0,
                 "avg_score_improvement": 0.0,
                 "student_retention": 0.0,
@@ -619,11 +619,11 @@ async def get_content_impact(
         score = min(100, max(0, score))
 
         if score >= 70:
-            interpretation = "Excellent  ce contenu améliore significativement les scores des apprenants."
+            interpretation = "Excellent : ce contenu améliore significativement les scores des apprenants."
         elif score >= 50:
-            interpretation = "Bon impact  ajoutez des exercices associés pour amplifier les résultats."
+            interpretation = "Bon impact : ajoutez des exercices associés pour amplifier les résultats."
         else:
-            interpretation = "Impact limité pour l'instant  enrichissez le contenu ou ajoutez un quiz associé."
+            interpretation = "Impact limité pour l'instant : enrichissez le contenu ou ajoutez un quiz associé."
 
         return {
             "impact_score": score,
@@ -763,7 +763,7 @@ async def predict_popularity(
             peak_names = " et ".join(MONTHS_FR[m] for m in peak_months[:2])
             if current_month in peak_months:
                 timing_msg = (
-                    f"Excellente période pour publier  les contenus {body.level or 'BAC'} "
+                    f"Excellente période pour publier : les contenus {body.level or 'BAC'} "
                     f"sont très recherchés en {MONTHS_FR[current_month]}."
                 )
             else:
@@ -774,7 +774,7 @@ async def predict_popularity(
                     f"Publiez en {pre_month} pour maximiser la visibilité."
                 )
         else:
-            timing_msg = "Ce type de contenu est consulté toute l'année  publiez dès que possible."
+            timing_msg = "Ce type de contenu est consulté toute l'année : publiez dès que possible."
 
         # Price recommendation
         price_rec = avg_price
@@ -971,7 +971,7 @@ async def analyze_submission(
         return {
             "error_type": "none",
             "error_details": extraction_warning or "Copie vide ou illisible : impossible d'analyser automatiquement.",
-            "suggested_comment": "Aucune analyse automatique n'a pu être produite pour cette copie  corrige-la manuellement.",
+            "suggested_comment": "Aucune analyse automatique n'a pu être produite pour cette copie : corrige-la manuellement.",
             "score_suggestion": 0,
             "alternative_comments": [],
             "score_range": None,
@@ -1077,7 +1077,7 @@ async def analyze_submission(
         return {
             "error_type": error_type,
             "error_details": str(raw.get("error_details", "Vérifiez la démarche utilisée.")),
-            "suggested_comment": str(raw.get("suggested_comment", "Bon travail  quelques points à consolider.")),
+            "suggested_comment": str(raw.get("suggested_comment", "Bon travail : quelques points à consolider.")),
             "score_suggestion": int(round(overall_score)),
             "alternative_comments": alt,
             "score_range": str(raw.get("score_range")) if not is_essay and raw.get("score_range") else None,
@@ -1094,7 +1094,7 @@ async def analyze_submission(
     fallback_score = body.max_score // 2
     return {
         "error_type": "methodological",
-        "error_details": "WinAI a analysé le travail  vérifiez manuellement la démarche appliquée.",
+        "error_details": "WinAI a analysé le travail : vérifiez manuellement la démarche appliquée.",
         "suggested_comment": "Service d'analyse temporairement indisponible. Corrige cette copie manuellement.",
         "score_suggestion": fallback_score,
         "alternative_comments": [],
@@ -1432,7 +1432,7 @@ def _suggest_single_rate(body: SuggestTutorRateRequest) -> SuggestTutorRateRespo
         range_high_xaf=5000,
         based_on="estimation",
         sample_size=len(rates),
-        explanation="Estimation par défaut  pas encore assez de répétiteurs actifs sur WinPlus dans cette matière pour une donnée de marché fiable.",
+        explanation="Estimation par défaut : pas encore assez de répétiteurs actifs sur WinPlus dans cette matière pour une donnée de marché fiable.",
     )
 
 
@@ -1479,7 +1479,7 @@ async def analyze_tutor_profile(
         f"Vidéo de présentation : {'oui' if body.has_video else 'non'}\n"
         f"{missing_line}\n"
         "Donne 3 à 5 suggestions concrètes et actionnables pour améliorer l'attractivité de ce profil "
-        "auprès d'élèves camerounais (pas de généralités  chaque suggestion doit se rattacher à un "
+        "auprès d'élèves camerounais (pas de généralités : chaque suggestion doit se rattacher à un "
         "champ précis du profil). Format JSON strict : "
         '[{"field":"bio","suggestion":"..."}, ...]  field parmi : title, bio, subjects, levels, hourlyRate, video, general.'
     )
@@ -2376,7 +2376,7 @@ def _download_for_analysis(file_url: str) -> tuple[bytes, Optional[str]]:
         if total > _ANALYSIS_MAX_BYTES:
             raise HTTPException(
                 status_code=413,
-                detail="Fichier trop volumineux pour une analyse immédiate (30 Mo max)  remplis le formulaire manuellement.",
+                detail="Fichier trop volumineux pour une analyse immédiate (30 Mo max) : remplis le formulaire manuellement.",
             )
         chunks.append(chunk)
     return b"".join(chunks), resp.headers.get("content-type")
@@ -2695,7 +2695,7 @@ def analyze_content_upload(
             suggested=SuggestedContentFields(duration_seconds=duration_seconds),
             winai_score=None,
             winai_justification=None,
-            extraction_warning=warning or "Contenu illisible  remplis le formulaire manuellement.",
+            extraction_warning=warning or "Contenu illisible : remplis le formulaire manuellement.",
         )
 
     hints = _CONTENT_KIND_FIELD_HINTS.get(body.content_kind, _CONTENT_KIND_FIELD_HINTS["epreuve"])
@@ -2723,7 +2723,7 @@ def analyze_content_upload(
         "level, difficulty (easy|medium|hard), year, exam_type, tags (liste), objectives (liste), "
         "prerequisites (liste), author, publisher, page_count (nombre), price_suggestion (nombre), "
         "winai_score (nombre 0-100), winai_justification (texte). "
-        "Mets une chaîne vide ou une liste vide pour tout champ non pertinent ou non détectable  n'invente rien "
+        "Mets une chaîne vide ou une liste vide pour tout champ non pertinent ou non détectable : n'invente rien "
         "qui ne soit pas appuyé par le texte fourni. Limite description à 400 caractères maximum et "
         "description_courte à 120 caractères maximum, pour rester dans la place disponible."
     )
@@ -2739,7 +2739,7 @@ def analyze_content_upload(
             suggested=SuggestedContentFields(duration_seconds=duration_seconds),
             winai_score=None,
             winai_justification=None,
-            extraction_warning=warning or "WinAI n'a pas pu produire de suggestion pour l'instant  remplis le formulaire manuellement.",
+            extraction_warning=warning or "WinAI n'a pas pu produire de suggestion pour l'instant : remplis le formulaire manuellement.",
         )
 
     def _str_list(v: Any) -> List[str]:
