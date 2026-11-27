@@ -26,6 +26,10 @@ public class TutorEngagementQuoteRequestDto
 
 public class CreateTutorEngagementRequestDto : TutorEngagementQuoteRequestDto
 {
+    /// <summary>T8 : lieu (200 caractères) ; exigé pour student_home et neutral_place, repris du profil pour tutor_home.</summary>
+    public string? LocationAddress { get; set; }
+    /// <summary>T8 : précision facultative sur le lieu (200 caractères).</summary>
+    public string? LocationNote { get; set; }
     public List<string>? Topics { get; set; }
     /// <summary>wallet | mobile_money.</summary>
     public string? PaymentMethod { get; set; }
@@ -138,6 +142,9 @@ public class TutorEngagementDto
     public int Weeks { get; set; }
     public List<TutorEngagementSlotDto> Slots { get; set; } = new();
     public string Mode { get; set; } = null!;
+    /// <summary>T8 : lieu des séances en présentiel.</summary>
+    public string? LocationAddress { get; set; }
+    public string? LocationNote { get; set; }
     public string? Subject { get; set; }
     public List<string> Topics { get; set; } = new();
 

@@ -16,6 +16,12 @@ public class CreateTutorBookingRequestDto
     public int? DurationMinutes { get; set; }
     /// <summary>online | student_home | tutor_home | neutral_place.</summary>
     public string Mode { get; set; } = "online";
+    /// <summary>T8 : lieu (200 caractères) ; exigé pour student_home et neutral_place, repris du profil pour tutor_home.</summary>
+    public string? LocationAddress { get; set; }
+    /// <summary>T8 : précision facultative sur le lieu (200 caractères).</summary>
+    public string? LocationNote { get; set; }
+    /// <summary>T7 : séance d'essai (400 essai_non_disponible si le tuteur ne la propose pas ou si l'élève a déjà réservé avec lui).</summary>
+    public bool? IsTrial { get; set; }
     /// <summary>Numéro Mobile Money pour le paiement NotchPay (inutile si <see cref="PaymentMethod"/> = wallet).</summary>
     public string? Phone { get; set; }
     /// <summary>
@@ -54,6 +60,8 @@ public class TutorPriceQuoteRequestDto
     public string? Subject { get; set; }
     /// <summary>Lot 9.3 : nombre d'élèves (1 par défaut) pour le prix de groupe.</summary>
     public int ParticipantCount { get; set; } = 1;
+    /// <summary>T7 : chiffrer la séance d'essai (l'éligibilité de l'élève est vérifiée à la réservation).</summary>
+    public bool? IsTrial { get; set; }
 }
 
 /// <summary>Participant d'une séance (lot 9.3).</summary>
@@ -187,6 +195,11 @@ public class TutorPriceQuoteDto
     /// <summary>Montant facturé au payeur pour toute la séance, arrondi à 0 décimale.</summary>
     public decimal TotalXaf { get; set; }
 
+    /// <summary>T7 : séance d'essai ; RegularTotalXaf = prix normal de la même séance, TrialLabel = ligne à afficher.</summary>
+    public bool? IsTrial { get; set; }
+    public decimal? RegularTotalXaf { get; set; }
+    public string? TrialLabel { get; set; }
+
     /// <summary>Renseignés par l'endpoint de devis uniquement (pas figés sur la réservation).</summary>
     public bool? IsAvailable { get; set; }
     public string? UnavailableReason { get; set; }
@@ -219,6 +232,11 @@ public class TutorBookingDto
     public string StartTime { get; set; } = null!;
     public string EndTime { get; set; } = null!;
     public string Mode { get; set; } = null!;
+    /// <summary>T8 : lieu de la séance (présentiel).</summary>
+    public string? LocationAddress { get; set; }
+    public string? LocationNote { get; set; }
+    /// <summary>T7 : séance d'essai.</summary>
+    public bool IsTrial { get; set; }
     public decimal PriceXaf { get; set; }
     public string Status { get; set; } = null!;
     public string PaymentStatus { get; set; } = null!;

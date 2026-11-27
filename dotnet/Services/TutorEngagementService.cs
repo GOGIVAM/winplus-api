@@ -282,6 +282,8 @@ public class TutorEngagementService : ITutorEngagementService
         // Lot 9.5 (17.11) : engagement présentiel refusé avec un tuteur non
         // vérifié ou suspendu, à la création comme au renouvellement (manuel ou automatique).
         TutorInPersonPolicy.EnsureModeAllowed(profile, mode);
+        // T8 : lieu des séances en présentiel, recopié sur chaque séance de l'engagement.
+        var (locationAddress, locationNote) = TutorSessionLocation.Resolve(profile, mode, request.LocationAddress, request.LocationNote);
         var discount = TutorMonthlyPlan.ClampDiscount(offer.DiscountPercent);
 
         // Payeur et participants : exactement les contrôles du 9.3 (rôle réel,
@@ -336,6 +338,8 @@ public class TutorEngagementService : ITutorEngagementService
                     StudentUserId = parties.ParticipantIds[0],
                     Subject = plan.Subject,
                     Mode = mode,
+                    LocationAddress = locationAddress,
+                    LocationNote = locationNote,
                     TopicsJson = topics.Count > 0 ? JsonSerializer.Serialize(topics, Json) : null,
                     StartDate = request.StartDate,
                     EndDate = TutorMonthlyPlan.EndDate(request.StartDate),
@@ -372,6 +376,8 @@ public class TutorEngagementService : ITutorEngagementService
                         StartTime = s.Occurrence.Start,
                         EndTime = s.Occurrence.End,
                         Mode = mode,
+                        LocationAddress = locationAddress,
+                        LocationNote = locationNote,
                         PriceXaf = s.PriceXaf,
                         PriceBreakdownJson = JsonSerializer.Serialize(s.Quote, Json),
                         Status = payByWallet ? "pending_tutor_approval" : "pending_payment",
@@ -653,6 +659,8 @@ public class TutorEngagementService : ITutorEngagementService
             Slots = SlotDtos(e.Slots.Select(s => new TutorMonthlyPlan.Slot(s.DayOfWeek, s.StartTime, s.DurationMinutes))
                 .OrderBy(s => (s.DayOfWeek + 6) % 7).ThenBy(s => s.Start)),
             Mode = e.Mode,
+            LocationAddress = e.LocationAddress,
+            LocationNote = e.LocationNote,
             Subject = e.Subject,
             Topics = ParseTopics(e.TopicsJson),
             PayerType = e.PayerType,
@@ -920,6 +928,8 @@ public class TutorEngagementService : ITutorEngagementService
         StartDate = TutorMonthlyPlan.NextStartDate(e.StartDate),
         Slots = e.Slots.Select(s => new TutorEngagementSlotDto { DayOfWeek = s.DayOfWeek, StartTime = TutorPricing.Hhmm(s.StartTime), DurationMinutes = s.DurationMinutes }).ToList(),
         Mode = e.Mode,
+        LocationAddress = e.LocationAddress,
+        LocationNote = e.LocationNote,
         Subject = e.Subject,
         ParticipantCount = e.ParticipantCount,
         Topics = ParseTopics(e.TopicsJson),

@@ -412,6 +412,17 @@ public class TutorProfileService : ITutorProfileService
         return ComputeCompletion(profile, hasPhoto);
     }
 
+    /// <summary>T7 : l'appelant (élève ou payeur) peut-il réserver une séance d'essai avec ce répétiteur ?</summary>
+    public async Task<bool> IsTrialEligibleAsync(int tutorUserId, int callerUserId)
+    {
+        var profile = await _context.TutorProfiles.AsNoTracking()
+            .Where(p => p.UserId == tutorUserId && p.IsActive)
+            .Select(p => new { p.Id, p.TrialSessionEnabled })
+            .FirstOrDefaultAsync();
+        if (profile is not { TrialSessionEnabled: true } || tutorUserId == callerUserId) return false;
+        return !await TutorTrial.HasHistoryAsync(_context, profile.Id, new[] { callerUserId }, callerUserId);
+    }
+
     public async Task<TutorProfileDto?> GetPublicProfileAsync(int userId)
     {
         var profile = await _context.TutorProfiles

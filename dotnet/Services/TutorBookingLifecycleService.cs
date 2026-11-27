@@ -164,7 +164,7 @@ public class TutorBookingLifecycleService : BackgroundService
             booking.UpdatedAt = now;
 
             var tutorUserId = booking.TutorProfile?.UserId;
-            if (tutorUserId.HasValue)
+            if (tutorUserId.HasValue && booking.PriceXaf > 0) // séance d'essai gratuite : rien à libérer
                 await ntfy.PublishLocalizedAsync(db, $"winplus-user-{tutorUserId.Value}", new("Fonds libérés", "Funds released"),
                     new($"Ta part de la séance du {booking.SessionDate:dd/MM/yyyy} ({booking.PriceXaf:0} XAF payés, commission déduite) est maintenant disponible dans ton solde WinPlus.",
                         $"Your share of the session on {booking.SessionDate:dd/MM/yyyy} ({booking.PriceXaf:0} XAF paid, commission deducted) is now available in your WinPlus balance."),

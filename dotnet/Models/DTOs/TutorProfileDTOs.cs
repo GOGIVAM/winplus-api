@@ -69,6 +69,9 @@ public class TutorProfileDto
     /// <summary>Propriétaire seulement : actif, hors vacances et minimum rempli, donc visible dans la recherche.
     /// Absent (null) sur une fiche publique.</summary>
     public bool? IsListedInSearch { get; set; }
+    /// <summary>T7 : fiche publique vue par un compte connecté : peut-il réserver une séance d'essai avec ce
+    /// répétiteur (essai proposé, aucune réservation antérieure) ? Absent pour un visiteur.</summary>
+    public bool? TrialEligible { get; set; }
 
     public List<string> Subjects { get; set; } = new();
     public List<string> Levels { get; set; } = new();

@@ -31,6 +31,17 @@ public class TutorBooking
     [MaxLength(30)]
     public string Mode { get; set; } = "online";
 
+    /// <summary>T8 : lieu de la séance en présentiel (quartier, rue, repère), null en ligne.</summary>
+    [MaxLength(200)]
+    public string? LocationAddress { get; set; }
+
+    /// <summary>T8 : précision facultative sur le lieu (étage, portail…).</summary>
+    [MaxLength(200)]
+    public string? LocationNote { get; set; }
+
+    /// <summary>T7 : séance d'essai (prix d'essai du tuteur, première rencontre).</summary>
+    public bool IsTrial { get; set; }
+
     /// <summary>Prix figé à la création : jamais recalculé ensuite, même si le répétiteur change sa grille.</summary>
     public decimal PriceXaf { get; set; }
 

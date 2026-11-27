@@ -29,6 +29,7 @@ public class TutorEngagementController : ControllerBase
         TutorEngagementConflictException c => Conflict(new { message = c.Message, conflicts = c.Conflicts }),
         InsufficientWalletBalanceException w => BadRequest(new { message = w.Message, availableXaf = w.AvailableXaf, requiredXaf = w.RequiredXaf }),
         KeyNotFoundException n => NotFound(new { message = n.Message }),
+        TutorBookingRuleException r => BadRequest(new { success = false, code = r.Code, error = r.Message, message = r.Message }),
         InvalidOperationException i => BadRequest(new { message = i.Message }),
         _ => throw ex,
     };

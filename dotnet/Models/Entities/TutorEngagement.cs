@@ -46,6 +46,14 @@ public class TutorEngagement
     [MaxLength(30)]
     public string Mode { get; set; } = "online";
 
+    /// <summary>T8 : lieu de la séance en présentiel (quartier, rue, repère), null en ligne.</summary>
+    [MaxLength(200)]
+    public string? LocationAddress { get; set; }
+
+    /// <summary>T8 : précision facultative sur le lieu (étage, portail…).</summary>
+    [MaxLength(200)]
+    public string? LocationNote { get; set; }
+
     /// <summary>Sujets saisis (JSON, liste de textes) : recopiés sur chaque séance et au renouvellement.</summary>
     public string? TopicsJson { get; set; }
 

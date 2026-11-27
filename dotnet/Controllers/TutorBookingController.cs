@@ -45,6 +45,10 @@ public class TutorBookingController : ControllerBase
         {
             return Ok(await _service.CreateBookingAsync(User.GetUserId(), request));
         }
+        catch (TutorBookingRuleException ex)
+        {
+            return BadRequest(new { success = false, code = ex.Code, error = ex.Message, message = ex.Message });
+        }
         catch (TutorBookingForbiddenException ex)
         {
             // Lot 9.3 : élève sans lien vérifié avec le payeur, rôle incompatible.
@@ -68,6 +72,10 @@ public class TutorBookingController : ControllerBase
         try
         {
             return Ok(await _service.GetQuoteAsync(request));
+        }
+        catch (TutorBookingRuleException ex)
+        {
+            return BadRequest(new { success = false, code = ex.Code, error = ex.Message, message = ex.Message });
         }
         catch (InvalidOperationException ex)
         {

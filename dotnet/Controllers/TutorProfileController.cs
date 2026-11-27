@@ -255,7 +255,11 @@ public class TutorProfileController : ControllerBase
     public async Task<ActionResult<TutorProfileDto>> GetPublic(int userId)
     {
         var profile = await _service.GetPublicProfileAsync(userId);
-        return profile == null ? NotFound(new { message = "Profil répétiteur introuvable ou non actif." }) : Ok(profile);
+        if (profile == null) return NotFound(new { message = "Profil répétiteur introuvable ou non actif." });
+        // T7 : éligibilité à la séance d'essai pour un compte connecté (absente pour un visiteur).
+        if (User.Identity?.IsAuthenticated == true)
+            profile.TrialEligible = await _service.IsTrialEligibleAsync(userId, User.GetUserId());
+        return Ok(profile);
     }
 
     /// <summary>

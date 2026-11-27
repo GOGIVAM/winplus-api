@@ -194,6 +194,11 @@ public class TutorBookingService : ITutorBookingService
         }
 
         var quote = TutorPricing.Compute(TutorPricing.Grid.FromProfile(tutorProfile), request.SessionDate, start, request.DurationMinutes, mode, subject, request.ParticipantCount);
+        if (request.IsTrial == true)
+        {
+            TutorTrial.EnsureOffered(tutorProfile, request.ParticipantCount, request.DurationMinutes);
+            TutorTrial.Apply(quote, tutorProfile.TrialSessionPriceXaf);
+        }
         quote.IsAvailable = unavailable == null;
         quote.UnavailableReason = unavailable;
         return quote;
@@ -236,16 +241,36 @@ public class TutorBookingService : ITutorBookingService
         // Prix toujours recalculé ici, jamais repris du client (17.3), pour le
         // nombre réel de participants (prix de groupe 9.3).
         var quote = TutorPricing.Compute(TutorPricing.Grid.FromProfile(tutorProfile), request.SessionDate, start, durationMinutes, mode, subject, parties.ParticipantIds.Count);
+
+        // T7 : séance d'essai, première rencontre seulement (élève et payeur).
+        var isTrial = request.IsTrial == true;
+        if (isTrial)
+        {
+            TutorTrial.EnsureOffered(tutorProfile, parties.ParticipantIds.Count, durationMinutes);
+            if (await TutorTrial.HasHistoryAsync(_context, tutorProfile.Id, parties.ParticipantIds, parties.PayerUserId))
+                throw new TutorBookingRuleException("essai_non_disponible",
+                    "La séance d'essai est réservée à une première rencontre : une séance a déjà été réservée avec ce répétiteur.");
+            TutorTrial.Apply(quote, tutorProfile.TrialSessionPriceXaf);
+        }
+        // T8 : lieu de la séance en présentiel.
+        var (locationAddress, locationNote) = TutorSessionLocation.Resolve(tutorProfile, mode, request.LocationAddress, request.LocationNote);
+
         var price = quote.TotalXaf;
+        // Essai gratuit : rien à payer, la demande part directement au tuteur.
+        var isFree = isTrial && price <= 0;
         var topics = TutorPricing.SanitizeTopics(request.Topics);
 
         // Lot 9.2 (17.6) : Mobile Money (flux NotchPay inchangé) ou solde du
         // portefeuille du payeur. Lot 9.3 : le payeur est l'élève, le parent
         // (portefeuille parent : dotation puis recharges), le titulaire du
         // portefeuille institution, ou le membre du groupe qui réserve.
-        var payByWallet = TutorPaymentMethods.IsWallet(request.PaymentMethod);
+        var payByWallet = !isFree && TutorPaymentMethods.IsWallet(request.PaymentMethod);
         var payerUserId = parties.PayerUserId;
-        if (payByWallet)
+        if (isFree)
+        {
+            // Aucun paiement : ni solde ni numéro Mobile Money exigés.
+        }
+        else if (payByWallet)
         {
             if (price <= 0)
                 throw new InvalidOperationException("Montant de séance invalide.");
@@ -278,16 +303,19 @@ public class TutorBookingService : ITutorBookingService
             StartTime = start,
             EndTime = end,
             Mode = mode,
+            LocationAddress = locationAddress,
+            LocationNote = locationNote,
+            IsTrial = isTrial,
             PriceXaf = price,
             PriceBreakdownJson = JsonSerializer.Serialize(quote, QuoteJson),
-            // Payé par solde : directement en attente du tuteur, comme un
+            // Payé par solde (ou essai gratuit) : directement en attente du tuteur, comme un
             // paiement NotchPay confirmé (aucun frais d'encaissement).
-            Status = payByWallet ? "pending_tutor_approval" : "pending_payment",
-            PaymentStatus = payByWallet ? "completed" : "pending",
-            PaymentMethod = payByWallet ? TutorPaymentMethods.Wallet : TutorPaymentMethods.MobileMoney,
-            PaymentFeeXaf = payByWallet ? 0m : null,
+            Status = payByWallet || isFree ? "pending_tutor_approval" : "pending_payment",
+            PaymentStatus = payByWallet ? "completed" : isFree ? TutorTrial.NotRequiredPaymentStatus : "pending",
+            PaymentMethod = payByWallet ? TutorPaymentMethods.Wallet : isFree ? TutorTrial.FreePaymentMethod : TutorPaymentMethods.MobileMoney,
+            PaymentFeeXaf = payByWallet || isFree ? 0m : null,
             PayerUserId = payerUserId,
-            PhoneNumber = payByWallet ? null : request.Phone,
+            PhoneNumber = payByWallet || isFree ? null : request.Phone,
             Topics = topics.Select(t => new TutorBookingTopic { Label = t }).ToList(),
         };
 
@@ -359,9 +387,9 @@ public class TutorBookingService : ITutorBookingService
             throw new InvalidOperationException("Ce créneau vient d'être réservé par un autre élève.");
         }
 
-        if (payByWallet)
+        if (payByWallet || isFree)
         {
-            await SyncWalletAsync(booking.Id);
+            if (payByWallet) await SyncWalletAsync(booking.Id);
             await NotifyPaymentConfirmedAsync(booking);
             return new TutorBookingCreatedResponseDto { Booking = await MapToDtoAsync(booking) };
         }
@@ -1032,15 +1060,22 @@ public class TutorBookingService : ITutorBookingService
         var topicsText = booking.Topics.Count > 0 ? $" Sujets : {string.Join(", ", booking.Topics.Select(t => t.Label))}." : "";
         var topicsTextEn = booking.Topics.Count > 0 ? $" Topics: {string.Join(", ", booking.Topics.Select(t => t.Label))}." : "";
         if (tutorUserId.HasValue)
-            await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{tutorUserId.Value}", new("Nouvelle demande de réservation", "New booking request"),
+            await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{tutorUserId.Value}",
+                booking.IsTrial ? new("Nouvelle demande de séance d'essai", "New trial session request") : new("Nouvelle demande de réservation", "New booking request"),
                 new($"Séance du {booking.SessionDate:dd/MM/yyyy} de {booking.StartTime:hh\\:mm} à {booking.EndTime:hh\\:mm}{(booking.Subject != null ? $" ({booking.Subject})" : "")}.{topicsText} Réponds avant expiration du délai.",
                     $"Session on {booking.SessionDate:dd/MM/yyyy} from {booking.StartTime:hh\\:mm} to {booking.EndTime:hh\\:mm}{(booking.Subject != null ? $" ({booking.Subject})" : "")}.{topicsTextEn} Reply before the deadline."),
                 priority: "high", userId: tutorUserId.Value, type: "TutorBooking");
         var payerId = booking.PayerUserId ?? booking.StudentUserId;
-        await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{payerId}", new("Paiement reçu — en attente du répétiteur", "Payment received, waiting for the tutor"),
-            new($"Ta demande du {booking.SessionDate:dd/MM/yyyy} est payée et en attente d'acceptation par le répétiteur.",
-                $"Your request for {booking.SessionDate:dd/MM/yyyy} is paid and waiting for the tutor to accept it."),
-            userId: payerId, type: "TutorBooking");
+        if (booking.PriceXaf <= 0)
+            await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{payerId}", new("Demande envoyée : en attente du répétiteur", "Request sent, waiting for the tutor"),
+                new($"Ta séance d'essai gratuite du {booking.SessionDate:dd/MM/yyyy} est en attente d'acceptation par le répétiteur.",
+                    $"Your free trial session on {booking.SessionDate:dd/MM/yyyy} is waiting for the tutor to accept it."),
+                userId: payerId, type: "TutorBooking");
+        else
+            await _ntfy.PublishLocalizedAsync(_context, $"winplus-user-{payerId}", new("Paiement reçu : en attente du répétiteur", "Payment received, waiting for the tutor"),
+                new($"Ta demande du {booking.SessionDate:dd/MM/yyyy} est payée et en attente d'acceptation par le répétiteur.",
+                    $"Your request for {booking.SessionDate:dd/MM/yyyy} is paid and waiting for the tutor to accept it."),
+                userId: payerId, type: "TutorBooking");
 
         // Lot 9.3 : chaque élève pour qui la séance a été réservée (par un
         // parent, une institution, un membre du groupe) en est prévenu.
@@ -1180,6 +1215,9 @@ public class TutorBookingService : ITutorBookingService
             StartTime = b.StartTime.ToString(@"hh\:mm"),
             EndTime = b.EndTime.ToString(@"hh\:mm"),
             Mode = b.Mode,
+            LocationAddress = b.LocationAddress,
+            LocationNote = b.LocationNote,
+            IsTrial = b.IsTrial,
             PriceXaf = b.PriceXaf,
             Status = b.Status,
             PaymentStatus = b.PaymentStatus,
