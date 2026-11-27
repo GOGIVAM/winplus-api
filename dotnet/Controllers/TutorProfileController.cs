@@ -116,7 +116,14 @@ public class TutorProfileController : ControllerBase
         if (!string.IsNullOrEmpty(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
         var res = await client.SendAsync(req, ct);
         await gate.CompleteAsync(ticket, res.IsSuccessStatusCode, observedTokens: Backend.Services.Entitlements.IAiFeatureGate.TokensOf(res));
-        return Content(await res.Content.ReadAsStringAsync(ct), "application/json");
+        var payload = await res.Content.ReadAsStringAsync(ct);
+        if (res.IsSuccessStatusCode)
+            return Content(payload, "application/json");
+        // Erreur WinAI relayée avec son vrai statut (avant : 200, et le mobile affichait une suggestion à 0 XAF).
+        _logger.LogWarning("WinAI {Path} : HTTP {Status} {Body}", pythonPath, (int)res.StatusCode, payload.Length > 300 ? payload[..300] : payload);
+        var status = (int)res.StatusCode is >= 400 and < 500 ? (int)res.StatusCode : 502;
+        const string message = "WinAI n'a pas pu répondre. Réessayez dans un instant.";
+        return StatusCode(status, new { success = false, code = "winai_indisponible", error = message, message });
     }
 
     /// <summary>Mon profil répétiteur (créé automatiquement au premier accès, US-PRO-05).</summary>

@@ -20,10 +20,12 @@ public class OrderRepository : IOrderRepository
     {
         try
         {
-            return await _context.Orders
+            var order = await _context.Orders
                 .Include(o => o.User)
                 .Include(o => o.Items)
                 .FirstOrDefaultAsync(o => o.Id == id);
+            if (order != null) await FillItemTitlesAsync(new[] { order });
+            return order;
         }
         catch (Exception ex)
         {
@@ -52,19 +54,37 @@ public class OrderRepository : IOrderRepository
     {
         try
         {
-            return await _context.Orders
+            var orders = await _context.Orders
                 .WhereNotDeleted()
                 .Where(o => o.UserId == userId)
                 .Include(o => o.Items)
                 .AsNoTracking()
                 .OrderByDescending(o => o.OrderDate)
                 .ToListAsync();
+            await FillItemTitlesAsync(orders);
+            return orders;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting orders for user {UserId}", userId);
             return Enumerable.Empty<Order>();
         }
+    }
+
+    /// <summary>Titres des lignes (épreuve ou formation) en deux requêtes pour toute la liste.</summary>
+    private async Task FillItemTitlesAsync(IEnumerable<Order> orders)
+    {
+        var items = orders.SelectMany(o => o.Items).ToList();
+        if (items.Count == 0) return;
+        var subjectIds = items.Where(i => i.SubjectId != null).Select(i => i.SubjectId!.Value).Distinct().ToList();
+        var courseIds = items.Where(i => i.CourseId != null).Select(i => i.CourseId!.Value).Distinct().ToList();
+        var subjects = subjectIds.Count == 0 ? new Dictionary<int, string>() : await _context.Subjects.AsNoTracking()
+            .Where(s => subjectIds.Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.Title);
+        var courses = courseIds.Count == 0 ? new Dictionary<int, string>() : await _context.Courses.AsNoTracking()
+            .Where(c => courseIds.Contains(c.Id)).ToDictionaryAsync(c => c.Id, c => c.Title);
+        foreach (var i in items)
+            i.Title = i.SubjectId is int sid ? subjects.GetValueOrDefault(sid)
+                : i.CourseId is int cid ? courses.GetValueOrDefault(cid) : null;
     }
 
     public async Task<IEnumerable<Order>> GetAllAsync()

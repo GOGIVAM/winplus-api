@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations.Schema;
 using System.Text.Json.Serialization;
 
 namespace Backend.Models.Entities;
@@ -20,6 +21,11 @@ public class OrderItem
     public int? CourseId { get; set; }
 
     public decimal PriceAtPurchase { get; set; }
+
+    /// <summary>Titre de l'épreuve ou de la formation, rempli à la lecture des commandes (non stocké). Sans lui,
+    /// les clients affichaient « sujet n° X » : l'entité liée n'était pas chargée, et elle exposerait trop de champs.</summary>
+    [NotMapped]
+    public string? Title { get; set; }
 
     [JsonIgnore]
     public Order Order { get; set; } = null!;

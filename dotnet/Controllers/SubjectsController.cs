@@ -194,6 +194,7 @@ public class SubjectsController : ControllerBase
         [FromQuery] bool verifiedAuthorOnly = false,
         [FromQuery] string? contentLanguage = null,
         [FromQuery] string? country = null,
+        [FromQuery] string? level = null,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] string sortBy = "createdAt",
@@ -231,6 +232,16 @@ public class SubjectsController : ControllerBase
             {
                 var categories = await FrenchEquivalentsAsync(category);
                 query = query.Where(s => s.Category != null && categories.Contains(s.Category.ToLower()));
+            }
+
+            // Niveau (27/11/2026) : le mobile l'envoyait déjà, il était ignoré. Correspondance partielle sans casse
+            // (« Terminale » trouve « Terminale C »), sur le niveau de la matière ou de l'une de ses épreuves.
+            if (!string.IsNullOrWhiteSpace(level))
+            {
+                var lvl = level.Trim().ToLower();
+                query = query.Where(s =>
+                    (s.Level != null && s.Level.ToLower().Contains(lvl)) ||
+                    _context.Exams.Any(e => e.SubjectId == s.Id && !e.IsDeleted && e.Level != null && e.Level.ToLower().Contains(lvl)));
             }
 
             if (!string.IsNullOrWhiteSpace(difficulty))

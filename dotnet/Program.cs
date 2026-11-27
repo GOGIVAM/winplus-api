@@ -90,6 +90,8 @@ builder.Services.AddControllers(o => o.Filters.Add<Backend.Services.Translation.
         // correctif reste de projeter vers un DTO ; ceci évite un crash total si
         // un futur endpoint oublie de le faire.
         options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+        // Dates reçues sans fuseau lues comme UTC (Npgsql refuse les DateTime « Unspecified » en timestamptz).
+        options.JsonSerializerOptions.Converters.Add(new Backend.Utils.UtcDateTimeJsonConverter());
     });
 // ❌ NE PAS ajouter AddNewtonsoftJson() - causes duplication
 
