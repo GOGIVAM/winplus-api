@@ -23,6 +23,8 @@ public interface ICustomAuthService
     Task<AuthResult> SignInAsync(string email, string password, HttpRequest request, bool rememberMe = false);
     /// <summary>Ouvre une session pour un compte déjà authentifié par un fournisseur externe (Google).</summary>
     Task<AuthResult> SignInVerifiedUserAsync(User user, HttpRequest request);
+    /// <summary>Ouvre la session après vérification du second facteur (double authentification).</summary>
+    Task<AuthResult> CompleteTwoFactorSignInAsync(int userId, HttpRequest request, bool rememberMe);
     Task<AuthResult> VerifyEmailAsync(int userId, string verificationCode);
     Task<AuthResult> ResendVerificationCodeAsync(string email);
     Task<AuthResult> ForgotPasswordAsync(string email);
@@ -308,6 +310,7 @@ public class CustomAuthService : ICustomAuthService
                 };
             }
 
+            if (await TwoFactorChallengeAsync(user) is { } challenge) return challenge;
             return await OpenSessionAsync(user, request, rememberMe);
         }
         catch (Exception ex)
@@ -339,8 +342,45 @@ public class CustomAuthService : ICustomAuthService
                 Errors = new() { { "account", "Account is inactive" } }
             };
         }
+        // Double authentification : exigée aussi après Google.
+        if (await TwoFactorChallengeAsync(user) is { } challenge) return challenge;
         // Google persiste la session, comme « Se souvenir de moi ».
         return await OpenSessionAsync(user, request, rememberMe: true);
+    }
+
+    /// <summary>
+    /// Compte avec double authentification active : aucun jeton n'est émis, la réponse demande le second code
+    /// (le contrôleur y joint le jeton de connexion en attente).
+    /// </summary>
+    private async Task<AuthResult?> TwoFactorChallengeAsync(User user)
+    {
+        var enabled = await _dbContext.UserTwoFactorAuthentications.AsNoTracking()
+            // Seulement les secrets au format v1 (28/11/2026) : un ancien enregistrement illisible ne doit pas bloquer la connexion.
+            .AnyAsync(t => t.UserId == user.Id && t.IsEnabled && t.TotpSecret != null && t.TotpSecret.StartsWith("v1:"));
+        if (!enabled) return null;
+        return new AuthResult
+        {
+            Success = true,
+            RequiresTwoFactor = true,
+            Message = "Saisissez le code de votre application d'authentification.",
+            User = new UserDto { Id = user.Id, Email = user.Email, Role = user.Role ?? "student" },
+        };
+    }
+
+    public async Task<AuthResult> CompleteTwoFactorSignInAsync(int userId, HttpRequest request, bool rememberMe)
+    {
+        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Id == userId);
+        if (user == null || !user.IsActive || user.IsDeleted)
+        {
+            return new AuthResult
+            {
+                Success = false,
+                Message = "Account is inactive",
+                ErrorCode = "ACCOUNT_INACTIVE",
+                Errors = new() { { "account", "Account is inactive" } },
+            };
+        }
+        return await OpenSessionAsync(user, request, rememberMe);
     }
 
     /// <summary>

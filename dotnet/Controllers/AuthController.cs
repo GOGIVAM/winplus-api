@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using Backend.Services;
 using Backend.Models;
 using Backend.Models.DTOs;
@@ -76,8 +77,10 @@ public class AuthController : ControllerBase
         ApplicationDbContext dbContext,
         Backend.Services.Marketing.IAttributionService? attribution = null,
         IGoogleAuthService? google = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        ITwoFactorService? twoFactor = null)
     {
+        _twoFactor = twoFactor;
         _attribution = attribution;
         _google = google;
         _refreshDays = int.TryParse(configuration?["JWT:RefreshTokenExpirationDays"], out var days) && days > 0 ? days : 30;
@@ -87,6 +90,89 @@ public class AuthController : ControllerBase
         _cartService = cartService;
         _logger = logger;
         _dbContext = dbContext;
+    }
+
+    private readonly ITwoFactorService? _twoFactor;
+    private const int MaxTwoFactorAttempts = 5;
+
+    /// <summary>
+    /// Double authentification : mot de passe (ou Google) accepté, aucun jeton émis. Le client affiche la saisie du
+    /// code et l'envoie avec ce jeton à POST /api/auth/2fa/verify-login (5 minutes, 5 essais).
+    /// </summary>
+    private IActionResult TwoFactorChallenge(AuthResult result, bool rememberMe, bool useCookie)
+    {
+        if (_twoFactor == null || result.User == null)
+            return StatusCode(500, new { error = "Double authentification indisponible.", code = "two_factor_unavailable" });
+        return Ok(new
+        {
+            requiresTwoFactor = true,
+            twoFactorToken = _twoFactor.CreateLoginChallenge(result.User.Id, rememberMe, useCookie),
+            expiresIn = 300,
+            message = "Saisissez le code à 6 chiffres de votre application d'authentification, ou un code de secours.",
+        });
+    }
+
+    /// <summary>Second facteur de la connexion : code de l'application ou code de secours (consommé).</summary>
+    [HttpPost("2fa/verify-login")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(SignInResponse), 200)]
+    public async Task<IActionResult> VerifyTwoFactorLogin([FromBody] VerifyTwoFactorLoginRequestDto request)
+    {
+        if (_twoFactor == null)
+            return StatusCode(500, new { error = "Double authentification indisponible.", code = "two_factor_unavailable" });
+        var challenge = _twoFactor.ReadLoginChallenge(request.TwoFactorToken);
+        if (challenge is not { } c)
+            return Unauthorized(new { error = "La vérification a expiré : reconnectez-vous.", errorCode = "TWO_FACTOR_EXPIRED", code = "jeton_expire" });
+
+        // 5 essais par jeton, puis il faut se reconnecter (le mot de passe est redemandé).
+        var cache = HttpContext.RequestServices.GetService(typeof(Microsoft.Extensions.Caching.Memory.IMemoryCache))
+            as Microsoft.Extensions.Caching.Memory.IMemoryCache;
+        var key = "2fa-tries-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(request.TwoFactorToken)));
+        var tries = cache != null && cache.TryGetValue(key, out int t) ? t : 0;
+        if (tries >= MaxTwoFactorAttempts)
+            return Unauthorized(new { error = "Trop d'essais : reconnectez-vous.", errorCode = "TWO_FACTOR_LOCKED", code = "trop_d_essais" });
+
+        if (!await _twoFactor.VerifyLoginCodeAsync(c.UserId, request.Code))
+        {
+            cache?.Set(key, tries + 1, TimeSpan.FromMinutes(6));
+            _logger.LogWarning("[2FA] Code refusé pour l'utilisateur {UserId} (essai {Try})", c.UserId, tries + 1);
+            return Unauthorized(new
+            {
+                error = "Code incorrect.",
+                errorCode = "TWO_FACTOR_INVALID",
+                code = "code_invalide",
+                attemptsLeft = MaxTwoFactorAttempts - tries - 1,
+            });
+        }
+        cache?.Remove(key);
+
+        var result = await _customAuthService.CompleteTwoFactorSignInAsync(c.UserId, HttpContext.Request, c.RememberMe);
+        if (!result.Success)
+            return Unauthorized(new { error = result.Message, errorCode = result.ErrorCode ?? "ACCOUNT_INACTIVE" });
+
+        if (!string.IsNullOrEmpty(request.DeviceId) && result.User?.Id > 0)
+        {
+            try { await _cartService.MergeAnonymousCartAsync(result.User.Id, request.DeviceId); }
+            catch (Exception mergeEx) { _logger.LogError(mergeEx, "[2FA] Fusion du panier impossible"); }
+        }
+
+        return Ok(new SignInResponse
+        {
+            AccessToken = result.AccessToken,
+            RefreshToken = HandOverRefreshToken(result.RefreshToken, c.UseCookie, c.RememberMe),
+            ExpiresIn = result.ExpiresIn ?? 900,
+            TokenType = "Bearer",
+            User = new
+            {
+                id = result.User?.Id,
+                email = result.User?.Email,
+                firstName = result.User?.FirstName,
+                lastName = result.User?.LastName,
+                role = result.User?.Role,
+                locale = result.User?.Locale,
+                isEmailVerified = result.User?.IsEmailVerified
+            }
+        });
     }
 
     [HttpPost("signup")]
@@ -252,6 +338,9 @@ public class AuthController : ControllerBase
                 return Unauthorized(errorResponse);
             }
 
+            if (result.RequiresTwoFactor)
+                return TwoFactorChallenge(result, request.RememberMe, request.UseCookie);
+
             _logger.LogInformation(
                 "[SignIn Success] ✅ Connexion réussie\n" +
                 "Email: {Email}\n" +
@@ -370,6 +459,8 @@ public class AuthController : ControllerBase
             _logger.LogWarning("[Google] Connexion refusée : {Code}", outcome.ErrorCode);
             return BadRequest(new { error = "La connexion avec Google n'a pas abouti.", code = outcome.ErrorCode });
         }
+        if (result.RequiresTwoFactor)
+            return TwoFactorChallenge(result, rememberMe: true, request.UseCookie);
 
         if (!string.IsNullOrEmpty(request.DeviceId) && result.User?.Id > 0)
         {

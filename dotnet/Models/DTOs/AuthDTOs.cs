@@ -55,6 +55,14 @@ public class SignInResponse
     public object? User { get; set; }
 }
 
+/// <summary>Second facteur de la connexion : jeton reçu à la connexion et code de l'application ou de secours.</summary>
+public class VerifyTwoFactorLoginRequestDto
+{
+    public string TwoFactorToken { get; set; } = string.Empty;
+    public string Code { get; set; } = string.Empty;
+    public string? DeviceId { get; set; }
+}
+
 public class VerifyEmailRequestDto
 {
     public string Email { get; set; } = string.Empty;
@@ -175,6 +183,9 @@ public class ConfirmForgotPasswordRequest
 public class AuthResult
 {
     public bool Success { get; set; }
+    /// <summary>Mot de passe (ou Google) accepté, mais le compte a la double authentification : aucun jeton n'est
+    /// émis tant que le second code n'est pas vérifié (POST /api/auth/2fa/verify-login).</summary>
+    public bool RequiresTwoFactor { get; set; }
     public string Message { get; set; } = string.Empty;
     public string? ErrorCode { get; set; } // ✅ Code d'erreur pour meilleurs messages frontend
     public string? AccessToken { get; set; }

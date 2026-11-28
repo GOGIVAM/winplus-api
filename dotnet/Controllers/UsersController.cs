@@ -992,59 +992,71 @@ public class UsersController : ControllerBase
         }
     }
 
+    // ── Double authentification (refaite le 28/11/2026, voir TwoFactorService) ──────────────────────
+    // Refus : 400 {success:false, code, error, message}. Codes : deja_active, aucune_activation, code_invalide,
+    // code_requis, non_active, mot_de_passe_requis, mot_de_passe_incorrect, secret_illisible.
+
+    private static ObjectResult TwoFactorRefusal(string code, string message, int status = 400) =>
+        new(new { success = false, code, error = message, message }) { StatusCode = status };
+
     [HttpGet("2fa/status")]
     [Authorize]
     public async Task<IActionResult> Get2FAStatus()
-    {
-        try
-        {
-            var status = await _twoFactorService.GetTwoFactorStatusAsync(User.GetUserId());
-            return Ok(status);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting 2FA status");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
+        => Ok(await _twoFactorService.GetTwoFactorStatusAsync(User.GetUserId()));
 
+    /// <summary>Étape 1 : nouveau secret en attente, QR code (PNG) et clé à saisir à la main.</summary>
     [HttpPost("2fa/enable")]
     [Authorize]
-    public async Task<IActionResult> Enable2FA([FromBody] Enable2FARequestDto request)
+    public async Task<IActionResult> Enable2FA()
     {
+        var userId = User.GetUserId();
+        var email = await _db.Users.AsNoTracking().Where(u => u.Id == userId).Select(u => u.Email).FirstOrDefaultAsync();
         try
         {
-            var response = await _twoFactorService.InitializeTwoFactorAsync(User.GetUserId(), request.Method);
-            return Ok(response);
+            return Ok(await _twoFactorService.StartSetupAsync(userId, email ?? $"compte-{userId}"));
         }
-        catch (Exception ex)
+        catch (TwoFactorException ex)
         {
-            _logger.LogError(ex, "Error enabling 2FA");
-            return StatusCode(500, new { error = "Internal server error" });
+            return TwoFactorRefusal(ex.Code, ex.Message, ex.Code == "deja_active" ? 409 : 400);
         }
     }
 
+    /// <summary>Étape 2 : premier code de l'application ; active la double authentification et renvoie les
+    /// 8 codes de secours, affichés une seule fois.</summary>
     [HttpPost("2fa/verify")]
     [Authorize]
     public async Task<IActionResult> Verify2FA([FromBody] Verify2FARequestDto request)
     {
         try
         {
-            var userId = User.GetUserId();
-            if (string.IsNullOrEmpty(request.Code) || request.Code.Length != 6)
-                return BadRequest(new { error = "Invalid verification code format" });
+            var (status, backupCodes) = await _twoFactorService.ConfirmSetupAsync(User.GetUserId(), request.Code ?? "");
+            return Ok(new
+            {
+                success = true,
+                message = "Double authentification activée. Conservez vos codes de secours en lieu sûr : ils ne seront plus affichés.",
+                status,
+                backupCodes,
+            });
+        }
+        catch (TwoFactorException ex)
+        {
+            return TwoFactorRefusal(ex.Code, ex.Message, ex.Code == "deja_active" ? 409 : 400);
+        }
+    }
 
-            var status = await _twoFactorService.VerifyTwoFactorAsync(userId, request.Code);
-            return Ok(new { success = true, message = "2FA verified and enabled successfully", status });
-        }
-        catch (InvalidOperationException ex)
+    /// <summary>Nouveaux codes de secours (les anciens deviennent inutilisables) ; code de l'application exigé.</summary>
+    [HttpPost("2fa/backup-codes")]
+    [Authorize]
+    public async Task<IActionResult> Regenerate2FABackupCodes([FromBody] RegenerateBackupCodesRequestDto request)
+    {
+        try
         {
-            return BadRequest(new { error = ex.Message });
+            var codes = await _twoFactorService.RegenerateBackupCodesAsync(User.GetUserId(), request.Code ?? "");
+            return Ok(new { success = true, backupCodes = codes });
         }
-        catch (Exception ex)
+        catch (TwoFactorException ex)
         {
-            _logger.LogError(ex, "Error verifying 2FA");
-            return StatusCode(500, new { error = "Internal server error" });
+            return TwoFactorRefusal(ex.Code, ex.Message);
         }
     }
 
@@ -1080,21 +1092,34 @@ public class UsersController : ControllerBase
         return Ok(new { success = true });
     }
 
+    /// <summary>Désactivation : mot de passe actuel (sauf compte Google) et code de l'application ou de secours.</summary>
     [HttpPost("2fa/disable")]
     [Authorize]
     public async Task<IActionResult> Disable2FA([FromBody] Disable2FARequestDto request)
     {
+        var userId = User.GetUserId();
+        var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+        if (user == null) return NotFound();
+        if (!string.IsNullOrEmpty(user.PasswordHash))
+        {
+            if (string.IsNullOrEmpty(request.Password))
+                return TwoFactorRefusal("mot_de_passe_requis", "Saisissez votre mot de passe actuel pour désactiver la double authentification.");
+            bool ok;
+            try { ok = BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash); }
+            catch (BCrypt.Net.SaltParseException) { ok = false; }
+            if (!ok) return TwoFactorRefusal("mot_de_passe_incorrect", "Mot de passe incorrect.");
+        }
+        var status = await _twoFactorService.GetTwoFactorStatusAsync(userId);
+        if (status.IsEnabled && string.IsNullOrWhiteSpace(request.Code))
+            return TwoFactorRefusal("code_requis", "Saisissez le code de votre application d'authentification, ou un code de secours.");
         try
         {
-            var userId = User.GetUserId();
-            await _twoFactorService.DisableTwoFactorAsync(userId);
-            var status = await _twoFactorService.GetTwoFactorStatusAsync(userId);
-            return Ok(new { success = true, message = "2FA disabled successfully", status });
+            await _twoFactorService.DisableAsync(userId, request.Code ?? "");
         }
-        catch (Exception ex)
+        catch (TwoFactorException ex)
         {
-            _logger.LogError(ex, "Error disabling 2FA");
-            return StatusCode(500, new { error = "Internal server error" });
+            return TwoFactorRefusal(ex.Code, ex.Message);
         }
+        return Ok(new { success = true, message = "Double authentification désactivée.", status = await _twoFactorService.GetTwoFactorStatusAsync(userId) });
     }
 }

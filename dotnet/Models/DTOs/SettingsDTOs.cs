@@ -57,6 +57,8 @@ public class TwoFactorStatusDto
     public DateTime? EnabledAt { get; set; }
     public DateTime? LastVerifiedAt { get; set; }
     public int BackupCodesCount { get; set; }
+    /// <summary>Activation commencée (QR code affiché) mais pas encore confirmée par un code.</summary>
+    public bool PendingSetup { get; set; }
 }
 
 /// <summary>
@@ -81,7 +83,16 @@ public class Verify2FARequestDto
 /// </summary>
 public class Disable2FARequestDto
 {
+    /// <summary>Mot de passe actuel (exigé sauf pour un compte créé avec Google).</summary>
     public string? Password { get; set; }
+    /// <summary>Code de l'application ou code de secours.</summary>
+    public string? Code { get; set; }
+}
+
+/// <summary>Remplacement des codes de secours : code de l'application exigé.</summary>
+public class RegenerateBackupCodesRequestDto
+{
+    public string Code { get; set; } = string.Empty;
 }
 
 /// <summary>
@@ -89,8 +100,14 @@ public class Disable2FARequestDto
 /// </summary>
 public class TwoFactorSetupResponse
 {
+    /// <summary>QR code en image PNG (data:image/png;base64,…), généré par le serveur.</summary>
     public string? QrCode { get; set; }
     public List<string>? BackupCodes { get; set; }
+    /// <summary>Clé base32 à saisir à la main si le QR code ne peut pas être scanné.</summary>
     public string? Secret { get; set; }
+    /// <summary>Même clé, par groupes de 4 caractères, pour l'affichage.</summary>
+    public string? SecretGrouped { get; set; }
+    /// <summary>Lien otpauth:// (ouvre directement l'application d'authentification sur le même téléphone).</summary>
+    public string? OtpauthUrl { get; set; }
     public string Message { get; set; } = string.Empty;
 }

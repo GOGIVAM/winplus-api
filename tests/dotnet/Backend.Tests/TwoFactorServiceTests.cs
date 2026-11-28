@@ -1,164 +1,166 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
-using Backend.Models.Entities;
 using Backend.Services;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Backend.Tests
 {
     /// <summary>
-    /// Double authentification : état, initialisation, refus d'un code faux,
-    /// désactivation (effacement du secret) et génération des codes de secours.
-    /// Le code TOTP valide dépend de l'horloge système et n'est pas testé ici ;
-    /// seuls les refus (déterministes) le sont.
+    /// Double authentification refaite le 28/11/2026 : secret base32 chiffré, activation en deux temps confirmée par
+    /// un code, codes de secours hachés et à usage unique, refus du rejeu, jeton de connexion en attente signé.
+    /// Les codes valides sont calculés ici avec l'algorithme standard (RFC 6238), comme le ferait l'application.
     /// </summary>
     public class TwoFactorServiceTests
     {
         private const int U = 9101;
-        private static readonly string Secret = Convert.ToBase64String(new byte[20]);
+
+        private static readonly IConfiguration Config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["JWT:SecretKey"] = "cle-de-test-suffisamment-longue-pour-hkdf-0123456789" })
+            .Build();
 
         private static (TestApplicationDbContext Db, TwoFactorService Svc) Build()
         {
             var db = TestApplicationDbContext.Create();
-            return (db, new TwoFactorService(db, NullLogger<TwoFactorService>.Instance));
+            return (db, new TwoFactorService(db, NullLogger<TwoFactorService>.Instance, Config, new MemoryCache(new MemoryCacheOptions())));
         }
 
-        private static UserTwoFactorAuthentication Row(bool enabled, string? codes = "A,B,C,D,E", int used = 0) => new()
-        {
-            UserId = U, IsEnabled = enabled, Method = "authenticator", TotpSecret = Secret, BackupCodes = codes, BackupCodesUsed = used,
-        };
+        // ── Algorithme de référence (côté « application d'authentification ») ──
 
-        [Fact]
-        public async Task Sans_configuration_le_statut_est_desactive()
+        private static byte[] FromBase32(string s)
         {
-            var (_, svc) = Build();
-            var s = await svc.GetTwoFactorStatusAsync(U);
-            Assert.False(s.IsEnabled);
-            Assert.Null(s.Method);
-            Assert.Equal(0, s.BackupCodesCount);
-        }
-
-        [Fact]
-        public async Task Le_nombre_de_codes_de_secours_exclut_ceux_deja_utilises()
-        {
-            var (db, svc) = Build();
-            db.UserTwoFactorAuthentications.Add(Row(true, used: 2));
-            db.SaveChanges();
-            var s = await svc.GetTwoFactorStatusAsync(U);
-            Assert.True(s.IsEnabled);
-            Assert.Equal(3, s.BackupCodesCount);
-        }
-
-        [Fact]
-        public async Task Sans_codes_de_secours_le_compte_est_zero()
-        {
-            var (db, svc) = Build();
-            db.UserTwoFactorAuthentications.Add(Row(true, codes: null));
-            db.SaveChanges();
-            Assert.Equal(0, (await svc.GetTwoFactorStatusAsync(U)).BackupCodesCount);
-        }
-
-        [Fact]
-        public async Task L_initialisation_renvoie_secret_qr_et_cinq_codes_sans_rien_enregistrer()
-        {
-            var (db, svc) = Build();
-            var r = await svc.InitializeTwoFactorAsync(U, "authenticator");
-            Assert.False(string.IsNullOrEmpty(r.Secret));
-            Assert.Equal(5, r.BackupCodes.Count);
-            Assert.Contains("otpauth", Uri.UnescapeDataString(r.QrCode));
-            Assert.Empty(db.UserTwoFactorAuthentications);
-        }
-
-        [Fact]
-        public void Les_codes_de_secours_ont_huit_caracteres_majuscules_alphanumeriques()
-        {
-            var (_, svc) = Build();
-            var codes = svc.GenerateBackupCodes(8);
-            Assert.Equal(8, codes.Count);
-            Assert.All(codes, c =>
+            const string a = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+            var output = new List<byte>(); int buffer = 0, bits = 0;
+            foreach (var c in s.Replace(" ", "").TrimEnd('='))
             {
-                Assert.Equal(8, c.Length);
-                Assert.Equal(c.ToUpperInvariant(), c);
-                Assert.DoesNotContain('+', c);
-                Assert.DoesNotContain('/', c);
-            });
+                buffer = (buffer << 5) | a.IndexOf(c); bits += 5;
+                if (bits >= 8) { output.Add((byte)((buffer >> (bits - 8)) & 0xff)); bits -= 8; }
+            }
+            return output.ToArray();
+        }
+
+        private static string Code(byte[] key, long step)
+        {
+            var counter = BitConverter.GetBytes(step);
+            if (BitConverter.IsLittleEndian) Array.Reverse(counter);
+            var h = HMACSHA1.HashData(key, counter);
+            var o = h[^1] & 0x0f;
+            var v = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+            return (v % 1_000_000).ToString("D6");
+        }
+
+        private static long Now => DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 30;
+
+        [Fact]
+        public void Vecteur_officiel_RFC_6238()
+        {
+            // Secret « 12345678901234567890 », T = 59 s : 94287082 sur 8 chiffres, donc 287082 sur 6.
+            Assert.Equal("287082", Code(Encoding.ASCII.GetBytes("12345678901234567890"), 59 / 30));
         }
 
         [Fact]
-        public void Le_secret_genere_est_un_base64_de_vingt_octets()
-        {
-            var (_, svc) = Build();
-            Assert.Equal(20, Convert.FromBase64String(svc.GenerateTotpSecret()).Length);
-        }
-
-        [Theory]
-        [InlineData("000000x")]
-        [InlineData("12345")]
-        [InlineData("")]
-        public async Task L_activation_refuse_un_code_mal_forme_et_n_enregistre_rien(string code)
+        public async Task Activation_en_deux_temps_puis_connexion_et_secours()
         {
             var (db, svc) = Build();
-            await Assert.ThrowsAsync<InvalidOperationException>(() => svc.EnableTwoFactorAsync(U, code, Secret));
-            Assert.Empty(db.UserTwoFactorAuthentications);
+            var setup = await svc.StartSetupAsync(U, "eleve@winplus.cm");
+            Assert.Matches("^[A-Z2-7]{32}$", setup.Secret);
+            Assert.StartsWith("otpauth://totp/WinPlus%3Aeleve%40winplus.cm?secret=" + setup.Secret, setup.OtpauthUrl);
+            Assert.StartsWith("data:image/png;base64,", setup.QrCode);
+
+            var row = db.UserTwoFactorAuthentications.Single();
+            Assert.False(row.IsEnabled);
+            Assert.StartsWith("v1:", row.TotpSecret);
+            Assert.DoesNotContain(setup.Secret!, row.TotpSecret);
+            Assert.True((await svc.GetTwoFactorStatusAsync(U)).PendingSetup);
+            Assert.False(await svc.IsEnabledAsync(U));
+
+            var key = FromBase32(setup.Secret!);
+            var refus = await Assert.ThrowsAsync<TwoFactorException>(() => svc.ConfirmSetupAsync(U, Code(key, Now + 5)));
+            Assert.Equal("code_invalide", refus.Code);
+
+            var (status, backup) = await svc.ConfirmSetupAsync(U, Code(key, Now));
+            Assert.True(status.IsEnabled);
+            Assert.Equal(8, backup.Count);
+            Assert.Equal(8, status.BackupCodesCount);
+            Assert.True(await svc.IsEnabledAsync(U));
+            Assert.All(backup, c => Assert.DoesNotContain(c, db.UserTwoFactorAuthentications.Single().BackupCodes!));
+
+            // Le code qui vient de servir n'est pas rejouable dans sa fenêtre.
+            Assert.False(await svc.VerifyLoginCodeAsync(U, Code(key, Now)));
+            Assert.True(await svc.VerifyLoginCodeAsync(U, Code(key, Now + 1)));
+
+            // Code de secours : accepté une fois (casse et tirets indifférents), puis consommé.
+            var b = backup[0];
+            Assert.True(await svc.VerifyLoginCodeAsync(U, b.ToLowerInvariant().Insert(4, "-")));
+            Assert.False(await svc.VerifyLoginCodeAsync(U, b));
+            Assert.Equal(7, (await svc.GetTwoFactorStatusAsync(U)).BackupCodesCount);
+
+            await Assert.ThrowsAsync<TwoFactorException>(() => svc.StartSetupAsync(U, "eleve@winplus.cm"));
         }
 
         [Fact]
-        public async Task L_activation_refuse_un_secret_invalide()
-        {
-            var (_, svc) = Build();
-            await Assert.ThrowsAsync<InvalidOperationException>(() => svc.EnableTwoFactorAsync(U, "123456", "pas-du-base64!"));
-        }
-
-        [Fact]
-        public async Task La_verification_exige_une_double_authentification_activee()
-        {
-            var (db, svc) = Build();
-            db.UserTwoFactorAuthentications.Add(Row(false));
-            db.SaveChanges();
-            await Assert.ThrowsAsync<InvalidOperationException>(() => svc.VerifyTwoFactorAsync(U, "123456"));
-        }
-
-        [Fact]
-        public async Task La_validation_renvoie_faux_sans_configuration_ou_desactivee_ou_sans_secret()
-        {
-            var (db, svc) = Build();
-            Assert.False(await svc.ValidateTwoFactorCodeAsync(U, "123456"));
-            db.UserTwoFactorAuthentications.Add(Row(false));
-            db.SaveChanges();
-            Assert.False(await svc.ValidateTwoFactorCodeAsync(U, "123456"));
-        }
-
-        [Fact]
-        public async Task La_validation_refuse_un_code_non_numerique_de_six_caracteres()
-        {
-            var (db, svc) = Build();
-            db.UserTwoFactorAuthentications.Add(Row(true));
-            db.SaveChanges();
-            Assert.False(await svc.ValidateTwoFactorCodeAsync(U, "abcdef"));
-        }
-
-        [Fact]
-        public async Task La_desactivation_efface_secret_codes_et_methode()
+        public async Task Desactivation_exige_un_code_valide()
         {
             var (db, svc) = Build();
-            db.UserTwoFactorAuthentications.Add(Row(true));
-            db.SaveChanges();
-            await svc.DisableTwoFactorAsync(U);
+            var setup = await svc.StartSetupAsync(U, "a@b.c");
+            var key = FromBase32(setup.Secret!);
+            var (_, backup) = await svc.ConfirmSetupAsync(U, Code(key, Now - 1));
+
+            Assert.Equal("code_invalide", (await Assert.ThrowsAsync<TwoFactorException>(() => svc.DisableAsync(U, "000000"))).Code);
+            await svc.DisableAsync(U, backup[3]);
             var row = db.UserTwoFactorAuthentications.Single();
             Assert.False(row.IsEnabled);
             Assert.Null(row.TotpSecret);
             Assert.Null(row.BackupCodes);
-            Assert.Null(row.Method);
+            Assert.False((await svc.GetTwoFactorStatusAsync(U)).IsEnabled);
         }
 
         [Fact]
-        public async Task La_desactivation_sans_configuration_ne_fait_rien()
+        public async Task Nouveaux_codes_de_secours_invalident_les_anciens()
         {
-            var (db, svc) = Build();
-            await svc.DisableTwoFactorAsync(U);
-            Assert.Empty(db.UserTwoFactorAuthentications);
+            var (_, svc) = Build();
+            var key = FromBase32((await svc.StartSetupAsync(U, "a@b.c")).Secret!);
+            var (_, old) = await svc.ConfirmSetupAsync(U, Code(key, Now - 1));
+            var fresh = await svc.RegenerateBackupCodesAsync(U, Code(key, Now));
+            Assert.Equal(8, fresh.Count);
+            Assert.False(await svc.VerifyLoginCodeAsync(U, old[0]));
+            Assert.True(await svc.VerifyLoginCodeAsync(U, fresh[0]));
+        }
+
+        [Fact]
+        public void Jeton_de_connexion_signe_et_infalsifiable()
+        {
+            var (_, svc) = Build();
+            var token = svc.CreateLoginChallenge(42, rememberMe: true, useCookie: false);
+            var read = svc.ReadLoginChallenge(token);
+            Assert.Equal((42, true, false), read);
+            Assert.Null(svc.ReadLoginChallenge(token[..^2] + (token[^1] == 'A' ? "BB" : "AA")));
+            Assert.Null(svc.ReadLoginChallenge("n'importe.quoi"));
+            Assert.Null(svc.ReadLoginChallenge(""));
+        }
+
+        [Fact]
+        public async Task Sans_activation_aucun_code_n_est_accepte()
+        {
+            var (_, svc) = Build();
+            Assert.False(await svc.VerifyLoginCodeAsync(U, "123456"));
+            Assert.Equal("aucune_activation", (await Assert.ThrowsAsync<TwoFactorException>(() => svc.ConfirmSetupAsync(U, "123456"))).Code);
+            Assert.False((await svc.GetTwoFactorStatusAsync(U)).IsEnabled);
+        }
+
+        [Fact]
+        public void Les_codes_de_secours_ont_huit_caracteres_sans_ambiguite()
+        {
+            var (_, svc) = Build();
+            var codes = svc.GenerateBackupCodes();
+            Assert.Equal(8, codes.Count);
+            Assert.All(codes, c => Assert.Matches("^[A-HJ-NP-Z2-9]{8}$", c));
         }
     }
 }
