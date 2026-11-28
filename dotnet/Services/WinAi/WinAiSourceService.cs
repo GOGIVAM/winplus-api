@@ -86,7 +86,9 @@ public class WinAiSourceException : Exception
 public class WinAiSourceService : IWinAiSourceService
 {
     public const int MaxSourcesPerMessage = 10;
-    public const long MaxFileBytes = 5L * 1024 * 1024;
+    /// <summary>25 Mo par fichier (5 Mo avant le 28/11/2026, trop peu pour un cours ou une épreuve scannés) ;
+    /// sous la limite de requête de l'API (32 Mo) et de nginx (50 Mo). L'espace total reste borné par ai.sources.max_mb.</summary>
+    public const long MaxFileBytes = 25L * 1024 * 1024;
     /// <summary>Types acceptés (mêmes familles que les pièces jointes du site) et extension envoyée au RAG.</summary>
     private static readonly Dictionary<string, string> Extensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -185,7 +187,7 @@ public class WinAiSourceService : IWinAiSourceService
     public async Task<WinAiSource> UploadAsync(int userId, IFormFile file, string? title, string? bearer, CancellationToken ct = default)
     {
         if (file == null || file.Length == 0) throw new WinAiSourceException(400, "fichier_vide", "Choisissez un fichier.");
-        if (file.Length > MaxFileBytes) throw new WinAiSourceException(413, "fichier_trop_gros", "Ce fichier dépasse 5 Mo.");
+        if (file.Length > MaxFileBytes) throw new WinAiSourceException(413, "fichier_trop_gros", $"Ce fichier dépasse {MaxFileBytes / (1024 * 1024)} Mo.");
         var ext = Path.GetExtension(file.FileName ?? "").ToLowerInvariant();
         var contentType = (file.ContentType ?? "").Split(';')[0].Trim().ToLowerInvariant();
         if (!Extensions.ContainsKey(contentType) && TypeParExtension.TryGetValue(ext, out var deduit)) contentType = deduit;

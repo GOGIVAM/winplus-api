@@ -55,8 +55,8 @@ public class WinAiSourcesController : ControllerBase
     }
 
     [HttpPost]
-    [RequestSizeLimit(6 * 1024 * 1024)]
-    [RequestFormLimits(MultipartBodyLengthLimit = 6 * 1024 * 1024)]
+    [RequestSizeLimit(WinAiSourceService.MaxFileBytes + 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = WinAiSourceService.MaxFileBytes + 1024 * 1024)]
     public async Task<IActionResult> Televerser([FromForm] IFormFile? file, [FromForm] string? title, CancellationToken ct)
     {
         try
