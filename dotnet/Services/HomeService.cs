@@ -66,6 +66,13 @@ public class HomeService : IHomeService
                 .Where(u => u.Role == "teacher" && u.IsActive && !u.IsDeleted)
                 .CountAsync();
 
+            // Répétiteurs réellement proposés dans le catalogue : un compte
+            // enseignant n'y apparaît qu'après avoir activé son profil de
+            // répétiteur (et tant qu'il n'est pas en pause).
+            var tutorCount = await _context.TutorProfiles
+                .Where(p => p.IsActive && !p.IsOnVacation)
+                .CountAsync();
+
             var parentCount = await _context.Users
                 .Where(u => u.Role == "parent" && u.IsActive && !u.IsDeleted)
                 .CountAsync();
@@ -78,6 +85,7 @@ public class HomeService : IHomeService
                 SuccessRate = successRate,
                 StudentCount = studentCount,
                 TeacherCount = teacherCount,
+                TutorCount = tutorCount,
                 ParentCount = parentCount,
                 CompletedEnrollments = completedEnrollments,
                 TotalEnrollments = totalEnrollments,
